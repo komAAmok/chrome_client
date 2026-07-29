@@ -1,6 +1,6 @@
 # 编译所有平台的 wheel
 param(
-    [ValidateSet("windows", "linux", "macos", "all")]
+    [ValidateSet("windows", "windows32", "linux", "macos", "all")]
     [string]$Platform = "all"
 )
 
@@ -25,6 +25,21 @@ function Build-Windows {
         Write-Host "✓ Windows x64 wheel 构建成功" -ForegroundColor Green
     } else {
         Write-Host "✗ Windows x64 wheel 构建失败" -ForegroundColor Red
+        exit 1
+    }
+}
+
+function Build-Windows32 {
+    Write-Host "`n=== Building Windows x86 Wheel ===" -ForegroundColor Cyan
+    Set-Location $ProjectDir
+
+    Remove-Item python\chrome_client\*.so -ErrorAction SilentlyContinue
+    Remove-Item python\chrome_client\*.dylib -ErrorAction SilentlyContinue
+    Copy-Item cronet-libs\windows32\cronet.144.0.7506.0.dll python\chrome_client\ -Force
+
+    rustup target add i686-pc-windows-msvc
+    maturin build --release --target i686-pc-windows-msvc
+    if ($LASTEXITCODE -ne 0) {
         exit 1
     }
 }
@@ -102,10 +117,12 @@ Write-Host "项目目录: $ProjectDir" -ForegroundColor White
 
 switch ($Platform) {
     "windows" { Build-Windows }
+    "windows32" { Build-Windows32 }
     "linux" { Build-Linux }
     "macos" { Build-MacOS }
     "all" {
         Build-Windows
+        Build-Windows32
         Build-Linux
         Build-MacOS
     }

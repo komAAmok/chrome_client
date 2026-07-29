@@ -80,12 +80,15 @@ fn main() {
         }
     } else {
         // For Windows, generate bindings normally
+        let wrapper = if target_arch == "x86" {
+            "#include <stdbool.h>\n#include \"cronet.idl_c.h\""
+        } else {
+            "#include <stdbool.h>\n#include \"cronet.idl_c.h\"\n#include \"cronet_websocket_c.h\""
+        };
         let bindings = bindgen::Builder::default()
-            .header_contents(
-                "wrapper.h",
-                "#include <stdbool.h>\n#include \"cronet.idl_c.h\"\n#include \"cronet_websocket_c.h\"",
-            )
+            .header_contents("wrapper.h", wrapper)
             .clang_arg(format!("-I{}", include_dir.display()))
+            .clang_arg(format!("--target={}", target))
             .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()))
             .generate()
             .expect("Unable to generate bindings");

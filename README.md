@@ -614,6 +614,8 @@ response = chrome_client.get('https://httpbin.org/ip', proxies=proxies, verify=F
 
 Chrome Client 支持 WebSocket (`ws://`) 和安全 WebSocket (`wss://`) 连接，使用 Chromium 原生 WebSocket 实现，**TLS 指纹与 Chrome 浏览器完全一致**。
 
+> Windows x86（32 位）所附带的 Cronet 库不导出 WebSocket API，因此该平台仅支持 HTTP/HTTPS；其他平台支持 WebSocket。
+
 ### 基本用法
 
 ```python

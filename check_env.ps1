@@ -24,6 +24,7 @@ if (Get-Command rustup -ErrorAction SilentlyContinue) {
     $installedTargets = rustup target list --installed
     foreach ($target in @(
         "x86_64-pc-windows-msvc",
+        "i686-pc-windows-msvc",
         "x86_64-unknown-linux-gnu",
         "aarch64-apple-darwin"
     )) {
@@ -38,6 +39,7 @@ if (Get-Command rustup -ErrorAction SilentlyContinue) {
 
 foreach ($library in @(
     "cronet-libs\windows\cronet.144.0.7506.0.dll",
+    "cronet-libs\windows32\cronet.144.0.7506.0.dll",
     "cronet-libs\linux\libcronet.144.0.7506.0.so",
     "cronet-libs\macos\libcronet.144.0.7506.0.dylib"
 )) {

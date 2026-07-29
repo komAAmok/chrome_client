@@ -1418,6 +1418,13 @@ impl SessionManager {
 // WebSocket Support
 // -----------------------------------------------------------------------------
 
+// Bindgen names anonymous C enum constants differently across platforms.
+// Keep the values from cronet_websocket_c.h under stable Rust names.
+#[cfg(not(all(target_os = "windows", target_arch = "x86")))]
+const WEBSOCKET_MESSAGE_TEXT: Cronet_WebSocket_MessageType = 1;
+#[cfg(not(all(target_os = "windows", target_arch = "x86")))]
+const WEBSOCKET_MESSAGE_BINARY: Cronet_WebSocket_MessageType = 2;
+
 /// WebSocket 事件
 #[derive(Debug, Clone)]
 pub enum WebSocketEvent {
@@ -1428,10 +1435,12 @@ pub enum WebSocketEvent {
 }
 
 /// 内部状态，通过 user_data 指针传递给 C 回调
+#[cfg(not(all(target_os = "windows", target_arch = "x86")))]
 struct WebSocketState {
     tx: std::sync::mpsc::Sender<WebSocketEvent>,
 }
 
+#[cfg(not(all(target_os = "windows", target_arch = "x86")))]
 unsafe extern "C" fn ws_on_open(
     _ws: Cronet_WebSocketPtr,
     user_data: *mut c_void,
@@ -1446,6 +1455,7 @@ unsafe extern "C" fn ws_on_open(
     let _ = state.tx.send(WebSocketEvent::Open { protocol: proto });
 }
 
+#[cfg(not(all(target_os = "windows", target_arch = "x86")))]
 unsafe extern "C" fn ws_on_message(
     _ws: Cronet_WebSocketPtr,
     user_data: *mut c_void,
@@ -1456,11 +1466,12 @@ unsafe extern "C" fn ws_on_message(
     let state = &*(user_data as *const WebSocketState);
     let slice = std::slice::from_raw_parts(data as *const u8, len as usize);
     let _ = state.tx.send(WebSocketEvent::Message {
-        is_text: msg_type == Cronet_WebSocket_MESSAGE_TEXT,
+        is_text: msg_type == WEBSOCKET_MESSAGE_TEXT,
         data: slice.to_vec(),
     });
 }
 
+#[cfg(not(all(target_os = "windows", target_arch = "x86")))]
 unsafe extern "C" fn ws_on_close(
     _ws: Cronet_WebSocketPtr,
     user_data: *mut c_void,
@@ -1481,6 +1492,7 @@ unsafe extern "C" fn ws_on_close(
     });
 }
 
+#[cfg(not(all(target_os = "windows", target_arch = "x86")))]
 unsafe extern "C" fn ws_on_error(
     _ws: Cronet_WebSocketPtr,
     user_data: *mut c_void,
@@ -1500,6 +1512,7 @@ unsafe extern "C" fn ws_on_error(
 }
 
 /// Rust-safe WebSocket handle
+#[cfg(not(all(target_os = "windows", target_arch = "x86")))]
 pub struct CronetWebSocket {
     ws_ptr: Cronet_WebSocketPtr,
     // Box 保持 state 存活，C 回调通过 user_data 指针访问
@@ -1507,8 +1520,10 @@ pub struct CronetWebSocket {
     pub rx: std::sync::mpsc::Receiver<WebSocketEvent>,
 }
 
+#[cfg(not(all(target_os = "windows", target_arch = "x86")))]
 unsafe impl Send for CronetWebSocket {}
 
+#[cfg(not(all(target_os = "windows", target_arch = "x86")))]
 impl CronetWebSocket {
     /// 用已有 engine 创建 WebSocket
     pub fn new(engine_ptr: Cronet_EnginePtr) -> Result<Self, String> {
@@ -1568,7 +1583,7 @@ impl CronetWebSocket {
         let ret = unsafe {
             Cronet_WebSocket_Send(
                 self.ws_ptr,
-                Cronet_WebSocket_MESSAGE_TEXT,
+                WEBSOCKET_MESSAGE_TEXT,
                 text.as_ptr() as *const c_void,
                 text.len() as u64,
             )
@@ -1583,7 +1598,7 @@ impl CronetWebSocket {
         let ret = unsafe {
             Cronet_WebSocket_Send(
                 self.ws_ptr,
-                Cronet_WebSocket_MESSAGE_BINARY,
+                WEBSOCKET_MESSAGE_BINARY,
                 data.as_ptr() as *const c_void,
                 data.len() as u64,
             )
@@ -1606,6 +1621,7 @@ impl CronetWebSocket {
     }
 }
 
+#[cfg(not(all(target_os = "windows", target_arch = "x86")))]
 impl Drop for CronetWebSocket {
     fn drop(&mut self) {
         unsafe {
@@ -1613,5 +1629,43 @@ impl Drop for CronetWebSocket {
                 Cronet_WebSocket_Destroy(self.ws_ptr);
             }
         }
+    }
+}
+
+/// The bundled 32-bit Windows Cronet library has no WebSocket exports.
+#[cfg(all(target_os = "windows", target_arch = "x86"))]
+pub struct CronetWebSocket {
+    pub rx: std::sync::mpsc::Receiver<WebSocketEvent>,
+}
+
+#[cfg(all(target_os = "windows", target_arch = "x86"))]
+unsafe impl Send for CronetWebSocket {}
+
+#[cfg(all(target_os = "windows", target_arch = "x86"))]
+impl CronetWebSocket {
+    pub fn new(_engine_ptr: Cronet_EnginePtr) -> Result<Self, String> {
+        Err("WebSocket is not supported by the bundled Windows x86 Cronet library".to_string())
+    }
+
+    pub fn connect(
+        &self,
+        _url: &str,
+        _sub_protocols: Option<&str>,
+        _origin: Option<&str>,
+        _extra_headers: Option<&str>,
+    ) -> Result<(), String> {
+        Err("WebSocket is not supported on Windows x86".to_string())
+    }
+
+    pub fn send_text(&self, _text: &str) -> Result<(), String> {
+        Err("WebSocket is not supported on Windows x86".to_string())
+    }
+
+    pub fn send_binary(&self, _data: &[u8]) -> Result<(), String> {
+        Err("WebSocket is not supported on Windows x86".to_string())
+    }
+
+    pub fn close(&self, _code: u16, _reason: &str) -> Result<(), String> {
+        Err("WebSocket is not supported on Windows x86".to_string())
     }
 }
