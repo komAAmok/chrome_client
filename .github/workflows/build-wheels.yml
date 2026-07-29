@@ -73,6 +73,10 @@ jobs:
         with:
           target: x86_64-unknown-linux-gnu
           manylinux: "2_24"
+          # auditwheel runs inside maturin-action's container. Point its loader
+          # at the versioned Cronet and NSS libraries copied above.
+          docker-options: >-
+            -e LD_LIBRARY_PATH=/io/python/chrome_client:/io/cronet-bin/linux
           # The image's /usr/bin/python3 is Python 3.5; use its CPython 3.8 toolchain.
           args: >-
             --release
