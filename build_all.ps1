@@ -1,6 +1,6 @@
 # 编译所有平台的 wheel
 param(
-    [ValidateSet("windows", "windows32", "linux", "macos", "all")]
+    [ValidateSet("windows", "linux", "macos", "all")]
     [string]$Platform = "all"
 )
 
@@ -25,35 +25,6 @@ function Build-Windows {
         Write-Host "✓ Windows x64 wheel 构建成功" -ForegroundColor Green
     } else {
         Write-Host "✗ Windows x64 wheel 构建失败" -ForegroundColor Red
-        exit 1
-    }
-}
-
-function Build-Windows32 {
-    Write-Host "`n=== 编译 Windows x86 (32-bit) Wheel ===" -ForegroundColor Cyan
-    cd $ProjectDir
-
-    Write-Host "清理其他平台的库文件..." -ForegroundColor Yellow
-    Remove-Item python\chrome_client\*.so -ErrorAction SilentlyContinue
-    Remove-Item python\chrome_client\*.dylib -ErrorAction SilentlyContinue
-
-    Write-Host "复制 Windows x86 DLL..." -ForegroundColor Yellow
-    Copy-Item cronet-libs\windows32\cronet.144.0.7506.0.dll python\chrome_client\ -Force
-
-    Write-Host "检查 Rust 目标..." -ForegroundColor Yellow
-    $targets = rustup target list --installed
-    if ($targets -notcontains "i686-pc-windows-msvc") {
-        Write-Host "安装 i686-pc-windows-msvc 目标..." -ForegroundColor Yellow
-        rustup target add i686-pc-windows-msvc
-    }
-
-    Write-Host "开始构建..." -ForegroundColor Green
-    maturin build --release --target i686-pc-windows-msvc
-
-    if ($LASTEXITCODE -eq 0) {
-        Write-Host "✓ Windows x86 wheel 构建成功" -ForegroundColor Green
-    } else {
-        Write-Host "✗ Windows x86 wheel 构建失败" -ForegroundColor Red
         exit 1
     }
 }
@@ -84,7 +55,8 @@ function Build-Linux {
         -v "${mountPath}:/io" `
         -e LD_LIBRARY_PATH=/io/python/chrome_client `
         ghcr.io/pyo3/maturin:latest `
-        build --release --target x86_64-unknown-linux-gnu --compatibility manylinux_2_24
+        build --release --target x86_64-unknown-linux-gnu --compatibility manylinux_2_24 `
+        --interpreter /opt/python/cp38-cp38/bin/python
 
     if ($LASTEXITCODE -eq 0) {
         Write-Host "✓ Linux wheel 构建成功" -ForegroundColor Green
@@ -104,6 +76,7 @@ function Build-MacOS {
 
     Write-Host "复制 macOS dylib..." -ForegroundColor Yellow
     Copy-Item cronet-libs\macos\libcronet.144.0.7506.0.dylib python\chrome_client\ -Force
+    Copy-Item cronet-bin\mac\libcronet.dylib libcronet.144.0.7506.0.dylib -Force
 
     Write-Host "检查 Rust 目标..." -ForegroundColor Yellow
     $targets = rustup target list --installed
@@ -129,12 +102,10 @@ Write-Host "项目目录: $ProjectDir" -ForegroundColor White
 
 switch ($Platform) {
     "windows" { Build-Windows }
-    "windows32" { Build-Windows32 }
     "linux" { Build-Linux }
     "macos" { Build-MacOS }
     "all" {
         Build-Windows
-        Build-Windows32
         Build-Linux
         Build-MacOS
     }

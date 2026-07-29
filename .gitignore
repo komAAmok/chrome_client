@@ -23,3 +23,4 @@ venv/
 /python/chrome_client/*.so
 /python/chrome_client/*.so.pkg
 /python/chrome_client/*.dylib
+/libcronet.*.dylib

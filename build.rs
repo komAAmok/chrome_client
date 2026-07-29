@@ -102,55 +102,12 @@ fn main() {
             .compile("seh_guard");
     }
 
-    // 2. Compile Protos (Standard Prost)
-    let proto_file = "proto/cronet_engine.proto";
-
-    // For Linux and macOS targets, use pre-generated proto files
-    if target.contains("linux") {
-        let pregenerated_proto = PathBuf::from(&dir).join("src/cronet_proto_linux.rs");
-        if pregenerated_proto.exists() {
-            std::fs::copy(&pregenerated_proto, out_path.join("cronet.engine.v1.rs"))
-                .expect("Failed to copy pre-generated proto");
-            println!("cargo:warning=Using pre-generated Linux proto");
-        } else {
-            panic!(
-                "Pre-generated Linux proto not found at {:?}",
-                pregenerated_proto
-            );
-        }
-    } else if target.contains("darwin") || target.contains("aarch64-apple") {
-        let pregenerated_proto = PathBuf::from(&dir).join("src/cronet_proto_mac.rs");
-        if pregenerated_proto.exists() {
-            std::fs::copy(&pregenerated_proto, out_path.join("cronet.engine.v1.rs"))
-                .expect("Failed to copy pre-generated proto");
-            println!("cargo:warning=Using pre-generated macOS proto");
-        } else {
-            panic!(
-                "Pre-generated macOS proto not found at {:?}",
-                pregenerated_proto
-            );
-        }
-    } else if std::path::Path::new(proto_file).exists() {
-        // For Windows, compile protos normally
-        let mut config = prost_build::Config::new();
-        config.type_attribute(".", "#[derive(serde::Serialize, serde::Deserialize)]");
-        config.type_attribute("cronet.engine.v1.ExecuteRequest", "#[serde(default)]");
-        config.type_attribute("cronet.engine.v1.TargetRequest", "#[serde(default)]");
-        config.type_attribute("cronet.engine.v1.ExecutionConfig", "#[serde(default)]");
-        config.type_attribute("cronet.engine.v1.ExecuteResponse", "#[serde(default)]");
-
-        config.field_attribute(
-            "cronet.engine.v1.TargetRequest.body",
-            "#[serde(with = \"hex::serde\")]",
-        );
-        config.field_attribute(
-            "cronet.engine.v1.TargetResponse.body",
-            "#[serde(with = \"hex::serde\")]",
-        );
-        config
-            .compile_protos(&[proto_file], &["proto"])
-            .expect("failed to compile protos");
-    }
+    // 2. Use target-independent pre-generated Prost types on every platform.
+    let pregenerated_proto = PathBuf::from(&dir).join("src/cronet_proto.rs");
+    std::fs::copy(&pregenerated_proto, out_path.join("cronet.engine.v1.rs"))
+        .expect("Failed to copy pre-generated proto");
+    println!("cargo:warning=Using pre-generated proto types");
+    println!("cargo:rerun-if-changed={}", pregenerated_proto.display());
 
     // 3. Link against the Cronet DLL/SO
     println!("cargo:rustc-link-search=native={}", lib_dir.display());

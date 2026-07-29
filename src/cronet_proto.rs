@@ -32,8 +32,7 @@ pub struct TargetRequest {
     pub body: ::prost::alloc::vec::Vec<u8>,
 }
 /// Single header with name and value
-#[derive(serde::Serialize, serde::Deserialize)]
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, PartialEq, ::prost::Message)]
 pub struct Header {
     #[prost(string, tag = "1")]
     pub name: ::prost::alloc::string::String,
@@ -58,8 +57,7 @@ pub struct ExecutionConfig {
     #[prost(bool, tag = "4")]
     pub skip_cert_verify: bool,
 }
-#[derive(serde::Serialize, serde::Deserialize)]
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, PartialEq, ::prost::Message)]
 pub struct ProxyConfig {
     #[prost(string, tag = "1")]
     pub host: ::prost::alloc::string::String,
@@ -75,8 +73,9 @@ pub struct ProxyConfig {
 }
 /// Nested message and enum types in `ProxyConfig`.
 pub mod proxy_config {
-    #[derive(serde::Serialize, serde::Deserialize)]
     #[derive(
+        serde::Serialize,
+        serde::Deserialize,
         Clone,
         Copy,
         Debug,
@@ -85,7 +84,7 @@ pub mod proxy_config {
         Hash,
         PartialOrd,
         Ord,
-        ::prost::Enumeration
+        ::prost::Enumeration,
     )]
     #[repr(i32)]
     pub enum ProxyType {
@@ -136,22 +135,17 @@ pub struct ExecuteResponse {
     #[prost(int64, tag = "5")]
     pub duration_ms: i64,
 }
-#[derive(serde::Serialize, serde::Deserialize)]
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, PartialEq, ::prost::Message)]
 pub struct TargetResponse {
     #[prost(int32, tag = "1")]
     pub status_code: i32,
     #[prost(map = "string, message", tag = "2")]
-    pub headers: ::std::collections::HashMap<
-        ::prost::alloc::string::String,
-        HeaderValues,
-    >,
+    pub headers: ::std::collections::HashMap<::prost::alloc::string::String, HeaderValues>,
     #[prost(bytes = "vec", tag = "3")]
     #[serde(with = "hex::serde")]
     pub body: ::prost::alloc::vec::Vec<u8>,
 }
-#[derive(serde::Serialize, serde::Deserialize)]
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, PartialEq, ::prost::Message)]
 pub struct HeaderValues {
     #[prost(string, repeated, tag = "1")]
     pub values: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
