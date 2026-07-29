@@ -2,56 +2,17 @@
 
 ## 🎯 核心功能
 
-Chrome Client 是基于 Chromium Cronet 网络栈的 Python HTTP 客户端，**最大的特点是能够产生真实的 Chrome 浏览器 TLS/HTTP2 指纹**，从而绕过各种反爬虫和指纹检测系统。
-
-**✨ 新特性：**
+Chrome Client 是基于 Chromium Cronet 网络栈的 Python HTTP 客户端，最大的特点是能够产生真实的 Chrome 浏览器 TLS/HTTP2 指纹，从而绕过各种反爬虫和指纹检测系统。
 
 - 🚀 同时支持同步和异步 API
 - ⚡ 异步并发请求，性能提升 5-10 倍
 - 🔄 与 aiohttp/httpx 相同的使用体验
 - 🎯 真实的 Chrome TLS/HTTP2 指纹（同步和异步均支持）
-- 🔐 **自定义 TLS 指纹配置（NEW！）**
-- 🔌 **SOCKS5 代理支持账号密码认证（NEW！）**
-- 📡 **流式响应（Streaming）支持（NEW！）**
-- 🔌 **WebSocket / WSS 支持，TLS 指纹与浏览器一致（NEW！）**
+- 🔐 自定义 TLS 指纹配置
+- 🔌 SOCKS5 代理支持账号密码认证
+- 📡 流式响应（Streaming）支持
+- 🔌 WebSocket / WSS 支持，TLS 指纹与浏览器一致（NEW！）
 
-### 为什么需要 Chrome Client？
-
-传统的 Python HTTP 库（如 requests、httpx、aiohttp）使用的是 Python 的网络栈，它们的 TLS 握手和 HTTP/2 特征与真实浏览器不同，容易被检测和封禁。
-
-**常见的检测方式：**
-
-1. **TLS 指纹检测**
-   - TLS ClientHello 消息中的加密套件顺序
-   - 支持的 TLS 扩展及其顺序
-   - 椭圆曲线算法的选择
-   - ALPN 协议列表
-
-2. **HTTP/2 指纹检测**
-   - SETTINGS 帧的参数和顺序
-   - WINDOW_UPDATE 的初始值
-   - 伪头部（pseudo-headers）的顺序
-   - 优先级（Priority）设置
-
-3. **请求头指纹检测**
-   - User-Agent 与实际行为不匹配
-   - 请求头的顺序异常
-   - 缺少浏览器特有的头部
-
-**Chrome Client 的解决方案：**
-
-Chrome Client 直接使用 Chromium 的 Cronet 网络库，产生的所有网络特征与真实 Chrome 浏览器**完全一致**，无法被检测出是爬虫。
-
-## 🚀 chrome_client 150.1.0 快速使用
-
-当前本地构建版本是 `150.1.0`，默认 TLS profile 是 `chrome_150`。正常使用时不需要手动传 `chrometls`，它会自动读取包内 `python/chrome_client/tls_profiles.json` 的 `chrome_150` 配置。
-
-### 安装本地编译好的 wheel
-
-```bash
-# 如果使用 conda，先进入你的环境：conda activate <env_name>
-python -m pip install --force-reinstall /Volumes/D/myxm/cyCronet/cycronet-build/target/wheels/chrome_client-150.1.0-cp36-abi3-macosx_11_0_arm64.whl
-```
 
 ### 默认请求方式
 
@@ -75,50 +36,6 @@ with chrome_client.CronetClient(verify=False, chrometls="chrome_150") as session
     print(response.json()["http2"]["akamai_fingerprint"])
 ```
 
-### 验证 signature_algorithms
-
-```python
-import chrome_client
-
-response = chrome_client.get("https://tls.tsvmp.com:38080/cbbiyhh", verify=False)
-print(response.text)
-```
-
-如果页面里 `name: signature_algorithms (13)` 下方顺序如下，说明 `chrome_150` 配置已经生效：
-
-```text
-- Unknown(0x0904)
-- Unknown(0x0905)
-- Unknown(0x0906)
-- ecdsa_secp256r1_sha256
-- rsa_pss_rsae_sha256
-- rsa_pkcs1_sha256
-- Unknown(0x0503)
-- rsa_pss_rsae_sha384
-- rsa_pkcs1_sha384
-- rsa_pss_rsae_sha512
-- Unknown(0x0601)
-```
-
-## 🔐 TLS/HTTP2 指纹绕过
-
-### 真实的 Chrome 指纹
-
-**同步方式：**
-
-```python
-import chrome_client
-
-# Chrome Client 自动使用 Chrome 的 TLS/HTTP2 指纹
-response = chrome_client.get('https://tls.peet.ws/api/all', verify=False)
-
-# 查看 TLS 指纹信息
-data = response.json()
-print(f"TLS Version: {data['tls']['version']}")
-print(f"Cipher Suite: {data['tls']['cipher_suite']}")
-print(f"HTTP Version: {data['http']['version']}")  # HTTP/2
-```
-
 **异步方式：**
 
 ```python
@@ -133,82 +50,6 @@ async def check_fingerprint():
     print(f"HTTP Version: {data['http']['version']}")  # HTTP/2
 
 asyncio.run(check_fingerprint())
-```
-
-### 与 requests 的对比
-
-```python
-# ❌ requests - 容易被检测
-import requests
-response = requests.get('https://example.com')
-# TLS 指纹：Python/OpenSSL
-# HTTP/2：不支持或特征异常
-
-# ✅ chrome_client 同步 - 真实 Chrome 指纹
-import chrome_client
-response = chrome_client.get('https://example.com', verify=False)
-# TLS 指纹：Chrome 150.x
-# HTTP/2：完全符合 Chrome 行为
-
-# ✅ chrome_client 异步 - 真实 Chrome 指纹 + 高性能
-import asyncio
-response = await chrome_client.async_get('https://example.com', verify=False)
-# TLS 指纹：Chrome 150.x
-# HTTP/2：完全符合 Chrome 行为
-# 性能：支持并发，速度提升 5-10 倍
-```
-
-### 绕过 Cloudflare、Akamai 等 CDN
-
-```python
-import chrome_client
-
-# Cloudflare 保护的网站
-response = chrome_client.get(
-    'https://cloudflare-protected-site.com',
-    headers={
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.9',
-        'Accept-Encoding': 'gzip, deflate, br',
-        'sec-ch-ua': '"Chromium";v="150", "Not A(Brand";v="99"',
-        'sec-ch-ua-mobile': '?0',
-        'sec-ch-ua-platform': '"Windows"',
-        'Sec-Fetch-Dest': 'document',
-        'Sec-Fetch-Mode': 'navigate',
-        'Sec-Fetch-Site': 'none',
-        'Sec-Fetch-User': '?1',
-        'Upgrade-Insecure-Requests': '1',
-    },
-    verify=False
-)
-
-print(f"Status: {response.status_code}")  # 200 - 成功绕过
-```
-
-### 自定义 TLS 指纹配置
-
-Chrome Client 支持自定义 TLS 指纹配置，可以模拟特定版本的 Chrome 浏览器：
-
-```python
-import chrome_client
-
-# 使用 Chrome 150 的 TLS 指纹配置
-session = chrome_client.CronetClient(
-    verify=False,
-    chrometls="chrome_150"  # 指定 TLS 配置
-)
-
-response = session.get('https://tls.peet.ws/api/all')
-print(response.json())
-session.close()
-
-# 同时使用代理和 TLS 指纹
-session = chrome_client.CronetClient(
-    verify=False,
-    proxies={'https': 'http://127.0.0.1:21882'},
-    chrometls="chrome_150"
-)
 ```
 
 **支持的 TLS 配置：**
@@ -544,21 +385,6 @@ async def main():
 asyncio.run(main())
 ```
 
-### 何时使用异步？
-
-**推荐使用异步的场景：**
-
-- ✅ 需要同时发送多个请求（爬虫、批量 API 调用）
-- ✅ 高并发场景（监控、数据采集）
-- ✅ 需要与其他异步代码集成（FastAPI、aiohttp 等）
-- ✅ 对性能有较高要求
-
-**使用同步的场景：**
-
-- ✅ 简单的单个请求
-- ✅ 脚本工具（不需要并发）
-- ✅ 与同步代码集成更方便
-
 ## 🌐 代理配置
 
 Chrome Client 支持多种代理类型，可以与代理池、IP 轮换等方案结合使用。
@@ -610,11 +436,9 @@ response = chrome_client.get('https://httpbin.org/ip', proxies=proxies, verify=F
 
 详细用法请参考 [README.md](../README.md)
 
-## � WebSocket 支持
+##  WebSocket 支持
 
 Chrome Client 支持 WebSocket (`ws://`) 和安全 WebSocket (`wss://`) 连接，使用 Chromium 原生 WebSocket 实现，**TLS 指纹与 Chrome 浏览器完全一致**。
-
-> Windows x86（32 位）所附带的 Cronet 库不导出 WebSocket API，因此该平台仅支持 HTTP/HTTPS；其他平台支持 WebSocket。
 
 ### 基本用法
 
@@ -981,69 +805,6 @@ headers = [
 response = chrome_client.get('https://example.com', headers=headers, verify=False)
 ```
 
-**为什么使用数组而不是字典？**
-
-- **字典（dict）**：Python 3.7+ 虽然保持插入顺序，但在某些情况下可能被重新排序
-- **数组（list of tuples）**：严格保持定义的顺序，确保 Headers 按你指定的顺序发送
-- 真实浏览器的 Headers 顺序是固定的，使用数组可以完美模拟
-
-## 📊 性能对比
-
-| 特性 | requests | httpx | aiohttp | **chrome_client (同步)** | **chrome_client (异步)** |
-|------|----------|-------|---------|---------------------|---------------------|
-| TLS 指纹 | Python/OpenSSL | Python/OpenSSL | Python/OpenSSL | **Chrome** ✅ | **Chrome** ✅ |
-| HTTP/2 | ❌ | ✅ (异常) | ❌ | **✅ (真实)** | **✅ (真实)** |
-| 异步支持 | ❌ | ✅ | ✅ | ❌ | **✅** |
-| 并发性能 | 低 | 高 | 高 | 低 | **高** |
-| 代理支持 | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Cookie 管理 | ✅ | ✅ | ✅ | ✅ | ✅ |
-| 绕过检测 | ❌ | ❌ | ❌ | **✅** | **✅** |
-
-**性能测试（10 个并发请求）：**
-
-- requests（同步）：~10 秒
-- httpx（异步）：~1 秒（但 TLS 指纹异常）
-- aiohttp（异步）：~1 秒（但 TLS 指纹异常）
-- **chrome_client（同步）**：~10 秒（真实 Chrome 指纹）
-- **chrome_client（异步）**：~1 秒（真实 Chrome 指纹）✅ **最佳选择**
-
-## ⚠️ 注意事项
-
-1. **合法使用**：仅用于合法的数据采集和测试，遵守网站的 robots.txt 和服务条款
-2. **请求频率**：控制请求频率，避免对目标服务器造成压力
-3. **代理质量**：使用高质量的代理，避免被封禁的 IP
-4. **Headers 真实性**：使用真实的浏览器 Headers，与 User-Agent 保持一致
-5. **行为模拟**：添加随机延迟，模拟真实用户行为
-
-## 🎯 使用场景
-
-- ✅ 绕过 Cloudflare、Akamai 等 CDN 的指纹检测
-- ✅ 爬取有反爬虫保护的网站
-- ✅ API 测试和压力测试
-- ✅ 数据采集和监控
-- ✅ SEO 工具开发
-- ✅ 价格监控和比价系统
-- ✅ 社交媒体数据采集
-- ✅ **高并发爬虫（使用异步 API）**
-- ✅ **大规模数据采集（异步并发）**
-- ✅ **实时监控系统（异步轮询）**
-- ✅ **WebSocket 实时通信（聊天、推送、行情）**
-- ✅ **WSS 连接绕过 WebSocket 指纹检测**
-
-## 📦 安装
-
-```bash
-pip install chrome_client
-```
-
-### Linux 注意事项
-
-**✅ 最新版本已自动修复库加载问题！**
-
-从源码编译时，构建系统会自动设置 RPATH，使得 Python 扩展能够在同目录找到 `libcronet.so`，无需手动配置。
-
-如果仍然遇到 `libcronet.so` 找不到的错误（旧版本或特殊环境），请参考 [LINUX_INSTALL_GUIDE.md](LINUX_INSTALL_GUIDE.md)。
-
 ## 🚀 快速开始
 
 ### 同步方式（简单场景）
@@ -1085,12 +846,3 @@ async def main():
 
 asyncio.run(main())
 ```
-
-## 📚 相关资源
-
-- **TLS 指纹检测工具**：https://tls.peet.ws/
-- **TLS 指纹检测站**：https://tls.jsvmp.top:38080/ 使用tls_verify.py检测
-- **HTTP/2 指纹检测**：https://http2.pro/
-- **Cloudflare 检测测试**：https://check.torproject.org/
-
-**Chrome Client - 真实的 Chrome 指纹，绕过一切检测！** 🚀
