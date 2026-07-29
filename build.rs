@@ -119,6 +119,9 @@ fn main() {
     // Linux: Set rpath to look for .so in the same directory as the extension module
     if target.contains("linux") {
         println!("cargo:rustc-link-arg=-Wl,-rpath,$ORIGIN");
+        // Let auditwheel resolve Cronet while the extension is staged in target/maturin.
+        // It replaces this build-time path with the wheel's bundled-library path.
+        println!("cargo:rustc-link-arg=-Wl,-rpath,{}", lib_dir.display());
         println!("cargo:rustc-link-arg=-Wl,--enable-new-dtags");
     }
 

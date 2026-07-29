@@ -73,10 +73,10 @@ jobs:
         with:
           target: x86_64-unknown-linux-gnu
           manylinux: "2_24"
-          # auditwheel runs inside maturin-action's container. Point its loader
-          # at the versioned Cronet and NSS libraries copied above.
+          # The action can mount the checkout either at /io or at the original
+          # runner path. Cover both so auditwheel can resolve Cronet's SONAME.
           docker-options: >-
-            -e LD_LIBRARY_PATH=/io/python/chrome_client:/io/cronet-bin/linux
+            -e LD_LIBRARY_PATH=/io/python/chrome_client:/io/linux_deps:/io/target/x86_64-unknown-linux-gnu/release:${{ github.workspace }}/python/chrome_client:${{ github.workspace }}/linux_deps:${{ github.workspace }}/target/x86_64-unknown-linux-gnu/release
           # The image's /usr/bin/python3 is Python 3.5; use its CPython 3.8 toolchain.
           args: >-
             --release
