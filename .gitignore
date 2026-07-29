@@ -1,0 +1,25 @@
+# OS and editor files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Python caches and virtual environments
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+
+# Rust/Python build output
+/target/
+/dist/
+*.whl
+
+# Native libraries copied into the Python package during wheel builds
+/python/chrome_client/*.dll
+/python/chrome_client/*.so
+/python/chrome_client/*.so.pkg
+/python/chrome_client/*.dylib

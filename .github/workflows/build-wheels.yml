@@ -1,0 +1,110 @@
+name: Build wheels
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  windows:
+    name: Windows ${{ matrix.arch }}
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            python-arch: x64
+            target: x86_64-pc-windows-msvc
+            native-dir: windows
+          - arch: x86
+            python-arch: x86
+            target: i686-pc-windows-msvc
+            native-dir: windows32
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          architecture: ${{ matrix.python-arch }}
+
+      - name: Copy Cronet runtime
+        shell: pwsh
+        run: |
+          Copy-Item "cronet-libs/${{ matrix.native-dir }}/cronet.144.0.7506.0.dll" "python/chrome_client/" -Force
+
+      - name: Build wheel
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.target }}
+          args: --release --out dist
+
+      - name: Upload wheel
+        uses: actions/upload-artifact@v4
+        with:
+          name: chrome-client-windows-${{ matrix.arch }}
+          path: dist/*.whl
+          if-no-files-found: error
+
+  linux:
+    name: Linux x86_64
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Copy Cronet runtime and NSS libraries
+        run: |
+          cp cronet-libs/linux/libcronet.144.0.7506.0.so python/chrome_client/
+          cp linux_deps/*.so python/chrome_client/
+
+      - name: Build manylinux wheel
+        uses: PyO3/maturin-action@v1
+        with:
+          target: x86_64-unknown-linux-gnu
+          manylinux: "2_24"
+          args: --release --out dist --compatibility manylinux_2_24
+
+      - name: Upload wheel
+        uses: actions/upload-artifact@v4
+        with:
+          name: chrome-client-linux-x86_64
+          path: dist/*.whl
+          if-no-files-found: error
+
+  macos:
+    name: macOS arm64
+    runs-on: macos-14
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Copy Cronet runtime
+        run: cp cronet-libs/macos/libcronet.144.0.7506.0.dylib python/chrome_client/
+
+      - name: Build arm64 wheel
+        uses: PyO3/maturin-action@v1
+        with:
+          target: aarch64-apple-darwin
+          args: --release --out dist
+
+      - name: Upload wheel
+        uses: actions/upload-artifact@v4
+        with:
+          name: chrome-client-macos-arm64
+          path: dist/*.whl
+          if-no-files-found: error

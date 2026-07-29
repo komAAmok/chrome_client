@@ -1,0 +1,50 @@
+[package]
+name = "cronet-cloak"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "cronet_cloak"
+crate-type = ["cdylib", "rlib"]
+
+[[bin]]
+name = "cronet-cloak"
+path = "src/main.rs"
+required-features = ["server"]
+
+[dependencies]
+axum = { version = "0.7", features = ["json"], optional = true }
+tokio = { version = "1", features = ["full"] }
+tower = { version = "0.4", optional = true }
+tower-http = { version = "0.5", features = ["cors", "trace"], optional = true }
+prost = "0.13"
+prost-types = "0.13"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+libc = "0.2"
+tracing = "0.1"
+tracing-subscriber = "0.3"
+hex = { version = "0.4", features = ["serde"] }
+uuid = { version = "1.0", features = ["v4"] }
+clap = { version = "4.5", features = ["derive", "env"], optional = true }
+pyo3 = { version = "0.15.2", features = ["extension-module", "abi3-py36"], optional = true }
+pyo3-asyncio = { version = "0.15.0", features = ["tokio-runtime"], optional = true }
+
+# Pinning 'home' to avoid 0.5.11+ which requires edition2024
+home = "=0.5.9"
+
+[build-dependencies]
+bindgen = "0.69"
+prost-build = "0.13"
+cc = "1.0"
+
+[features]
+default = ["python"]
+python = ["pyo3", "pyo3-asyncio"]
+server = ["axum", "tower", "tower-http", "clap"]
+cdll = []
+[dev-dependencies]
+reqwest = { version = "0.12", features = ["json"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+
+
