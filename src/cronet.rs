@@ -1420,9 +1420,7 @@ impl SessionManager {
 
 // Bindgen names anonymous C enum constants differently across platforms.
 // Keep the values from cronet_websocket_c.h under stable Rust names.
-#[cfg(target_os = "macos")]
 const WEBSOCKET_MESSAGE_TEXT: Cronet_WebSocket_MessageType = 1;
-#[cfg(target_os = "macos")]
 const WEBSOCKET_MESSAGE_BINARY: Cronet_WebSocket_MessageType = 2;
 
 /// WebSocket 事件
@@ -1435,12 +1433,10 @@ pub enum WebSocketEvent {
 }
 
 /// 内部状态，通过 user_data 指针传递给 C 回调
-#[cfg(target_os = "macos")]
 struct WebSocketState {
     tx: std::sync::mpsc::Sender<WebSocketEvent>,
 }
 
-#[cfg(target_os = "macos")]
 unsafe extern "C" fn ws_on_open(
     _ws: Cronet_WebSocketPtr,
     user_data: *mut c_void,
@@ -1455,7 +1451,6 @@ unsafe extern "C" fn ws_on_open(
     let _ = state.tx.send(WebSocketEvent::Open { protocol: proto });
 }
 
-#[cfg(target_os = "macos")]
 unsafe extern "C" fn ws_on_message(
     _ws: Cronet_WebSocketPtr,
     user_data: *mut c_void,
@@ -1471,7 +1466,6 @@ unsafe extern "C" fn ws_on_message(
     });
 }
 
-#[cfg(target_os = "macos")]
 unsafe extern "C" fn ws_on_close(
     _ws: Cronet_WebSocketPtr,
     user_data: *mut c_void,
@@ -1492,7 +1486,6 @@ unsafe extern "C" fn ws_on_close(
     });
 }
 
-#[cfg(target_os = "macos")]
 unsafe extern "C" fn ws_on_error(
     _ws: Cronet_WebSocketPtr,
     user_data: *mut c_void,
@@ -1512,7 +1505,6 @@ unsafe extern "C" fn ws_on_error(
 }
 
 /// Rust-safe WebSocket handle
-#[cfg(target_os = "macos")]
 pub struct CronetWebSocket {
     ws_ptr: Cronet_WebSocketPtr,
     // Box 保持 state 存活，C 回调通过 user_data 指针访问
@@ -1520,10 +1512,8 @@ pub struct CronetWebSocket {
     pub rx: std::sync::mpsc::Receiver<WebSocketEvent>,
 }
 
-#[cfg(target_os = "macos")]
 unsafe impl Send for CronetWebSocket {}
 
-#[cfg(target_os = "macos")]
 impl CronetWebSocket {
     /// 用已有 engine 创建 WebSocket
     pub fn new(engine_ptr: Cronet_EnginePtr) -> Result<Self, String> {
@@ -1562,9 +1552,25 @@ impl CronetWebSocket {
         let c_url = safe_cstring(url, "ws_url")?;
         let c_protos = sub_protocols.map(|s| safe_cstring(s, "ws_sub_protocols")).transpose()?;
         let c_origin = origin.map(|s| safe_cstring(s, "ws_origin")).transpose()?;
+        #[cfg(target_os = "windows")]
+        if extra_headers.is_some_and(|headers| !headers.is_empty()) {
+            return Err("Custom WebSocket headers are not supported by the bundled Windows Cronet library".to_string());
+        }
+        #[cfg(not(target_os = "windows"))]
         let c_extra_headers = extra_headers.map(|s| safe_cstring(s, "ws_extra_headers")).transpose()?;
 
         let ret = unsafe {
+            #[cfg(target_os = "windows")]
+            {
+                Cronet_WebSocket_Connect(
+                    self.ws_ptr,
+                    c_url.as_ptr(),
+                    c_protos.as_ref().map_or(ptr::null(), |s| s.as_ptr()),
+                    c_origin.as_ref().map_or(ptr::null(), |s| s.as_ptr()),
+                )
+            }
+            #[cfg(not(target_os = "windows"))]
+            {
             Cronet_WebSocket_Connect(
                 self.ws_ptr,
                 c_url.as_ptr(),
@@ -1572,6 +1578,7 @@ impl CronetWebSocket {
                 c_origin.as_ref().map_or(ptr::null(), |s| s.as_ptr()),
                 c_extra_headers.as_ref().map_or(ptr::null(), |s| s.as_ptr()),
             )
+            }
         };
         if ret != 0 {
             return Err(format!("WebSocket connect failed: {}", ret));
@@ -1621,7 +1628,6 @@ impl CronetWebSocket {
     }
 }
 
-#[cfg(target_os = "macos")]
 impl Drop for CronetWebSocket {
     fn drop(&mut self) {
         unsafe {
@@ -1629,43 +1635,5 @@ impl Drop for CronetWebSocket {
                 Cronet_WebSocket_Destroy(self.ws_ptr);
             }
         }
-    }
-}
-
-/// The bundled Windows and Linux Cronet libraries have no WebSocket exports.
-#[cfg(not(target_os = "macos"))]
-pub struct CronetWebSocket {
-    pub rx: std::sync::mpsc::Receiver<WebSocketEvent>,
-}
-
-#[cfg(not(target_os = "macos"))]
-unsafe impl Send for CronetWebSocket {}
-
-#[cfg(not(target_os = "macos"))]
-impl CronetWebSocket {
-    pub fn new(_engine_ptr: Cronet_EnginePtr) -> Result<Self, String> {
-        Err("WebSocket is not supported by the bundled Cronet library on this platform".to_string())
-    }
-
-    pub fn connect(
-        &self,
-        _url: &str,
-        _sub_protocols: Option<&str>,
-        _origin: Option<&str>,
-        _extra_headers: Option<&str>,
-    ) -> Result<(), String> {
-        Err("WebSocket is not supported by the bundled Cronet library on this platform".to_string())
-    }
-
-    pub fn send_text(&self, _text: &str) -> Result<(), String> {
-        Err("WebSocket is not supported by the bundled Cronet library on this platform".to_string())
-    }
-
-    pub fn send_binary(&self, _data: &[u8]) -> Result<(), String> {
-        Err("WebSocket is not supported by the bundled Cronet library on this platform".to_string())
-    }
-
-    pub fn close(&self, _code: u16, _reason: &str) -> Result<(), String> {
-        Err("WebSocket is not supported by the bundled Cronet library on this platform".to_string())
     }
 }
