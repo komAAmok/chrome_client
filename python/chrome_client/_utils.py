@@ -6,6 +6,33 @@ from typing import Dict, List, Tuple
 from urllib.parse import urlparse
 
 
+def should_strip_auth(old_url, new_url):
+    old = urlparse(old_url)
+    new = urlparse(new_url)
+    old_port = old.port or (443 if old.scheme == "https" else 80)
+    new_port = new.port or (443 if new.scheme == "https" else 80)
+    return (
+        (old.hostname or "").lower(), old.scheme.lower(), old_port
+    ) != (
+        (new.hostname or "").lower(), new.scheme.lower(), new_port
+    )
+
+
+def prepare_redirect_headers(headers, old_url, new_url, drop_body=False):
+    """Copy redirect headers without leaking credentials across hosts."""
+    result = dict(headers or {})
+    strip_auth = should_strip_auth(old_url, new_url)
+    for name in list(result):
+        lower = name.lower()
+        if strip_auth and lower == "authorization":
+            result[name] = None
+        elif drop_body and lower in ("content-length", "content-type", "transfer-encoding"):
+            result[name] = None
+    if strip_auth and not any(name.lower() == "authorization" for name in result):
+        result["Authorization"] = None
+    return result
+
+
 # Browser default header order
 BROWSER_HEADER_ORDER = [
     "host", "connection", "cache-control", "sec-ch-ua", "sec-ch-ua-mobile",
@@ -42,34 +69,6 @@ def extract_domain_with_port(url: str) -> str:
     """Extract domain with port from URL."""
     parsed = urlparse(url)
     return parsed.netloc.lower()
-
-
-def parse_set_cookie(set_cookie_values: List[str]) -> List[Tuple[str, str, str, str]]:
-    """Parse Set-Cookie header values.
-
-    Returns:
-        List of (name, value, domain, path) tuples
-    """
-    cookies = []
-    for value in set_cookie_values:
-        if '=' in value:
-            parts = value.split(';')
-            cookie_part = parts[0].strip()
-            if '=' in cookie_part:
-                name, val = cookie_part.split('=', 1)
-                name = name.strip()
-                val = val.strip()
-                domain = ""
-                path = "/"
-                for part in parts[1:]:
-                    part = part.strip()
-                    part_lower = part.lower()
-                    if part_lower.startswith('domain='):
-                        domain = normalize_cookie_domain(part.split('=', 1)[1])
-                    elif part_lower.startswith('path='):
-                        path = part.split('=', 1)[1].strip() or "/"
-                cookies.append((name, val, domain, path))
-    return cookies
 
 
 # RFC 7230 tchar characters allowed in HTTP header field-names
@@ -113,6 +112,19 @@ def validate_header_value(value: str) -> None:
             )
 
 
+def validate_headers(headers, allow_none=False) -> None:
+    """Validate a header mapping before it reaches native CString handling."""
+    for name, value in headers.items():
+        if not isinstance(name, str):
+            raise TypeError("header names must be strings")
+        if value is None and allow_none:
+            continue
+        if not isinstance(value, str):
+            raise TypeError("header values must be strings or None")
+        validate_header_name(name)
+        validate_header_value(value)
+
+
 def normalize_cookie_domain(domain: str) -> str:
     """Normalize cookie domain: strip leading dot, lowercase, strip port."""
     if not domain:
@@ -120,9 +132,14 @@ def normalize_cookie_domain(domain: str) -> str:
     domain = domain.lower().strip()
     if domain.startswith('.'):
         domain = domain[1:]
-    # Strip port if present
-    if ':' in domain and not domain.startswith('['):
-        domain = domain.rsplit(':', 1)[0]
+    if domain.startswith('['):
+        closing = domain.find(']')
+        if closing != -1:
+            domain = domain[1:closing]
+    elif domain.count(':') == 1:
+        host, port = domain.rsplit(':', 1)
+        if port.isdigit():
+            domain = host
     return domain
 
 

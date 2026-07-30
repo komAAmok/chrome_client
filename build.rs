@@ -141,46 +141,64 @@ fn main() {
 
     if target_os == "windows" {
         let dll_name = format!("cronet.{}.dll", version);
-        let src_dll = lib_dir.join("cronet.dll");
+        let bundled_dir = if target_arch == "x86" {
+            "windows32"
+        } else {
+            "windows"
+        };
+        let unversioned_dll = lib_dir.join("cronet.dll");
+        let bundled_dll = PathBuf::from(&dir)
+            .join("cronet-libs")
+            .join(bundled_dir)
+            .join(&dll_name);
+        let src_dll = if unversioned_dll.exists() {
+            unversioned_dll
+        } else {
+            bundled_dll
+        };
         let dst_dll = target_dir.join(&dll_name);
 
         if src_dll.exists() {
-            std::fs::copy(&src_dll, &dst_dll).ok();
+            std::fs::copy(&src_dll, &dst_dll).expect("Failed to stage Cronet DLL");
             println!(
                 "cargo:warning=Copied {} to {}",
                 src_dll.display(),
                 dst_dll.display()
             );
             if python_dir.exists() {
-                std::fs::copy(&src_dll, python_dir.join(&dll_name)).ok();
+                std::fs::copy(&src_dll, python_dir.join(&dll_name))
+                    .expect("Failed to copy Cronet DLL into Python package");
                 println!(
                     "cargo:warning=Copied {} to python package directory",
                     dll_name
                 );
             }
+        } else {
+            panic!("Cronet DLL not found at {}", src_dll.display());
         }
         println!("cargo:rerun-if-changed={}", src_dll.display());
     } else if target_os == "linux" {
         let so_name = format!("libcronet.{}.so", version);
-        let pkg_name = format!("libcronet.{}.so.pkg", version);
         let src_so = lib_dir.join("libcronet.so");
         let dst_so = target_dir.join(&so_name);
 
         if src_so.exists() {
-            std::fs::copy(&src_so, &dst_so).ok();
+            std::fs::copy(&src_so, &dst_so).expect("Failed to stage Cronet shared library");
             println!(
                 "cargo:warning=Copied {} to {}",
                 src_so.display(),
                 dst_so.display()
             );
             if python_dir.exists() {
-                // Use .so.pkg extension to prevent maturin from ignoring native .so
-                std::fs::copy(&src_so, python_dir.join(&pkg_name)).ok();
+                std::fs::copy(&src_so, python_dir.join(&so_name))
+                    .expect("Failed to copy Cronet shared library into Python package");
                 println!(
                     "cargo:warning=Copied SO to python package directory as {}",
-                    pkg_name
+                    so_name
                 );
             }
+        } else {
+            panic!("Cronet shared library not found at {}", src_so.display());
         }
         println!("cargo:rerun-if-changed={}", src_so.display());
     } else if target_os == "macos" {
@@ -189,16 +207,20 @@ fn main() {
         let dst_dylib = target_dir.join(&dylib_name);
 
         if src_dylib.exists() {
-            std::fs::copy(&src_dylib, &dst_dylib).ok();
+            std::fs::copy(&src_dylib, &dst_dylib)
+                .expect("Failed to stage Cronet dynamic library");
             println!(
                 "cargo:warning=Copied {} to {}",
                 src_dylib.display(),
                 dst_dylib.display()
             );
             if python_dir.exists() {
-                std::fs::copy(&src_dylib, python_dir.join(&dylib_name)).ok();
+                std::fs::copy(&src_dylib, python_dir.join(&dylib_name))
+                    .expect("Failed to copy Cronet dynamic library into Python package");
                 println!("cargo:warning=Copied dylib to python package directory");
             }
+        } else {
+            panic!("Cronet dynamic library not found at {}", src_dylib.display());
         }
         println!("cargo:rerun-if-changed={}", src_dylib.display());
     }

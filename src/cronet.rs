@@ -82,7 +82,7 @@ impl CronetEngine {
                 Ok(s) => s,
                 Err(e) => {
                     eprintln!("[ERROR] {}, using default", e);
-                    CString::new("CronetClient/1.0").unwrap()
+                    CString::new("chrome_client/1.0").unwrap()
                 }
             };
             Cronet_EngineParams_user_agent_set(params_ptr, c_ua.as_ptr());
@@ -114,7 +114,10 @@ impl CronetEngine {
 
     // Get or create a cached engine with custom configuration
     fn get_or_create_engine(&self, config_key: &EngineConfig) -> Cronet_EnginePtr {
-        let mut cache = self.engine_cache.lock().unwrap();
+        let mut cache = self
+            .engine_cache
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
 
         if let Some(cached) = cache.get(config_key) {
             verbose_log!("[DEBUG] Reusing cached engine for config: {:?}", config_key);
@@ -360,7 +363,10 @@ impl Drop for CronetEngine {
         // active_requests 等待 + 超时泄漏逻辑。
         unsafe {
             // Clean up cached engines
-            let cache = self.engine_cache.lock().unwrap();
+            let cache = self
+                .engine_cache
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             for (_, cached) in cache.iter() {
                 Cronet_Engine_Shutdown(cached.ptr);
                 Cronet_Engine_Destroy(cached.ptr);
@@ -1016,7 +1022,7 @@ impl Drop for Session {
 
 /// 会话管理器 - 管理多个会话，支持并发访问
 pub struct SessionManager {
-    sessions: RwLock<HashMap<String, Session>>,
+    sessions: RwLock<HashMap<String, Arc<Session>>>,
 }
 
 impl SessionManager {
@@ -1055,53 +1061,33 @@ impl SessionManager {
 
             if let Some(ref cipher_suites) = config.cipher_suites {
                 if !cipher_suites.is_empty() {
-                    let cipher_suites_json: Vec<String> = cipher_suites
-                        .iter()
-                        .map(|s| format!("\"{}\"", s))
-                        .collect();
-                    options_parts.push(format!(
-                        "\"tls_cipher_suites\":[{}]",
-                        cipher_suites_json.join(",")
-                    ));
+                    if let Ok(value) = serde_json::to_string(cipher_suites) {
+                        options_parts.push(format!("\"tls_cipher_suites\":{}", value));
+                    }
                 }
             }
 
             if let Some(ref tls_curves) = config.tls_curves {
                 if !tls_curves.is_empty() {
-                    let tls_curves_json: Vec<String> = tls_curves
-                        .iter()
-                        .map(|s| format!("\"{}\"", s))
-                        .collect();
-                    options_parts.push(format!(
-                        "\"tls_curves\":[{}]",
-                        tls_curves_json.join(",")
-                    ));
+                    if let Ok(value) = serde_json::to_string(tls_curves) {
+                        options_parts.push(format!("\"tls_curves\":{}", value));
+                    }
                 }
             }
 
             if let Some(ref tls_extensions) = config.tls_extensions {
                 if !tls_extensions.is_empty() {
-                    let tls_extensions_json: Vec<String> = tls_extensions
-                        .iter()
-                        .map(|s| format!("\"{}\"", s))
-                        .collect();
-                    options_parts.push(format!(
-                        "\"tls_extensions\":[{}]",
-                        tls_extensions_json.join(",")
-                    ));
+                    if let Ok(value) = serde_json::to_string(tls_extensions) {
+                        options_parts.push(format!("\"tls_extensions\":{}", value));
+                    }
                 }
             }
 
             if let Some(ref signature_algorithms) = config.signature_algorithms {
                 if !signature_algorithms.is_empty() {
-                    let signature_algorithms_json: Vec<String> = signature_algorithms
-                        .iter()
-                        .map(|s| format!("\"{}\"", s))
-                        .collect();
-                    options_parts.push(format!(
-                        "\"tls_signature_algorithms\":[{}]",
-                        signature_algorithms_json.join(",")
-                    ));
+                    if let Ok(value) = serde_json::to_string(signature_algorithms) {
+                        options_parts.push(format!("\"tls_signature_algorithms\":{}", value));
+                    }
                 }
             }
 
@@ -1138,12 +1124,12 @@ impl SessionManager {
             verbose_log!("[DEBUG] Created session: {}", session_id);
             match self.sessions.write() {
                 Ok(mut sessions) => {
-                    sessions.insert(session_id.clone(), session);
+                    sessions.insert(session_id.clone(), Arc::new(session));
                 }
                 Err(poisoned) => {
                     eprintln!("[WARN] create_session: RwLock poisoned, recovering");
                     let mut sessions = poisoned.into_inner();
-                    sessions.insert(session_id.clone(), session);
+                    sessions.insert(session_id.clone(), Arc::new(session));
                 }
             }
         }
@@ -1383,7 +1369,13 @@ impl SessionManager {
 
     /// 关闭会话
     pub fn close_session(&self, session_id: &str) -> bool {
-        let mut sessions = self.sessions.write().unwrap();
+        let mut sessions = match self.sessions.write() {
+            Ok(guard) => guard,
+            Err(poisoned) => {
+                eprintln!("[WARN] close_session: RwLock poisoned, recovering");
+                poisoned.into_inner()
+            }
+        };
         if sessions.remove(session_id).is_some() {
             verbose_log!("[DEBUG] Closed session: {}", session_id);
             true
@@ -1395,22 +1387,40 @@ impl SessionManager {
 
     /// 列出所有会话ID
     pub fn list_sessions(&self) -> Vec<String> {
-        self.sessions.read().unwrap().keys().cloned().collect()
+        match self.sessions.read() {
+            Ok(sessions) => sessions.keys().cloned().collect(),
+            Err(poisoned) => poisoned.into_inner().keys().cloned().collect(),
+        }
     }
 
     /// 获取会话数量
     pub fn session_count(&self) -> usize {
-        self.sessions.read().unwrap().len()
+        match self.sessions.read() {
+            Ok(sessions) => sessions.len(),
+            Err(poisoned) => poisoned.into_inner().len(),
+        }
     }
 
     /// 检查会话是否存在
     pub fn session_exists(&self, session_id: &str) -> bool {
-        self.sessions.read().unwrap().contains_key(session_id)
+        match self.sessions.read() {
+            Ok(sessions) => sessions.contains_key(session_id),
+            Err(poisoned) => poisoned.into_inner().contains_key(session_id),
+        }
     }
 
-    /// 获取 session 的 engine_ptr（供 WebSocket 使用）
-    pub fn get_engine_ptr(&self, session_id: &str) -> Option<Cronet_EnginePtr> {
-        self.sessions.read().ok()?.get(session_id).map(|s| s.engine_ptr)
+    /// Return the raw engine together with ownership that keeps the session
+    /// alive for long-lived users such as WebSockets.
+    pub fn get_engine_handle(&self, session_id: &str) -> Option<(Cronet_EnginePtr, Arc<Session>)> {
+        let sessions = match self.sessions.read() {
+            Ok(sessions) => sessions,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        let session = sessions.get(session_id)?.clone();
+        if session.is_closed.load(Ordering::Acquire) {
+            return None;
+        }
+        Some((session.engine_ptr, session))
     }
 }
 
@@ -1459,7 +1469,17 @@ unsafe extern "C" fn ws_on_message(
     len: u64,
 ) {
     let state = &*(user_data as *const WebSocketState);
-    let slice = std::slice::from_raw_parts(data as *const u8, len as usize);
+    let slice = if len == 0 {
+        &[]
+    } else if data.is_null() {
+        let _ = state.tx.send(WebSocketEvent::Error {
+            net_error: -1,
+            message: "WebSocket callback returned null message data".to_string(),
+        });
+        return;
+    } else {
+        std::slice::from_raw_parts(data as *const u8, len as usize)
+    };
     let _ = state.tx.send(WebSocketEvent::Message {
         is_text: msg_type == WEBSOCKET_MESSAGE_TEXT,
         data: slice.to_vec(),
@@ -1510,13 +1530,24 @@ pub struct CronetWebSocket {
     // Box 保持 state 存活，C 回调通过 user_data 指针访问
     _state: Box<WebSocketState>,
     pub rx: std::sync::mpsc::Receiver<WebSocketEvent>,
+    // Must outlive ws_ptr: Session::drop destroys the Cronet engine.
+    _session: Arc<Session>,
 }
 
 unsafe impl Send for CronetWebSocket {}
 
 impl CronetWebSocket {
-    /// 用已有 engine 创建 WebSocket
-    pub fn new(engine_ptr: Cronet_EnginePtr) -> Result<Self, String> {
+    pub fn new_with_lifetime(
+        engine_ptr: Cronet_EnginePtr,
+        session: Arc<Session>,
+    ) -> Result<Self, String> {
+        Self::create(engine_ptr, session)
+    }
+
+    fn create(
+        engine_ptr: Cronet_EnginePtr,
+        session: Arc<Session>,
+    ) -> Result<Self, String> {
         let (tx, rx) = std::sync::mpsc::channel();
         let state = Box::new(WebSocketState { tx });
         let state_ptr = &*state as *const WebSocketState as *mut c_void;
@@ -1539,6 +1570,7 @@ impl CronetWebSocket {
             ws_ptr,
             _state: state,
             rx,
+            _session: session,
         })
     }
 
@@ -1553,7 +1585,7 @@ impl CronetWebSocket {
         let c_protos = sub_protocols.map(|s| safe_cstring(s, "ws_sub_protocols")).transpose()?;
         let c_origin = origin.map(|s| safe_cstring(s, "ws_origin")).transpose()?;
         #[cfg(target_os = "windows")]
-        if extra_headers.is_some_and(|headers| !headers.is_empty()) {
+        if matches!(extra_headers, Some(headers) if !headers.is_empty()) {
             return Err("Custom WebSocket headers are not supported by the bundled Windows Cronet library".to_string());
         }
         #[cfg(not(target_os = "windows"))]

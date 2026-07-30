@@ -1,178 +1,78 @@
-"""
-Synchronous module-level API functions for chrome_client.
-"""
+"""Requests-first synchronous module API."""
 
-from typing import Optional, Dict, Any, Union
+from typing import Optional, Dict, Any
 
-from ._types import HeadersType, CookiesType, DataType
+from ._types import HeadersType, CookiesType
 from ._response import Response, StreamResponse
-from ._client import CronetClient
+from ._client import Session
+
+_SESSION_KEYS = {
+    "verify", "proxies", "proxy", "timeout", "impersonate", "timeout_ms",
+    "base_url", "default_domain", "default_headers",
+}
 
 
-def _send(method, url, *, stream=False, proxies=None, chrometls="chrome_150",
-          timeout=None, verify=True, **kwargs):
-    """Internal helper: keeps session alive when stream=True."""
-    timeout_ms = int(timeout * 1000) if timeout else 30000
-    session = CronetClient(verify=verify, timeout_ms=timeout_ms, proxies=proxies, chrometls=chrometls)
+def _send(method, url, **kwargs):
+    """Create one temporary Session, preserving it only for streamed responses."""
+    session_kwargs = {
+        key: kwargs.pop(key) for key in tuple(kwargs) if key in _SESSION_KEYS
+    }
+    session = Session(**session_kwargs)
     try:
-        resp = getattr(session, method)(url, verify=verify, stream=stream, **kwargs)
-        if stream and isinstance(resp, StreamResponse):
-            resp._session = session
-            return resp
-        session.close()
-        return resp
+        response = session.request(method, url, **kwargs)
+        if isinstance(response, StreamResponse):
+            response._session = session
+        else:
+            session.close()
+        return response
     except Exception:
         session.close()
         raise
 
 
-def get(
-    url: str,
-    *,
-    params: Optional[Dict[str, Any]] = None,
-    headers: Optional[HeadersType] = None,
-    cookies: Optional[CookiesType] = None,
-    timeout: Optional[float] = None,
-    verify: bool = True,
-    allow_redirects: bool = True,
-    stream: bool = False,
-    proxies: Optional[Union[str, Dict[str, str]]] = None,
-    chrometls: Optional[str] = "chrome_150",
-    **kwargs
-):
-    """Send GET request - similar to requests.get()"""
-    return _send('get', url, stream=stream, proxies=proxies, chrometls=chrometls,
-                 timeout=timeout, verify=verify, params=params, headers=headers,
-                 cookies=cookies, allow_redirects=allow_redirects, **kwargs)
+def request(method, url, **kwargs):
+    return _send(method, url, **kwargs)
 
 
-def post(
-    url: str,
-    *,
-    params: Optional[Dict[str, Any]] = None,
-    headers: Optional[HeadersType] = None,
-    cookies: Optional[CookiesType] = None,
-    data: DataType = None,
-    json: Optional[Dict[str, Any]] = None,
-    timeout: Optional[float] = None,
-    verify: bool = True,
-    allow_redirects: bool = True,
-    stream: bool = False,
-    proxies: Optional[Union[str, Dict[str, str]]] = None,
-    chrometls: Optional[str] = "chrome_150",
-    **kwargs
-):
-    """Send POST request - similar to requests.post()"""
-    return _send('post', url, stream=stream, proxies=proxies, chrometls=chrometls,
-                 timeout=timeout, verify=verify, params=params, headers=headers,
-                 cookies=cookies, data=data, json=json,
-                 allow_redirects=allow_redirects, **kwargs)
+def session(**kwargs):
+    return Session(**kwargs)
 
 
-def put(
-    url: str,
-    *,
-    params: Optional[Dict[str, Any]] = None,
-    headers: Optional[HeadersType] = None,
-    cookies: Optional[CookiesType] = None,
-    data: DataType = None,
-    json: Optional[Dict[str, Any]] = None,
-    timeout: Optional[float] = None,
-    verify: bool = True,
-    allow_redirects: bool = True,
-    stream: bool = False,
-    proxies: Optional[Union[str, Dict[str, str]]] = None,
-    chrometls: Optional[str] = "chrome_150",
-    **kwargs
-):
-    """Send PUT request - similar to requests.put()"""
-    return _send('put', url, stream=stream, proxies=proxies, chrometls=chrometls,
-                 timeout=timeout, verify=verify, params=params, headers=headers,
-                 cookies=cookies, data=data, json=json,
-                 allow_redirects=allow_redirects, **kwargs)
+def get(url, params=None, **kwargs):
+    return request("GET", url, params=params, **kwargs)
 
 
-def delete(
-    url: str,
-    *,
-    params: Optional[Dict[str, Any]] = None,
-    headers: Optional[HeadersType] = None,
-    cookies: Optional[CookiesType] = None,
-    timeout: Optional[float] = None,
-    verify: bool = True,
-    allow_redirects: bool = True,
-    stream: bool = False,
-    proxies: Optional[Union[str, Dict[str, str]]] = None,
-    chrometls: Optional[str] = "chrome_150",
-    **kwargs
-):
-    """Send DELETE request - similar to requests.delete()"""
-    return _send('delete', url, stream=stream, proxies=proxies, chrometls=chrometls,
-                 timeout=timeout, verify=verify, params=params, headers=headers,
-                 cookies=cookies, allow_redirects=allow_redirects, **kwargs)
+def options(url, **kwargs):
+    return request("OPTIONS", url, **kwargs)
 
 
-def patch(
-    url: str,
-    *,
-    params: Optional[Dict[str, Any]] = None,
-    headers: Optional[HeadersType] = None,
-    cookies: Optional[CookiesType] = None,
-    data: DataType = None,
-    json: Optional[Dict[str, Any]] = None,
-    timeout: Optional[float] = None,
-    verify: bool = True,
-    allow_redirects: bool = True,
-    stream: bool = False,
-    proxies: Optional[Union[str, Dict[str, str]]] = None,
-    chrometls: Optional[str] = "chrome_150",
-    **kwargs
-):
-    """Send PATCH request - similar to requests.patch()"""
-    return _send('patch', url, stream=stream, proxies=proxies, chrometls=chrometls,
-                 timeout=timeout, verify=verify, params=params, headers=headers,
-                 cookies=cookies, data=data, json=json,
-                 allow_redirects=allow_redirects, **kwargs)
+def head(url, **kwargs):
+    kwargs.setdefault("allow_redirects", False)
+    return request("HEAD", url, **kwargs)
 
 
-def head(
-    url: str,
-    *,
-    params: Optional[Dict[str, Any]] = None,
-    headers: Optional[HeadersType] = None,
-    cookies: Optional[CookiesType] = None,
-    timeout: Optional[float] = None,
-    verify: bool = True,
-    allow_redirects: bool = True,
-    stream: bool = False,
-    proxies: Optional[Union[str, Dict[str, str]]] = None,
-    chrometls: Optional[str] = "chrome_150",
-    **kwargs
-):
-    """Send HEAD request - similar to requests.head()"""
-    return _send('head', url, stream=stream, proxies=proxies, chrometls=chrometls,
-                 timeout=timeout, verify=verify, params=params, headers=headers,
-                 cookies=cookies, allow_redirects=allow_redirects, **kwargs)
+def post(url, data=None, json=None, **kwargs):
+    return request("POST", url, data=data, json=json, **kwargs)
 
 
-def options(
-    url: str,
-    *,
-    params: Optional[Dict[str, Any]] = None,
-    headers: Optional[HeadersType] = None,
-    cookies: Optional[CookiesType] = None,
-    timeout: Optional[float] = None,
-    verify: bool = True,
-    allow_redirects: bool = True,
-    stream: bool = False,
-    proxies: Optional[Union[str, Dict[str, str]]] = None,
-    chrometls: Optional[str] = "chrome_150",
-    **kwargs
-):
-    """Send OPTIONS request - similar to requests.options()"""
-    return _send('options', url, stream=stream, proxies=proxies, chrometls=chrometls,
-                 timeout=timeout, verify=verify, params=params, headers=headers,
-                 cookies=cookies, allow_redirects=allow_redirects, **kwargs)
+def put(url, data=None, **kwargs):
+    return request("PUT", url, data=data, **kwargs)
+
+
+def patch(url, data=None, **kwargs):
+    return request("PATCH", url, data=data, **kwargs)
+
+
+def delete(url, **kwargs):
+    return request("DELETE", url, **kwargs)
+
+
+def trace(url, **kwargs):
+    return request("TRACE", url, **kwargs)
+
+
+def query(url, **kwargs):
+    return request("QUERY", url, **kwargs)
 
 
 def upload_file(
@@ -185,19 +85,13 @@ def upload_file(
     cookies: Optional[CookiesType] = None,
     timeout: Optional[float] = None,
     verify: bool = True,
+    impersonate: Optional[str] = "chrome_150",
     **kwargs: Any
 ) -> Response:
-    """Upload file - similar to requests file upload"""
-    timeout_ms = int(timeout * 1000) if timeout else 30000
-    with CronetClient(verify=verify, timeout_ms=timeout_ms) as session:
+    with Session(verify=verify, timeout=timeout, impersonate=impersonate, **kwargs) as session:
         return session.upload_file(
-            url,
-            file_path,
-            field_name=field_name,
-            additional_fields=additional_fields,
-            headers=headers,
-            cookies=cookies,
-            verify=verify
+            url, file_path, field_name=field_name,
+            additional_fields=additional_fields, headers=headers, cookies=cookies,
         )
 
 
@@ -210,16 +104,10 @@ def download_file(
     timeout: Optional[float] = None,
     verify: bool = True,
     chunk_size: int = 8192,
+    impersonate: Optional[str] = "chrome_150",
     **kwargs: Any
 ) -> Dict[str, Any]:
-    """Download file - similar to requests file download"""
-    timeout_ms = int(timeout * 1000) if timeout else 30000
-    with CronetClient(verify=verify, timeout_ms=timeout_ms) as session:
+    with Session(verify=verify, timeout=timeout, impersonate=impersonate, **kwargs) as session:
         return session.download_file(
-            url,
-            save_path,
-            headers=headers,
-            cookies=cookies,
-            verify=verify,
-            chunk_size=chunk_size
+            url, save_path, headers=headers, cookies=cookies, chunk_size=chunk_size,
         )

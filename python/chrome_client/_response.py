@@ -5,8 +5,118 @@ Response and exception classes for chrome_client.
 import json as json_lib
 from typing import Dict, List, Any, Optional
 from dataclasses import dataclass, field
+from datetime import timedelta
 
 from ._cookies import CookieJar
+
+
+class CaseInsensitiveDict(dict):
+    """Small dict-compatible header mapping with case-insensitive lookup."""
+
+    def __getitem__(self, key):
+        match = next((name for name in self if name.lower() == key.lower()), None)
+        if match is None:
+            raise KeyError(key)
+        return super().__getitem__(match)
+
+    def __contains__(self, key):
+        return isinstance(key, str) and any(
+            name.lower() == key.lower() for name in self.keys()
+        )
+
+    def get(self, key, default=None):
+        try:
+            return self[key]
+        except KeyError:
+            return default
+
+
+def _split_complete_lines(data, separator=None):
+    if separator is not None:
+        lines = data.split(separator)
+        return lines[:-1], lines[-1]
+    lines = []
+    start = 0
+    index = 0
+    while index < len(data):
+        byte = data[index]
+        if byte == 10:
+            lines.append(data[start:index])
+            start = index + 1
+        elif byte == 13:
+            if index + 1 == len(data):
+                break
+            lines.append(data[start:index])
+            start = index + 2 if data[index + 1] == 10 else index + 1
+            if data[index + 1] == 10:
+                index += 1
+        index += 1
+    return lines, data[start:]
+
+
+def _iter_lines(chunks, encoding, decode_unicode=False, delimiter=None):
+    separator = delimiter.encode(encoding) if isinstance(delimiter, str) else delimiter
+    pending = b""
+    for chunk in chunks:
+        lines, pending = _split_complete_lines(pending + chunk, separator)
+        for line in lines:
+            yield line.decode(encoding, errors="replace") if decode_unicode else line
+    if pending:
+        line = pending.rstrip(b"\r") if separator is None else pending
+        yield line.decode(encoding, errors="replace") if decode_unicode else line
+
+class RequestError(Exception):
+    """Base request error, compatible with requests.RequestException."""
+
+
+class Timeout(RequestError):
+    pass
+
+
+class ConnectionError(RequestError):
+    pass
+
+
+class ProxyError(ConnectionError):
+    pass
+
+
+class SSLError(ConnectionError):
+    pass
+
+
+class HTTPStatusError(RequestError):
+    """HTTP status code error, compatible with requests.HTTPError."""
+
+    def __init__(self, message: str, response=None, request=None):
+        super().__init__(message)
+        self.response = response
+        self.request = request
+
+
+class Request:
+    """User request model with the common requests.Request constructor."""
+
+    def __init__(self, method=None, url=None, headers=None, files=None, data=None,
+                 params=None, auth=None, cookies=None, hooks=None, json=None):
+        self.method = method
+        self.url = url
+        self.headers = dict(headers or {})
+        self.files = files
+        self.data = data
+        self.params = params
+        self.auth = auth
+        self.cookies = cookies
+        self.hooks = hooks
+        self.json = json
+
+
+@dataclass
+class PreparedRequest:
+    method: str
+    url: str
+    headers: Dict[str, str] = field(default_factory=dict)
+    body: Any = None
 
 
 @dataclass
@@ -18,11 +128,18 @@ class Response:
     url: str = ""
     _cookies: CookieJar = field(default_factory=CookieJar)
     encoding: Optional[str] = None
+    reason: str = ""
+    history: List['Response'] = field(default_factory=list)
+    request: Optional[PreparedRequest] = None
+    elapsed: timedelta = field(default_factory=timedelta)
+    raw: Any = None
 
     @property
     def headers(self) -> Dict[str, str]:
         """Return headers dictionary (take first value)"""
-        return {k: v[0] if v else "" for k, v in self._headers.items()}
+        return CaseInsensitiveDict(
+            (k, v[0] if v else "") for k, v in self._headers.items()
+        )
 
     @property
     def cookies(self) -> CookieJar:
@@ -40,7 +157,7 @@ class Response:
             try:
                 charset = content_type.split('charset=')[1].split(';')[0].strip()
                 return charset
-            except:
+            except (IndexError, LookupError):
                 pass
 
         # Default to utf-8
@@ -52,31 +169,49 @@ class Response:
         encoding = self._get_encoding()
         return self.content.decode(encoding, errors='replace')
 
-    def json(self) -> Any:
+    def json(self, **kwargs) -> Any:
         """Parse JSON response"""
-        return json_lib.loads(self.text)
+        return json_lib.loads(self.text, **kwargs)
 
     @property
     def ok(self) -> bool:
         """Check if status code indicates success"""
-        return 200 <= self.status_code < 400
+        return self.status_code < 400
 
     def raise_for_status(self):
         """Raise exception if status code indicates error"""
-        if self.status_code >= 400:
-            raise HTTPStatusError(f"{self.status_code} Error", response=self)
+        if 400 <= self.status_code < 600:
+            raise HTTPStatusError(
+                f"{self.status_code} Error", response=self, request=self.request
+            )
 
+    @property
+    def is_redirect(self) -> bool:
+        return self.status_code in (301, 302, 303, 307, 308) and bool(
+            self.headers.get("location")
+        )
 
-class HTTPStatusError(Exception):
-    """HTTP status code error"""
-    def __init__(self, message: str, response: Response):
-        super().__init__(message)
-        self.response = response
+    def iter_content(self, chunk_size: Optional[int] = 1, decode_unicode: bool = False):
+        if chunk_size is None:
+            chunk_size = len(self.content) or 1
+        if not isinstance(chunk_size, int) or chunk_size <= 0:
+            raise ValueError("chunk_size must be a positive integer or None")
+        for offset in range(0, len(self.content), chunk_size):
+            chunk = self.content[offset:offset + chunk_size]
+            yield chunk.decode(self._get_encoding(), errors="replace") if decode_unicode else chunk
 
+    def iter_lines(self, chunk_size: int = 512, decode_unicode: bool = False,
+                   delimiter=None):
+        return _iter_lines(
+            self.iter_content(chunk_size), self._get_encoding(),
+            decode_unicode, delimiter,
+        )
 
-class RequestError(Exception):
-    """Request error"""
-    pass
+    def close(self):
+        pass
+
+    def __bool__(self):
+        return self.ok
 
 
 class StreamResponse:
@@ -104,6 +239,11 @@ class StreamResponse:
         self._content: Optional[bytes] = None
         self._closed: bool = False
         self._session = session
+        self.reason: str = ""
+        self.history: List[Response] = []
+        self.request = None
+        self.elapsed = timedelta()
+        self.raw = reader
 
         # Parse raw headers into dict
         self._headers: Dict[str, List[str]] = {}
@@ -120,7 +260,9 @@ class StreamResponse:
     @property
     def headers(self) -> Dict[str, str]:
         """Return headers dictionary (take first value)"""
-        return {k: v[0] if v else "" for k, v in self._headers.items()}
+        return CaseInsensitiveDict(
+            (k, v[0] if v else "") for k, v in self._headers.items()
+        )
 
     @property
     def cookies(self) -> 'CookieJar':
@@ -128,7 +270,7 @@ class StreamResponse:
 
     @property
     def ok(self) -> bool:
-        return 200 <= self._status_code < 400
+        return self._status_code < 400
 
     def _get_encoding(self) -> str:
         if self.encoding:
@@ -138,13 +280,21 @@ class StreamResponse:
             try:
                 charset = content_type.split('charset=')[1].split(';')[0].strip()
                 return charset
-            except Exception:
+            except (IndexError, LookupError):
                 pass
         return 'utf-8'
 
     def raise_for_status(self):
-        if self._status_code >= 400:
-            raise HTTPStatusError(f"{self._status_code} Error", response=self)
+        if 400 <= self._status_code < 600:
+            raise HTTPStatusError(
+                f"{self._status_code} Error", response=self, request=self.request
+            )
+
+    @property
+    def is_redirect(self) -> bool:
+        return self.status_code in (301, 302, 303, 307, 308) and bool(
+            self.headers.get("location")
+        )
 
     # ---- Sync iteration ----
 
@@ -156,6 +306,16 @@ class StreamResponse:
                         If None, yield raw chunks as received from network.
         """
         if self._closed:
+            return
+        if chunk_size is not None and (
+            not isinstance(chunk_size, int) or chunk_size <= 0
+        ):
+            raise ValueError("chunk_size must be a positive integer or None")
+
+        if self._content is not None:
+            size = chunk_size or len(self._content) or 1
+            for offset in range(0, len(self._content), size):
+                yield self._content[offset:offset + size]
             return
 
         buf = b""
@@ -173,41 +333,34 @@ class StreamResponse:
                     yield buf[:chunk_size]
                     buf = buf[chunk_size:]
 
-    def iter_lines(self, chunk_size: int = 512, decode_unicode: bool = True, delimiter: Optional[str] = None):
+    def iter_lines(self, chunk_size: int = 512, decode_unicode: bool = False,
+                   delimiter: Optional[str] = None):
         """Iterate over response lines (sync generator).
 
         Args:
             chunk_size: Internal read buffer size.
             delimiter: Line delimiter. Default: None (auto-detect \\n or \\r\\n).
         """
-        pending = b""
-        delim_bytes = delimiter.encode(self._get_encoding()) if delimiter else None
-
-        for chunk in self.iter_content(chunk_size=chunk_size):
-            pending += chunk
-            if delim_bytes:
-                lines = pending.split(delim_bytes)
-            else:
-                lines = pending.splitlines(True)
-
-            # All complete lines except the last (which may be incomplete)
-            if lines:
-                for line in lines[:-1]:
-                    decoded = line.decode(self._get_encoding(), errors='replace')
-                    yield decoded.rstrip('\r\n')
-                pending = lines[-1] if not lines[-1].endswith((b'\n', b'\r')) else b""
-                if lines[-1].endswith((b'\n', b'\r')):
-                    decoded = lines[-1].decode(self._get_encoding(), errors='replace')
-                    yield decoded.rstrip('\r\n')
-
-        if pending:
-            yield pending.decode(self._get_encoding(), errors='replace').rstrip('\r\n')
+        return _iter_lines(
+            self.iter_content(chunk_size), self._get_encoding(),
+            decode_unicode, delimiter,
+        )
 
     # ---- Async iteration ----
 
     async def aiter_content(self, chunk_size: Optional[int] = None):
         """Iterate over response data chunks (async generator)."""
         if self._closed:
+            return
+        if chunk_size is not None and (
+            not isinstance(chunk_size, int) or chunk_size <= 0
+        ):
+            raise ValueError("chunk_size must be a positive integer or None")
+
+        if self._content is not None:
+            size = chunk_size or len(self._content) or 1
+            for offset in range(0, len(self._content), size):
+                yield self._content[offset:offset + size]
             return
 
         buf = b""
@@ -225,29 +378,29 @@ class StreamResponse:
                     yield buf[:chunk_size]
                     buf = buf[chunk_size:]
 
-    async def aiter_lines(self, chunk_size: int = 512, delimiter: Optional[str] = None):
+    async def aiter_lines(self, chunk_size: int = 512, decode_unicode: bool = False,
+                          delimiter: Optional[str] = None):
         """Iterate over response lines (async generator)."""
         pending = b""
-        delim_bytes = delimiter.encode(self._get_encoding()) if delimiter else None
+        delim_bytes = delimiter.encode(self._get_encoding()) if isinstance(delimiter, str) else delimiter
 
         async for chunk in self.aiter_content(chunk_size=chunk_size):
-            pending += chunk
-            if delim_bytes:
-                lines = pending.split(delim_bytes)
-            else:
-                lines = pending.splitlines(True)
-
-            if lines:
-                for line in lines[:-1]:
-                    decoded = line.decode(self._get_encoding(), errors='replace')
-                    yield decoded.rstrip('\r\n')
-                pending = lines[-1] if not lines[-1].endswith((b'\n', b'\r')) else b""
-                if lines[-1].endswith((b'\n', b'\r')):
-                    decoded = lines[-1].decode(self._get_encoding(), errors='replace')
-                    yield decoded.rstrip('\r\n')
+            lines, pending = _split_complete_lines(pending + chunk, delim_bytes)
+            for line in lines:
+                yield line.decode(self._get_encoding(), errors='replace') if decode_unicode else line
 
         if pending:
-            yield pending.decode(self._get_encoding(), errors='replace').rstrip('\r\n')
+            if delim_bytes is None:
+                pending = pending.rstrip(b'\r')
+            yield pending.decode(self._get_encoding(), errors='replace') if decode_unicode else pending
+
+    async def acontent(self) -> bytes:
+        if self._content is None:
+            self._content = b"".join([chunk async for chunk in self.aiter_content()])
+        return self._content
+
+    async def atext(self) -> str:
+        return (await self.acontent()).decode(self._get_encoding(), errors='replace')
 
     # ---- Drain helpers ----
 
@@ -265,8 +418,8 @@ class StreamResponse:
     def text(self) -> str:
         return self.content.decode(self._get_encoding(), errors='replace')
 
-    def json(self) -> Any:
-        return json_lib.loads(self.text)
+    def json(self, **kwargs) -> Any:
+        return json_lib.loads(self.text, **kwargs)
 
     # ---- Resource management ----
 
@@ -277,7 +430,8 @@ class StreamResponse:
                 self._reader.close()
             if self._session is not None:
                 try:
-                    self._session.close()
+                    close = getattr(self._session, "_close_sync", self._session.close)
+                    close()
                 except Exception:
                     pass
                 self._session = None
@@ -292,7 +446,21 @@ class StreamResponse:
         return self
 
     async def __aexit__(self, *args):
-        self.close()
+        await self.aclose()
+
+    async def aclose(self):
+        if not self._closed:
+            self._closed = True
+            if self._reader is not None:
+                self._reader.close()
+            if self._session is not None:
+                close = self._session.close()
+                if hasattr(close, "__await__"):
+                    await close
+                self._session = None
 
     def __del__(self):
         self.close()
+
+    def __bool__(self):
+        return self.ok

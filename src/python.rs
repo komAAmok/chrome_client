@@ -511,21 +511,23 @@ impl PyCronetClient {
     ///
     /// Returns:
     ///     PyCronetWebSocket instance
-    #[args(extra_headers = "None")]
+    #[args(extra_headers = "None", sub_protocols = "None", origin = "None")]
     fn websocket_connect(
         &self,
         session_id: String,
         url: String,
         extra_headers: Option<Vec<(String, String)>>,
+        sub_protocols: Option<String>,
+        origin: Option<String>,
     ) -> PyResult<PyCronetWebSocket> {
-        let engine_ptr = self.manager.get_engine_ptr(&session_id).ok_or_else(|| {
+        let (engine_ptr, session) = self.manager.get_engine_handle(&session_id).ok_or_else(|| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
                 "Session not found: {}",
                 session_id
             ))
         })?;
 
-        let ws = CronetWebSocket::new(engine_ptr)
+        let ws = CronetWebSocket::new_with_lifetime(engine_ptr, session)
             .map_err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>)?;
 
         // Build "\r\n"-delimited header string from list of (name, value) tuples
@@ -536,7 +538,12 @@ impl PyCronetClient {
                 .join("\r\n")
         });
 
-        ws.connect(&url, None, None, headers_str.as_deref())
+        ws.connect(
+            &url,
+            sub_protocols.as_deref(),
+            origin.as_deref(),
+            headers_str.as_deref(),
+        )
             .map_err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>)?;
 
         Ok(PyCronetWebSocket {
@@ -577,10 +584,15 @@ impl PyStreamReader {
         let chunk = py.allow_threads(|| {
             runtime.block_on(async {
                 let mut guard = rx.lock().await;
-                if let Some(ref mut recv) = *guard {
-                    recv.recv().await
-                } else {
-                    None
+                loop {
+                    let chunk = if let Some(ref mut recv) = *guard {
+                        recv.recv().await
+                    } else {
+                        None
+                    };
+                    if !matches!(&chunk, Some(StreamChunk::Headers { .. })) {
+                        break chunk;
+                    }
                 }
             })
         });
@@ -591,10 +603,7 @@ impl PyStreamReader {
             Some(StreamChunk::Error(e)) => Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
                 format!("Stream error: {}", e),
             )),
-            Some(StreamChunk::Headers { .. }) => {
-                // Unexpected headers in data stream, skip and try next
-                self.next_chunk_sync(py)
-            }
+            Some(StreamChunk::Headers { .. }) => unreachable!(),
         }
     }
 
@@ -605,10 +614,15 @@ impl PyStreamReader {
 
         future_into_py(py, async move {
             let mut guard = rx.lock().await;
-            let chunk = if let Some(ref mut recv) = *guard {
-                recv.recv().await
-            } else {
-                None
+            let chunk = loop {
+                let chunk = if let Some(ref mut recv) = *guard {
+                    recv.recv().await
+                } else {
+                    None
+                };
+                if !matches!(&chunk, Some(StreamChunk::Headers { .. })) {
+                    break chunk;
+                }
             };
             drop(guard);
 
@@ -623,7 +637,7 @@ impl PyStreamReader {
                         e
                     )))
                 }
-                Some(StreamChunk::Headers { .. }) => Ok(None::<PyObject>),
+                Some(StreamChunk::Headers { .. }) => unreachable!(),
             }
         })
     }

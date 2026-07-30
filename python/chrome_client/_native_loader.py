@@ -11,6 +11,16 @@ import glob
 import ctypes
 import warnings
 
+_DLL_DIRECTORY_HANDLES = []
+
+
+def _add_dll_directory(path):
+    """Keep Windows DLL-directory handles alive for the process lifetime."""
+    if hasattr(os, 'add_dll_directory'):
+        _DLL_DIRECTORY_HANDLES.append(os.add_dll_directory(path))
+    else:
+        os.environ['PATH'] = path + os.pathsep + os.environ.get('PATH', '')
+
 
 def load_native_libraries():
     """Load platform-specific native libraries."""
@@ -134,8 +144,7 @@ def _load_windows_libraries():
         os.environ['PATH'] = package_dir + os.pathsep + os.environ.get('PATH', '')
 
         # Add package directory to DLL search path
-        if hasattr(os, 'add_dll_directory'):
-            os.add_dll_directory(package_dir)
+        _add_dll_directory(package_dir)
 
         # Preload DLL (Python 3.8+ requires explicit loading)
         try:
@@ -168,12 +177,15 @@ def _load_windows_libraries():
         for path in possible_paths:
             dll_path = os.path.join(path, "cronet.dll")
             if os.path.exists(dll_path):
-                if hasattr(os, 'add_dll_directory'):
-                    os.add_dll_directory(path)
-                else:
-                    os.environ['PATH'] = path + os.pathsep + os.environ.get('PATH', '')
-                dll_loaded = False
-                break
+                _add_dll_directory(path)
+                try:
+                    ctypes.CDLL(dll_path)
+                    dll_loaded = True
+                    break
+                except OSError as exc:
+                    warnings.warn(
+                        f"Failed to preload {dll_path}: {exc}", RuntimeWarning
+                    )
 
         if not dll_loaded:
             # Try loading from environment variable or system path

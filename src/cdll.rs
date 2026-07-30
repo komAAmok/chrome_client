@@ -61,6 +61,8 @@ pub struct CycronetStream {
     headers: Vec<(CString, CString)>,
     headers_received: bool,
     done: bool,
+    pending: Vec<u8>,
+    pending_offset: usize,
 }
 
 /// Opaque WebSocket handle.
@@ -86,8 +88,13 @@ unsafe fn parse_headers(
         return out;
     }
     for i in 0..count as usize {
-        let n = CStr::from_ptr(*names.add(i)).to_string_lossy().into_owned();
-        let v = CStr::from_ptr(*values.add(i))
+        let name = *names.add(i);
+        let value = *values.add(i);
+        if name.is_null() || value.is_null() {
+            continue;
+        }
+        let n = CStr::from_ptr(name).to_string_lossy().into_owned();
+        let v = CStr::from_ptr(value)
             .to_string_lossy()
             .into_owned();
         out.push(Header { name: n, value: v });
@@ -118,7 +125,10 @@ unsafe fn c_str_array(arr: *const *const c_char, count: c_int) -> Option<Vec<Str
     }
     let mut v = Vec::with_capacity(count as usize);
     for i in 0..count as usize {
-        v.push(CStr::from_ptr(*arr.add(i)).to_string_lossy().into_owned());
+        let item = *arr.add(i);
+        if !item.is_null() {
+            v.push(CStr::from_ptr(item).to_string_lossy().into_owned());
+        }
     }
     Some(v)
 }
@@ -612,6 +622,8 @@ pub unsafe extern "C" fn cycronet_stream_open(
         headers: Vec::new(),
         headers_received: false,
         done: false,
+        pending: Vec::new(),
+        pending_offset: 0,
     }))
 }
 
@@ -636,6 +648,26 @@ pub unsafe extern "C" fn cycronet_stream_read(
     let s = &mut *stream;
     if s.done {
         return 0;
+    }
+    if !out_read.is_null() {
+        *out_read = 0;
+    }
+    if s.pending_offset < s.pending.len() {
+        if out_buf.is_null() || buf_len == 0 {
+            return -1;
+        }
+        let remaining = &s.pending[s.pending_offset..];
+        let copy_len = remaining.len().min(buf_len);
+        ptr::copy_nonoverlapping(remaining.as_ptr(), out_buf, copy_len);
+        s.pending_offset += copy_len;
+        if s.pending_offset == s.pending.len() {
+            s.pending.clear();
+            s.pending_offset = 0;
+        }
+        if !out_read.is_null() {
+            *out_read = copy_len;
+        }
+        return 1;
     }
 
     let Some(g) = global() else {
@@ -662,9 +694,18 @@ pub unsafe extern "C" fn cycronet_stream_read(
             2 // headers event
         }
         Some(StreamChunk::Data(data)) => {
+            if out_buf.is_null() || buf_len == 0 {
+                s.pending = data;
+                s.pending_offset = 0;
+                return -1;
+            }
             let copy_len = data.len().min(buf_len);
-            if !out_buf.is_null() && copy_len > 0 {
+            if copy_len > 0 {
                 ptr::copy_nonoverlapping(data.as_ptr(), out_buf, copy_len);
+            }
+            if copy_len < data.len() {
+                s.pending = data;
+                s.pending_offset = copy_len;
             }
             if !out_read.is_null() {
                 *out_read = copy_len;
@@ -866,9 +907,9 @@ pub unsafe extern "C" fn cycronet_ws_create(session_id: *const c_char) -> *mut C
         None => return ptr::null_mut(),
     };
 
-    // Safety: engine_ptr is owned by a live session in SessionManager. C callers
-    // must destroy the websocket before destroying its session.
-    match unsafe { CronetWebSocket::new_with_lifetime(engine_ptr, session_live) } {
+    // The Arc retained by CronetWebSocket keeps the session engine alive even
+    // when the caller closes the public session first.
+    match CronetWebSocket::new_with_lifetime(engine_ptr, session_live) {
         Ok(ws) => Box::into_raw(Box::new(CycronetWebSocket {
             inner: Some(ws),
             reader_thread: None,
@@ -964,11 +1005,15 @@ pub unsafe extern "C" fn cycronet_ws_send_binary(
     data: *const u8,
     len: usize,
 ) -> c_int {
-    if ws.is_null() || data.is_null() {
+    if ws.is_null() || (data.is_null() && len != 0) {
         return -1;
     }
     let w = &*ws;
-    let slice = std::slice::from_raw_parts(data, len);
+    let slice = if len == 0 {
+        &[]
+    } else {
+        std::slice::from_raw_parts(data, len)
+    };
     let Some(inner) = w.inner.as_ref() else {
         return -1;
     };
@@ -998,13 +1043,14 @@ unsafe fn set_ws_output(bytes: Vec<u8>, out_data: *mut *const u8, out_data_len: 
     } else {
         boxed.as_ptr()
     };
+    let transferred = !out_data.is_null() && len > 0;
     if !out_data.is_null() {
         *out_data = ptr;
     }
     if !out_data_len.is_null() {
         *out_data_len = len;
     }
-    if len > 0 {
+    if transferred {
         std::mem::forget(boxed);
     }
 }

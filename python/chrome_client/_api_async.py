@@ -1,102 +1,89 @@
-"""
-Asynchronous module-level API functions for chrome_client.
-"""
+"""Asynchronous convenience API; AsyncSession remains the primary interface."""
 
 from typing import Optional, Dict, Any
 
-from ._types import HeadersType, CookiesType, DataType
 from ._response import Response, StreamResponse
-from ._client import AsyncCronetClient
+from ._client import AsyncSession
+
+_SESSION_KEYS = {
+    "verify", "proxies", "proxy", "timeout", "impersonate", "timeout_ms",
+    "base_url", "default_domain", "default_headers",
+}
 
 
-async def _async_send(method, url, *, stream=False, verify=True, timeout=None, **kwargs):
-    """Internal helper: keeps session alive when stream=True."""
-    timeout_ms = int(timeout * 1000) if timeout else 30000
-    session = AsyncCronetClient(verify=verify, timeout_ms=timeout_ms)
+async def _async_send(method, url, **kwargs):
+    session_kwargs = {
+        key: kwargs.pop(key) for key in tuple(kwargs) if key in _SESSION_KEYS
+    }
+    session = AsyncSession(**session_kwargs)
     try:
-        resp = await getattr(session, method)(url, stream=stream, **kwargs)
-        if stream and isinstance(resp, StreamResponse):
-            resp._session = session
-            return resp
-        await session.close()
-        return resp
+        response = await session.request(method, url, **kwargs)
+        if isinstance(response, StreamResponse):
+            response._session = session
+        else:
+            await session.close()
+        return response
     except Exception:
         await session.close()
         raise
 
 
-async def async_get(url: str, *, verify: bool = True, timeout: Optional[float] = None, stream: bool = False, **kwargs):
-    """Async GET request"""
-    return await _async_send('get', url, stream=stream, verify=verify, timeout=timeout, **kwargs)
+async def async_request(method, url, **kwargs):
+    return await _async_send(method, url, **kwargs)
 
 
-async def async_post(url: str, *, verify: bool = True, timeout: Optional[float] = None, stream: bool = False, **kwargs):
-    """Async POST request"""
-    return await _async_send('post', url, stream=stream, verify=verify, timeout=timeout, **kwargs)
+async def async_get(url, params=None, **kwargs):
+    return await async_request("GET", url, params=params, **kwargs)
 
 
-async def async_put(url: str, *, verify: bool = True, timeout: Optional[float] = None, stream: bool = False, **kwargs):
-    """Async PUT request"""
-    return await _async_send('put', url, stream=stream, verify=verify, timeout=timeout, **kwargs)
+async def async_options(url, **kwargs):
+    return await async_request("OPTIONS", url, **kwargs)
 
 
-async def async_delete(url: str, *, verify: bool = True, timeout: Optional[float] = None, stream: bool = False, **kwargs):
-    """Async DELETE request"""
-    return await _async_send('delete', url, stream=stream, verify=verify, timeout=timeout, **kwargs)
+async def async_head(url, **kwargs):
+    kwargs.setdefault("allow_redirects", False)
+    return await async_request("HEAD", url, **kwargs)
 
 
-async def async_patch(url: str, *, verify: bool = True, timeout: Optional[float] = None, stream: bool = False, **kwargs):
-    """Async PATCH request"""
-    return await _async_send('patch', url, stream=stream, verify=verify, timeout=timeout, **kwargs)
+async def async_post(url, data=None, json=None, **kwargs):
+    return await async_request("POST", url, data=data, json=json, **kwargs)
 
 
-async def async_head(url: str, *, verify: bool = True, timeout: Optional[float] = None, stream: bool = False, **kwargs):
-    """Async HEAD request"""
-    return await _async_send('head', url, stream=stream, verify=verify, timeout=timeout, **kwargs)
+async def async_put(url, data=None, **kwargs):
+    return await async_request("PUT", url, data=data, **kwargs)
 
 
-async def async_options(url: str, *, verify: bool = True, timeout: Optional[float] = None, stream: bool = False, **kwargs):
-    """Async OPTIONS request"""
-    return await _async_send('options', url, stream=stream, verify=verify, timeout=timeout, **kwargs)
+async def async_patch(url, data=None, **kwargs):
+    return await async_request("PATCH", url, data=data, **kwargs)
+
+
+async def async_delete(url, **kwargs):
+    return await async_request("DELETE", url, **kwargs)
 
 
 async def async_upload_file(
-    url: str,
-    file_path: str,
-    *,
-    field_name: str = "file",
+    url: str, file_path: str, *, field_name: str = "file",
     additional_fields: Optional[Dict[str, str]] = None,
-    verify: bool = True,
-    timeout: Optional[float] = None,
-    **kwargs
+    verify: bool = True, timeout: Optional[float] = None,
+    impersonate: Optional[str] = "chrome_150", **kwargs,
 ) -> Response:
-    """Async upload file"""
-    timeout_ms = int(timeout * 1000) if timeout else 30000
-    async with AsyncCronetClient(verify=verify, timeout_ms=timeout_ms) as session:
+    async with AsyncSession(
+        verify=verify, timeout=timeout, impersonate=impersonate
+    ) as session:
         return await session.upload_file(
-            url,
-            file_path,
-            field_name=field_name,
-            additional_fields=additional_fields,
-            **kwargs
+            url, file_path, field_name=field_name,
+            additional_fields=additional_fields, **kwargs
         )
 
 
 async def async_download_file(
-    url: str,
-    save_path: str,
-    *,
-    verify: bool = True,
-    timeout: Optional[float] = None,
-    chunk_size: int = 8192,
-    **kwargs
+    url: str, save_path: str, *, verify: bool = True,
+    timeout: Optional[float] = None, chunk_size: int = 8192,
+    impersonate: Optional[str] = "chrome_150", **kwargs,
 ) -> Dict[str, Any]:
-    """Async download file"""
-    timeout_ms = int(timeout * 1000) if timeout else 30000
-    async with AsyncCronetClient(verify=verify, timeout_ms=timeout_ms) as session:
+    async with AsyncSession(
+        verify=verify, timeout=timeout, impersonate=impersonate
+    ) as session:
         return await session.download_file(
-            url,
-            save_path,
-            chunk_size=chunk_size,
-            **kwargs
+            url, save_path, chunk_size=chunk_size, **kwargs
         )

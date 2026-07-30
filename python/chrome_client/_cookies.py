@@ -1,370 +1,376 @@
-"""
-Cookie management classes for chrome_client.
-Designed to match requests.cookies.RequestsCookieJar behavior.
-"""
+"""Requests-style cookie storage with RFC 6265 domain, path and expiry rules."""
 
+import calendar
+import time
+from collections.abc import Mapping
+from datetime import timezone
+from email.utils import parsedate_to_datetime
+from http.cookies import CookieError, SimpleCookie
 from typing import Dict, Iterator, Optional, Tuple, Union
+from urllib.parse import urlparse
 
 from ._utils import domain_matches as _domain_matches, normalize_cookie_domain
 
 
-class Cookie:
-    """Single Cookie object - similar to http.cookiejar.Cookie"""
+def _default_path(request_path: str) -> str:
+    """RFC 6265 default-path algorithm."""
+    if not request_path or not request_path.startswith('/'):
+        return '/'
+    if request_path.count('/') <= 1:
+        return '/'
+    return request_path.rsplit('/', 1)[0] or '/'
 
-    def __init__(self, name: str, value: str, domain: str = "", path: str = "/",
-                 seq: int = 0):
+
+def _path_matches(cookie_path: str, request_path: str) -> bool:
+    request_path = request_path or '/'
+    if request_path == cookie_path:
+        return True
+    return request_path.startswith(cookie_path) and (
+        cookie_path.endswith('/') or
+        (len(request_path) > len(cookie_path) and request_path[len(cookie_path)] == '/')
+    )
+
+
+def _parse_expires(value: str) -> Optional[float]:
+    if not value:
+        return None
+    try:
+        parsed = parsedate_to_datetime(value)
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return calendar.timegm(parsed.utctimetuple()) + parsed.microsecond / 1000000.0
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+
+class Cookie:
+    """One HTTP cookie."""
+
+    def __init__(self, name: str, value: str, domain: str = '', path: str = '/',
+                 seq: int = 0, expires: Optional[float] = None,
+                 host_only: bool = False, secure: bool = False,
+                 creation_seq: Optional[int] = None):
         self.name = name
         self.value = value
-        self.domain = Cookie._normalize_domain(domain)
-        self.path = path or "/"
-        # Monotonic write sequence — used for last-write-wins dedup when
-        # several cookies with the same name coexist across domain buckets
-        # (matches requests / browser behaviour of "newest write wins").
+        self.domain = normalize_cookie_domain(domain)
+        self.path = path if path and path.startswith('/') else '/'
         self.seq = seq
+        self.creation_seq = seq if creation_seq is None else creation_seq
+        self.expires = expires
+        self.host_only = host_only
+        self.secure = secure
 
-    @staticmethod
-    def _normalize_domain(domain: str) -> str:
-        return normalize_cookie_domain(domain)
+    def is_expired(self, now: Optional[float] = None) -> bool:
+        return self.expires is not None and self.expires <= (
+            time.time() if now is None else now
+        )
+
+    def matches(self, domain: str, path: str = '/', secure: bool = False) -> bool:
+        domain = normalize_cookie_domain(domain)
+        domain_ok = not self.domain or (
+            domain == self.domain if self.host_only else (
+                domain == self.domain or _domain_matches(self.domain, domain)
+            )
+        )
+        return (
+            not self.is_expired() and domain_ok and
+            _path_matches(self.path, path) and
+            (not self.secure or secure)
+        )
 
     def __repr__(self):
-        return f"<Cookie {self.name}={self.value} for {self.domain}{self.path}>"
+        return '<Cookie %s=%s for %s%s>' % (
+            self.name, self.value, self.domain, self.path
+        )
 
     def __str__(self):
-        return f"{self.name}={self.value}"
+        return '%s=%s' % (self.name, self.value)
 
 
 class CookieJar:
-    """Cookie Jar manager - compatible with requests.cookies.RequestsCookieJar
-
-    Storage: {domain: {name: Cookie}}
-    Domain matching follows RFC 6265 rules.
-
-    Supports an optional *default_domain* — when set, calls like
-    ``set(name, value)`` or ``update(dict)`` that omit a domain will store
-    cookies under the default domain instead of the empty (wildcard) bucket.
-    The session wires this automatically from its ``base_url`` or the first
-    outgoing request's host, so callers do not need to pass ``domain=`` every
-    time for single-host clients.
-    """
+    """Cookie jar keyed by ``(domain, path, name)``."""
 
     def __init__(self, default_domain: Optional[str] = None):
-        # Storage structure: {domain: {name: Cookie}}
-        self._cookies: Dict[str, Dict[str, Cookie]] = {}
-        self._default_domain: str = Cookie._normalize_domain(default_domain or "")
-        self._seq_counter: int = 0
+        self._cookies: Dict[Tuple[str, str, str], Cookie] = {}
+        self._default_domain = normalize_cookie_domain(default_domain or '')
+        self._seq_counter = 0
 
     def _next_seq(self) -> int:
         self._seq_counter += 1
         return self._seq_counter
 
+    def _purge_expired(self, now: Optional[float] = None) -> None:
+        now = time.time() if now is None else now
+        for key, cookie in list(self._cookies.items()):
+            if cookie.is_expired(now):
+                del self._cookies[key]
+
     @property
     def default_domain(self) -> str:
-        """Default domain used when a cookie is set/updated without an explicit domain."""
         return self._default_domain
 
     def set_default_domain(self, domain: Optional[str]) -> None:
-        """Set (or clear, if falsy) the default domain used by subsequent writes."""
-        self._default_domain = Cookie._normalize_domain(domain or "")
+        self._default_domain = normalize_cookie_domain(domain or '')
 
-    def set(self, name: str, value: str, domain: Optional[str] = None, path: str = "/"):
-        """Set a cookie.
-
-        :param name: cookie name
-        :param value: cookie value
-        :param domain: cookie domain (auto-normalized). If ``None`` or empty,
-            falls back to :attr:`default_domain`; if that is also empty the
-            cookie is stored in the wildcard bucket (sent on every request).
-        :param path: cookie path, defaults to "/"
-        """
-        effective = domain if domain else self._default_domain
-        effective = Cookie._normalize_domain(effective or "")
-        if effective not in self._cookies:
-            self._cookies[effective] = {}
-        self._cookies[effective][name] = Cookie(
-            name, value, effective, path, seq=self._next_seq()
+    def set(self, name: str, value: str, domain: Optional[str] = None,
+            path: str = '/', expires: Optional[float] = None,
+            max_age: Optional[int] = None, host_only: Optional[bool] = None,
+            secure: bool = False) -> None:
+        if not isinstance(name, str) or not isinstance(value, str):
+            raise TypeError('cookie name and value must be strings')
+        effective_domain = normalize_cookie_domain(domain or self._default_domain)
+        effective_path = path if path and path.startswith('/') else '/'
+        if max_age is not None:
+            try:
+                max_age = int(max_age)
+            except (TypeError, ValueError):
+                raise ValueError('max_age must be an integer')
+            expires = time.time() + max_age
+        key = (effective_domain, effective_path, name)
+        if expires is not None and expires <= time.time():
+            self._cookies.pop(key, None)
+            return
+        if host_only is None:
+            host_only = bool(effective_domain) and not bool(domain)
+        seq = self._next_seq()
+        previous = self._cookies.get(key)
+        self._cookies[key] = Cookie(
+            name, value, effective_domain, effective_path,
+            seq=seq, expires=expires,
+            host_only=host_only, secure=secure,
+            creation_seq=previous.creation_seq if previous else seq,
         )
 
-    def get(self, name: str, default: Optional[str] = None, domain: Optional[str] = None) -> Optional[str]:
-        """Get cookie value by name.
-
-        If *domain* is specified, restricts the search to cookies whose
-        domain matches (RFC 6265) — including wildcard cookies, which the
-        request layer sends to every host.
-
-        When multiple cookies with the same *name* match, the most recently
-        written value wins (last-write-wins), so the result stays consistent
-        with ``get_dict`` and with the Cookie header actually sent by the
-        session.
-
-        :param name: cookie name
-        :param default: default value if not found
-        :param domain: optional domain filter
-        :return: cookie value or default
-        """
-        candidates = []
-        if domain is not None:
-            domain_norm = Cookie._normalize_domain(domain)
-            for cookie_domain, domain_cookies in self._cookies.items():
-                if name in domain_cookies and (
-                    not cookie_domain or _domain_matches(cookie_domain, domain_norm)
-                ):
-                    candidates.append(domain_cookies[name])
-        else:
-            for domain_cookies in self._cookies.values():
-                if name in domain_cookies:
-                    candidates.append(domain_cookies[name])
-        if not candidates:
-            return default
-        return max(candidates, key=lambda c: c.seq).value
-
-    def get_dict(self, domain: Optional[str] = None) -> Dict[str, str]:
-        """Get cookies as {name: value} dict.
-
-        If *domain* is specified, returns cookies that would be sent to that
-        domain using RFC 6265 matching. Wildcard (empty-domain) cookies —
-        which the request layer treats as "send to every host" — are also
-        included, so the result matches what actually goes on the wire.
-
-        When several cookies share a name across different domain buckets
-        (e.g. a wildcard ``_abck`` plus a host-scoped ``_abck`` written by a
-        later Set-Cookie), **the most recently written value wins** — the
-        same "last-write-wins" rule the request layer uses when building
-        the Cookie header. This mirrors ``requests`` / browser behaviour and
-        keeps ``session.cookies.update(fresh_ck)`` authoritative over stale
-        response-scoped copies.
-
-        If *domain* is None, returns ALL cookies (wildcard included), still
-        deduped last-write-wins.
-
-        :param domain: optional domain filter (the request domain to match against)
-        :return: dict of {cookie_name: cookie_value}
-        """
-        matches = []  # list of Cookie objects that pass the domain filter
-        if domain is not None:
-            domain = Cookie._normalize_domain(domain)
-            for cookie_domain, domain_cookies in self._cookies.items():
-                if not cookie_domain or _domain_matches(cookie_domain, domain):
-                    matches.extend(domain_cookies.values())
-        else:
-            for domain_cookies in self._cookies.values():
-                matches.extend(domain_cookies.values())
-
-        # Sort by write sequence ascending so dict-overwrite yields the
-        # newest write for each name.
-        matches.sort(key=lambda c: c.seq)
-        return {c.name: c.value for c in matches}
-
-    def update(self, cookies: Union[Dict[str, str], 'CookieJar'], domain: Optional[str] = None):
-        """Update cookies from dict or another CookieJar.
-
-        :param cookies: dict {name: value} or CookieJar
-        :param domain: domain to use when updating from dict
-        """
-        if isinstance(cookies, CookieJar):
-            for d, domain_cookies in cookies._cookies.items():
-                for name, cookie in domain_cookies.items():
-                    self.set(name, cookie.value, cookie.domain, cookie.path)
-        elif isinstance(cookies, dict):
-            for name, value in cookies.items():
-                self.set(name, value, domain)
-
-    def clear(self, domain: Optional[str] = None):
-        """Clear cookies.
-
-        :param domain: if specified, only clear cookies for that domain; otherwise clear all
-        """
-        if domain is not None:
-            domain = Cookie._normalize_domain(domain)
-            if domain in self._cookies:
-                del self._cookies[domain]
-        else:
-            self._cookies.clear()
-
-    # Alias so that ``jar.set_cookie(name, value, domain)`` works as
-    # documented in the README.
     set_cookie = set
 
-    def delete(self, name: Optional[str] = None, domain: Optional[str] = None):
-        """Unified cookie deletion.
+    def update_from_set_cookie(self, values, request_url: str) -> None:
+        """Apply Set-Cookie values using RFC domain/path/expiry rules."""
+        parsed_url = urlparse(request_url)
+        request_domain = normalize_cookie_domain(parsed_url.hostname or '')
+        request_path = parsed_url.path or '/'
+        now = time.time()
 
-        - ``delete(name="key", domain="example.com")`` — delete one cookie
-          with the given *name* under the exact *domain*.
-        - ``delete(name="key")`` — delete the cookie named *key* from
-          **every** domain bucket.
-        - ``delete(domain="example.com")`` — delete **all** cookies stored
-          under *domain*.
+        for header in values:
+            parts = header.split(';')
+            name, separator, value = parts[0].strip().partition('=')
+            if not separator or not name:
+                continue
+            value = value.strip()
+            if len(value) >= 2 and value[0] == value[-1] == '"':
+                quoted = SimpleCookie()
+                try:
+                    quoted.load('__cookie=' + value)
+                    value = quoted['__cookie'].value
+                except (CookieError, KeyError):
+                    value = value[1:-1]
+            attributes = {}
+            for attribute in parts[1:]:
+                key, separator, attribute_value = attribute.strip().partition('=')
+                if key:
+                    attributes[key.lower()] = (
+                        attribute_value.strip().strip('"') if separator else True
+                    )
+            domain_value = attributes.get('domain', '')
+            domain_attr = normalize_cookie_domain(
+                domain_value if isinstance(domain_value, str) else ''
+            )
+            if domain_attr and not (
+                request_domain == domain_attr or
+                _domain_matches(domain_attr, request_domain)
+            ):
+                continue
+            domain = domain_attr or request_domain
+            host_only = not bool(domain_attr)
+            path_value = attributes.get('path', '')
+            path_attr = path_value if isinstance(path_value, str) else ''
+            path = path_attr if path_attr.startswith('/') else _default_path(request_path)
 
-        At least one of *name* or *domain* must be provided; passing neither
-        raises :class:`ValueError`.
+            expires = None
+            max_age_value = attributes.get('max-age', '')
+            max_age = max_age_value if isinstance(max_age_value, str) else ''
+            expires_value = attributes.get('expires', '')
+            expires_header = expires_value if isinstance(expires_value, str) else ''
+            if max_age:
+                try:
+                    expires = now + int(max_age)
+                except (TypeError, ValueError):
+                    expires = _parse_expires(expires_header)
+            else:
+                expires = _parse_expires(expires_header)
 
-        :param name: cookie name (optional)
-        :param domain: cookie domain (optional)
-        """
-        if name is None and domain is None:
-            raise ValueError("At least one of 'name' or 'domain' must be provided")
+            self.set(
+                name, value, domain=domain, path=path,
+                expires=expires, host_only=host_only,
+                secure=bool(attributes.get('secure', False)),
+            )
 
+    def cookies_for_request(self, url: str) -> list:
+        self._purge_expired()
+        parsed = urlparse(url)
+        domain = normalize_cookie_domain(parsed.hostname or '')
+        path = parsed.path or '/'
+        secure = parsed.scheme.lower() in ('https', 'wss')
+        matches = [
+            cookie for cookie in self._cookies.values()
+            if cookie.matches(domain, path, secure)
+        ]
+        # RFC 6265: longer paths first, then older creation time.
+        matches.sort(key=lambda cookie: (-len(cookie.path), cookie.creation_seq))
+        return matches
+
+    def get(self, name: str, default: Optional[str] = None,
+            domain: Optional[str] = None, path: Optional[str] = None) -> Optional[str]:
+        self._purge_expired()
+        candidates = [cookie for cookie in self._cookies.values() if cookie.name == name]
         if domain is not None:
-            domain = Cookie._normalize_domain(domain)
+            domain = normalize_cookie_domain(domain)
+            candidates = [
+                cookie for cookie in candidates
+                if not cookie.domain or domain == cookie.domain or (
+                    not cookie.host_only and _domain_matches(cookie.domain, domain)
+                )
+            ]
+        if path is not None:
+            candidates = [cookie for cookie in candidates if _path_matches(cookie.path, path)]
+        if not candidates:
+            return default
+        candidates.sort(key=lambda cookie: (len(cookie.path), cookie.seq))
+        return candidates[-1].value
 
-        if name is not None and domain is not None:
-            # Delete a specific cookie from a specific domain
-            if domain in self._cookies and name in self._cookies[domain]:
-                del self._cookies[domain][name]
-                if not self._cookies[domain]:
-                    del self._cookies[domain]
-        elif name is not None:
-            # Delete this name from ALL domains
-            for d in list(self._cookies.keys()):
-                if name in self._cookies[d]:
-                    del self._cookies[d][name]
-                    if not self._cookies[d]:
-                        del self._cookies[d]
-        else:
-            # domain is not None, name is None → delete entire domain
-            if domain in self._cookies:
-                del self._cookies[domain]
-
-    def remove(self, name: str, domain: Optional[str] = None):
-        """Remove a specific cookie.
-
-        :param name: cookie name
-        :param domain: if specified, only remove from that domain
-
-        .. deprecated:: Use :meth:`delete` instead for a more flexible API.
-        """
+    def get_dict(self, domain: Optional[str] = None,
+                 path: Optional[str] = None) -> Dict[str, str]:
+        self._purge_expired()
+        cookies = list(self._cookies.values())
         if domain is not None:
-            domain = Cookie._normalize_domain(domain)
-            if domain in self._cookies and name in self._cookies[domain]:
-                del self._cookies[domain][name]
-                if not self._cookies[domain]:
-                    del self._cookies[domain]
+            domain = normalize_cookie_domain(domain)
+            cookies = [
+                cookie for cookie in cookies
+                if not cookie.domain or domain == cookie.domain or (
+                    not cookie.host_only and _domain_matches(cookie.domain, domain)
+                )
+            ]
+        if path is not None:
+            cookies = [cookie for cookie in cookies if _path_matches(cookie.path, path)]
+        cookies.sort(key=lambda cookie: (len(cookie.path), cookie.seq))
+        return {cookie.name: cookie.value for cookie in cookies}
+
+    def update(self, cookies: Union[Mapping, 'CookieJar'],
+               domain: Optional[str] = None) -> None:
+        if isinstance(cookies, CookieJar):
+            if cookies is self:
+                return
+            for cookie in cookies.iter_cookies():
+                self.set(
+                    cookie.name, cookie.value, cookie.domain, cookie.path,
+                    expires=cookie.expires, host_only=cookie.host_only,
+                    secure=cookie.secure,
+                )
+        elif isinstance(cookies, Mapping):
+            for name, value in cookies.items():
+                self.set(name, value, domain)
         else:
-            for d in list(self._cookies.keys()):
-                if name in self._cookies[d]:
-                    del self._cookies[d][name]
-                    if not self._cookies[d]:
-                        del self._cookies[d]
+            raise TypeError('cookies must be a mapping or CookieJar')
+
+    def clear(self, domain: Optional[str] = None,
+              path: Optional[str] = None) -> None:
+        if domain is None and path is None:
+            self._cookies.clear()
+            return
+        domain = normalize_cookie_domain(domain or '')
+        for key, cookie in list(self._cookies.items()):
+            if (domain and cookie.domain != domain) or (path is not None and cookie.path != path):
+                continue
+            del self._cookies[key]
+
+    def clear_expired_cookies(self) -> None:
+        self._purge_expired()
+
+    def clear_session_cookies(self) -> None:
+        for key, cookie in list(self._cookies.items()):
+            if cookie.expires is None:
+                del self._cookies[key]
+
+    def delete(self, name: Optional[str] = None, domain: Optional[str] = None,
+               path: Optional[str] = None) -> None:
+        if name is None and domain is None and path is None:
+            raise ValueError("at least one of 'name', 'domain' or 'path' is required")
+        domain = normalize_cookie_domain(domain) if domain is not None else None
+        for key, cookie in list(self._cookies.items()):
+            if name is not None and cookie.name != name:
+                continue
+            if domain is not None and cookie.domain != domain:
+                continue
+            if path is not None and cookie.path != path:
+                continue
+            del self._cookies[key]
+
+    def remove(self, name: str, domain: Optional[str] = None,
+               path: Optional[str] = None) -> None:
+        self.delete(name=name, domain=domain, path=path)
 
     def copy(self) -> 'CookieJar':
-        """Return a copy of this CookieJar, preserving *default_domain* and
-        the relative write-ordering (seq) of every cookie so that
-        last-write-wins results stay identical to the original.
-        """
-        new_jar = CookieJar(default_domain=self._default_domain or None)
-        # Collect all cookies and replay them in original seq order so the
-        # new jar's monotonic counter mirrors the relative ordering.
-        all_cookies = sorted(self.iter_cookies(), key=lambda c: c.seq)
-        for cookie in all_cookies:
-            new_jar.set(cookie.name, cookie.value, cookie.domain, cookie.path)
-        return new_jar
+        jar = CookieJar(self._default_domain or None)
+        jar.update(self)
+        return jar
 
-    def _deduped(self) -> Dict[str, 'Cookie']:
-        """Return {name: Cookie} resolving same-name collisions via last-write-wins."""
-        latest: Dict[str, 'Cookie'] = {}
-        for domain_cookies in self._cookies.values():
-            for name, cookie in domain_cookies.items():
-                prev = latest.get(name)
-                if prev is None or cookie.seq > prev.seq:
-                    latest[name] = cookie
+    def _deduped(self) -> Dict[str, Cookie]:
+        self._purge_expired()
+        latest = {}
+        for cookie in self._cookies.values():
+            previous = latest.get(cookie.name)
+            if previous is None or cookie.seq > previous.seq:
+                latest[cookie.name] = cookie
         return latest
 
     def items(self) -> Iterator[Tuple[str, str]]:
-        """Yield (name, value) pairs, deduped by last-write-wins — matches
-        ``requests.Session().cookies.items()`` so ``dict(jar)`` and
-        ``get_dict()`` agree.
-        """
         for name, cookie in self._deduped().items():
-            yield (name, cookie.value)
+            yield name, cookie.value
 
     def keys(self) -> Iterator[str]:
-        """Yield all cookie names (deduped)."""
-        for name in self._deduped().keys():
-            yield name
+        return iter(self._deduped().keys())
 
     def values(self) -> Iterator[str]:
-        """Yield cookie values (deduped, last-write-wins)."""
         for cookie in self._deduped().values():
             yield cookie.value
 
     def list_domains(self) -> list:
-        """Return list of all domains that have cookies."""
-        return list(self._cookies.keys())
+        self._purge_expired()
+        return list(dict.fromkeys(cookie.domain for cookie in self._cookies.values()))
 
-    def items_for_domain(self, domain: str) -> Iterator[Tuple[str, str]]:
-        """Yield (name, value) pairs for cookies matching a domain.
+    def items_for_domain(self, domain: str, path: str = '/') -> Iterator[Tuple[str, str]]:
+        # Compatibility helper; use a synthetic HTTPS URL so Secure cookies remain visible.
+        host = '[%s]' % domain if ':' in domain and not domain.startswith('[') else domain
+        for cookie in self.cookies_for_request('https://%s%s' % (host, path)):
+            yield cookie.name, cookie.value
 
-        Uses the same matching rules as :meth:`get_dict`: RFC 6265 domain
-        matching **plus** wildcard (empty-domain) cookies, deduped via
-        last-write-wins so the result is consistent with what the session
-        actually sends on the wire.
+    def iter_cookies(self) -> Iterator[Cookie]:
+        self._purge_expired()
+        return iter(self._cookies.values())
 
-        :param domain: the request domain to match against
-        """
-        domain = Cookie._normalize_domain(domain)
-        matches = []
-        for cookie_domain, domain_cookies in self._cookies.items():
-            if not cookie_domain or _domain_matches(cookie_domain, domain):
-                matches.extend(domain_cookies.values())
-        matches.sort(key=lambda c: c.seq)
-        seen = {}
-        for c in matches:
-            seen[c.name] = c.value
-        for name, value in seen.items():
-            yield (name, value)
-
-    def __setitem__(self, name: str, value: str):
-        """Allow jar[name] = value syntax (sets with empty domain)."""
+    def __setitem__(self, name: str, value: str) -> None:
         self.set(name, value)
 
     def __getitem__(self, name: str) -> str:
-        """Allow jar[name] syntax."""
-        val = self.get(name)
-        if val is None:
+        value = self.get(name)
+        if value is None:
             raise KeyError(name)
-        return val
+        return value
 
     def __contains__(self, name: str) -> bool:
-        """Support 'name in jar' syntax."""
         return self.get(name) is not None
 
     def __bool__(self) -> bool:
-        """Truthiness: True if jar has any cookies."""
         return len(self) > 0
 
-    def __iter__(self) -> Iterator['Cookie']:
-        """Iterate over :class:`Cookie` objects — matches
-        ``requests.Session().cookies`` and ``http.cookiejar.CookieJar``, so
-        ``for c in session.cookies: c.name`` works as users expect.
-
-        ``dict(jar)`` / ``{**jar}`` / ``jar[name]`` still produce ``{name:
-        value}`` because they go through the mapping protocol
-        (``keys()`` + ``__getitem__``), which stays deduped last-write-wins.
-        """
+    def __iter__(self) -> Iterator[Cookie]:
         return self.iter_cookies()
 
-    def iter_cookies(self) -> Iterator['Cookie']:
-        """Yield every :class:`Cookie` object in the jar — including same-name
-        entries in different domain/path buckets. Equivalent to ``iter(jar)``;
-        kept as an explicit alias for call sites that want to make the intent
-        obvious.
-        """
-        for domain_cookies in self._cookies.values():
-            for cookie in domain_cookies.values():
-                yield cookie
-
     def __len__(self) -> int:
-        """Total number of stored :class:`Cookie` objects — matches
-        ``requests.Session().cookies`` and keeps ``len(list(jar)) == len(jar)``.
-        Use ``len(jar.get_dict())`` if you want the deduped name count.
-        """
-        return sum(len(bucket) for bucket in self._cookies.values())
+        self._purge_expired()
+        return len(self._cookies)
 
     def __repr__(self):
-        cookies_list = list(self.iter_cookies())
-        if not cookies_list:
-            return "<CookieJar[]>"
-        cookies_repr = ", ".join(repr(cookie) for cookie in cookies_list)
-        return f"<CookieJar[{cookies_repr}]>"
+        cookies = list(self.iter_cookies())
+        return '<CookieJar[%s]>' % ', '.join(repr(cookie) for cookie in cookies)
 
-    def __str__(self):
-        return self.__repr__()
+    __str__ = __repr__

@@ -4,13 +4,48 @@ Synchronous Session class for chrome_client.
 
 import os
 import json as json_lib
+import base64
 from typing import Optional, Dict, List, Tuple, Any
-from urllib.parse import urlparse, urlencode
+from urllib.parse import urlparse, urlencode, urljoin
 
 from ._types import HeadersType, CookiesType, DataType
 from ._cookies import CookieJar
-from ._response import Response, StreamResponse, HTTPStatusError, RequestError
-from ._utils import extract_domain, parse_set_cookie, domain_matches, normalize_cookie_domain
+from ._response import Request, PreparedRequest, Response, StreamResponse, HTTPStatusError, RequestError
+from ._utils import (
+    extract_domain,
+    prepare_redirect_headers, should_strip_auth,
+    validate_headers,
+)
+
+
+def _prepare_request(session, request: Request) -> PreparedRequest:
+    if not isinstance(request, Request):
+        raise TypeError("request must be a chrome_client.Request")
+    if not request.url:
+        raise RequestError("URL must be a non-empty string")
+    url = urljoin(session.base_url.rstrip('/') + '/', request.url) if session.base_url else request.url
+    params = dict(session.params)
+    if request.params:
+        if isinstance(request.params, dict):
+            params.update(request.params)
+        else:
+            params = list(params.items()) + list(request.params)
+    if params:
+        url += ('&' if '?' in url else '?') + urlencode(params, doseq=True)
+    headers = dict(session.headers)
+    headers.update(request.headers)
+    body = request.data
+    if request.json is not None:
+        body = json_lib.dumps(request.json).encode('utf-8')
+        if not any(name.lower() == 'content-type' for name in headers):
+            headers['Content-Type'] = 'application/json'
+    elif isinstance(body, (dict, list, tuple)):
+        body = urlencode(body).encode('utf-8')
+        if not any(name.lower() == 'content-type' for name in headers):
+            headers['Content-Type'] = 'application/x-www-form-urlencoded'
+    elif isinstance(body, str):
+        body = body.encode('utf-8')
+    return PreparedRequest((request.method or 'GET').upper(), url, headers, body)
 
 
 class Session:
@@ -18,15 +53,31 @@ class Session:
 
     MAX_REDIRECTS = 30  # Same default as requests
 
-    def __init__(self, client: 'CronetClient', session_id: str, verify: bool = True,
+    def __init__(self, client: Any, session_id: str, verify: bool = True,
                  headers: Optional[Dict[str, str]] = None,
-                 default_domain: Optional[str] = None):
+                 default_domain: Optional[str] = None,
+                 base_url: Optional[str] = None,
+                 params: Optional[Dict[str, Any]] = None,
+                 auth=None, proxies=None, timeout=30,
+                 allow_redirects: bool = True, max_redirects: int = 30,
+                 impersonate: Optional[str] = None):
         self._client = client
         self._session_id = session_id
         self._closed = False
         self._verify = verify
         self._cookies = CookieJar(default_domain=default_domain)
-        self._default_headers = dict(headers) if headers else {}  # Store default headers for session
+        self.headers = dict(headers) if headers else {}
+        self.params = dict(params) if params else {}
+        self.auth = auth
+        self.proxies = proxies or {}
+        self.verify = verify
+        self.stream = False
+        self.cert = None
+        self.max_redirects = max_redirects
+        self.timeout = timeout
+        self.allow_redirects = allow_redirects
+        self.impersonate = impersonate
+        self.base_url = base_url or ""
 
     @property
     def cookies(self) -> CookieJar:
@@ -114,7 +165,7 @@ class Session:
         self,
         headers: Optional[HeadersType] = None,
         cookies: Optional[CookiesType] = None,
-        domain: str = "",
+        request_url: str = "",
         method: str = "GET",
         has_body: bool = False,
         is_json: bool = False,
@@ -122,35 +173,19 @@ class Session:
     ) -> List[Tuple[str, str]]:
         """Prepare request headers with session defaults"""
 
-        # Check if user provided headers
-        user_provided = headers is not None
-
-        # Decide which headers to use
-        if user_provided:
-            # User provided, use user's headers
-            if isinstance(headers, dict):
-                headers_dict = headers.copy()
-            else:
-                headers_dict = dict(headers)
-
-            # Save to session (update default headers)
-            self._default_headers = headers_dict.copy()
-
-        elif self._default_headers:
-            # User didn't provide, use saved headers
-            headers_dict = self._default_headers.copy()
-
-            # Adjust existing headers based on request type
-            headers_dict = self._adjust_chrome_headers(
-                headers_dict,
-                method,
-                has_body=has_body,
-                is_json=is_json
-            )
-
-        else:
-            # No headers at all
-            headers_dict = {}
+        validate_headers(self.headers)
+        headers_dict = self._adjust_chrome_headers(
+            self.headers, method, has_body=has_body, is_json=is_json
+        )
+        if headers:
+            incoming_headers = dict(headers)
+            validate_headers(incoming_headers, allow_none=True)
+            for key, value in incoming_headers.items():
+                old = next((name for name in headers_dict if name.lower() == key.lower()), None)
+                if old is not None:
+                    del headers_dict[old]
+                if value is not None:
+                    headers_dict[key] = value
 
         # Add content-type if needed (and not already present)
         if need_content_type:
@@ -175,66 +210,77 @@ class Session:
             else:
                 normal_headers.append((k, v))
 
-        # Get matching cookies from CookieJar (last-write-wins via seq)
-        all_cookies = []
-        for cookie in self._cookies.iter_cookies():
-            if not cookie.domain or cookie.domain == domain or domain_matches(cookie.domain, domain):
-                all_cookies.append(cookie)
-        all_cookies.sort(key=lambda c: c.seq)
-        merged_cookies = {c.name: c.value for c in all_cookies}
-
+        cookie_pairs = [
+            (cookie.name, cookie.value)
+            for cookie in self._cookies.cookies_for_request(request_url)
+        ]
         if cookies:
-            merged_cookies.update(cookies)
+            request_pairs = (
+                [(cookie.name, cookie.value) for cookie in cookies.cookies_for_request(request_url)]
+                if isinstance(cookies, CookieJar) else list(cookies.items())
+            )
+            overridden = {name for name, _ in request_pairs}
+            cookie_pairs = [pair for pair in cookie_pairs if pair[0] not in overridden]
+            cookie_pairs.extend(request_pairs)
 
         result = normal_headers
 
-        if not cookie_headers and merged_cookies:
-            cookie_str = "; ".join([f"{k}={v}" for k, v in merged_cookies.items()])
+        if not cookie_headers and cookie_pairs:
+            cookie_str = "; ".join([f"{k}={v}" for k, v in cookie_pairs])
             result.append(("cookie", cookie_str))
         elif cookie_headers:
             result.extend(cookie_headers)
 
         result.extend(priority_headers)
+        validate_headers(dict(result))
         return result
 
-    def _update_cookies_from_response(self, headers: Dict[str, List[str]], request_domain: str):
-        """Extract Set-Cookie from response headers and update session cookies.
-
-        Domain handling follows RFC 6265:
-        - If Set-Cookie has Domain attribute, use it (normalized)
-        - If no Domain attribute, use the request domain (host-only cookie)
-        """
-        request_domain = normalize_cookie_domain(request_domain)
+    def _update_cookies_from_response(self, headers: Dict[str, List[str]], request_url: str):
         for name, values in headers.items():
             if name.lower() == 'set-cookie':
-                parsed_cookies = parse_set_cookie(values)
-                for cookie_name, cookie_value, cookie_domain, cookie_path in parsed_cookies:
-                    store_domain = cookie_domain if cookie_domain else request_domain
-                    self._cookies.set(cookie_name, cookie_value, store_domain, cookie_path)
+                self._cookies.update_from_set_cookie(values, request_url)
 
     def request(
         self,
         method: str,
         url: str,
-        *,
         params: Optional[Dict[str, Any]] = None,
         headers: Optional[HeadersType] = None,
         cookies: Optional[CookiesType] = None,
         data: DataType = None,
-        json: Optional[Dict[str, Any]] = None,
+        content=None,
+        json: Any = None,
+        files=None,
+        auth=None,
         timeout: Optional[float] = None,
         verify: Optional[bool] = None,
-        allow_redirects: bool = True,
-        stream: bool = False,
+        allow_redirects: Optional[bool] = None,
+        proxies=None,
+        proxy=None,
+        hooks=None,
+        stream: Optional[bool] = None,
+        cert=None,
+        impersonate=None,
+        max_redirects: Optional[int] = None,
         **kwargs
     ):
         """Send HTTP request - compatible with requests.request()"""
         if self._closed:
             raise RequestError("Session is closed")
 
+        if not isinstance(method, str) or not method:
+            raise RequestError("HTTP method must be a non-empty string")
+        if '\x00' in method:
+            raise RequestError("HTTP method must not contain NUL bytes")
+
+        if self.base_url:
+            url = urljoin(self.base_url.rstrip('/') + '/', url)
+
         # Validate URL
         if not url or not isinstance(url, str):
             raise RequestError("URL must be a non-empty string")
+        if '\x00' in url:
+            raise RequestError("URL must not contain NUL bytes")
 
         # Validate URL format
         parsed = urlparse(url)
@@ -245,11 +291,42 @@ class Session:
         if not parsed.netloc:
             raise RequestError(f"Invalid URL '{url}': No host supplied")
 
-        # verify parameter is ignored here (decided at session creation)
-        # but accept it for requests API compatibility
+        if verify is not None and verify != self.verify:
+            raise RequestError("per-request verify cannot differ from the Client setting")
+        if cert is not None:
+            raise NotImplementedError("client certificates are not supported by this Cronet backend")
+        if proxies is not None or proxy is not None:
+            configured = proxy if proxy is not None else proxies
+            if configured != self.proxies:
+                raise RequestError("per-request proxy cannot differ from the Client setting")
+        if impersonate is not None and impersonate != self.impersonate:
+            raise RequestError("per-request impersonate cannot differ from the Client setting")
+        if files is not None:
+            raise NotImplementedError("files= is not supported; use upload_file()")
+        if content is not None:
+            if data is not None or json is not None:
+                raise ValueError("content cannot be combined with data or json")
+            data = content
+        suppress_auth = kwargs.pop('_suppress_auth', False)
+        skip_default_params = kwargs.pop('_skip_default_params', False)
+        if kwargs and set(kwargs) != {'_redirects_remaining'}:
+            name = next(key for key in kwargs if key != '_redirects_remaining')
+            raise TypeError("unexpected keyword argument %r" % name)
 
+        allow_redirects = self.allow_redirects if allow_redirects is None else allow_redirects
+        stream = self.stream if stream is None else stream
+        redirect_limit = self.max_redirects if max_redirects is None else max_redirects
+        if not isinstance(redirect_limit, int) or redirect_limit < 0:
+            raise ValueError("max_redirects must be a non-negative integer")
+
+        query = {} if skip_default_params else dict(self.params)
         if params:
-            url = url + ('&' if '?' in url else '?') + urlencode(params)
+            if isinstance(params, dict):
+                query.update(params)
+            else:
+                query = list(query.items()) + list(params)
+        if query:
+            url = url + ('&' if '?' in url else '?') + urlencode(query, doseq=True)
 
         domain = extract_domain(url)
 
@@ -268,19 +345,31 @@ class Session:
         else:
             headers_to_prepare = list(headers)
 
+        request_auth = None if suppress_auth else (self.auth if auth is None else auth)
+        if request_auth is not None:
+            if not isinstance(request_auth, (tuple, list)) or len(request_auth) != 2:
+                raise TypeError("auth must be a (username, password) pair")
+            token = base64.b64encode(
+                (str(request_auth[0]) + ':' + str(request_auth[1])).encode('latin-1')
+            ).decode('ascii')
+            auth_header = {'Authorization': 'Basic ' + token}
+            if headers_to_prepare:
+                auth_header.update(dict(headers_to_prepare))
+            headers_to_prepare = auth_header
+
         # Determine request type
         is_json_request = json is not None
         has_body = data is not None or json is not None
         need_content_type = None
 
-        # Handle json parameter
+        # JSON accepts any serialisable value, not only dictionaries.
         if json is not None:
-            data = json
+            data = json_lib.dumps(json).encode('utf-8')
             need_content_type = 'application/json'
 
         # Handle data parameter
         elif data is not None:
-            if isinstance(data, dict):
+            if isinstance(data, (dict, list, tuple)):
                 data = urlencode(data)
                 need_content_type = 'application/x-www-form-urlencoded'
 
@@ -298,7 +387,7 @@ class Session:
         prepared_headers = self._prepare_headers(
             headers_to_prepare,
             cookies,
-            domain,
+            url,
             method=method,
             has_body=has_body,
             is_json=is_json_request,
@@ -328,15 +417,13 @@ class Session:
                 resp_headers[name].append(value)
 
             # Update session cookies from response
-            self._update_cookies_from_response(resp_headers, domain)
+            self._update_cookies_from_response(resp_headers, url)
 
             # Create response CookieJar
             response_cookies = CookieJar()
             for header_name, values in resp_headers.items():
                 if header_name.lower() == 'set-cookie':
-                    for cookie_name, cookie_value, cookie_domain, cookie_path in parse_set_cookie(values):
-                        store_domain = cookie_domain if cookie_domain else normalize_cookie_domain(domain)
-                        response_cookies.set(cookie_name, cookie_value, store_domain, cookie_path)
+                    response_cookies.update_from_set_cookie(values, url)
 
             # Handle redirects for streaming
             if allow_redirects and status_code in (301, 302, 303, 307, 308):
@@ -349,24 +436,34 @@ class Session:
                     reader.close()
                     redirects_remaining = kwargs.get('_redirects_remaining')
                     if redirects_remaining is None:
-                        redirects_remaining = self.MAX_REDIRECTS
+                        redirects_remaining = redirect_limit
                     if redirects_remaining <= 0:
-                        raise RequestError(f"Exceeded maximum redirects ({self.MAX_REDIRECTS})")
+                        raise RequestError(f"Exceeded maximum redirects ({redirect_limit})")
                     if not location.startswith(('http://', 'https://')):
                         from urllib.parse import urljoin
                         location = urljoin(url, location)
-                    redirect_method = 'GET' if status_code == 303 else method
+                    switch_to_get = status_code == 303 or (
+                        status_code in (301, 302) and method.upper() != 'HEAD'
+                    )
+                    redirect_method = 'GET' if switch_to_get else method
+                    redirect_headers = prepare_redirect_headers(
+                        headers_to_prepare, url, location, switch_to_get
+                    )
                     return self.request(
                         redirect_method, location,
-                        params=None, headers=headers_to_prepare, cookies=cookies,
-                        data=None if status_code == 303 else data, json=None,
+                        params=None, headers=redirect_headers, cookies=cookies,
+                        data=None if switch_to_get else data, json=None,
                         timeout=timeout, verify=verify, allow_redirects=True,
-                        stream=True, _redirects_remaining=redirects_remaining - 1
+                        stream=True, _redirects_remaining=redirects_remaining - 1,
+                        _suppress_auth=should_strip_auth(url, location),
+                        _skip_default_params=True,
                     )
 
-            return StreamResponse(
+            response = StreamResponse(
                 reader, url=url, cookies=response_cookies
             )
+            response.request = PreparedRequest(method.upper(), url, dict(prepared_headers), body)
+            return response
 
         # Non-streaming path
         response_dict = self._client._client.request_sync(
@@ -392,12 +489,10 @@ class Session:
         response_cookies = CookieJar()
         for header_name, values in resp_headers.items():
             if header_name.lower() == 'set-cookie':
-                for cookie_name, cookie_value, cookie_domain, cookie_path in parse_set_cookie(values):
-                    store_domain = cookie_domain if cookie_domain else normalize_cookie_domain(domain)
-                    response_cookies.set(cookie_name, cookie_value, store_domain, cookie_path)
+                response_cookies.update_from_set_cookie(values, url)
 
         # Update session cookies from response
-        self._update_cookies_from_response(resp_headers, domain)
+        self._update_cookies_from_response(resp_headers, url)
 
         # Handle redirects in Python layer
         if allow_redirects and status_code in (301, 302, 303, 307, 308):
@@ -411,10 +506,10 @@ class Session:
                 # Enforce redirect depth limit
                 redirects_remaining = kwargs.get('_redirects_remaining')
                 if redirects_remaining is None:
-                    redirects_remaining = self.MAX_REDIRECTS
+                    redirects_remaining = redirect_limit
                 if redirects_remaining <= 0:
                     raise RequestError(
-                        f"Exceeded maximum redirects ({self.MAX_REDIRECTS})"
+                        f"Exceeded maximum redirects ({redirect_limit})"
                     )
 
                 # Handle relative URLs
@@ -424,217 +519,94 @@ class Session:
 
                 # Follow redirect with updated cookies and headers
                 # For 303, change method to GET
-                redirect_method = 'GET' if status_code == 303 else method
+                switch_to_get = status_code == 303 or (
+                    status_code in (301, 302) and method.upper() != 'HEAD'
+                )
+                redirect_method = 'GET' if switch_to_get else method
+                redirect_headers = prepare_redirect_headers(
+                    headers_to_prepare, url, location, switch_to_get
+                )
 
-                # Recursively call request with updated URL
-                # Pass original per-request cookies so they carry through redirects
-                return self.request(
+                current = Response(
+                    status_code=status_code, _headers=resp_headers,
+                    content=body_bytes, url=url, _cookies=response_cookies,
+                )
+                current.request = PreparedRequest(
+                    method.upper(), url, dict(prepared_headers), body
+                )
+                followed = self.request(
                     redirect_method,
                     location,
                     params=None,  # Don't carry params on redirect
-                    headers=headers_to_prepare,  # Carry original headers
+                    headers=redirect_headers,
                     cookies=cookies,  # Carry per-request cookies through redirect
-                    data=None if status_code == 303 else data,  # Drop body for 303
+                    data=None if switch_to_get else data,
                     json=None,
                     timeout=timeout,
                     verify=verify,
                     allow_redirects=True,  # Continue following redirects
-                    _redirects_remaining=redirects_remaining - 1
+                    _redirects_remaining=redirects_remaining - 1,
+                    _suppress_auth=should_strip_auth(url, location),
+                    _skip_default_params=True,
                 )
+                followed.history = [current] + list(followed.history)
+                return followed
 
-        return Response(
+        response = Response(
             status_code=status_code,
             _headers=resp_headers,
             content=body_bytes,
             url=url,
             _cookies=response_cookies
         )
+        response.request = PreparedRequest(method.upper(), url, dict(prepared_headers), body)
+        if hooks:
+            callbacks = hooks.get('response', []) if isinstance(hooks, dict) else []
+            if callable(callbacks):
+                callbacks = [callbacks]
+            for callback in callbacks:
+                replacement = callback(response)
+                if replacement is not None:
+                    response = replacement
+        return response
 
-    def get(
-        self,
-        url: str,
-        *,
-        params: Optional[Dict[str, Any]] = None,
-        headers: Optional[HeadersType] = None,
-        cookies: Optional[CookiesType] = None,
-        timeout: Optional[float] = None,
-        verify: Optional[bool] = None,
-        allow_redirects: bool = True,
-        stream: bool = False
-    ):
-        """Send GET request"""
-        return self.request(
-            "GET",
-            url,
-            params=params,
-            headers=headers,
-            cookies=cookies,
-            timeout=timeout,
-            verify=verify,
-            allow_redirects=allow_redirects,
-            stream=stream
-        )
+    def get(self, url: str, params=None, **kwargs):
+        return self.request("GET", url, params=params, **kwargs)
 
-    def post(
-        self,
-        url: str,
-        *,
-        params: Optional[Dict[str, Any]] = None,
-        headers: Optional[HeadersType] = None,
-        cookies: Optional[CookiesType] = None,
-        data: DataType = None,
-        json: Optional[Dict[str, Any]] = None,
-        timeout: Optional[float] = None,
-        verify: Optional[bool] = None,
-        allow_redirects: bool = True,
-        stream: bool = False
-    ):
-        """Send POST request"""
-        return self.request(
-            "POST",
-            url,
-            params=params,
-            headers=headers,
-            cookies=cookies,
-            data=data,
-            json=json,
-            timeout=timeout,
-            verify=verify,
-            allow_redirects=allow_redirects,
-            stream=stream
-        )
+    def options(self, url: str, **kwargs):
+        return self.request("OPTIONS", url, **kwargs)
 
-    def put(
-        self,
-        url: str,
-        *,
-        params: Optional[Dict[str, Any]] = None,
-        headers: Optional[HeadersType] = None,
-        cookies: Optional[CookiesType] = None,
-        data: DataType = None,
-        json: Optional[Dict[str, Any]] = None,
-        timeout: Optional[float] = None,
-        verify: Optional[bool] = None,
-        allow_redirects: bool = True,
-        stream: bool = False
-    ):
-        """Send PUT request"""
-        return self.request(
-            "PUT",
-            url,
-            params=params,
-            headers=headers,
-            cookies=cookies,
-            data=data,
-            json=json,
-            timeout=timeout,
-            verify=verify,
-            allow_redirects=allow_redirects,
-            stream=stream
-        )
+    def head(self, url: str, **kwargs):
+        kwargs.setdefault("allow_redirects", False)
+        return self.request("HEAD", url, **kwargs)
 
-    def delete(
-        self,
-        url: str,
-        *,
-        params: Optional[Dict[str, Any]] = None,
-        headers: Optional[HeadersType] = None,
-        cookies: Optional[CookiesType] = None,
-        timeout: Optional[float] = None,
-        verify: Optional[bool] = None,
-        allow_redirects: bool = True,
-        stream: bool = False
-    ):
-        """Send DELETE request"""
-        return self.request(
-            "DELETE",
-            url,
-            params=params,
-            headers=headers,
-            cookies=cookies,
-            timeout=timeout,
-            verify=verify,
-            allow_redirects=allow_redirects,
-            stream=stream
-        )
+    def post(self, url: str, data=None, json=None, **kwargs):
+        return self.request("POST", url, data=data, json=json, **kwargs)
 
-    def patch(
-        self,
-        url: str,
-        *,
-        params: Optional[Dict[str, Any]] = None,
-        headers: Optional[HeadersType] = None,
-        cookies: Optional[CookiesType] = None,
-        data: DataType = None,
-        json: Optional[Dict[str, Any]] = None,
-        timeout: Optional[float] = None,
-        verify: Optional[bool] = None,
-        allow_redirects: bool = True,
-        stream: bool = False
-    ):
-        """Send PATCH request"""
-        return self.request(
-            "PATCH",
-            url,
-            params=params,
-            headers=headers,
-            cookies=cookies,
-            data=data,
-            json=json,
-            timeout=timeout,
-            verify=verify,
-            allow_redirects=allow_redirects,
-            stream=stream
-        )
+    def put(self, url: str, data=None, **kwargs):
+        return self.request("PUT", url, data=data, **kwargs)
 
-    def head(
-        self,
-        url: str,
-        *,
-        params: Optional[Dict[str, Any]] = None,
-        headers: Optional[HeadersType] = None,
-        cookies: Optional[CookiesType] = None,
-        timeout: Optional[float] = None,
-        verify: Optional[bool] = None,
-        allow_redirects: bool = True,
-        stream: bool = False
-    ):
-        """Send HEAD request"""
-        return self.request(
-            "HEAD",
-            url,
-            params=params,
-            headers=headers,
-            cookies=cookies,
-            timeout=timeout,
-            verify=verify,
-            allow_redirects=allow_redirects,
-            stream=stream
-        )
+    def patch(self, url: str, data=None, **kwargs):
+        return self.request("PATCH", url, data=data, **kwargs)
 
-    def options(
-        self,
-        url: str,
-        *,
-        params: Optional[Dict[str, Any]] = None,
-        headers: Optional[HeadersType] = None,
-        cookies: Optional[CookiesType] = None,
-        timeout: Optional[float] = None,
-        verify: Optional[bool] = None,
-        allow_redirects: bool = True,
-        stream: bool = False
-    ):
-        """Send OPTIONS request"""
+    def delete(self, url: str, **kwargs):
+        return self.request("DELETE", url, **kwargs)
+
+    def trace(self, url: str, **kwargs):
+        return self.request("TRACE", url, **kwargs)
+
+    def query(self, url: str, **kwargs):
+        return self.request("QUERY", url, **kwargs)
+
+    def prepare_request(self, request: Request) -> PreparedRequest:
+        return _prepare_request(self, request)
+
+    def send(self, request: PreparedRequest, **kwargs):
+        if not isinstance(request, PreparedRequest):
+            raise TypeError("request must be a PreparedRequest")
         return self.request(
-            "OPTIONS",
-            url,
-            params=params,
-            headers=headers,
-            cookies=cookies,
-            timeout=timeout,
-            verify=verify,
-            allow_redirects=allow_redirects,
-            stream=stream
+            request.method, request.url, headers=request.headers,
+            data=request.body, _skip_default_params=True, **kwargs
         )
 
     def upload_file(
@@ -722,47 +694,45 @@ class Session:
         chunk_size: int = 8192
     ) -> Dict[str, Any]:
         """Download file"""
-        # Send request
+        if not isinstance(chunk_size, int) or chunk_size <= 0:
+            raise ValueError("chunk_size must be a positive integer")
         response = self.get(
             url,
             headers=headers,
             cookies=cookies,
             timeout=timeout,
-            verify=verify
+            verify=verify,
+            stream=True,
         )
+        try:
+            response.raise_for_status()
+            save_dir = os.path.dirname(save_path)
+            if save_dir:
+                os.makedirs(save_dir, exist_ok=True)
+            size = 0
+            with open(save_path, 'wb') as file:
+                for chunk in response.iter_content(chunk_size):
+                    file.write(chunk)
+                    size += len(chunk)
+            return {
+                'file_path': save_path,
+                'size': size,
+                'status_code': response.status_code,
+                'headers': response.headers,
+            }
+        finally:
+            response.close()
 
-        # Check status code
-        if response.status_code >= 400:
-            raise HTTPStatusError(
-                f"Download failed with status {response.status_code}",
-                response=response
-            )
-
-        # Create directory (if not exists)
-        save_dir = os.path.dirname(save_path)
-        if save_dir and not os.path.exists(save_dir):
-            os.makedirs(save_dir, exist_ok=True)
-
-        # Save file
-        with open(save_path, 'wb') as f:
-            f.write(response.content)
-
-        return {
-            'file_path': save_path,
-            'size': len(response.content),
-            'status_code': response.status_code,
-            'headers': response.headers
-        }
-
-    def websocket(self, url, *, on_open=None, on_message=None, on_close=None, on_error=None, headers=None):
+    def websocket(self, url, *, on_open=None, on_message=None, on_close=None,
+                  on_error=None, sub_protocols=None, origin=None, headers=None):
         """Create a callback-based WebSocket connection.
 
         Args:
             url: WebSocket URL (ws:// or wss://)
             on_open: callback(ws) - called when connected
-            on_message: callback(ws, message, is_text) - called on message
-            on_close: callback(ws, code, reason, was_clean) - called on close
-            on_error: callback(ws, error, net_error) - called on error
+            on_message: callback(ws, message) - called on message
+            on_close: callback(ws, code, reason) - called on close
+            on_error: callback(ws, error) - called on error
             headers: list of (name, value) tuples for custom HTTP headers
 
         Returns:
@@ -770,11 +740,14 @@ class Session:
         """
         from ._websocket import WebSocketApp
         return WebSocketApp(
-            self, url,
+            self,
+            url,
             on_open=on_open,
             on_message=on_message,
             on_close=on_close,
             on_error=on_error,
+            sub_protocols=sub_protocols,
+            origin=origin,
             headers=headers,
         )
 

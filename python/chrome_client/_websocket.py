@@ -2,10 +2,9 @@
 WebSocketApp - High-level WebSocket client with callback interface.
 
 Usage:
-    from chrome_client import CronetClient, WebSocketApp
+    from chrome_client import Client
 
-    client = CronetClient(verify=False)
-    session_id = client.create_session()
+    client = Client(verify=False)
 
     def on_open(ws):
         ws.send("Hello")
@@ -16,9 +15,7 @@ Usage:
     def on_close(ws, code, reason):
         print(f"Closed: {code} {reason}")
 
-    ws = WebSocketApp(
-        client,
-        session_id,
+    ws = client.websocket(
         "wss://echo.websocket.org",
         on_open=on_open,
         on_message=on_message,
@@ -28,6 +25,7 @@ Usage:
 """
 
 import threading
+from collections.abc import Mapping
 from typing import Optional, Callable, Any
 
 
@@ -40,8 +38,7 @@ class WebSocketApp:
 
     def __init__(
         self,
-        client,
-        session_id: str,
+        session,
         url: str,
         on_open: Optional[Callable] = None,
         on_message: Optional[Callable] = None,
@@ -49,11 +46,11 @@ class WebSocketApp:
         on_error: Optional[Callable] = None,
         sub_protocols: Optional[str] = None,
         origin: Optional[str] = None,
+        headers=None,
     ):
         """
         Args:
-            client: CronetClient instance (must have a session created)
-            session_id: Session ID from client.create_session()
+            session: Client/Session instance.
             url: WebSocket URL (ws:// or wss://)
             on_open: Callback(ws) when connection opens
             on_message: Callback(ws, message) for text, Callback(ws, data) for binary
@@ -62,15 +59,19 @@ class WebSocketApp:
             sub_protocols: Optional comma-separated sub-protocols
             origin: Optional origin header
         """
-        self._client = client
-        self._session_id = session_id
+        self._session = session
+        self._native = session._client._client
+        self._session_id = session._session_id
         self._url = url
         self._on_open = on_open
         self._on_message = on_message
         self._on_close = on_close
         self._on_error = on_error
+        if sub_protocols is not None and not isinstance(sub_protocols, str):
+            sub_protocols = ", ".join(sub_protocols)
         self._sub_protocols = sub_protocols
         self._origin = origin
+        self._headers = list(headers.items()) if isinstance(headers, Mapping) else list(headers or [])
         self._ws = None
         self._running = False
         self._thread = None
@@ -113,13 +114,20 @@ class WebSocketApp:
             self._thread = threading.Thread(target=self._run, daemon=True)
             self._thread.start()
 
+    def run_in_background(self):
+        """Start the event loop in a daemon thread and return that thread."""
+        self.run_forever(blocking=False)
+        return self._thread
+
     def _run(self) -> None:
         """Internal event loop."""
         try:
             # Connect
-            self._ws = self._client._native.websocket_connect(
+            headers = list(self._headers)
+            self._ws = self._native.websocket_connect(
                 self._session_id,
                 self._url,
+                headers or None,
                 self._sub_protocols,
                 self._origin,
             )

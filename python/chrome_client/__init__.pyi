@@ -1,690 +1,280 @@
-"""
-Type stubs for chrome_client package
-"""
+from typing import Any, AsyncIterator, Dict, Iterable, Iterator, List, Mapping, Optional, Sequence, Tuple, Union
+from datetime import timedelta
 
-from typing import Dict, List, Tuple, Optional, Union, Any, Iterator, AsyncIterator, Generator, overload
-from dataclasses import dataclass
-
-HeadersType = Union[Dict[str, str], List[Tuple[str, str]]]
-CookiesType = Dict[str, str]
-DataType = Union[str, bytes, Dict[str, Any], None]
+HeadersType = Union[Mapping[str, Optional[str]], Sequence[Tuple[str, Optional[str]]]]
+CookiesType = Union[Mapping[str, str], "CookieJar"]
+DataType = Union[str, bytes, bytearray, Mapping[str, Any], Sequence[Tuple[str, Any]], None]
 
 class Cookie:
-    """单个 Cookie 对象"""
     name: str
     value: str
     domain: str
     path: str
-
-    def __init__(self, name: str, value: str, domain: str = "", path: str = "/") -> None: ...
-    def __repr__(self) -> str: ...
-    def __str__(self) -> str: ...
+    seq: int
+    creation_seq: int
+    expires: Optional[float]
+    host_only: bool
+    secure: bool
+    def __init__(self, name: str, value: str, domain: str = ..., path: str = ..., seq: int = ..., expires: Optional[float] = ..., host_only: bool = ..., secure: bool = ..., creation_seq: Optional[int] = ...) -> None: ...
+    def is_expired(self, now: Optional[float] = ...) -> bool: ...
+    def matches(self, domain: str, path: str = ..., secure: bool = ...) -> bool: ...
 
 class CookieJar:
-    """Cookie Jar 管理器 - 类似 requests.cookies.RequestsCookieJar"""
-
-    def __init__(self) -> None: ...
-    def set(self, name: str, value: str, domain: str = "", path: str = "/") -> None: ...
-    def get(self, name: str, domain: str = "") -> Optional[str]: ...
-    def get_dict(self, domain: str = "") -> Dict[str, str]: ...
-    def update(self, cookies: Union[Dict[str, str], 'CookieJar'], domain: str = "") -> None: ...
-    def clear(self, domain: str = "") -> None: ...
+    default_domain: str
+    def __init__(self, default_domain: Optional[str] = ...) -> None: ...
+    def set(self, name: str, value: str, domain: Optional[str] = ..., path: str = ..., expires: Optional[float] = ..., max_age: Optional[int] = ..., host_only: Optional[bool] = ..., secure: bool = ...) -> None: ...
+    def set_cookie(self, name: str, value: str, domain: Optional[str] = ..., path: str = ..., expires: Optional[float] = ..., max_age: Optional[int] = ..., host_only: Optional[bool] = ..., secure: bool = ...) -> None: ...
+    def update_from_set_cookie(self, values: Iterable[str], request_url: str) -> None: ...
+    def cookies_for_request(self, url: str) -> List[Cookie]: ...
+    def get(self, name: str, default: Optional[str] = ..., domain: Optional[str] = ..., path: Optional[str] = ...) -> Optional[str]: ...
+    def get_dict(self, domain: Optional[str] = ..., path: Optional[str] = ...) -> Dict[str, str]: ...
+    def update(self, cookies: CookiesType, domain: Optional[str] = ...) -> None: ...
+    def clear(self, domain: Optional[str] = ..., path: Optional[str] = ...) -> None: ...
+    def clear_expired_cookies(self) -> None: ...
+    def clear_session_cookies(self) -> None: ...
+    def set_default_domain(self, domain: Optional[str]) -> None: ...
+    def delete(self, name: Optional[str] = ..., domain: Optional[str] = ..., path: Optional[str] = ...) -> None: ...
+    def remove(self, name: str, domain: Optional[str] = ..., path: Optional[str] = ...) -> None: ...
+    def copy(self) -> "CookieJar": ...
+    def list_domains(self) -> List[str]: ...
+    def items_for_domain(self, domain: str, path: str = ...) -> Iterator[Tuple[str, str]]: ...
+    def iter_cookies(self) -> Iterator[Cookie]: ...
     def items(self) -> Iterator[Tuple[str, str]]: ...
     def keys(self) -> Iterator[str]: ...
     def values(self) -> Iterator[str]: ...
+    def __setitem__(self, name: str, value: str) -> None: ...
+    def __getitem__(self, name: str) -> str: ...
+    def __contains__(self, name: str) -> bool: ...
+    def __bool__(self) -> bool: ...
     def __iter__(self) -> Iterator[Cookie]: ...
     def __len__(self) -> int: ...
-    def __repr__(self) -> str: ...
-    def __str__(self) -> str: ...
 
-@dataclass
+class Request:
+    method: Optional[str]
+    url: Optional[str]
+    headers: Dict[str, str]
+    files: Any
+    data: Any
+    params: Any
+    auth: Any
+    cookies: Any
+    hooks: Any
+    json: Any
+    def __init__(self, method: Optional[str] = ..., url: Optional[str] = ..., headers: Any = ..., files: Any = ..., data: Any = ..., params: Any = ..., auth: Any = ..., cookies: Any = ..., hooks: Any = ..., json: Any = ...) -> None: ...
+
+class PreparedRequest:
+    method: str
+    url: str
+    headers: Dict[str, str]
+    body: Any
+    def __init__(self, method: str, url: str, headers: Optional[Dict[str, str]] = ..., body: Any = ...) -> None: ...
+
+class RequestError(Exception): ...
+class Timeout(RequestError): ...
+class ConnectionError(RequestError): ...
+class ProxyError(ConnectionError): ...
+class SSLError(ConnectionError): ...
+class HTTPStatusError(RequestError):
+    response: Union["Response", "StreamResponse"]
+    request: Optional[PreparedRequest]
+
+RequestException = RequestError
+HTTPError = HTTPStatusError
+
 class Response:
-    """HTTP 响应对象"""
     status_code: int
-    _headers: Dict[str, List[str]]
     content: bytes
-    url: str = ""
-    _cookies: CookieJar = ...
-    encoding: Optional[str] = None
-
-    @property
-    def headers(self) -> Dict[str, str]: ...
-    @property
-    def cookies(self) -> CookieJar: ...
-    def _get_encoding(self) -> str: ...
-    @property
-    def text(self) -> str: ...
-    def json(self) -> Any: ...
-    @property
-    def ok(self) -> bool: ...
-    def raise_for_status(self) -> None: ...
-
-class HTTPStatusError(Exception):
-    """HTTP 状态码错误"""
-    response: Response
-    def __init__(self, message: str, response: Response) -> None: ...
-
-class RequestError(Exception):
-    """请求错误"""
-    pass
-
-class StreamResponse:
-    """流式 HTTP 响应对象 - 兼容 requests stream=True 风格"""
     url: str
     encoding: Optional[str]
-
-    @property
-    def status_code(self) -> int: ...
+    reason: str
+    history: List["Response"]
+    request: Optional[PreparedRequest]
+    elapsed: timedelta
+    raw: Any
+    def __init__(self, status_code: int, _headers: Dict[str, List[str]], content: bytes, url: str = ..., _cookies: Optional[CookieJar] = ..., encoding: Optional[str] = ..., reason: str = ..., history: Optional[List["Response"]] = ..., request: Optional[PreparedRequest] = ..., elapsed: Optional[timedelta] = ..., raw: Any = ...) -> None: ...
     @property
     def headers(self) -> Dict[str, str]: ...
     @property
     def cookies(self) -> CookieJar: ...
     @property
+    def text(self) -> str: ...
+    @property
     def ok(self) -> bool: ...
+    @property
+    def is_redirect(self) -> bool: ...
+    def json(self, **kwargs: Any) -> Any: ...
     def raise_for_status(self) -> None: ...
-    def iter_content(self, chunk_size: Optional[int] = None) -> Generator[bytes, None, None]: ...
-    def iter_lines(self, chunk_size: int = 512, delimiter: Optional[str] = None) -> Generator[str, None, None]: ...
-    async def aiter_content(self, chunk_size: Optional[int] = None) -> AsyncIterator[bytes]: ...
-    async def aiter_lines(self, chunk_size: int = 512, delimiter: Optional[str] = None) -> AsyncIterator[str]: ...
+    def iter_content(self, chunk_size: Optional[int] = ..., decode_unicode: bool = ...) -> Iterable[Union[bytes, str]]: ...
+    def iter_lines(self, chunk_size: int = ..., decode_unicode: bool = ..., delimiter: Any = ...) -> Iterable[Union[bytes, str]]: ...
+    def close(self) -> None: ...
+    def __bool__(self) -> bool: ...
+
+class StreamResponse:
+    status_code: int
+    url: str
+    encoding: Optional[str]
+    reason: str
+    history: List[Response]
+    request: Optional[PreparedRequest]
+    elapsed: timedelta
+    raw: Any
+    def __init__(self, reader: Any, url: str = ..., cookies: Optional[CookieJar] = ..., encoding: Optional[str] = ..., session: Any = ...) -> None: ...
+    @property
+    def headers(self) -> Dict[str, str]: ...
+    @property
+    def cookies(self) -> CookieJar: ...
     @property
     def content(self) -> bytes: ...
     @property
     def text(self) -> str: ...
-    def json(self) -> Any: ...
+    @property
+    def ok(self) -> bool: ...
+    @property
+    def is_redirect(self) -> bool: ...
+    def json(self, **kwargs: Any) -> Any: ...
+    def raise_for_status(self) -> None: ...
+    def iter_content(self, chunk_size: Optional[int] = ...) -> Iterable[bytes]: ...
+    def iter_lines(self, chunk_size: int = ..., decode_unicode: bool = ..., delimiter: Optional[str] = ...) -> Iterable[Union[bytes, str]]: ...
+    def aiter_content(self, chunk_size: Optional[int] = ...) -> AsyncIterator[bytes]: ...
+    def aiter_lines(self, chunk_size: int = ..., decode_unicode: bool = ..., delimiter: Optional[str] = ...) -> AsyncIterator[Union[bytes, str]]: ...
+    async def acontent(self) -> bytes: ...
+    async def atext(self) -> str: ...
     def close(self) -> None: ...
-    def __enter__(self) -> 'StreamResponse': ...
+    async def aclose(self) -> None: ...
+    def __enter__(self) -> "StreamResponse": ...
     def __exit__(self, *args: Any) -> None: ...
-    async def __aenter__(self) -> 'StreamResponse': ...
+    async def __aenter__(self) -> "StreamResponse": ...
+    async def __aexit__(self, *args: Any) -> None: ...
+    def __bool__(self) -> bool: ...
+
+class Client:
+    headers: Dict[str, str]
+    cookies: CookieJar
+    params: Dict[str, Any]
+    auth: Optional[Tuple[str, str]]
+    proxies: Union[str, Dict[str, str]]
+    verify: bool
+    stream: bool
+    cert: Any
+    max_redirects: int
+    timeout: Any
+    allow_redirects: bool
+    impersonate: Optional[str]
+    base_url: str
+    def __init__(
+        self, verify: bool = ..., proxies: Optional[Union[str, Dict[str, str]]] = ...,
+        timeout: Any = ..., impersonate: Optional[str] = ...,
+        headers: Optional[Dict[str, str]] = ..., cookies: Optional[CookiesType] = ...,
+        auth: Optional[Tuple[str, str]] = ..., proxy: Optional[str] = ...,
+        base_url: Optional[str] = ..., params: Optional[Dict[str, Any]] = ...,
+        allow_redirects: bool = ..., max_redirects: int = ...,
+        default_headers: bool = ..., timeout_ms: Optional[int] = ...,
+        default_domain: Optional[str] = ...
+    ) -> None: ...
+    def request(
+        self, method: str, url: str, params: Any = ..., headers: Optional[HeadersType] = ...,
+        cookies: Optional[CookiesType] = ..., data: DataType = ..., content: Any = ...,
+        json: Any = ..., files: Any = ..., auth: Any = ..., timeout: Any = ...,
+        verify: Optional[bool] = ..., allow_redirects: Optional[bool] = ...,
+        proxies: Any = ..., proxy: Optional[str] = ..., hooks: Any = ...,
+        stream: Optional[bool] = ..., cert: Any = ..., impersonate: Optional[str] = ...,
+        max_redirects: Optional[int] = ..., **kwargs: Any
+    ) -> Union[Response, StreamResponse]: ...
+    def get(self, url: str, params: Any = ..., **kwargs: Any) -> Union[Response, StreamResponse]: ...
+    def options(self, url: str, **kwargs: Any) -> Union[Response, StreamResponse]: ...
+    def head(self, url: str, **kwargs: Any) -> Union[Response, StreamResponse]: ...
+    def post(self, url: str, data: DataType = ..., json: Any = ..., **kwargs: Any) -> Union[Response, StreamResponse]: ...
+    def put(self, url: str, data: DataType = ..., **kwargs: Any) -> Union[Response, StreamResponse]: ...
+    def patch(self, url: str, data: DataType = ..., **kwargs: Any) -> Union[Response, StreamResponse]: ...
+    def delete(self, url: str, **kwargs: Any) -> Union[Response, StreamResponse]: ...
+    def trace(self, url: str, **kwargs: Any) -> Union[Response, StreamResponse]: ...
+    def query(self, url: str, **kwargs: Any) -> Union[Response, StreamResponse]: ...
+    def prepare_request(self, request: Request) -> PreparedRequest: ...
+    def send(self, request: PreparedRequest, **kwargs: Any) -> Union[Response, StreamResponse]: ...
+    def upload_file(self, url: str, file_path: str, **kwargs: Any) -> Response: ...
+    def download_file(self, url: str, save_path: str, **kwargs: Any) -> Dict[str, Any]: ...
+    def websocket(self, url: str, **kwargs: Any) -> "WebSocketApp": ...
+    def close(self) -> None: ...
+    def __enter__(self) -> "Client": ...
+    def __exit__(self, *args: Any) -> None: ...
+
+class Session(Client):
+    def __init__(self, verify: bool = ..., proxies: Any = ..., timeout: Any = ..., impersonate: Optional[str] = ..., headers: Any = ..., cookies: Any = ..., auth: Any = ..., proxy: Optional[str] = ..., base_url: Optional[str] = ..., params: Any = ..., allow_redirects: bool = ..., max_redirects: int = ..., default_headers: bool = ..., timeout_ms: Optional[int] = ..., default_domain: Optional[str] = ...) -> None: ...
+
+class AsyncClient:
+    headers: Dict[str, str]
+    cookies: CookieJar
+    params: Dict[str, Any]
+    auth: Optional[Tuple[str, str]]
+    proxies: Union[str, Dict[str, str]]
+    verify: bool
+    stream: bool
+    cert: Any
+    max_redirects: int
+    timeout: Any
+    allow_redirects: bool
+    impersonate: Optional[str]
+    base_url: str
+    def __init__(self, verify: bool = ..., proxies: Any = ..., timeout: Any = ..., impersonate: Optional[str] = ..., headers: Any = ..., cookies: Any = ..., auth: Any = ..., proxy: Optional[str] = ..., base_url: Optional[str] = ..., params: Any = ..., allow_redirects: bool = ..., max_redirects: int = ..., default_headers: bool = ..., timeout_ms: Optional[int] = ..., default_domain: Optional[str] = ...) -> None: ...
+    async def request(self, method: str, url: str, **kwargs: Any) -> Union[Response, StreamResponse]: ...
+    async def get(self, url: str, params: Any = ..., **kwargs: Any) -> Union[Response, StreamResponse]: ...
+    async def options(self, url: str, **kwargs: Any) -> Union[Response, StreamResponse]: ...
+    async def head(self, url: str, **kwargs: Any) -> Union[Response, StreamResponse]: ...
+    async def post(self, url: str, data: DataType = ..., json: Any = ..., **kwargs: Any) -> Union[Response, StreamResponse]: ...
+    async def put(self, url: str, data: DataType = ..., **kwargs: Any) -> Union[Response, StreamResponse]: ...
+    async def patch(self, url: str, data: DataType = ..., **kwargs: Any) -> Union[Response, StreamResponse]: ...
+    async def delete(self, url: str, **kwargs: Any) -> Union[Response, StreamResponse]: ...
+    async def trace(self, url: str, **kwargs: Any) -> Union[Response, StreamResponse]: ...
+    async def query(self, url: str, **kwargs: Any) -> Union[Response, StreamResponse]: ...
+    def prepare_request(self, request: Request) -> PreparedRequest: ...
+    async def send(self, request: PreparedRequest, **kwargs: Any) -> Union[Response, StreamResponse]: ...
+    async def upload_file(self, url: str, file_path: str, **kwargs: Any) -> Response: ...
+    async def download_file(self, url: str, save_path: str, **kwargs: Any) -> Dict[str, Any]: ...
+    def websocket(self, url: str, **kwargs: Any) -> "WebSocketApp": ...
+    async def close(self) -> None: ...
+    async def __aenter__(self) -> "AsyncClient": ...
     async def __aexit__(self, *args: Any) -> None: ...
 
-class Session:
-    """Session 对象 - 兼容 requests.Session"""
+class AsyncSession(AsyncClient): ...
 
-    def __init__(self, client: Any, session_id: str, verify: bool = True) -> None: ...
-
+class WebSocketApp:
+    def __init__(self, session: Union[Client, AsyncClient], url: str, on_open: Any = ..., on_message: Any = ..., on_close: Any = ..., on_error: Any = ..., sub_protocols: Optional[Union[str, Sequence[str]]] = ..., origin: Optional[str] = ..., headers: Optional[HeadersType] = ...) -> None: ...
     @property
-    def cookies(self) -> CookieJar: ...
+    def connected(self) -> bool: ...
+    def send(self, message: str) -> None: ...
+    def send_bytes(self, data: bytes) -> None: ...
+    def close(self, code: int = ..., reason: str = ...) -> None: ...
+    def run_forever(self, blocking: bool = ...) -> Any: ...
+    def run_in_background(self) -> Any: ...
 
-    def request(
-        self,
-        method: str,
-        url: str,
-        *,
-        params: Optional[Dict[str, Any]] = None,
-        headers: Optional[HeadersType] = None,
-        cookies: Optional[CookiesType] = None,
-        data: DataType = None,
-        json: Optional[Dict[str, Any]] = None,
-        timeout: Optional[float] = None,
-        verify: Optional[bool] = None,
-        allow_redirects: bool = True,
-        stream: bool = False
-    ) -> Union[Response, StreamResponse]: ...
+def request(method: str, url: str, **kwargs: Any) -> Union[Response, StreamResponse]: ...
+def session(**kwargs: Any) -> Session: ...
+def get(url: str, params: Any = ..., **kwargs: Any) -> Union[Response, StreamResponse]: ...
+def options(url: str, **kwargs: Any) -> Union[Response, StreamResponse]: ...
+def head(url: str, **kwargs: Any) -> Union[Response, StreamResponse]: ...
+def post(url: str, data: DataType = ..., json: Any = ..., **kwargs: Any) -> Union[Response, StreamResponse]: ...
+def put(url: str, data: DataType = ..., **kwargs: Any) -> Union[Response, StreamResponse]: ...
+def patch(url: str, data: DataType = ..., **kwargs: Any) -> Union[Response, StreamResponse]: ...
+def delete(url: str, **kwargs: Any) -> Union[Response, StreamResponse]: ...
+def trace(url: str, **kwargs: Any) -> Union[Response, StreamResponse]: ...
+def query(url: str, **kwargs: Any) -> Union[Response, StreamResponse]: ...
+def upload_file(url: str, file_path: str, **kwargs: Any) -> Response: ...
+def download_file(url: str, save_path: str, **kwargs: Any) -> Dict[str, Any]: ...
 
-    def get(
-        self,
-        url: str,
-        *,
-        params: Optional[Dict[str, Any]] = None,
-        headers: Optional[HeadersType] = None,
-        cookies: Optional[CookiesType] = None,
-        timeout: Optional[float] = None,
-        verify: Optional[bool] = None,
-        allow_redirects: bool = True,
-        stream: bool = False
-    ) -> Union[Response, StreamResponse]: ...
+async def async_request(method: str, url: str, **kwargs: Any) -> Union[Response, StreamResponse]: ...
+async def async_get(url: str, params: Any = ..., **kwargs: Any) -> Union[Response, StreamResponse]: ...
+async def async_options(url: str, **kwargs: Any) -> Union[Response, StreamResponse]: ...
+async def async_head(url: str, **kwargs: Any) -> Union[Response, StreamResponse]: ...
+async def async_post(url: str, data: DataType = ..., json: Any = ..., **kwargs: Any) -> Union[Response, StreamResponse]: ...
+async def async_put(url: str, data: DataType = ..., **kwargs: Any) -> Union[Response, StreamResponse]: ...
+async def async_patch(url: str, data: DataType = ..., **kwargs: Any) -> Union[Response, StreamResponse]: ...
+async def async_delete(url: str, **kwargs: Any) -> Union[Response, StreamResponse]: ...
+async def async_upload_file(url: str, file_path: str, **kwargs: Any) -> Response: ...
+async def async_download_file(url: str, save_path: str, **kwargs: Any) -> Dict[str, Any]: ...
 
-    def post(
-        self,
-        url: str,
-        *,
-        params: Optional[Dict[str, Any]] = None,
-        headers: Optional[HeadersType] = None,
-        cookies: Optional[CookiesType] = None,
-        data: DataType = None,
-        json: Optional[Dict[str, Any]] = None,
-        timeout: Optional[float] = None,
-        verify: Optional[bool] = None,
-        allow_redirects: bool = True,
-        stream: bool = False
-    ) -> Union[Response, StreamResponse]: ...
+def set_tls_profiles(profiles: Dict[str, Dict[str, Any]]) -> None: ...
+def add_tls_profile(name: str, profile: Dict[str, Any]) -> None: ...
+def get_tls_profiles() -> Dict[str, Dict[str, Any]]: ...
+def clear_tls_profiles_cache() -> None: ...
 
-    def put(
-        self,
-        url: str,
-        *,
-        params: Optional[Dict[str, Any]] = None,
-        headers: Optional[HeadersType] = None,
-        cookies: Optional[CookiesType] = None,
-        data: DataType = None,
-        json: Optional[Dict[str, Any]] = None,
-        timeout: Optional[float] = None,
-        verify: Optional[bool] = None,
-        allow_redirects: bool = True,
-        stream: bool = False
-    ) -> Union[Response, StreamResponse]: ...
-
-    def delete(
-        self,
-        url: str,
-        *,
-        params: Optional[Dict[str, Any]] = None,
-        headers: Optional[HeadersType] = None,
-        cookies: Optional[CookiesType] = None,
-        timeout: Optional[float] = None,
-        verify: Optional[bool] = None,
-        allow_redirects: bool = True,
-        stream: bool = False
-    ) -> Union[Response, StreamResponse]: ...
-
-    def patch(
-        self,
-        url: str,
-        *,
-        params: Optional[Dict[str, Any]] = None,
-        headers: Optional[HeadersType] = None,
-        cookies: Optional[CookiesType] = None,
-        data: DataType = None,
-        json: Optional[Dict[str, Any]] = None,
-        timeout: Optional[float] = None,
-        verify: Optional[bool] = None,
-        allow_redirects: bool = True,
-        stream: bool = False
-    ) -> Union[Response, StreamResponse]: ...
-
-    def head(
-        self,
-        url: str,
-        *,
-        params: Optional[Dict[str, Any]] = None,
-        headers: Optional[HeadersType] = None,
-        cookies: Optional[CookiesType] = None,
-        timeout: Optional[float] = None,
-        verify: Optional[bool] = None,
-        allow_redirects: bool = True,
-        stream: bool = False
-    ) -> Union[Response, StreamResponse]: ...
-
-    def options(
-        self,
-        url: str,
-        *,
-        params: Optional[Dict[str, Any]] = None,
-        headers: Optional[HeadersType] = None,
-        cookies: Optional[CookiesType] = None,
-        timeout: Optional[float] = None,
-        verify: Optional[bool] = None,
-        allow_redirects: bool = True,
-        stream: bool = False
-    ) -> Union[Response, StreamResponse]: ...
-
-    def upload_file(
-        self,
-        url: str,
-        file_path: str,
-        *,
-        field_name: str = "file",
-        additional_fields: Optional[Dict[str, str]] = None,
-        headers: Optional[HeadersType] = None,
-        cookies: Optional[CookiesType] = None,
-        timeout: Optional[float] = None,
-        verify: Optional[bool] = None
-    ) -> Response: ...
-
-    def download_file(
-        self,
-        url: str,
-        save_path: str,
-        *,
-        headers: Optional[HeadersType] = None,
-        cookies: Optional[CookiesType] = None,
-        timeout: Optional[float] = None,
-        verify: Optional[bool] = None,
-        chunk_size: int = 8192
-    ) -> Dict[str, Any]: ...
-
-    def close(self) -> None: ...
-    def __enter__(self) -> Session: ...
-    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None: ...
-
-
-class AsyncSession:
-    """Async Session 对象 - 支持 async/await"""
-
-    def __init__(self, client: Any, session_id: str, verify: bool = True) -> None: ...
-
-    @property
-    def cookies(self) -> CookieJar: ...
-
-    async def request(
-        self,
-        method: str,
-        url: str,
-        *,
-        params: Optional[Dict[str, Any]] = None,
-        headers: Optional[HeadersType] = None,
-        cookies: Optional[CookiesType] = None,
-        data: DataType = None,
-        json: Optional[Dict[str, Any]] = None,
-        timeout: Optional[float] = None,
-        verify: Optional[bool] = None,
-        allow_redirects: bool = True,
-        stream: bool = False
-    ) -> Union[Response, StreamResponse]: ...
-
-    async def get(
-        self,
-        url: str,
-        *,
-        params: Optional[Dict[str, Any]] = None,
-        headers: Optional[HeadersType] = None,
-        cookies: Optional[CookiesType] = None,
-        timeout: Optional[float] = None,
-        verify: Optional[bool] = None,
-        allow_redirects: bool = True,
-        stream: bool = False
-    ) -> Union[Response, StreamResponse]: ...
-
-    async def post(
-        self,
-        url: str,
-        *,
-        params: Optional[Dict[str, Any]] = None,
-        headers: Optional[HeadersType] = None,
-        cookies: Optional[CookiesType] = None,
-        data: DataType = None,
-        json: Optional[Dict[str, Any]] = None,
-        timeout: Optional[float] = None,
-        verify: Optional[bool] = None,
-        allow_redirects: bool = True,
-        stream: bool = False
-    ) -> Union[Response, StreamResponse]: ...
-
-    async def put(
-        self,
-        url: str,
-        *,
-        params: Optional[Dict[str, Any]] = None,
-        headers: Optional[HeadersType] = None,
-        cookies: Optional[CookiesType] = None,
-        data: DataType = None,
-        json: Optional[Dict[str, Any]] = None,
-        timeout: Optional[float] = None,
-        verify: Optional[bool] = None,
-        allow_redirects: bool = True,
-        stream: bool = False
-    ) -> Union[Response, StreamResponse]: ...
-
-    async def delete(
-        self,
-        url: str,
-        *,
-        params: Optional[Dict[str, Any]] = None,
-        headers: Optional[HeadersType] = None,
-        cookies: Optional[CookiesType] = None,
-        timeout: Optional[float] = None,
-        verify: Optional[bool] = None,
-        allow_redirects: bool = True,
-        stream: bool = False
-    ) -> Union[Response, StreamResponse]: ...
-
-    async def patch(
-        self,
-        url: str,
-        *,
-        params: Optional[Dict[str, Any]] = None,
-        headers: Optional[HeadersType] = None,
-        cookies: Optional[CookiesType] = None,
-        data: DataType = None,
-        json: Optional[Dict[str, Any]] = None,
-        timeout: Optional[float] = None,
-        verify: Optional[bool] = None,
-        allow_redirects: bool = True,
-        stream: bool = False
-    ) -> Union[Response, StreamResponse]: ...
-
-    async def head(
-        self,
-        url: str,
-        *,
-        params: Optional[Dict[str, Any]] = None,
-        headers: Optional[HeadersType] = None,
-        cookies: Optional[CookiesType] = None,
-        timeout: Optional[float] = None,
-        verify: Optional[bool] = None,
-        allow_redirects: bool = True,
-        stream: bool = False
-    ) -> Union[Response, StreamResponse]: ...
-
-    async def options(
-        self,
-        url: str,
-        *,
-        params: Optional[Dict[str, Any]] = None,
-        headers: Optional[HeadersType] = None,
-        cookies: Optional[CookiesType] = None,
-        timeout: Optional[float] = None,
-        verify: Optional[bool] = None,
-        allow_redirects: bool = True,
-        stream: bool = False
-    ) -> Union[Response, StreamResponse]: ...
-
-    async def upload_file(
-        self,
-        url: str,
-        file_path: str,
-        *,
-        field_name: str = "file",
-        additional_fields: Optional[Dict[str, str]] = None,
-        headers: Optional[HeadersType] = None,
-        cookies: Optional[CookiesType] = None,
-        timeout: Optional[float] = None,
-        verify: Optional[bool] = None
-    ) -> Response: ...
-
-    async def download_file(
-        self,
-        url: str,
-        save_path: str,
-        *,
-        headers: Optional[HeadersType] = None,
-        cookies: Optional[CookiesType] = None,
-        timeout: Optional[float] = None,
-        verify: Optional[bool] = None,
-        chunk_size: int = 8192
-    ) -> Dict[str, Any]: ...
-
-    async def close(self) -> None: ...
-    async def __aenter__(self) -> AsyncSession: ...
-    async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None: ...
-
-
-def _load_tls_profile(chrometls: Optional[str] = None) -> Optional[Dict[str, List[str]]]: ...
-
-
-def CronetClient(
-    verify: bool = True,
-    proxies: Optional[Union[str, Dict[str, str]]] = None,
-    timeout_ms: int = 30000,
-    chrometls: Optional[str] = "chrome_150"
-) -> Session:
-    """
-    创建 Cronet Session - 类似 requests.Session()
-
-    Args:
-        verify: 是否验证 SSL 证书（False 跳过验证）
-        proxies: 代理配置，支持字典格式 {"https": "http://127.0.0.1:8080"} 或字符串
-        timeout_ms: 超时时间（毫秒）
-        chrometls: TLS 指纹配置名称（如 "chrome_150"）
-
-    Returns:
-        Session 对象
-    """
-    ...
-
-
-def AsyncCronetClient(
-    verify: bool = True,
-    proxies: Optional[Union[str, Dict[str, str]]] = None,
-    timeout_ms: int = 30000,
-    chrometls: Optional[str] = "chrome_150"
-) -> AsyncSession:
-    """
-    创建异步 Cronet Session - 支持 async/await
-
-    Args:
-        verify: 是否验证 SSL 证书（False 跳过验证）
-        proxies: 代理配置，支持字典格式 {"https": "http://127.0.0.1:8080"} 或字符串
-        timeout_ms: 超时时间（毫秒）
-        chrometls: TLS 指纹配置名称（如 "chrome_150"）
-
-    Returns:
-        AsyncSession 对象
-    """
-    ...
-
-# 模块级别的便捷函数
-def get(
-    url: str,
-    *,
-    params: Optional[Dict[str, Any]] = None,
-    headers: Optional[HeadersType] = None,
-    cookies: Optional[CookiesType] = None,
-    timeout: Optional[float] = None,
-    verify: bool = True,
-    allow_redirects: bool = True,
-    stream: bool = False,
-    proxies: Optional[Union[str, Dict[str, str]]] = None,
-    chrometls: Optional[str] = None
-) -> Union[Response, StreamResponse]: ...
-
-def post(
-    url: str,
-    *,
-    params: Optional[Dict[str, Any]] = None,
-    headers: Optional[HeadersType] = None,
-    cookies: Optional[CookiesType] = None,
-    data: DataType = None,
-    json: Optional[Dict[str, Any]] = None,
-    timeout: Optional[float] = None,
-    verify: bool = True,
-    allow_redirects: bool = True,
-    stream: bool = False,
-    proxies: Optional[Union[str, Dict[str, str]]] = None,
-    chrometls: Optional[str] = None
-) -> Union[Response, StreamResponse]: ...
-
-def put(
-    url: str,
-    *,
-    params: Optional[Dict[str, Any]] = None,
-    headers: Optional[HeadersType] = None,
-    cookies: Optional[CookiesType] = None,
-    data: DataType = None,
-    json: Optional[Dict[str, Any]] = None,
-    timeout: Optional[float] = None,
-    verify: bool = True,
-    allow_redirects: bool = True,
-    stream: bool = False,
-    proxies: Optional[Union[str, Dict[str, str]]] = None,
-    chrometls: Optional[str] = None
-) -> Union[Response, StreamResponse]: ...
-
-def delete(
-    url: str,
-    *,
-    params: Optional[Dict[str, Any]] = None,
-    headers: Optional[HeadersType] = None,
-    cookies: Optional[CookiesType] = None,
-    timeout: Optional[float] = None,
-    verify: bool = True,
-    allow_redirects: bool = True,
-    stream: bool = False,
-    proxies: Optional[Union[str, Dict[str, str]]] = None,
-    chrometls: Optional[str] = None
-) -> Union[Response, StreamResponse]: ...
-
-def patch(
-    url: str,
-    *,
-    params: Optional[Dict[str, Any]] = None,
-    headers: Optional[HeadersType] = None,
-    cookies: Optional[CookiesType] = None,
-    data: DataType = None,
-    json: Optional[Dict[str, Any]] = None,
-    timeout: Optional[float] = None,
-    verify: bool = True,
-    allow_redirects: bool = True,
-    stream: bool = False,
-    proxies: Optional[Union[str, Dict[str, str]]] = None,
-    chrometls: Optional[str] = None
-) -> Union[Response, StreamResponse]: ...
-
-def head(
-    url: str,
-    *,
-    params: Optional[Dict[str, Any]] = None,
-    headers: Optional[HeadersType] = None,
-    cookies: Optional[CookiesType] = None,
-    timeout: Optional[float] = None,
-    verify: bool = True,
-    allow_redirects: bool = True,
-    stream: bool = False,
-    proxies: Optional[Union[str, Dict[str, str]]] = None,
-    chrometls: Optional[str] = None
-) -> Union[Response, StreamResponse]: ...
-
-def options(
-    url: str,
-    *,
-    params: Optional[Dict[str, Any]] = None,
-    headers: Optional[HeadersType] = None,
-    cookies: Optional[CookiesType] = None,
-    timeout: Optional[float] = None,
-    verify: bool = True,
-    allow_redirects: bool = True,
-    stream: bool = False,
-    proxies: Optional[Union[str, Dict[str, str]]] = None,
-    chrometls: Optional[str] = None
-) -> Union[Response, StreamResponse]: ...
-
-def upload_file(
-    url: str,
-    file_path: str,
-    *,
-    field_name: str = "file",
-    additional_fields: Optional[Dict[str, str]] = None,
-    headers: Optional[HeadersType] = None,
-    cookies: Optional[CookiesType] = None,
-    timeout: Optional[float] = None,
-    verify: bool = True
-) -> Response: ...
-
-def download_file(
-    url: str,
-    save_path: str,
-    *,
-    headers: Optional[HeadersType] = None,
-    cookies: Optional[CookiesType] = None,
-    timeout: Optional[float] = None,
-    verify: bool = True,
-    chunk_size: int = 8192
-) -> Dict[str, Any]: ...
-
-
-# 异步模块级别函数
-async def async_get(
-    url: str,
-    *,
-    params: Optional[Dict[str, Any]] = None,
-    headers: Optional[HeadersType] = None,
-    cookies: Optional[CookiesType] = None,
-    timeout: Optional[float] = None,
-    verify: bool = True,
-    allow_redirects: bool = True,
-    stream: bool = False
-) -> Union[Response, StreamResponse]: ...
-
-async def async_post(
-    url: str,
-    *,
-    params: Optional[Dict[str, Any]] = None,
-    headers: Optional[HeadersType] = None,
-    cookies: Optional[CookiesType] = None,
-    data: DataType = None,
-    json: Optional[Dict[str, Any]] = None,
-    timeout: Optional[float] = None,
-    verify: bool = True,
-    allow_redirects: bool = True,
-    stream: bool = False
-) -> Union[Response, StreamResponse]: ...
-
-async def async_put(
-    url: str,
-    *,
-    params: Optional[Dict[str, Any]] = None,
-    headers: Optional[HeadersType] = None,
-    cookies: Optional[CookiesType] = None,
-    data: DataType = None,
-    json: Optional[Dict[str, Any]] = None,
-    timeout: Optional[float] = None,
-    verify: bool = True,
-    allow_redirects: bool = True,
-    stream: bool = False
-) -> Union[Response, StreamResponse]: ...
-
-async def async_delete(
-    url: str,
-    *,
-    params: Optional[Dict[str, Any]] = None,
-    headers: Optional[HeadersType] = None,
-    cookies: Optional[CookiesType] = None,
-    timeout: Optional[float] = None,
-    verify: bool = True,
-    allow_redirects: bool = True,
-    stream: bool = False
-) -> Union[Response, StreamResponse]: ...
-
-async def async_patch(
-    url: str,
-    *,
-    params: Optional[Dict[str, Any]] = None,
-    headers: Optional[HeadersType] = None,
-    cookies: Optional[CookiesType] = None,
-    data: DataType = None,
-    json: Optional[Dict[str, Any]] = None,
-    timeout: Optional[float] = None,
-    verify: bool = True,
-    allow_redirects: bool = True,
-    stream: bool = False
-) -> Union[Response, StreamResponse]: ...
-
-async def async_head(
-    url: str,
-    *,
-    params: Optional[Dict[str, Any]] = None,
-    headers: Optional[HeadersType] = None,
-    cookies: Optional[CookiesType] = None,
-    timeout: Optional[float] = None,
-    verify: bool = True,
-    allow_redirects: bool = True,
-    stream: bool = False
-) -> Union[Response, StreamResponse]: ...
-
-async def async_options(
-    url: str,
-    *,
-    params: Optional[Dict[str, Any]] = None,
-    headers: Optional[HeadersType] = None,
-    cookies: Optional[CookiesType] = None,
-    timeout: Optional[float] = None,
-    verify: bool = True,
-    allow_redirects: bool = True,
-    stream: bool = False
-) -> Union[Response, StreamResponse]: ...
-
-async def async_upload_file(
-    url: str,
-    file_path: str,
-    *,
-    field_name: str = "file",
-    additional_fields: Optional[Dict[str, str]] = None,
-    headers: Optional[HeadersType] = None,
-    cookies: Optional[CookiesType] = None,
-    timeout: Optional[float] = None,
-    verify: bool = True
-) -> Response: ...
-
-async def async_download_file(
-    url: str,
-    save_path: str,
-    *,
-    headers: Optional[HeadersType] = None,
-    cookies: Optional[CookiesType] = None,
-    timeout: Optional[float] = None,
-    verify: bool = True,
-    chunk_size: int = 8192
-) -> Dict[str, Any]: ...
-
-
-__all__: List[str]
+from . import requests as requests
