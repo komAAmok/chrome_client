@@ -1,6 +1,6 @@
 [package]
 name = "cronet-cloak"
-version = "0.1.0"
+version = "0.1.4"
 edition = "2021"
 
 [lib]
@@ -14,7 +14,7 @@ required-features = ["server"]
 
 [dependencies]
 axum = { version = "0.7", features = ["json"], optional = true }
-tokio = { version = "1", features = ["full"] }
+tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "sync", "time"] }
 tower = { version = "0.4", optional = true }
 tower-http = { version = "0.5", features = ["cors", "trace"], optional = true }
 prost = "0.13"
@@ -45,5 +45,12 @@ cdll = []
 [dev-dependencies]
 reqwest = { version = "0.12", features = ["json"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+
+[profile.release]
+# Thin LTO keeps cross-platform builds reliable while reducing extension size
+# and improving hot-path performance without the memory cost of full LTO.
+lto = "thin"
+codegen-units = 1
+opt-level = 3
 
 

@@ -56,6 +56,7 @@ except ImportError as e:
 
 # Import public API
 from ._types import HeadersType, CookiesType, DataType
+from ._typing import BrowserTypeLiteral
 from ._cookies import Cookie, CookieJar
 from ._response import (
     Request, PreparedRequest, Response, StreamResponse, HTTPStatusError, RequestError,
@@ -91,6 +92,8 @@ __all__ = [
     "set_tls_profiles", "add_tls_profile", "get_tls_profiles", "clear_tls_profiles_cache",
     "WebSocketApp"
 ]
+
+__all__ += ["BrowserTypeLiteral"]
 
 __all__ += [
     "RequestException", "HTTPError", "Timeout", "ConnectionError",

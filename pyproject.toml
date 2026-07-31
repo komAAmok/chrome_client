@@ -4,12 +4,13 @@ build-backend = "maturin"
 
 [project]
 name = "chrome_client"
-version = "0.1.3"
+version = "0.1.4"
 description = "Python bindings for Cronet-Cloak - Authentic Chrome TLS/HTTP2 fingerprints with async support"
 readme = "README.md"
 requires-python = ">=3.6"
 dependencies = [
     "dataclasses>=0.8; python_version < '3.7'",
+    "typing_extensions>=4.1; python_version < '3.8'",
 ]
 license = { text = "MIT" }
 keywords = ["cronet", "chrome", "tls", "fingerprint", "http2", "scraping"]
@@ -35,10 +36,12 @@ Repository = "https://github.com/komAAmok/chrome_client"
 [tool.maturin]
 python-source = "python"
 module-name = "chrome_client.cronet_cloak"
+strip = true
 
 # Include type stubs and native libraries in the wheel package
 include = [
-    { path = "python/chrome_client/__init__.pyi", format = "wheel" },
+    { path = "python/chrome_client/*.pyi", format = "wheel" },
+    { path = "python/chrome_client/py.typed", format = "wheel" },
     { path = "python/chrome_client/*.dll", format = "wheel" },
     { path = "python/chrome_client/*.so", format = "wheel" },
     { path = "python/chrome_client/*.dylib", format = "wheel" },

@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::ffi::{c_void, CStr, CString};
 use std::ptr;
 use std::sync::atomic::{AtomicBool, AtomicUsize, AtomicI32, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use tokio::sync::{oneshot, mpsc};
 
 // Macro for verbose logging
@@ -410,6 +410,25 @@ pub enum StreamChunk {
     Error(String),
 }
 
+// 64 x 32 KiB Cronet buffers cap queued response data at roughly 2 MiB per
+// stream. Native callbacks apply backpressure instead of allowing unbounded
+// growth when Python/C consumers are slower than the network.
+const STREAM_CHANNEL_CAPACITY: usize = 64;
+
+fn send_stream_chunk(tx: &mpsc::Sender<StreamChunk>, chunk: StreamChunk) {
+    use tokio::sync::mpsc::error::TrySendError;
+
+    let chunk = match tx.try_send(chunk) {
+        Ok(()) | Err(TrySendError::Closed(_)) => return,
+        Err(TrySendError::Full(chunk)) => chunk,
+    };
+    if tokio::runtime::Handle::try_current().is_ok() {
+        let _ = tokio::task::block_in_place(|| tx.blocking_send(chunk));
+    } else {
+        let _ = tx.blocking_send(chunk);
+    }
+}
+
 #[allow(dead_code)]
 pub struct CronetRequest {
     ptr: Cronet_UrlRequestPtr,
@@ -423,6 +442,156 @@ pub struct CronetRequest {
 }
 
 unsafe impl Send for CronetRequest {}
+
+struct DeferredRequestCleanup {
+    ptr: Cronet_UrlRequestPtr,
+    callback_ptr: Cronet_UrlRequestCallbackPtr,
+    executor_ptr: Cronet_ExecutorPtr,
+    executor_context_ptr: *mut ExecutorContext,
+    owned_engine_ptr: Option<Cronet_EnginePtr>,
+    upload_data_provider_ptr: Option<Cronet_UploadDataProviderPtr>,
+    upload_body_data: Option<Vec<u8>>,
+    completed: Arc<AtomicBool>,
+}
+
+unsafe impl Send for DeferredRequestCleanup {}
+
+impl DeferredRequestCleanup {
+    unsafe fn destroy(self) {
+        if !self.ptr.is_null() {
+            Cronet_UrlRequest_Destroy(self.ptr);
+        }
+        if !self.callback_ptr.is_null() {
+            Cronet_UrlRequestCallback_Destroy(self.callback_ptr);
+        }
+        if !self.executor_ptr.is_null() {
+            Cronet_Executor_Destroy(self.executor_ptr);
+        }
+        if !self.executor_context_ptr.is_null() {
+            let _ = Box::from_raw(self.executor_context_ptr);
+        }
+        if let Some(provider) = self.upload_data_provider_ptr {
+            Cronet_UploadDataProvider_Destroy(provider);
+        }
+        drop(self.upload_body_data);
+        if let Some(engine_ptr) = self.owned_engine_ptr {
+            Cronet_Engine_Shutdown(engine_ptr);
+            Cronet_Engine_Destroy(engine_ptr);
+        }
+    }
+}
+
+enum DeferredCleanup {
+    Request(DeferredRequestCleanup),
+    Engine {
+        ptr: Cronet_EnginePtr,
+        active_requests: Arc<AtomicUsize>,
+    },
+}
+
+unsafe impl Send for DeferredCleanup {}
+
+impl DeferredCleanup {
+    fn is_ready(&self) -> bool {
+        match self {
+            Self::Request(cleanup) => cleanup.completed.load(Ordering::Acquire),
+            Self::Engine {
+                active_requests, ..
+            } => active_requests.load(Ordering::Acquire) == 0,
+        }
+    }
+
+    unsafe fn destroy(self) {
+        match self {
+            Self::Request(cleanup) => cleanup.destroy(),
+            Self::Engine { ptr, .. } => {
+                Cronet_Engine_Shutdown(ptr);
+                Cronet_Engine_Destroy(ptr);
+            }
+        }
+    }
+}
+
+fn defer_cleanup(cleanup: DeferredCleanup) {
+    static REAPER: OnceLock<std::sync::mpsc::Sender<DeferredCleanup>> = OnceLock::new();
+
+    let tx = REAPER.get_or_init(|| {
+        let (tx, rx) = std::sync::mpsc::channel::<DeferredCleanup>();
+        std::thread::Builder::new()
+            .name("cronet-request-reaper".to_string())
+            .spawn(move || {
+                let mut pending = Vec::new();
+                loop {
+                    match rx.recv_timeout(std::time::Duration::from_millis(100)) {
+                        Ok(cleanup) => pending.push(cleanup),
+                        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+                        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+                    }
+
+                    let mut index = 0;
+                    while index < pending.len() {
+                        if pending[index].is_ready() {
+                            let cleanup = pending.swap_remove(index);
+                            unsafe { cleanup.destroy() };
+                        } else {
+                            index += 1;
+                        }
+                    }
+                }
+            })
+            .expect("failed to start Cronet request cleanup thread");
+        tx
+    });
+
+    if let Err(error) = tx.send(cleanup) {
+        // The process is shutting down and the reaper is gone. Keeping these
+        // pointers alive is safer than freeing memory still owned by Cronet.
+        std::mem::forget(error.0);
+    }
+}
+
+fn defer_request_cleanup(cleanup: DeferredRequestCleanup) {
+    defer_cleanup(DeferredCleanup::Request(cleanup));
+}
+
+fn defer_engine_cleanup(ptr: Cronet_EnginePtr, active_requests: Arc<AtomicUsize>) {
+    defer_cleanup(DeferredCleanup::Engine {
+        ptr,
+        active_requests,
+    });
+}
+
+struct RequestCompletionGuard {
+    completed: Arc<AtomicBool>,
+    active_requests: Option<Arc<AtomicUsize>>,
+}
+
+impl Drop for RequestCompletionGuard {
+    fn drop(&mut self) {
+        if let Some(counter) = &self.active_requests {
+            counter.fetch_sub(1, Ordering::Release);
+        }
+        self.completed.store(true, Ordering::Release);
+    }
+}
+
+impl CronetRequest {
+    fn take_cleanup(&mut self) -> DeferredRequestCleanup {
+        DeferredRequestCleanup {
+            ptr: std::mem::replace(&mut self.ptr, std::ptr::null_mut()),
+            callback_ptr: std::mem::replace(&mut self.callback_ptr, std::ptr::null_mut()),
+            executor_ptr: std::mem::replace(&mut self.executor_ptr, std::ptr::null_mut()),
+            executor_context_ptr: std::mem::replace(
+                &mut self.executor_context_ptr,
+                std::ptr::null_mut(),
+            ),
+            owned_engine_ptr: self.owned_engine_ptr.take(),
+            upload_data_provider_ptr: self.upload_data_provider_ptr.take(),
+            upload_body_data: self.upload_body_data.take(),
+            completed: self.completed.clone(),
+        }
+    }
+}
 
 impl Drop for CronetRequest {
     fn drop(&mut self) {
@@ -438,15 +607,10 @@ impl Drop for CronetRequest {
                 let start = std::time::Instant::now();
                 while !self.completed.load(Ordering::Acquire) {
                     if start.elapsed() > std::time::Duration::from_secs(5) {
-                        eprintln!("[WARN] CronetRequest::drop - Timeout waiting for cancel callback, leaking request to avoid use-after-free");
-                        // 网络线程仍持有引用，不能销毁任何指针，否则会 DCHECK crash。
-                        // 泄漏内存，但避免崩溃。
-                        self.ptr = std::ptr::null_mut();
-                        self.callback_ptr = std::ptr::null_mut();
-                        self.executor_ptr = std::ptr::null_mut();
-                        self.executor_context_ptr = std::ptr::null_mut();
-                        self.upload_data_provider_ptr = None;
-                        self.owned_engine_ptr = None;
+                        eprintln!("[WARN] CronetRequest::drop - Cancel callback is delayed; deferring native cleanup");
+                        // Cronet may still own the callback pointers. The reaper
+                        // frees them only after the callback has fully returned.
+                        defer_request_cleanup(self.take_cleanup());
                         return;
                     }
                     std::thread::sleep(std::time::Duration::from_millis(10));
@@ -454,27 +618,7 @@ impl Drop for CronetRequest {
             }
 
             // completed == true，可以安全销毁
-            if !self.ptr.is_null() {
-                Cronet_UrlRequest_Destroy(self.ptr);
-            }
-            if !self.callback_ptr.is_null() {
-                Cronet_UrlRequestCallback_Destroy(self.callback_ptr);
-            }
-            if !self.executor_ptr.is_null() {
-                Cronet_Executor_Destroy(self.executor_ptr);
-            }
-            // 释放 ExecutorContext
-            if !self.executor_context_ptr.is_null() {
-                let _ = Box::from_raw(self.executor_context_ptr);
-            }
-            if let Some(dp) = self.upload_data_provider_ptr {
-                Cronet_UploadDataProvider_Destroy(dp);
-            }
-            // Finally destroy engine if we own it
-            if let Some(engine_ptr) = self.owned_engine_ptr {
-                Cronet_Engine_Shutdown(engine_ptr);
-                Cronet_Engine_Destroy(engine_ptr);
-            }
+            self.take_cleanup().destroy();
         }
     }
 }
@@ -492,7 +636,7 @@ struct RequestContext {
     context_taken: AtomicBool,  // 防止双重释放：标记 context 是否已被取走
     // 流式响应
     is_streaming: bool,
-    stream_tx: Mutex<Option<mpsc::UnboundedSender<StreamChunk>>>,
+    stream_tx: Mutex<Option<mpsc::Sender<StreamChunk>>>,
 }
 
 // Executor 专用 context - 独立于 RequestContext，避免 use-after-free
@@ -639,10 +783,13 @@ unsafe extern "C" fn on_response_started(
                 poisoned.into_inner().clone()
             }
         };
-        if let Ok(guard) = context.stream_tx.lock() {
-            if let Some(ref tx) = *guard {
-                let _ = tx.send(StreamChunk::Headers { status_code, headers });
-            }
+        let stream_tx = context
+            .stream_tx
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone();
+        if let Some(tx) = stream_tx {
+            send_stream_chunk(&tx, StreamChunk::Headers { status_code, headers });
         }
     }
 
@@ -668,10 +815,13 @@ unsafe extern "C" fn on_read_completed(
 
     if context.is_streaming {
         // 流式模式：直接发送数据块
-        if let Ok(guard) = context.stream_tx.lock() {
-            if let Some(ref tx) = *guard {
-                let _ = tx.send(StreamChunk::Data(slice.to_vec()));
-            }
+        let stream_tx = context
+            .stream_tx
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone();
+        if let Some(tx) = stream_tx {
+            send_stream_chunk(&tx, StreamChunk::Data(slice.to_vec()));
         }
     } else {
         // 非流式模式：缓冲数据
@@ -733,15 +883,13 @@ unsafe extern "C" fn on_canceled(
         return;
     }
 
+    let _completion = RequestCompletionGuard {
+        completed: context_ref.completed.clone(),
+        active_requests: context_ref.active_requests.clone(),
+    };
     let context = Box::from_raw(context_ptr);
 
-    // 标记请求已完成
-    context.completed.store(true, Ordering::Release);
-
-    // 减少活跃请求计数
-    if let Some(ref active_requests) = context.active_requests {
-        active_requests.fetch_sub(1, Ordering::Release);
-    }
+    // Completion is published by _completion after context cleanup finishes.
 
     // 流式模式：发送错误或重定向响应
     if context.is_streaming {
@@ -756,13 +904,13 @@ unsafe extern "C" fn on_canceled(
         if let Some(tx) = stream_tx {
             if let Some(redirect) = redirect_response {
                 // 重定向响应：发送 Headers 然后 Done
-                let _ = tx.send(StreamChunk::Headers {
+                send_stream_chunk(&tx, StreamChunk::Headers {
                     status_code: redirect.status_code,
                     headers: redirect.headers,
                 });
-                let _ = tx.send(StreamChunk::Done);
+                send_stream_chunk(&tx, StreamChunk::Done);
             } else {
-                let _ = tx.send(StreamChunk::Error("Canceled".to_string()));
+                send_stream_chunk(&tx, StreamChunk::Error("Canceled".to_string()));
             }
         }
         return;
@@ -815,16 +963,14 @@ unsafe fn complete_request(callback_ptr: Cronet_UrlRequestCallbackPtr, result: R
         return;
     }
 
-    // Take ownership back to drop it.
+    let _completion = RequestCompletionGuard {
+        completed: context_ref.completed.clone(),
+        active_requests: context_ref.active_requests.clone(),
+    };
+    // Declared after the guard so context drops before completion is published.
     let context = Box::from_raw(context_ptr);
 
-    // 标记请求已完成
-    context.completed.store(true, Ordering::Release);
-
-    // 递减活跃请求计数
-    if let Some(ref counter) = context.active_requests {
-        counter.fetch_sub(1, Ordering::Release);
-    }
+    // Completion is published by _completion after context cleanup finishes.
 
     verbose_log!("[DEBUG] complete_request: {:?}", result);
 
@@ -836,8 +982,8 @@ unsafe fn complete_request(callback_ptr: Cronet_UrlRequestCallbackPtr, result: R
         };
         if let Some(tx) = stream_tx {
             match result {
-                Ok(_) => { let _ = tx.send(StreamChunk::Done); }
-                Err(e) => { let _ = tx.send(StreamChunk::Error(e)); }
+                Ok(_) => send_stream_chunk(&tx, StreamChunk::Done),
+                Err(e) => send_stream_chunk(&tx, StreamChunk::Error(e)),
             }
         }
         return;
@@ -996,11 +1142,13 @@ impl Drop for Session {
                     let start = std::time::Instant::now();
                     while self.active_requests.load(Ordering::Acquire) > 0 {
                         if start.elapsed() > std::time::Duration::from_secs(30) {
-                            eprintln!("[WARN] Session::drop - Timeout waiting for {} active requests, leaking engine to avoid use-after-free",
+                            eprintln!("[WARN] Session::drop - Timeout waiting for {} active requests; deferring engine cleanup",
                                 self.active_requests.load(Ordering::Acquire));
-                            // 网络线程仍持有引用，不能销毁 Engine，否则会 crash。
-                            // 泄漏 Engine，但避免崩溃（与 CronetRequest::drop 策略一致）。
-                            self.engine_ptr = std::ptr::null_mut();
+                            let engine_ptr = std::mem::replace(
+                                &mut self.engine_ptr,
+                                std::ptr::null_mut(),
+                            );
+                            defer_engine_cleanup(engine_ptr, self.active_requests.clone());
                             return;
                         }
                         std::thread::sleep(std::time::Duration::from_millis(50));
@@ -1187,7 +1335,7 @@ impl SessionManager {
         active_requests: Option<Arc<AtomicUsize>>,
         in_flight_executors: Option<Arc<AtomicUsize>>,
         allow_redirects: bool,
-        stream_sender: Option<mpsc::UnboundedSender<StreamChunk>>,
+        stream_sender: Option<mpsc::Sender<StreamChunk>>,
     ) -> (CronetRequest, oneshot::Receiver<Result<RequestResult, String>>) {
         unsafe {
             let (tx, rx) = oneshot::channel();
@@ -1330,13 +1478,13 @@ impl SessionManager {
     }
 
     /// 使用会话发送流式请求
-    /// 返回 (CronetRequest, UnboundedReceiver<StreamChunk>, timeout_ms)
+    /// 返回 (CronetRequest, Receiver<StreamChunk>, timeout_ms)
     pub fn send_request_stream(
         &self,
         session_id: &str,
         target: &crate::cronet_pb::TargetRequest,
         allow_redirects: bool,
-    ) -> Option<(CronetRequest, mpsc::UnboundedReceiver<StreamChunk>, u64)> {
+    ) -> Option<(CronetRequest, mpsc::Receiver<StreamChunk>, u64)> {
         let sessions = match self.sessions.read() {
             Ok(guard) => guard,
             Err(poisoned) => {
@@ -1353,7 +1501,7 @@ impl SessionManager {
 
         session.active_requests.fetch_add(1, Ordering::Acquire);
 
-        let (stream_tx, stream_rx) = mpsc::unbounded_channel();
+        let (stream_tx, stream_rx) = mpsc::channel(STREAM_CHANNEL_CAPACITY);
 
         let (request, _rx) = Self::start_request_with_engine(
             session.engine_ptr,
@@ -1376,7 +1524,10 @@ impl SessionManager {
                 poisoned.into_inner()
             }
         };
-        if sessions.remove(session_id).is_some() {
+        let removed = sessions.remove(session_id);
+        drop(sessions);
+
+        if removed.is_some() {
             verbose_log!("[DEBUG] Closed session: {}", session_id);
             true
         } else {
@@ -1667,5 +1818,26 @@ impl Drop for CronetWebSocket {
                 Cronet_WebSocket_Destroy(self.ws_ptr);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn completion_guard_updates_state_on_drop() {
+        let completed = Arc::new(AtomicBool::new(false));
+        let active = Arc::new(AtomicUsize::new(1));
+        {
+            let _guard = RequestCompletionGuard {
+                completed: completed.clone(),
+                active_requests: Some(active.clone()),
+            };
+            assert!(!completed.load(Ordering::Acquire));
+            assert_eq!(active.load(Ordering::Acquire), 1);
+        }
+        assert!(completed.load(Ordering::Acquire));
+        assert_eq!(active.load(Ordering::Acquire), 0);
     }
 }

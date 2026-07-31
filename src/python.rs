@@ -4,7 +4,7 @@ use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict, PyList};
 use pyo3_asyncio::tokio::future_into_py;
 use std::ops::Deref;
-use std::sync::{Arc, Mutex as StdMutex};
+use std::sync::{Arc, Mutex as StdMutex, OnceLock};
 use std::time::Duration;
 use tokio::sync::Mutex as TokioMutex;
 
@@ -39,13 +39,38 @@ impl Drop for SafeRuntime {
     fn drop(&mut self) {
         if tokio::runtime::Handle::try_current().is_ok() {
             if let Some(runtime) = self.inner.take() {
-                eprintln!(
-                    "[WARN] PyCronetClient runtime dropped inside Tokio context; leaking runtime to avoid Tokio shutdown panic"
-                );
-                std::mem::forget(runtime);
+                runtime.shutdown_background();
             }
         }
     }
+}
+
+static SHARED_RUNTIME: OnceLock<Arc<SafeRuntime>> = OnceLock::new();
+
+fn shared_runtime() -> PyResult<Arc<SafeRuntime>> {
+    if let Some(runtime) = SHARED_RUNTIME.get() {
+        return Ok(runtime.clone());
+    }
+
+    // Cronet owns network threads; one small Tokio pool is enough for all clients.
+    let worker_threads = std::thread::available_parallelism()
+        .map(|count| count.get().min(4))
+        .unwrap_or(2);
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(worker_threads)
+        .enable_all()
+        .build()
+        .map(SafeRuntime::new)
+        .map(Arc::new)
+        .map_err(|e| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+                "Failed to create Tokio runtime: {}",
+                e
+            ))
+        })?;
+
+    let _ = SHARED_RUNTIME.set(runtime.clone());
+    Ok(SHARED_RUNTIME.get().cloned().unwrap_or(runtime))
 }
 
 /// Python wrapper for SessionManager
@@ -60,20 +85,9 @@ pub struct PyCronetClient {
 impl PyCronetClient {
     #[new]
     fn new() -> PyResult<Self> {
-        // Create a multi-threaded Tokio runtime for async operations
-        let runtime = tokio::runtime::Builder::new_multi_thread()
-            .enable_all()
-            .build()
-            .map_err(|e| {
-                PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
-                    "Failed to create Tokio runtime: {}",
-                    e
-                ))
-            })?;
-
         Ok(PyCronetClient {
             manager: Arc::new(SessionManager::new()),
-            runtime: Arc::new(SafeRuntime::new(runtime)),
+            runtime: shared_runtime()?,
         })
     }
 
@@ -555,7 +569,7 @@ impl PyCronetClient {
 /// Python wrapper for streaming response reader
 #[pyclass]
 pub struct PyStreamReader {
-    rx: Arc<TokioMutex<Option<tokio::sync::mpsc::UnboundedReceiver<StreamChunk>>>>,
+    rx: Arc<TokioMutex<Option<tokio::sync::mpsc::Receiver<StreamChunk>>>>,
     runtime: Arc<SafeRuntime>,
     _request: Arc<StdMutex<Option<CronetRequest>>>,
     #[pyo3(get)]

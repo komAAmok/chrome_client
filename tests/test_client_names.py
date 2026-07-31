@@ -1,5 +1,7 @@
 import inspect
 import asyncio
+import ast
+import json
 import sys
 import types
 import unittest
@@ -111,6 +113,38 @@ import chrome_client
 
 
 class ClientNamesTest(unittest.TestCase):
+    def test_impersonate_hints_match_bundled_profiles(self):
+        package = Path(__file__).resolve().parents[1] / "python" / "chrome_client"
+        tree = ast.parse((package / "_typing.pyi").read_text(encoding="utf-8"))
+        literal = next(
+            node.value for node in tree.body
+            if isinstance(node, ast.Assign)
+            and any(getattr(target, "id", None) == "BrowserTypeLiteral"
+                    for target in node.targets)
+        )
+        values = literal.slice.value if isinstance(literal.slice, ast.Index) else literal.slice
+        hinted = [value.value if hasattr(value, "value") else value.s
+                  for value in values.elts]
+        profiles = json.loads(
+            (package / "tls_profiles.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(set(hinted), set(profiles))
+        self.assertIs(chrome_client.BrowserTypeLiteral, str)
+
+        requests_stub = ast.parse(
+            (package / "requests.pyi").read_text(encoding="utf-8")
+        )
+        functions = {
+            node.name: node for node in requests_stub.body
+            if isinstance(node, ast.FunctionDef)
+        }
+        for name in (
+            "request", "get", "options", "head", "post", "put", "patch",
+            "delete", "trace", "query",
+        ):
+            self.assertIsNone(functions[name].args.kwarg, name)
+        self.assertTrue((package / "py.typed").is_file())
+
     def test_public_client_names(self):
         self.assertFalse(hasattr(chrome_client, "CronetClient"))
         self.assertFalse(hasattr(chrome_client, "AsyncCronetClient"))

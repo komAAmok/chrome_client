@@ -19,7 +19,7 @@ function Build-Windows {
     Copy-Item cronet-libs\windows\cronet.144.0.7506.0.dll python\chrome_client\ -Force
 
     Write-Host "开始构建..." -ForegroundColor Green
-    maturin build --release
+    maturin build --release --locked
 
     if ($LASTEXITCODE -eq 0) {
         Write-Host "✓ Windows x64 wheel 构建成功" -ForegroundColor Green
@@ -38,14 +38,14 @@ function Build-Windows32 {
     Copy-Item cronet-libs\windows32\cronet.144.0.7506.0.dll python\chrome_client\ -Force
 
     rustup target add i686-pc-windows-msvc
-    maturin build --release --target i686-pc-windows-msvc
+    maturin build --release --locked --target i686-pc-windows-msvc
     if ($LASTEXITCODE -ne 0) {
         exit 1
     }
 }
 
 function Build-Linux {
-    Write-Host "`n=== 编译 Linux x86_64 Wheel (manylinux_2_24) ===" -ForegroundColor Cyan
+    Write-Host "`n=== 编译 Linux x86_64 Wheel (manylinux_2_17) ===" -ForegroundColor Cyan
     cd $ProjectDir
 
     Write-Host "清理其他平台的库文件..." -ForegroundColor Yellow
@@ -70,7 +70,7 @@ function Build-Linux {
         -v "${mountPath}:/io" `
         -e LD_LIBRARY_PATH=/io/python/chrome_client `
         ghcr.io/pyo3/maturin:latest `
-        build --release --target x86_64-unknown-linux-gnu --compatibility manylinux_2_24 `
+        build --release --locked --target x86_64-unknown-linux-gnu --compatibility manylinux_2_17 `
         --interpreter /opt/python/cp38-cp38/bin/python
 
     if ($LASTEXITCODE -eq 0) {
@@ -101,7 +101,7 @@ function Build-MacOS {
     }
 
     Write-Host "开始构建（使用 zig 交叉编译）..." -ForegroundColor Green
-    maturin build --release --target aarch64-apple-darwin --zig
+    maturin build --release --locked --target aarch64-apple-darwin --zig
 
     if ($LASTEXITCODE -eq 0) {
         Write-Host "✓ macOS wheel 构建成功" -ForegroundColor Green

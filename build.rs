@@ -60,6 +60,7 @@ fn main() {
             std::fs::copy(&pregenerated, out_path.join("cronet_bindings.rs"))
                 .expect("Failed to copy pre-generated bindings");
             println!("cargo:warning=Using pre-generated Linux bindings");
+            println!("cargo:rerun-if-changed={}", pregenerated.display());
         } else {
             panic!(
                 "Pre-generated Linux bindings not found at {:?}",
@@ -72,6 +73,7 @@ fn main() {
             std::fs::copy(&pregenerated, out_path.join("cronet_bindings.rs"))
                 .expect("Failed to copy pre-generated bindings");
             println!("cargo:warning=Using pre-generated macOS bindings");
+            println!("cargo:rerun-if-changed={}", pregenerated.display());
         } else {
             panic!(
                 "Pre-generated macOS bindings not found at {:?}",

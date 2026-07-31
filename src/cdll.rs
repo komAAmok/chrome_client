@@ -55,7 +55,7 @@ pub struct CycronetResponse {
 
 /// Opaque stream handle for streaming reads.
 pub struct CycronetStream {
-    rx: tokio::sync::mpsc::UnboundedReceiver<StreamChunk>,
+    rx: tokio::sync::mpsc::Receiver<StreamChunk>,
     _request: crate::cronet::CronetRequest,
     status_code: i32,
     headers: Vec<(CString, CString)>,
@@ -178,7 +178,11 @@ pub unsafe extern "C" fn cycronet_init() -> c_int {
         return 0;
     }
 
+    let worker_threads = std::thread::available_parallelism()
+        .map(|count| count.get().min(4))
+        .unwrap_or(2);
     match tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(worker_threads)
         .enable_all()
         .build()
     {

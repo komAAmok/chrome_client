@@ -8,6 +8,7 @@ from ._response import (
 from ._api_sync import (
     request, session, get, options, head, post, put, patch, delete, trace, query,
 )
+from ._typing import BrowserTypeLiteral
 
 RequestException = RequestError
 HTTPError = HTTPStatusError
@@ -17,4 +18,5 @@ __all__ = [
     "Timeout", "ConnectionError", "ProxyError", "SSLError",
     "request", "session", "get", "options", "head", "post", "put", "patch",
     "delete", "trace", "query",
+    "BrowserTypeLiteral",
 ]

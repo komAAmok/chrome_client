@@ -1,6 +1,6 @@
 # chrome_client
 
-`chrome_client` 是一个基于 Chromium Cronet、Rust 和 PyO3 的 Python HTTP 客户端，提供同步、异步、流式请求、Cookie、代理、TLS 指纹模拟和 WebSocket 支持。
+`chrome_client` 是一个基于 Chromium Cronet、Rust 和 PyO3 的 Python HTTP 客户端，提供同步、异步、流式请求、Cookie、代理、与chrome完全一致的TLS 指纹/行为和 WebSocket 支持。
 
 公开接口的兼容优先级为：
 
@@ -64,7 +64,7 @@ pip install --upgrade chrome_client
 |---|---|---|
 | Windows | x86_64 | 支持 |
 | Windows | x86 / 32 位 | 支持 |
-| Linux | x86_64，glibc >= 2.24 | 支持 |
+| Linux | x86_64，glibc >= 2.17（包含 2.23） | 支持 |
 | macOS | Apple Silicon / arm64 | 支持 |
 
 当前不提供 Linux ARM64、macOS Intel 和 Alpine Linux / musl Wheel。
@@ -798,6 +798,25 @@ client = chrome_client.Client(verify=False)
 with chrome_client.Client(impersonate="chrome_150") as client:
     response = client.get("https://example.com")
 ```
+
+当前支持 Chrome 99 到 Chrome 151，`impersonate` 可选值如下：
+
+```text
+chrome_99   chrome_100  chrome_101  chrome_102  chrome_103
+chrome_104  chrome_105  chrome_106  chrome_107  chrome_108
+chrome_109  chrome_110  chrome_111  chrome_112  chrome_113
+chrome_114  chrome_115  chrome_116  chrome_117  chrome_118
+chrome_119  chrome_120  chrome_121  chrome_122  chrome_123
+chrome_124  chrome_125  chrome_126  chrome_127  chrome_128
+chrome_129  chrome_130  chrome_131  chrome_132  chrome_133
+chrome_134  chrome_135  chrome_136  chrome_137  chrome_138
+chrome_139  chrome_140  chrome_141  chrome_142  chrome_143
+chrome_144  chrome_145  chrome_146  chrome_147  chrome_148
+chrome_149  chrome_150  chrome_151
+```
+
+IDE 会像 `curl_cffi` 一样为 `impersonate` 显示上述可选值，并为
+`chrome_client.requests.get/post/request/...` 显示可用请求参数。
 
 不加载 Profile：
 

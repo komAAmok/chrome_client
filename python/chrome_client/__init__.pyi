@@ -1,5 +1,6 @@
 from typing import Any, AsyncIterator, Dict, Iterable, Iterator, List, Mapping, Optional, Sequence, Tuple, Union
 from datetime import timedelta
+from ._typing import BrowserTypeLiteral as BrowserTypeLiteral
 
 HeadersType = Union[Mapping[str, Optional[str]], Sequence[Tuple[str, Optional[str]]]]
 CookiesType = Union[Mapping[str, str], "CookieJar"]
@@ -159,11 +160,11 @@ class Client:
     max_redirects: int
     timeout: Any
     allow_redirects: bool
-    impersonate: Optional[str]
+    impersonate: Optional[BrowserTypeLiteral]
     base_url: str
     def __init__(
         self, verify: bool = ..., proxies: Optional[Union[str, Dict[str, str]]] = ...,
-        timeout: Any = ..., impersonate: Optional[str] = ...,
+        timeout: Any = ..., impersonate: Optional[BrowserTypeLiteral] = ...,
         headers: Optional[Dict[str, str]] = ..., cookies: Optional[CookiesType] = ...,
         auth: Optional[Tuple[str, str]] = ..., proxy: Optional[str] = ...,
         base_url: Optional[str] = ..., params: Optional[Dict[str, Any]] = ...,
@@ -177,18 +178,83 @@ class Client:
         json: Any = ..., files: Any = ..., auth: Any = ..., timeout: Any = ...,
         verify: Optional[bool] = ..., allow_redirects: Optional[bool] = ...,
         proxies: Any = ..., proxy: Optional[str] = ..., hooks: Any = ...,
-        stream: Optional[bool] = ..., cert: Any = ..., impersonate: Optional[str] = ...,
+        stream: Optional[bool] = ..., cert: Any = ..., impersonate: Optional[BrowserTypeLiteral] = ...,
         max_redirects: Optional[int] = ..., **kwargs: Any
     ) -> Union[Response, StreamResponse]: ...
-    def get(self, url: str, params: Any = ..., **kwargs: Any) -> Union[Response, StreamResponse]: ...
-    def options(self, url: str, **kwargs: Any) -> Union[Response, StreamResponse]: ...
-    def head(self, url: str, **kwargs: Any) -> Union[Response, StreamResponse]: ...
-    def post(self, url: str, data: DataType = ..., json: Any = ..., **kwargs: Any) -> Union[Response, StreamResponse]: ...
-    def put(self, url: str, data: DataType = ..., **kwargs: Any) -> Union[Response, StreamResponse]: ...
-    def patch(self, url: str, data: DataType = ..., **kwargs: Any) -> Union[Response, StreamResponse]: ...
-    def delete(self, url: str, **kwargs: Any) -> Union[Response, StreamResponse]: ...
-    def trace(self, url: str, **kwargs: Any) -> Union[Response, StreamResponse]: ...
-    def query(self, url: str, **kwargs: Any) -> Union[Response, StreamResponse]: ...
+    def get(
+        self, url: str, params: Any = ..., *, headers: Optional[HeadersType] = ...,
+        cookies: Optional[CookiesType] = ..., data: DataType = ..., content: Any = ...,
+        json: Any = ..., auth: Any = ..., timeout: Any = ..., verify: Optional[bool] = ...,
+        allow_redirects: Optional[bool] = ..., proxies: Any = ..., proxy: Optional[str] = ...,
+        hooks: Any = ..., stream: Optional[bool] = ...,
+        impersonate: Optional[BrowserTypeLiteral] = ..., max_redirects: Optional[int] = ...
+    ) -> Union[Response, StreamResponse]: ...
+    def options(
+        self, url: str, *, params: Any = ..., headers: Optional[HeadersType] = ...,
+        cookies: Optional[CookiesType] = ..., data: DataType = ..., content: Any = ...,
+        json: Any = ..., auth: Any = ..., timeout: Any = ..., verify: Optional[bool] = ...,
+        allow_redirects: Optional[bool] = ..., proxies: Any = ..., proxy: Optional[str] = ...,
+        hooks: Any = ..., stream: Optional[bool] = ...,
+        impersonate: Optional[BrowserTypeLiteral] = ..., max_redirects: Optional[int] = ...
+    ) -> Union[Response, StreamResponse]: ...
+    def head(
+        self, url: str, *, params: Any = ..., headers: Optional[HeadersType] = ...,
+        cookies: Optional[CookiesType] = ..., auth: Any = ..., timeout: Any = ...,
+        verify: Optional[bool] = ..., allow_redirects: Optional[bool] = ...,
+        proxies: Any = ..., proxy: Optional[str] = ..., hooks: Any = ...,
+        stream: Optional[bool] = ..., impersonate: Optional[BrowserTypeLiteral] = ...,
+        max_redirects: Optional[int] = ...
+    ) -> Union[Response, StreamResponse]: ...
+    def post(
+        self, url: str, data: DataType = ..., json: Any = ..., *, params: Any = ...,
+        headers: Optional[HeadersType] = ..., cookies: Optional[CookiesType] = ...,
+        content: Any = ..., auth: Any = ..., timeout: Any = ..., verify: Optional[bool] = ...,
+        allow_redirects: Optional[bool] = ..., proxies: Any = ..., proxy: Optional[str] = ...,
+        hooks: Any = ..., stream: Optional[bool] = ...,
+        impersonate: Optional[BrowserTypeLiteral] = ..., max_redirects: Optional[int] = ...
+    ) -> Union[Response, StreamResponse]: ...
+    def put(
+        self, url: str, data: DataType = ..., *, params: Any = ...,
+        headers: Optional[HeadersType] = ..., cookies: Optional[CookiesType] = ...,
+        content: Any = ..., json: Any = ..., auth: Any = ..., timeout: Any = ...,
+        verify: Optional[bool] = ..., allow_redirects: Optional[bool] = ...,
+        proxies: Any = ..., proxy: Optional[str] = ..., hooks: Any = ...,
+        stream: Optional[bool] = ..., impersonate: Optional[BrowserTypeLiteral] = ...,
+        max_redirects: Optional[int] = ...
+    ) -> Union[Response, StreamResponse]: ...
+    def patch(
+        self, url: str, data: DataType = ..., *, params: Any = ...,
+        headers: Optional[HeadersType] = ..., cookies: Optional[CookiesType] = ...,
+        content: Any = ..., json: Any = ..., auth: Any = ..., timeout: Any = ...,
+        verify: Optional[bool] = ..., allow_redirects: Optional[bool] = ...,
+        proxies: Any = ..., proxy: Optional[str] = ..., hooks: Any = ...,
+        stream: Optional[bool] = ..., impersonate: Optional[BrowserTypeLiteral] = ...,
+        max_redirects: Optional[int] = ...
+    ) -> Union[Response, StreamResponse]: ...
+    def delete(
+        self, url: str, *, params: Any = ..., headers: Optional[HeadersType] = ...,
+        cookies: Optional[CookiesType] = ..., data: DataType = ..., content: Any = ...,
+        json: Any = ..., auth: Any = ..., timeout: Any = ..., verify: Optional[bool] = ...,
+        allow_redirects: Optional[bool] = ..., proxies: Any = ..., proxy: Optional[str] = ...,
+        hooks: Any = ..., stream: Optional[bool] = ...,
+        impersonate: Optional[BrowserTypeLiteral] = ..., max_redirects: Optional[int] = ...
+    ) -> Union[Response, StreamResponse]: ...
+    def trace(
+        self, url: str, *, params: Any = ..., headers: Optional[HeadersType] = ...,
+        cookies: Optional[CookiesType] = ..., data: DataType = ..., content: Any = ...,
+        json: Any = ..., auth: Any = ..., timeout: Any = ..., verify: Optional[bool] = ...,
+        allow_redirects: Optional[bool] = ..., proxies: Any = ..., proxy: Optional[str] = ...,
+        hooks: Any = ..., stream: Optional[bool] = ...,
+        impersonate: Optional[BrowserTypeLiteral] = ..., max_redirects: Optional[int] = ...
+    ) -> Union[Response, StreamResponse]: ...
+    def query(
+        self, url: str, *, params: Any = ..., headers: Optional[HeadersType] = ...,
+        cookies: Optional[CookiesType] = ..., data: DataType = ..., content: Any = ...,
+        json: Any = ..., auth: Any = ..., timeout: Any = ..., verify: Optional[bool] = ...,
+        allow_redirects: Optional[bool] = ..., proxies: Any = ..., proxy: Optional[str] = ...,
+        hooks: Any = ..., stream: Optional[bool] = ...,
+        impersonate: Optional[BrowserTypeLiteral] = ..., max_redirects: Optional[int] = ...
+    ) -> Union[Response, StreamResponse]: ...
     def prepare_request(self, request: Request) -> PreparedRequest: ...
     def send(self, request: PreparedRequest, **kwargs: Any) -> Union[Response, StreamResponse]: ...
     def upload_file(self, url: str, file_path: str, **kwargs: Any) -> Response: ...
@@ -199,7 +265,7 @@ class Client:
     def __exit__(self, *args: Any) -> None: ...
 
 class Session(Client):
-    def __init__(self, verify: bool = ..., proxies: Any = ..., timeout: Any = ..., impersonate: Optional[str] = ..., headers: Any = ..., cookies: Any = ..., auth: Any = ..., proxy: Optional[str] = ..., base_url: Optional[str] = ..., params: Any = ..., allow_redirects: bool = ..., max_redirects: int = ..., default_headers: bool = ..., timeout_ms: Optional[int] = ..., default_domain: Optional[str] = ...) -> None: ...
+    def __init__(self, verify: bool = ..., proxies: Any = ..., timeout: Any = ..., impersonate: Optional[BrowserTypeLiteral] = ..., headers: Any = ..., cookies: Any = ..., auth: Any = ..., proxy: Optional[str] = ..., base_url: Optional[str] = ..., params: Any = ..., allow_redirects: bool = ..., max_redirects: int = ..., default_headers: bool = ..., timeout_ms: Optional[int] = ..., default_domain: Optional[str] = ...) -> None: ...
 
 class AsyncClient:
     headers: Dict[str, str]
@@ -213,9 +279,9 @@ class AsyncClient:
     max_redirects: int
     timeout: Any
     allow_redirects: bool
-    impersonate: Optional[str]
+    impersonate: Optional[BrowserTypeLiteral]
     base_url: str
-    def __init__(self, verify: bool = ..., proxies: Any = ..., timeout: Any = ..., impersonate: Optional[str] = ..., headers: Any = ..., cookies: Any = ..., auth: Any = ..., proxy: Optional[str] = ..., base_url: Optional[str] = ..., params: Any = ..., allow_redirects: bool = ..., max_redirects: int = ..., default_headers: bool = ..., timeout_ms: Optional[int] = ..., default_domain: Optional[str] = ...) -> None: ...
+    def __init__(self, verify: bool = ..., proxies: Any = ..., timeout: Any = ..., impersonate: Optional[BrowserTypeLiteral] = ..., headers: Any = ..., cookies: Any = ..., auth: Any = ..., proxy: Optional[str] = ..., base_url: Optional[str] = ..., params: Any = ..., allow_redirects: bool = ..., max_redirects: int = ..., default_headers: bool = ..., timeout_ms: Optional[int] = ..., default_domain: Optional[str] = ...) -> None: ...
     async def request(self, method: str, url: str, **kwargs: Any) -> Union[Response, StreamResponse]: ...
     async def get(self, url: str, params: Any = ..., **kwargs: Any) -> Union[Response, StreamResponse]: ...
     async def options(self, url: str, **kwargs: Any) -> Union[Response, StreamResponse]: ...
