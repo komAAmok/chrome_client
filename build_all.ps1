@@ -45,7 +45,7 @@ function Build-Windows32 {
 }
 
 function Build-Linux {
-    Write-Host "`n=== 编译 Linux x86_64 Wheel (manylinux_2_17) ===" -ForegroundColor Cyan
+    Write-Host "`n=== 编译 Linux x86_64 Wheel (manylinux_2_18) ===" -ForegroundColor Cyan
     cd $ProjectDir
 
     Write-Host "清理其他平台的库文件..." -ForegroundColor Yellow
@@ -70,10 +70,18 @@ function Build-Linux {
         -v "${mountPath}:/io" `
         -e LD_LIBRARY_PATH=/io/python/chrome_client `
         ghcr.io/pyo3/maturin:latest `
-        build --release --locked --target x86_64-unknown-linux-gnu --compatibility manylinux_2_17 `
+        build --release --locked --target x86_64-unknown-linux-gnu --compatibility linux `
         --interpreter /opt/python/cp310-cp310/bin/python3.10
 
     if ($LASTEXITCODE -eq 0) {
+        python -m pip install --disable-pip-version-check wheel==0.45.1
+        Get-ChildItem "$ProjectDir\target\wheels\*-linux_x86_64.whl" |
+            ForEach-Object {
+                python -m wheel tags --platform-tag manylinux_2_18_x86_64 --remove $_.FullName
+                if ($LASTEXITCODE -ne 0) {
+                    exit 1
+                }
+            }
         Write-Host "✓ Linux wheel 构建成功" -ForegroundColor Green
     } else {
         Write-Host "✗ Linux wheel 构建失败" -ForegroundColor Red

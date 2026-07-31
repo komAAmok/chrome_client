@@ -73,6 +73,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
       - name: Copy Cronet runtime and NSS libraries
         run: |
           cp cronet-libs/linux/libcronet.144.0.7506.0.so python/chrome_client/
@@ -82,7 +86,10 @@ jobs:
         uses: PyO3/maturin-action@v1
         with:
           target: x86_64-unknown-linux-gnu
-          manylinux: "2_17"
+          # Build in the manylinux2014 container, but skip its 2.17 audit tag:
+          # bundled Cronet requires exactly GLIBC_2.18.
+          manylinux: "off"
+          container: quay.io/pypa/manylinux2014_x86_64:latest
           # The action can mount the checkout either at /io or at the original
           # runner path. Cover both so auditwheel can resolve Cronet's SONAME.
           docker-options: >-
@@ -91,8 +98,14 @@ jobs:
           args: >-
             --release
             --locked
+            --compatibility linux
             --out dist
             --interpreter /opt/python/cp310-cp310/bin/python3.10
+
+      - name: Apply the exact glibc compatibility tag
+        run: |
+          python -m pip install --disable-pip-version-check wheel==0.45.1
+          python -m wheel tags --platform-tag manylinux_2_18_x86_64 --remove dist/*-linux_x86_64.whl
 
       - name: Upload wheel
         uses: actions/upload-artifact@v4

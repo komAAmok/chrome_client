@@ -64,7 +64,7 @@ pip install --upgrade chrome_client
 |---|---|---|
 | Windows | x86_64 | 支持 |
 | Windows | x86 / 32 位 | 支持 |
-| Linux | x86_64，glibc >= 2.17（包含 2.23） | 支持 |
+| Linux | x86_64，glibc >= 2.18（包含 2.23） | 支持 |
 | macOS | Apple Silicon / arm64 | 支持 |
 
 当前不提供 Linux ARM64、macOS Intel 和 Alpine Linux / musl Wheel。
