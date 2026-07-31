@@ -98,7 +98,6 @@ jobs:
           args: >-
             --release
             --locked
-            --compatibility linux
             --out dist
             --interpreter /opt/python/cp310-cp310/bin/python3.10
 
