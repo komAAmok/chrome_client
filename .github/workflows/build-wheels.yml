@@ -87,12 +87,12 @@ jobs:
           # runner path. Cover both so auditwheel can resolve Cronet's SONAME.
           docker-options: >-
             -e LD_LIBRARY_PATH=/io/python/chrome_client:/io/linux_deps:/io/target/x86_64-unknown-linux-gnu/release:${{ github.workspace }}/python/chrome_client:${{ github.workspace }}/linux_deps:${{ github.workspace }}/target/x86_64-unknown-linux-gnu/release
-          # The image's /usr/bin/python3 is Python 3.5; use its CPython 3.8 toolchain.
+          # Match the Python 3.10 toolchain used by the Windows and macOS jobs.
           args: >-
             --release
             --locked
             --out dist
-            --interpreter /opt/python/cp38-cp38/bin/python
+            --interpreter /opt/python/cp310-cp310/bin/python3.10
 
       - name: Upload wheel
         uses: actions/upload-artifact@v4

@@ -71,7 +71,7 @@ function Build-Linux {
         -e LD_LIBRARY_PATH=/io/python/chrome_client `
         ghcr.io/pyo3/maturin:latest `
         build --release --locked --target x86_64-unknown-linux-gnu --compatibility manylinux_2_17 `
-        --interpreter /opt/python/cp38-cp38/bin/python
+        --interpreter /opt/python/cp310-cp310/bin/python3.10
 
     if ($LASTEXITCODE -eq 0) {
         Write-Host "✓ Linux wheel 构建成功" -ForegroundColor Green
