@@ -1,14 +1,10 @@
 # chrome_client
 
-`chrome_client` 是一个基于 Chromium Cronet、Rust 和 PyO3 的 Python HTTP 客户端，提供同步、异步、流式请求、Cookie、代理、与chrome完全一致的TLS 指纹/行为和 WebSocket 支持。
+[![PyPI version](https://img.shields.io/pypi/v/chrome-client)](https://pypi.org/project/chrome-client)
+[![Python](https://img.shields.io/pypi/pyversions/chrome-client)](https://pypi.org/project/chrome-client)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-公开接口的兼容优先级为：
-
-1. `requests`
-2. `curl_cffi.requests`
-3. `chrome_client` 自有扩展
-
-Python 导入名和项目名均为 `chrome_client`。
+`chrome_client` 是一个基于 Chromium Cronet 的 Python HTTP 客户端，提供参数提示、同步、异步、流式请求、Cookie、代理、 WebSocket 、与chrome完全一致的http(s) 请求指纹/行为和TLS 指纹/行为，兼容requests、curl_cffi的API。
 
 ## 目录
 
