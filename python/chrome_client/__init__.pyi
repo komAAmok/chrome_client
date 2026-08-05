@@ -150,7 +150,6 @@ class StreamResponse:
 
 class Client:
     headers: Dict[str, str]
-    cookies: CookieJar
     params: Dict[str, Any]
     auth: Optional[Tuple[str, str]]
     proxies: Union[str, Dict[str, str]]
@@ -162,6 +161,10 @@ class Client:
     allow_redirects: bool
     impersonate: Optional[BrowserTypeLiteral]
     base_url: str
+    @property
+    def cookies(self) -> CookieJar: ...
+    @cookies.setter
+    def cookies(self, value: CookiesType) -> None: ...
     def __init__(
         self, verify: bool = ..., proxies: Optional[Union[str, Dict[str, str]]] = ...,
         timeout: Any = ..., impersonate: Optional[BrowserTypeLiteral] = ...,
@@ -269,7 +272,6 @@ class Session(Client):
 
 class AsyncClient:
     headers: Dict[str, str]
-    cookies: CookieJar
     params: Dict[str, Any]
     auth: Optional[Tuple[str, str]]
     proxies: Union[str, Dict[str, str]]
@@ -281,6 +283,10 @@ class AsyncClient:
     allow_redirects: bool
     impersonate: Optional[BrowserTypeLiteral]
     base_url: str
+    @property
+    def cookies(self) -> CookieJar: ...
+    @cookies.setter
+    def cookies(self, value: CookiesType) -> None: ...
     def __init__(self, verify: bool = ..., proxies: Any = ..., timeout: Any = ..., impersonate: Optional[BrowserTypeLiteral] = ..., headers: Any = ..., cookies: Any = ..., auth: Any = ..., proxy: Optional[str] = ..., base_url: Optional[str] = ..., params: Any = ..., allow_redirects: bool = ..., max_redirects: int = ..., default_headers: bool = ..., timeout_ms: Optional[int] = ..., default_domain: Optional[str] = ...) -> None: ...
     async def request(self, method: str, url: str, **kwargs: Any) -> Union[Response, StreamResponse]: ...
     async def get(self, url: str, params: Any = ..., **kwargs: Any) -> Union[Response, StreamResponse]: ...

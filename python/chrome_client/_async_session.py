@@ -55,6 +55,16 @@ class AsyncSession:
         """Get current session's CookieJar"""
         return self._cookies
 
+    @cookies.setter
+    def cookies(self, value: CookiesType) -> None:
+        """Replace the session cookie jar with a CookieJar or mapping."""
+        if isinstance(value, CookieJar):
+            self._cookies = value
+            return
+        jar = CookieJar(default_domain=self._cookies.default_domain or None)
+        jar.update(value)
+        self._cookies = jar
+
     def _adjust_chrome_headers(self, headers: Dict[str, str], method: str, has_body: bool = False, is_json: bool = False) -> Dict[str, str]:
         """
         Adjust existing headers to match Chrome browser behavior.

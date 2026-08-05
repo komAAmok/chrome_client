@@ -259,6 +259,21 @@ class ClientNamesTest(unittest.TestCase):
             client.get("https://example.test/path")
         self.assertEqual(PyCronetClient.calls[-1][2]["cookie"], "global=yes")
 
+    def test_session_cookie_jar_can_be_assigned(self):
+        jar = chrome_client.CookieJar()
+        jar["token"] = "value"
+
+        with chrome_client.Session(impersonate=None) as session:
+            session.cookies = jar
+            self.assertIs(session.cookies, jar)
+            session.cookies = UserDict({"other": "cookie"})
+            self.assertEqual(session.cookies.get_dict(), {"other": "cookie"})
+
+        async_session = chrome_client.AsyncSession(impersonate=None)
+        async_session.cookies = jar
+        self.assertIs(async_session.cookies, jar)
+        asyncio.run(async_session.close())
+
     def test_cookie_path_expires_and_max_age_semantics(self):
         jar = chrome_client.CookieJar()
         with patch("chrome_client._cookies.time.time", return_value=1000):
