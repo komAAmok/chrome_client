@@ -6,7 +6,7 @@
 
 [English](README_EN.md) | 简体中文
 
-`chrome_client` 是一个基于 Chromium Cronet 的 Python HTTP 客户端，提供参数提示、同步、异步、流式请求、Cookie、代理、 WebSocket 、与chrome完全一致的http(s) 请求指纹/行为和TLS 指纹/行为，兼容 [`requests`](https://github.com/psf/requests) 和 [`curl_cffi`](https://github.com/lexiforest/curl_cffi) 的 API。
+`chrome_client` 是一个基于 Chromium Cronet 的 Python HTTP 客户端，提供参数提示、同步、异步、流式请求、Cookie、代理、 WebSocket 、与chrome一致的指纹/行为，兼容 [`requests`](https://github.com/psf/requests) 和 [`curl_cffi`](https://github.com/lexiforest/curl_cffi) 的 API。
 
 ## 目录
 
