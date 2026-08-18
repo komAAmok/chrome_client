@@ -208,6 +208,7 @@ impl CronetEngine {
 
             // 创建完成标志，用于追踪请求是否已完成
             let completed = Arc::new(AtomicBool::new(false));
+            let callback_claimed = Arc::new(AtomicBool::new(false));
 
             // Create Context to hold state across callbacks
             let context = Box::new(RequestContext {
@@ -216,8 +217,9 @@ impl CronetEngine {
                 response_headers: Mutex::new(Vec::new()),
                 status_code: AtomicI32::new(0),
                 completed: completed.clone(),
-                active_requests: None,  // CronetEngine 不使用活跃请求计数
-                allow_redirects: true,  // 默认允许重定向（REST API）
+                callback_claimed: callback_claimed.clone(),
+                active_requests: None, // CronetEngine does not track active requests.
+                allow_redirects: true,
                 redirect_response: Mutex::new(None),
                 context_taken: AtomicBool::new(false),
                 is_streaming: false,
@@ -348,6 +350,7 @@ impl CronetEngine {
                 upload_data_provider_ptr,
                 upload_body_data,
                 completed,
+                callback_claimed,
             };
 
             (request_handle, rx)
@@ -439,6 +442,10 @@ pub struct CronetRequest {
     upload_data_provider_ptr: Option<Cronet_UploadDataProviderPtr>,
     upload_body_data: Option<Vec<u8>>, // Owns the body data so pointers are valid
     completed: Arc<AtomicBool>,  // 标记请求是否完成，由回调设置
+    // Set as soon as a terminal callback claims the context.  The response
+    // channel may wake its consumer before that callback returns; in that
+    // window Drop must not call Cancel concurrently with on_failed/on_canceled.
+    callback_claimed: Arc<AtomicBool>,
 }
 
 unsafe impl Send for CronetRequest {}
@@ -593,15 +600,27 @@ impl CronetRequest {
     }
 }
 
+fn should_cancel_request(callback_claimed: bool, native_done: bool) -> bool {
+    !callback_claimed && !native_done
+}
+
 impl Drop for CronetRequest {
     fn drop(&mut self) {
         unsafe {
             // 检查请求是否已完成
             if !self.completed.load(Ordering::Acquire) {
                 // 请求尚未完成，先取消它
-                verbose_log!("[DEBUG] CronetRequest::drop - Request not completed, canceling...");
-                if !self.ptr.is_null() {
+                verbose_log!("[DEBUG] CronetRequest::drop - Request not completed; checking cancellation state");
+                let callback_claimed = self.callback_claimed.load(Ordering::Acquire);
+                let native_done = !self.ptr.is_null() && Cronet_UrlRequest_IsDone(self.ptr);
+                if !self.ptr.is_null()
+                    && should_cancel_request(callback_claimed, native_done)
+                {
+                    // Cronet marks a failed request done before dispatching
+                    // on_failed. Do not race that callback with Cancel.
                     Cronet_UrlRequest_Cancel(self.ptr);
+                } else if callback_claimed || native_done {
+                    verbose_log!("[DEBUG] CronetRequest::drop - terminal callback is in progress; waiting without Cancel");
                 }
                 // 等待请求完成（最多等待 5 秒）
                 let start = std::time::Instant::now();
@@ -630,6 +649,7 @@ struct RequestContext {
     response_headers: Mutex<Vec<(String, String)>>,
     status_code: AtomicI32,
     completed: Arc<AtomicBool>,  // 标记请求是否完成
+    callback_claimed: Arc<AtomicBool>,
     active_requests: Option<Arc<AtomicUsize>>,  // Session 的活跃请求计数器
     allow_redirects: bool,  // 是否允许重定向（只读，不需要锁）
     redirect_response: Mutex<Option<RequestResult>>,  // 存储重定向响应（当 allow_redirects=false 时）
@@ -878,6 +898,7 @@ unsafe extern "C" fn on_canceled(
 
     // 检查 context 是否已被取走，防止双重释放
     let context_ref = &*context_ptr;
+    context_ref.callback_claimed.store(true, Ordering::Release);
     if context_ref.context_taken.swap(true, Ordering::AcqRel) {
         verbose_log!("[WARN] on_canceled: Context already taken, skipping");
         return;
@@ -958,6 +979,7 @@ unsafe fn complete_request(callback_ptr: Cronet_UrlRequestCallbackPtr, result: R
 
     // 检查 context 是否已被取走，防止双重释放
     let context_ref = &*context_ptr;
+    context_ref.callback_claimed.store(true, Ordering::Release);
     if context_ref.context_taken.swap(true, Ordering::AcqRel) {
         verbose_log!("[WARN] complete_request: Context already taken, skipping");
         return;
@@ -1342,6 +1364,7 @@ impl SessionManager {
 
             // 创建完成标志
             let completed = Arc::new(AtomicBool::new(false));
+            let callback_claimed = Arc::new(AtomicBool::new(false));
 
             let is_streaming = stream_sender.is_some();
             let context = Box::new(RequestContext {
@@ -1350,6 +1373,7 @@ impl SessionManager {
                 response_headers: Mutex::new(Vec::new()),
                 status_code: AtomicI32::new(0),
                 completed: completed.clone(),
+                callback_claimed: callback_claimed.clone(),
                 active_requests,
                 allow_redirects,
                 redirect_response: Mutex::new(None),
@@ -1471,6 +1495,7 @@ impl SessionManager {
                 upload_data_provider_ptr,
                 upload_body_data,
                 completed,
+                callback_claimed,
             };
 
             (request_handle, rx)
@@ -1839,5 +1864,12 @@ mod tests {
         }
         assert!(completed.load(Ordering::Acquire));
         assert_eq!(active.load(Ordering::Acquire), 0);
+    }
+
+    #[test]
+    fn terminal_request_is_not_canceled_again() {
+        assert!(should_cancel_request(false, false));
+        assert!(!should_cancel_request(true, false));
+        assert!(!should_cancel_request(false, true));
     }
 }
