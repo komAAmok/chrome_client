@@ -6,6 +6,7 @@ import sys
 import types
 import unittest
 import tempfile
+import threading
 from collections import UserDict
 from unittest.mock import patch
 from pathlib import Path
@@ -273,6 +274,51 @@ class ClientNamesTest(unittest.TestCase):
         async_session.cookies = jar
         self.assertIs(async_session.cookies, jar)
         asyncio.run(async_session.close())
+
+    def test_stale_cookie_response_cannot_roll_back_newer_state(self):
+        with chrome_client.Session(impersonate=None) as session:
+            session._update_cookies_from_response(
+                {"set-cookie": ["token=new; Path=/"]},
+                "https://example.test/api",
+                2,
+            )
+            session._update_cookies_from_response(
+                {"set-cookie": ["token=old; Path=/"]},
+                "https://example.test/api",
+                1,
+            )
+            self.assertEqual(session.cookies.get("token"), "new")
+
+            session._update_cookies_from_response(
+                {"set-cookie": ["other=old; Path=/"]},
+                "https://example.test/api",
+                1,
+            )
+            self.assertEqual(session.cookies.get("other"), "old")
+
+    def test_cookie_jar_is_safe_for_concurrent_updates(self):
+        jar = chrome_client.CookieJar(default_domain="example.test")
+        errors = []
+
+        def worker(worker_id):
+            try:
+                for index in range(100):
+                    jar.set("token-%d-%d" % (worker_id, index), "value")
+                    jar.update_from_set_cookie(
+                        ["server-%d-%d=ok; Path=/" % (worker_id, index)],
+                        "https://example.test/api",
+                    )
+                    jar.cookies_for_request("https://example.test/api")
+            except Exception as exc:
+                errors.append(exc)
+
+        threads = [threading.Thread(target=worker, args=(i,)) for i in range(8)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        self.assertEqual(errors, [])
+        self.assertEqual(len(jar.get_dict()), 1600)
 
     def test_cookie_path_expires_and_max_age_semantics(self):
         jar = chrome_client.CookieJar()

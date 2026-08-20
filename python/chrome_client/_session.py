@@ -5,6 +5,7 @@ Synchronous Session class for chrome_client.
 import os
 import json as json_lib
 import base64
+import threading
 from typing import Optional, Dict, List, Tuple, Any
 from urllib.parse import urlparse, urlencode, urljoin
 
@@ -66,6 +67,9 @@ class Session:
         self._closed = False
         self._verify = verify
         self._cookies = CookieJar(default_domain=default_domain)
+        self._state_lock = threading.RLock()
+        self._request_sequence = 0
+        self._cookie_sequences = {}
         self.headers = dict(headers) if headers else {}
         self.params = dict(params) if params else {}
         self.auth = auth
@@ -87,12 +91,19 @@ class Session:
     @cookies.setter
     def cookies(self, value: CookiesType) -> None:
         """Replace the session cookie jar with a CookieJar or mapping."""
-        if isinstance(value, CookieJar):
-            self._cookies = value
-            return
-        jar = CookieJar(default_domain=self._cookies.default_domain or None)
-        jar.update(value)
-        self._cookies = jar
+        with self._state_lock:
+            if isinstance(value, CookieJar):
+                self._cookies = value
+            else:
+                jar = CookieJar(default_domain=self._cookies.default_domain or None)
+                jar.update(value)
+                self._cookies = jar
+            # An explicitly assigned jar is newer than every already-issued
+            # request, so old responses cannot overwrite its auth cookies.
+            marker = self._request_sequence + 1
+            self._cookie_sequences = {
+                cookie.name: marker for cookie in self._cookies.iter_cookies()
+            }
 
     def _adjust_chrome_headers(self, headers: Dict[str, str], method: str, has_body: bool = False, is_json: bool = False) -> Dict[str, str]:
         """
@@ -245,10 +256,29 @@ class Session:
         validate_headers(dict(result))
         return result
 
-    def _update_cookies_from_response(self, headers: Dict[str, List[str]], request_url: str):
-        for name, values in headers.items():
-            if name.lower() == 'set-cookie':
-                self._cookies.update_from_set_cookie(values, request_url)
+    def _next_request_sequence(self) -> int:
+        with self._state_lock:
+            self._request_sequence += 1
+            return self._request_sequence
+
+    def _update_cookies_from_response(
+        self, headers: Dict[str, List[str]], request_url: str,
+        request_sequence: int,
+    ):
+        # Responses can complete out of order. Apply each cookie name in
+        # request order so an older in-flight response cannot roll back a newer
+        # auth token without blocking unrelated cookie names.
+        with self._state_lock:
+            for name, values in headers.items():
+                if name.lower() == 'set-cookie':
+                    for value in values:
+                        cookie_name = value.split(';', 1)[0].partition('=')[0].strip()
+                        if not cookie_name:
+                            continue
+                        if request_sequence < self._cookie_sequences.get(cookie_name, -1):
+                            continue
+                        self._cookies.update_from_set_cookie([value], request_url)
+                        self._cookie_sequences[cookie_name] = request_sequence
 
     def request(
         self,
@@ -319,6 +349,9 @@ class Session:
             data = content
         suppress_auth = kwargs.pop('_suppress_auth', False)
         skip_default_params = kwargs.pop('_skip_default_params', False)
+        request_sequence = kwargs.pop('_request_sequence', None)
+        if request_sequence is None:
+            request_sequence = self._next_request_sequence()
         if kwargs and set(kwargs) != {'_redirects_remaining'}:
             name = next(key for key in kwargs if key != '_redirects_remaining')
             raise TypeError("unexpected keyword argument %r" % name)
@@ -342,8 +375,7 @@ class Session:
 
         # Auto-detect default domain from first request when none was
         # supplied at construction time (fulfils the documented behaviour).
-        if not self._cookies.default_domain:
-            self._cookies.set_default_domain(domain)
+        self._cookies._set_default_domain_if_empty(domain)
 
         # Per-request cookies are NOT merged into session (matching requests behavior).
         # They are only used for this single request via _prepare_headers.
@@ -427,7 +459,7 @@ class Session:
                 resp_headers[name].append(value)
 
             # Update session cookies from response
-            self._update_cookies_from_response(resp_headers, url)
+            self._update_cookies_from_response(resp_headers, url, request_sequence)
 
             # Create response CookieJar
             response_cookies = CookieJar()
@@ -467,6 +499,7 @@ class Session:
                         stream=True, _redirects_remaining=redirects_remaining - 1,
                         _suppress_auth=should_strip_auth(url, location),
                         _skip_default_params=True,
+                        _request_sequence=request_sequence,
                     )
 
             response = StreamResponse(
@@ -502,7 +535,7 @@ class Session:
                 response_cookies.update_from_set_cookie(values, url)
 
         # Update session cookies from response
-        self._update_cookies_from_response(resp_headers, url)
+        self._update_cookies_from_response(resp_headers, url, request_sequence)
 
         # Handle redirects in Python layer
         if allow_redirects and status_code in (301, 302, 303, 307, 308):
@@ -558,6 +591,7 @@ class Session:
                     _redirects_remaining=redirects_remaining - 1,
                     _suppress_auth=should_strip_auth(url, location),
                     _skip_default_params=True,
+                    _request_sequence=request_sequence,
                 )
                 followed.history = [current] + list(followed.history)
                 return followed
