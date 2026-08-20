@@ -58,6 +58,11 @@ pip install --upgrade chrome_client
 
 Python `>= 3.6` is required.
 
+Published wheels use the `py3-none` Python/ABI tag (for example,
+`chrome_client-0.1.7-py3-none-win_amd64.whl`). The platform tag remains
+platform-specific, while `Requires-Python >=3.6` keeps installation limited
+to supported Python 3 versions.
+
 | Platform | Architecture | Status |
 |---|---|---|
 | Windows | x86_64 | Supported |

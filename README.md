@@ -58,6 +58,10 @@ pip install --upgrade chrome_client
 
 要求 Python `>= 3.6`。
 
+发布的 wheel 使用 `py3-none` Python/ABI 标签（例如
+`chrome_client-0.1.7-py3-none-win_amd64.whl`）。平台标签仍然区分操作系统和架构，
+`Requires-Python >=3.6` 保证只会安装到受支持的 Python 3 版本。
+
 | 平台 | 架构 | 状态 |
 |---|---|---|
 | Windows | x86_64 | 支持 |

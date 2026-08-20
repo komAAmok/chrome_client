@@ -59,6 +59,15 @@ jobs:
           target: ${{ matrix.target }}
           args: --release --locked --out dist
 
+      - name: Normalize wheel Python tag
+        shell: pwsh
+        run: |
+          python -m pip install --disable-pip-version-check wheel==0.45.1
+          Get-ChildItem dist/*.whl | ForEach-Object {
+            python -m wheel tags --python-tag py3 --abi-tag none --remove $_.FullName
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+
       - name: Upload wheel
         uses: actions/upload-artifact@v4
         with:
@@ -104,7 +113,7 @@ jobs:
       - name: Apply the exact glibc compatibility tag
         run: |
           python -m pip install --disable-pip-version-check wheel==0.45.1
-          python -m wheel tags --platform-tag manylinux_2_18_x86_64 --remove dist/*-linux_x86_64.whl
+          python -m wheel tags --python-tag py3 --abi-tag none --platform-tag manylinux_2_18_x86_64 --remove dist/*-linux_x86_64.whl
 
       - name: Upload wheel
         uses: actions/upload-artifact@v4
@@ -134,6 +143,11 @@ jobs:
         with:
           target: aarch64-apple-darwin
           args: --release --locked --out dist
+
+      - name: Normalize wheel Python tag
+        run: |
+          python -m pip install --disable-pip-version-check wheel==0.45.1
+          python -m wheel tags --python-tag py3 --abi-tag none --remove dist/*.whl
 
       - name: Upload wheel
         uses: actions/upload-artifact@v4

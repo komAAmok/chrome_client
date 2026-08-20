@@ -5,6 +5,14 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+
+function Normalize-WheelTags([string]$Pattern) {
+    python -m pip install --disable-pip-version-check wheel==0.45.1
+    Get-ChildItem $Pattern | ForEach-Object {
+        python -m wheel tags --python-tag py3 --abi-tag none --remove $_.FullName
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    }
+}
 $ProjectDir = $PSScriptRoot  # 使用脚本所在目录
 
 function Build-Windows {
@@ -22,6 +30,7 @@ function Build-Windows {
     maturin build --release --locked
 
     if ($LASTEXITCODE -eq 0) {
+        Normalize-WheelTags "$ProjectDir\target\wheels\*.whl"
         Write-Host "✓ Windows x64 wheel 构建成功" -ForegroundColor Green
     } else {
         Write-Host "✗ Windows x64 wheel 构建失败" -ForegroundColor Red
@@ -42,6 +51,7 @@ function Build-Windows32 {
     if ($LASTEXITCODE -ne 0) {
         exit 1
     }
+    Normalize-WheelTags "$ProjectDir\target\wheels\*.whl"
 }
 
 function Build-Linux {
@@ -77,7 +87,7 @@ function Build-Linux {
         python -m pip install --disable-pip-version-check wheel==0.45.1
         Get-ChildItem "$ProjectDir\target\wheels\*-linux_x86_64.whl" |
             ForEach-Object {
-                python -m wheel tags --platform-tag manylinux_2_18_x86_64 --remove $_.FullName
+                python -m wheel tags --python-tag py3 --abi-tag none --platform-tag manylinux_2_18_x86_64 --remove $_.FullName
                 if ($LASTEXITCODE -ne 0) {
                     exit 1
                 }
@@ -112,6 +122,7 @@ function Build-MacOS {
     maturin build --release --locked --target aarch64-apple-darwin --zig
 
     if ($LASTEXITCODE -eq 0) {
+        Normalize-WheelTags "$ProjectDir\target\wheels\*.whl"
         Write-Host "✓ macOS wheel 构建成功" -ForegroundColor Green
     } else {
         Write-Host "✗ macOS wheel 构建失败" -ForegroundColor Red
