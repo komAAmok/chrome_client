@@ -5,7 +5,7 @@ build-backend = "maturin"
 [project]
 name = "chrome_client"
 version = "0.1.8"
-description = "Python bindings for Cronet-Cloak - Authentic Chrome TLS/HTTP2 fingerprints with async support"
+description = "A Chrome TLS client based on the Chromium network stack (Cronet) ."
 readme = "README.md"
 requires-python = ">=3.6"
 dependencies = [
