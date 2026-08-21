@@ -53,16 +53,44 @@ pub struct CycronetResponse {
     body: Vec<u8>,
 }
 
-/// Opaque stream handle for streaming reads.
-pub struct CycronetStream {
-    rx: tokio::sync::mpsc::Receiver<StreamChunk>,
-    _request: crate::cronet::CronetRequest,
+struct StreamMetadata {
     status_code: i32,
     headers: Vec<(CString, CString)>,
     headers_received: bool,
     done: bool,
     pending: Vec<u8>,
     pending_offset: usize,
+}
+
+struct StreamShared {
+    rx: tokio::sync::Mutex<tokio::sync::mpsc::Receiver<StreamChunk>>,
+    metadata: Mutex<StreamMetadata>,
+    // Only one consumer (sync or async) may wait for the next chunk.
+    read_in_progress: Arc<AtomicBool>,
+}
+
+struct ReadPermit(Arc<AtomicBool>);
+
+impl Drop for ReadPermit {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
+    }
+}
+
+fn acquire_read(shared: &Arc<StreamShared>) -> Option<ReadPermit> {
+    shared
+        .read_in_progress
+        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+        .ok()
+        .map(|_| ReadPermit(shared.read_in_progress.clone()))
+}
+
+/// Opaque stream handle for streaming reads.
+pub struct CycronetStream {
+    // Async tasks retain this Arc, so closing the public Box cannot leave a
+    // task dereferencing freed stream memory.
+    shared: Arc<StreamShared>,
+    _request: crate::cronet::CronetRequest,
 }
 
 /// Opaque WebSocket handle.
@@ -143,14 +171,6 @@ struct AsyncRequestCtx {
     user_data: usize, // *mut c_void as usize
 }
 unsafe impl Send for AsyncRequestCtx {}
-
-/// Context for async stream read.
-struct AsyncStreamCtx {
-    stream: usize, // *mut CycronetStream as usize
-    callback: CycronetStreamCallback,
-    user_data: usize,
-}
-unsafe impl Send for AsyncStreamCtx {}
 
 /// Context for WebSocket callback thread.
 struct WsCallbackCtx {
@@ -620,15 +640,25 @@ pub unsafe extern "C" fn cycronet_stream_open(
     };
 
     Box::into_raw(Box::new(CycronetStream {
-        rx,
+        shared: Arc::new(StreamShared {
+            rx: tokio::sync::Mutex::new(rx),
+            metadata: Mutex::new(StreamMetadata {
+                status_code: 0,
+                headers: Vec::new(),
+                headers_received: false,
+                done: false,
+                pending: Vec::new(),
+                pending_offset: 0,
+            }),
+            read_in_progress: Arc::new(AtomicBool::new(false)),
+        }),
         _request: request,
-        status_code: 0,
-        headers: Vec::new(),
-        headers_received: false,
-        done: false,
-        pending: Vec::new(),
-        pending_offset: 0,
     }))
+}
+
+async fn recv_stream_chunk(shared: &Arc<StreamShared>) -> Option<StreamChunk> {
+    let mut rx = shared.rx.lock().await;
+    rx.recv().await
 }
 
 /// Read the next chunk from a stream (blocking).
@@ -649,43 +679,56 @@ pub unsafe extern "C" fn cycronet_stream_read(
     if stream.is_null() {
         return -1;
     }
-    let s = &mut *stream;
-    if s.done {
-        return 0;
-    }
+    let shared = (*stream).shared.clone();
+    let _permit = match acquire_read(&shared) {
+        Some(permit) => permit,
+        None => return -1,
+    };
     if !out_read.is_null() {
         *out_read = 0;
     }
-    if s.pending_offset < s.pending.len() {
+    let mut metadata = shared
+        .metadata
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if metadata.done {
+        return 0;
+    }
+    if metadata.pending_offset < metadata.pending.len() {
         if out_buf.is_null() || buf_len == 0 {
             return -1;
         }
-        let remaining = &s.pending[s.pending_offset..];
-        let copy_len = remaining.len().min(buf_len);
-        ptr::copy_nonoverlapping(remaining.as_ptr(), out_buf, copy_len);
-        s.pending_offset += copy_len;
-        if s.pending_offset == s.pending.len() {
-            s.pending.clear();
-            s.pending_offset = 0;
+        let offset = metadata.pending_offset;
+        let copy_len = (metadata.pending.len() - offset).min(buf_len);
+        ptr::copy_nonoverlapping(metadata.pending.as_ptr().add(offset), out_buf, copy_len);
+        metadata.pending_offset += copy_len;
+        if metadata.pending_offset == metadata.pending.len() {
+            metadata.pending.clear();
+            metadata.pending_offset = 0;
         }
         if !out_read.is_null() {
             *out_read = copy_len;
         }
         return 1;
     }
+    drop(metadata);
 
     let Some(g) = global() else {
         return -1;
     };
-    let chunk = g.runtime.block_on(async { s.rx.recv().await });
+    let chunk = g.runtime.block_on(recv_stream_chunk(&shared));
 
     match chunk {
         Some(StreamChunk::Headers {
             status_code,
             headers,
         }) => {
-            s.status_code = status_code;
-            s.headers = headers
+            let mut metadata = shared
+                .metadata
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            metadata.status_code = status_code;
+            metadata.headers = headers
                 .into_iter()
                 .map(|(n, v)| {
                     (
@@ -694,13 +737,17 @@ pub unsafe extern "C" fn cycronet_stream_read(
                     )
                 })
                 .collect();
-            s.headers_received = true;
+            metadata.headers_received = true;
             2 // headers event
         }
         Some(StreamChunk::Data(data)) => {
+            let mut metadata = shared
+                .metadata
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             if out_buf.is_null() || buf_len == 0 {
-                s.pending = data;
-                s.pending_offset = 0;
+                metadata.pending = data;
+                metadata.pending_offset = 0;
                 return -1;
             }
             let copy_len = data.len().min(buf_len);
@@ -708,8 +755,8 @@ pub unsafe extern "C" fn cycronet_stream_read(
                 ptr::copy_nonoverlapping(data.as_ptr(), out_buf, copy_len);
             }
             if copy_len < data.len() {
-                s.pending = data;
-                s.pending_offset = copy_len;
+                metadata.pending = data;
+                metadata.pending_offset = copy_len;
             }
             if !out_read.is_null() {
                 *out_read = copy_len;
@@ -717,16 +764,28 @@ pub unsafe extern "C" fn cycronet_stream_read(
             1
         }
         Some(StreamChunk::Done) => {
-            s.done = true;
+            shared
+                .metadata
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .done = true;
             0
         }
         Some(StreamChunk::Error(e)) => {
             eprintln!("[cycronet] stream error: {}", e);
-            s.done = true;
+            shared
+                .metadata
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .done = true;
             -1
         }
         None => {
-            s.done = true;
+            shared
+                .metadata
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .done = true;
             0
         }
     }
@@ -745,7 +804,9 @@ pub type CycronetStreamCallback = Option<
 
 /// Read the next chunk from a stream asynchronously.
 /// The callback is invoked on a background thread.
-/// Returns 0 on success, -1 if stream is invalid or already done.
+/// Returns 0 on success, -1 if stream is invalid, already done, or another
+/// synchronous/asynchronous read is currently waiting for a chunk. Only one
+/// outstanding read is allowed per stream.
 #[no_mangle]
 pub unsafe extern "C" fn cycronet_stream_read_async(
     stream: *mut CycronetStream,
@@ -755,34 +816,40 @@ pub unsafe extern "C" fn cycronet_stream_read_async(
     if stream.is_null() || callback.is_none() {
         return -1;
     }
-    let s = &mut *stream;
-    if s.done {
+    let shared = (*stream).shared.clone();
+    let permit = match acquire_read(&shared) {
+        Some(permit) => permit,
+        None => return -1,
+    };
+    if shared
+        .metadata
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .done
+    {
         return -1;
     }
-
-    let ctx = AsyncStreamCtx {
-        stream: stream as usize,
-        callback,
-        user_data: user_data as usize,
-    };
 
     let Some(g) = global() else {
         return -1;
     };
+    let user_data = user_data as usize;
     g.runtime.spawn(async move {
-        let s = &mut *(ctx.stream as *mut CycronetStream);
-        let chunk = s.rx.recv().await;
-        let ud = ctx.user_data as *mut c_void;
-        let Some(callback) = ctx.callback else {
-            return;
-        };
+        let _permit = permit;
+        let chunk = recv_stream_chunk(&shared).await;
+        let ud = user_data as *mut c_void;
+        let Some(callback) = callback else { return; };
         match chunk {
             Some(StreamChunk::Headers {
                 status_code,
                 headers,
             }) => {
-                s.status_code = status_code;
-                s.headers = headers
+                let mut metadata = shared
+                    .metadata
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                metadata.status_code = status_code;
+                metadata.headers = headers
                     .into_iter()
                     .map(|(n, v)| {
                         (
@@ -791,22 +858,35 @@ pub unsafe extern "C" fn cycronet_stream_read_async(
                         )
                     })
                     .collect();
-                s.headers_received = true;
+                metadata.headers_received = true;
+                drop(metadata);
                 callback(ud, 2, ptr::null(), 0);
             }
             Some(StreamChunk::Data(data)) => {
                 callback(ud, 1, data.as_ptr(), data.len());
             }
             Some(StreamChunk::Done) => {
-                s.done = true;
+                shared
+                    .metadata
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .done = true;
                 callback(ud, 0, ptr::null(), 0);
             }
             Some(StreamChunk::Error(_)) => {
-                s.done = true;
+                shared
+                    .metadata
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .done = true;
                 callback(ud, -1, ptr::null(), 0);
             }
             None => {
-                s.done = true;
+                shared
+                    .metadata
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .done = true;
                 callback(ud, 0, ptr::null(), 0);
             }
         }
@@ -821,7 +901,12 @@ pub unsafe extern "C" fn cycronet_stream_status(stream: *const CycronetStream) -
     if stream.is_null() {
         return 0;
     }
-    (*stream).status_code
+    (*stream)
+        .shared
+        .metadata
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .status_code
 }
 
 /// Get stream response header count.
@@ -830,7 +915,13 @@ pub unsafe extern "C" fn cycronet_stream_header_count(stream: *const CycronetStr
     if stream.is_null() {
         return 0;
     }
-    (*stream).headers.len() as c_int
+    (*stream)
+        .shared
+        .metadata
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .headers
+        .len() as c_int
 }
 
 /// Get stream response header by index.
@@ -844,16 +935,20 @@ pub unsafe extern "C" fn cycronet_stream_header_at(
     if stream.is_null() {
         return -1;
     }
-    let s = &*stream;
+    let shared = &(*stream).shared;
+    let metadata = shared
+        .metadata
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let idx = index as usize;
-    if idx >= s.headers.len() {
+    if idx >= metadata.headers.len() {
         return -1;
     }
     if !out_name.is_null() {
-        *out_name = s.headers[idx].0.as_ptr();
+        *out_name = metadata.headers[idx].0.as_ptr();
     }
     if !out_value.is_null() {
-        *out_value = s.headers[idx].1.as_ptr();
+        *out_value = metadata.headers[idx].1.as_ptr();
     }
     0
 }

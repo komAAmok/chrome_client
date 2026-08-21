@@ -708,6 +708,24 @@ with chrome_client.Client(impersonate="chrome_150") as client:
 
 Chrome 99 through Chrome 151 are supported. Valid `impersonate` values are:
 
+`random_tls_extension_order` controls TLS ClientHello extension permutation.
+It defaults to `False`; pass `True` to enable it. The order is randomized when
+the Client/Session's TLS profile is created, and the native Cronet library must
+honor the configured `tls_extensions` order for this to change the wire-level
+ClientHello.
+
+The order is fixed for the lifetime of a Client/Session. Updating the profile
+registry later affects only newly created sessions; it does not reconfigure an
+engine that is already serving requests.
+
+Chromium's official M101 source is the first release source checked here that
+contains `SSL_set_permute_extensions`; the corresponding `PermuteTLSExtensions`
+feature was still disabled by default. This is a Chromium capability boundary,
+not a guarantee that every Chrome build enables the feature.
+
+Note that JA4 intentionally sorts TLS extension and cipher lists, so changing
+only extension order does not necessarily produce a different JA4 value.
+
 ```text
 chrome_99   chrome_100  chrome_101  chrome_102  chrome_103
 chrome_104  chrome_105  chrome_106  chrome_107  chrome_108

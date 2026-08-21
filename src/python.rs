@@ -370,6 +370,7 @@ impl PyCronetClient {
                             rx: Arc::new(TokioMutex::new(Some(rx))),
                             runtime: self.runtime.clone(),
                             _request: Arc::new(StdMutex::new(Some(request))),
+                            closed: Arc::new(std::sync::atomic::AtomicBool::new(false)),
                             status_code,
                             headers_list: headers,
                         };
@@ -466,6 +467,7 @@ impl PyCronetClient {
                         rx: Arc::new(TokioMutex::new(Some(rx))),
                         runtime,
                         _request: Arc::new(StdMutex::new(Some(request))),
+                        closed: Arc::new(std::sync::atomic::AtomicBool::new(false)),
                         status_code,
                         headers_list: headers,
                     };
@@ -572,6 +574,7 @@ pub struct PyStreamReader {
     rx: Arc<TokioMutex<Option<tokio::sync::mpsc::Receiver<StreamChunk>>>>,
     runtime: Arc<SafeRuntime>,
     _request: Arc<StdMutex<Option<CronetRequest>>>,
+    closed: Arc<std::sync::atomic::AtomicBool>,
     #[pyo3(get)]
     status_code: i32,
     headers_list: Vec<(String, String)>,
@@ -594,11 +597,18 @@ impl PyStreamReader {
     fn next_chunk_sync(&self, py: Python) -> PyResult<Option<PyObject>> {
         let runtime = self.runtime.clone();
         let rx = self.rx.clone();
+        let closed = self.closed.clone();
 
         let chunk = py.allow_threads(|| {
             runtime.block_on(async {
+                if closed.load(std::sync::atomic::Ordering::Acquire) {
+                    return None;
+                }
                 let mut guard = rx.lock().await;
                 loop {
+                    if closed.load(std::sync::atomic::Ordering::Acquire) {
+                        break None;
+                    }
                     let chunk = if let Some(ref mut recv) = *guard {
                         recv.recv().await
                     } else {
@@ -625,10 +635,17 @@ impl PyStreamReader {
     /// Returns awaitable that resolves to bytes or None
     fn next_chunk<'py>(&self, py: Python<'py>) -> PyResult<&'py PyAny> {
         let rx = self.rx.clone();
+        let closed = self.closed.clone();
 
         future_into_py(py, async move {
+            if closed.load(std::sync::atomic::Ordering::Acquire) {
+                return Ok(None::<PyObject>);
+            }
             let mut guard = rx.lock().await;
             let chunk = loop {
+                if closed.load(std::sync::atomic::Ordering::Acquire) {
+                    break None;
+                }
                 let chunk = if let Some(ref mut recv) = *guard {
                     recv.recv().await
                 } else {
@@ -658,12 +675,18 @@ impl PyStreamReader {
 
     /// Close the stream reader and release resources
     fn close(&self) -> PyResult<()> {
-        // Drop receiver
-        if let Ok(mut guard) = self.rx.try_lock() {
+        self.closed.store(true, std::sync::atomic::Ordering::Release);
+
+        // Cancel the request first. If a read currently owns the receiver
+        // mutex, Cronet's terminal callback wakes it; the reader observes the
+        // closed flag and exits without silently losing cancellation.
+        if let Ok(mut guard) = self._request.lock() {
             *guard = None;
         }
-        // Drop request handle (triggers cancel if still active)
-        if let Ok(mut guard) = self._request.lock() {
+
+        // Drop receiver when it is immediately available. It is safe to leave
+        // it temporarily owned by an in-flight read because `closed` is set.
+        if let Ok(mut guard) = self.rx.try_lock() {
             *guard = None;
         }
         Ok(())

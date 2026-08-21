@@ -7,7 +7,7 @@ from ._client import AsyncSession
 
 _SESSION_KEYS = {
     "verify", "proxies", "proxy", "timeout", "impersonate", "timeout_ms",
-    "base_url", "default_domain", "default_headers",
+    "base_url", "default_domain", "default_headers", "random_tls_extension_order",
 }
 
 
@@ -67,12 +67,21 @@ async def async_upload_file(
     verify: bool = True, timeout: Optional[float] = None,
     impersonate: Optional[str] = "chrome_150", **kwargs,
 ) -> Response:
+    session_kwargs = {
+        key: kwargs.pop(key) for key in tuple(kwargs) if key in _SESSION_KEYS
+    }
+    request_kwargs = {
+        key: kwargs.pop(key) for key in ("headers", "cookies") if key in kwargs
+    }
+    if kwargs:
+        raise TypeError("unexpected keyword argument %r" % next(iter(kwargs)))
     async with AsyncSession(
-        verify=verify, timeout=timeout, impersonate=impersonate
+        verify=verify, timeout=timeout, impersonate=impersonate, **session_kwargs
     ) as session:
         return await session.upload_file(
             url, file_path, field_name=field_name,
-            additional_fields=additional_fields, **kwargs
+            additional_fields=additional_fields,
+            **request_kwargs,
         )
 
 
@@ -81,9 +90,18 @@ async def async_download_file(
     timeout: Optional[float] = None, chunk_size: int = 8192,
     impersonate: Optional[str] = "chrome_150", **kwargs,
 ) -> Dict[str, Any]:
+    session_kwargs = {
+        key: kwargs.pop(key) for key in tuple(kwargs) if key in _SESSION_KEYS
+    }
+    request_kwargs = {
+        key: kwargs.pop(key) for key in ("headers", "cookies") if key in kwargs
+    }
+    if kwargs:
+        raise TypeError("unexpected keyword argument %r" % next(iter(kwargs)))
     async with AsyncSession(
-        verify=verify, timeout=timeout, impersonate=impersonate
+        verify=verify, timeout=timeout, impersonate=impersonate, **session_kwargs
     ) as session:
         return await session.download_file(
-            url, save_path, chunk_size=chunk_size, **kwargs
+            url, save_path, chunk_size=chunk_size,
+            **request_kwargs,
         )

@@ -8,7 +8,7 @@ from ._client import Session
 
 _SESSION_KEYS = {
     "verify", "proxies", "proxy", "timeout", "impersonate", "timeout_ms",
-    "base_url", "default_domain", "default_headers",
+    "base_url", "default_domain", "default_headers", "random_tls_extension_order",
 }
 
 

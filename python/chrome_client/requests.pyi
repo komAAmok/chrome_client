@@ -19,6 +19,7 @@ def request(
     impersonate: Optional[BrowserTypeLiteral] = ..., max_redirects: Optional[int] = ...,
     timeout_ms: Optional[int] = ..., base_url: Optional[str] = ...,
     default_domain: Optional[str] = ..., default_headers: bool = ...,
+    random_tls_extension_order: bool = ...,
 ) -> _ResponseType: ...
 
 def session(
@@ -30,6 +31,7 @@ def session(
     allow_redirects: bool = ..., max_redirects: int = ...,
     default_headers: bool = ..., timeout_ms: Optional[int] = ...,
     default_domain: Optional[str] = ...,
+    random_tls_extension_order: bool = ...,
 ) -> Session: ...
 
 def get(

@@ -19,8 +19,10 @@ native = types.ModuleType("chrome_client.cronet_cloak")
 
 class PyCronetClient:
     calls = []
+    create_calls = []
 
     def create_session(self, *args):
+        self.create_calls.append(args)
         return "test-session"
 
     def request_sync(self, session_id, url, method, headers, body, allow_redirects):
@@ -174,16 +176,89 @@ class ClientNamesTest(unittest.TestCase):
             "default_headers",
             "timeout_ms",
             "default_domain",
+            "random_tls_extension_order",
         ]
         self.assertEqual(list(inspect.signature(chrome_client.Client).parameters), expected)
         self.assertEqual(
             list(inspect.signature(chrome_client.AsyncClient).parameters), expected
         )
 
+    def test_random_tls_extension_order_is_explicit(self):
+        with chrome_client.Client(impersonate=None) as client:
+            self.assertFalse(client.random_tls_extension_order)
+        with chrome_client.Client(
+            impersonate=None, random_tls_extension_order=True
+        ) as client:
+            self.assertTrue(client.random_tls_extension_order)
+
+        from chrome_client import _client as client_module
+        original_profiles = client_module._TLS_PROFILES_CACHE
+        profile = {"tls_extensions": ["first", "second", "third"]}
+        client_module._TLS_PROFILES_CACHE = {"test": profile}
+
+        class ReverseRandom:
+            def shuffle(self, values):
+                values.reverse()
+
+        try:
+            PyCronetClient.create_calls.clear()
+            with patch.object(client_module.random, "SystemRandom", return_value=ReverseRandom()):
+                with chrome_client.Client(
+                    impersonate="test", random_tls_extension_order=True
+                ):
+                    pass
+            self.assertEqual(
+                PyCronetClient.create_calls[-1][5],
+                ["third", "second", "first"],
+            )
+            self.assertEqual(profile["tls_extensions"], ["first", "second", "third"])
+        finally:
+            client_module._TLS_PROFILES_CACHE = original_profiles
+
         for name in ("request", "get", "post", "put", "patch", "delete",
                      "head", "options", "trace", "query", "close"):
             self.assertTrue(hasattr(chrome_client.Client, name), name)
             self.assertTrue(hasattr(chrome_client.AsyncClient, name), name)
+
+    def test_tls_profile_lists_are_not_shared_with_callers(self):
+        from chrome_client import _client as client_module
+        original_profiles = client_module._TLS_PROFILES_CACHE
+        try:
+            source = {"test": {"tls_extensions": ["a", "b"]}}
+            chrome_client.set_tls_profiles(source)
+            source["test"]["tls_extensions"].reverse()
+            exported = chrome_client.get_tls_profiles()
+            exported["test"]["tls_extensions"].reverse()
+            self.assertEqual(
+                client_module._load_tls_profile("test")["tls_extensions"],
+                ["a", "b"],
+            )
+        finally:
+            client_module._TLS_PROFILES_CACHE = original_profiles
+
+    def test_tls_profile_registry_is_safe_during_concurrent_reads_and_writes(self):
+        from concurrent.futures import ThreadPoolExecutor
+
+        from chrome_client import _client as client_module
+        original_profiles = client_module._TLS_PROFILES_CACHE
+        try:
+            chrome_client.set_tls_profiles({"test": {"tls_extensions": ["a", "b"]}})
+
+            def read_profile(_):
+                return client_module._load_tls_profile("test")["tls_extensions"]
+
+            def write_profile(index):
+                chrome_client.add_tls_profile(
+                    "test", {"tls_extensions": ["a", "b", str(index)]}
+                )
+
+            with ThreadPoolExecutor(max_workers=8) as pool:
+                futures = [pool.submit(read_profile, i) for i in range(64)]
+                futures += [pool.submit(write_profile, i) for i in range(64)]
+                for future in futures:
+                    future.result()
+        finally:
+            client_module._TLS_PROFILES_CACHE = original_profiles
 
     def test_requests_namespace_and_session_attributes(self):
         session = chrome_client.requests.Session(impersonate=None)

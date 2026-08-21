@@ -113,7 +113,7 @@ impl CronetEngine {
     }
 
     // Get or create a cached engine with custom configuration
-    fn get_or_create_engine(&self, config_key: &EngineConfig) -> Cronet_EnginePtr {
+    fn get_or_create_engine(&self, config_key: &EngineConfig) -> Option<Cronet_EnginePtr> {
         let mut cache = self
             .engine_cache
             .lock()
@@ -121,7 +121,7 @@ impl CronetEngine {
 
         if let Some(cached) = cache.get(config_key) {
             verbose_log!("[DEBUG] Reusing cached engine for config: {:?}", config_key);
-            return cached.ptr;
+            return Some(cached.ptr);
         }
 
         verbose_log!("[DEBUG] Creating new engine for config: {:?}", config_key);
@@ -148,11 +148,20 @@ impl CronetEngine {
             let c_options = CString::new(experimental_options).expect("Invalid experimental options");
             Cronet_EngineParams_experimental_options_set(params, c_options.as_ptr());
 
-            Cronet_Engine_StartWithParams(engine, params);
+            let result = Cronet_Engine_StartWithParams(engine, params);
             Cronet_EngineParams_Destroy(params);
 
+            if result != Cronet_RESULT_Cronet_RESULT_SUCCESS {
+                eprintln!(
+                    "[ERROR] Failed to start cached Cronet engine for {:?}: {:?}",
+                    config_key, result
+                );
+                Cronet_Engine_Destroy(engine);
+                return None;
+            }
+
             cache.insert(config_key.clone(), CachedEngine { ptr: engine });
-            engine
+            Some(engine)
         }
     }
 
@@ -196,7 +205,10 @@ impl CronetEngine {
                 };
 
                 // Use cached engine (session is preserved)
-                self.get_or_create_engine(&config_key)
+                self.get_or_create_engine(&config_key).unwrap_or_else(|| {
+                    eprintln!("[WARN] Falling back to the shared Cronet engine after custom engine startup failure");
+                    self.ptr
+                })
             } else {
                 self.ptr
             };
@@ -209,6 +221,7 @@ impl CronetEngine {
             // 创建完成标志，用于追踪请求是否已完成
             let completed = Arc::new(AtomicBool::new(false));
             let callback_claimed = Arc::new(AtomicBool::new(false));
+            let callback_returned = Arc::new(AtomicBool::new(false));
 
             // Create Context to hold state across callbacks
             let context = Box::new(RequestContext {
@@ -218,6 +231,7 @@ impl CronetEngine {
                 status_code: AtomicI32::new(0),
                 completed: completed.clone(),
                 callback_claimed: callback_claimed.clone(),
+                callback_returned: callback_returned.clone(),
                 active_requests: None, // CronetEngine does not track active requests.
                 allow_redirects: true,
                 redirect_response: Mutex::new(None),
@@ -351,6 +365,7 @@ impl CronetEngine {
                 upload_body_data,
                 completed,
                 callback_claimed,
+                callback_returned,
             };
 
             (request_handle, rx)
@@ -446,6 +461,10 @@ pub struct CronetRequest {
     // channel may wake its consumer before that callback returns; in that
     // window Drop must not call Cancel concurrently with on_failed/on_canceled.
     callback_claimed: Arc<AtomicBool>,
+    // The terminal callback may publish its response before returning to
+    // Cronet. Native callback objects are destroyed only after it returns.
+    callback_returned: Arc<AtomicBool>,
+    callback_claimed: Arc<AtomicBool>,
 }
 
 unsafe impl Send for CronetRequest {}
@@ -459,6 +478,9 @@ struct DeferredRequestCleanup {
     upload_data_provider_ptr: Option<Cronet_UploadDataProviderPtr>,
     upload_body_data: Option<Vec<u8>>,
     completed: Arc<AtomicBool>,
+    callback_returned: Arc<AtomicBool>,
+    queued_at: std::time::Instant,
+    cancel_requested: Arc<AtomicBool>,
 }
 
 unsafe impl Send for DeferredRequestCleanup {}
@@ -501,7 +523,10 @@ unsafe impl Send for DeferredCleanup {}
 impl DeferredCleanup {
     fn is_ready(&self) -> bool {
         match self {
-            Self::Request(cleanup) => cleanup.completed.load(Ordering::Acquire),
+            Self::Request(cleanup) => {
+                cleanup.completed.load(Ordering::Acquire)
+                    && cleanup.callback_returned.load(Ordering::Acquire)
+            }
             Self::Engine {
                 active_requests, ..
             } => active_requests.load(Ordering::Acquire) == 0,
@@ -516,6 +541,21 @@ impl DeferredCleanup {
                 Cronet_Engine_Destroy(ptr);
             }
         }
+    }
+
+    unsafe fn request_cancel_if_stale(&self) {
+        let Self::Request(cleanup) = self else { return };
+        if cleanup.queued_at.elapsed() < std::time::Duration::from_secs(5)
+            || cleanup.cancel_requested.swap(true, Ordering::AcqRel)
+            || cleanup.callback_claimed.load(Ordering::Acquire)
+            || cleanup.ptr.is_null()
+        {
+            return;
+        }
+        // Keep the native objects alive and ask Cronet to deliver its normal
+        // terminal callback. We still never destroy them before that callback
+        // returns.
+        Cronet_UrlRequest_Cancel(cleanup.ptr);
     }
 }
 
@@ -537,6 +577,7 @@ fn defer_cleanup(cleanup: DeferredCleanup) {
 
                     let mut index = 0;
                     while index < pending.len() {
+                        unsafe { pending[index].request_cancel_if_stale() };
                         if pending[index].is_ready() {
                             let cleanup = pending.swap_remove(index);
                             unsafe { cleanup.destroy() };
@@ -582,6 +623,17 @@ impl Drop for RequestCompletionGuard {
     }
 }
 
+// A terminal callback can send the oneshot/stream event before returning to
+// Cronet.  Keep native callback objects alive until the C callback has fully
+// unwound, including early-return paths.
+struct CallbackReturnGuard(Arc<AtomicBool>);
+
+impl Drop for CallbackReturnGuard {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::Release);
+    }
+}
+
 impl CronetRequest {
     fn take_cleanup(&mut self) -> DeferredRequestCleanup {
         DeferredRequestCleanup {
@@ -596,6 +648,10 @@ impl CronetRequest {
             upload_data_provider_ptr: self.upload_data_provider_ptr.take(),
             upload_body_data: self.upload_body_data.take(),
             completed: self.completed.clone(),
+            callback_returned: self.callback_returned.clone(),
+            callback_claimed: self.callback_claimed.clone(),
+            queued_at: std::time::Instant::now(),
+            cancel_requested: Arc::new(AtomicBool::new(false)),
         }
     }
 }
@@ -637,7 +693,14 @@ impl Drop for CronetRequest {
             }
 
             // completed == true，可以安全销毁
-            self.take_cleanup().destroy();
+            // The receiver may wake before the terminal callback returns.
+            // Keep native callback/request objects alive until it unwinds.
+            let cleanup = self.take_cleanup();
+            if cleanup.callback_returned.load(Ordering::Acquire) {
+                cleanup.destroy();
+            } else {
+                defer_request_cleanup(cleanup);
+            }
         }
     }
 }
@@ -650,6 +713,7 @@ struct RequestContext {
     status_code: AtomicI32,
     completed: Arc<AtomicBool>,  // 标记请求是否完成
     callback_claimed: Arc<AtomicBool>,
+    callback_returned: Arc<AtomicBool>,
     active_requests: Option<Arc<AtomicUsize>>,  // Session 的活跃请求计数器
     allow_redirects: bool,  // 是否允许重定向（只读，不需要锁）
     redirect_response: Mutex<Option<RequestResult>>,  // 存储重定向响应（当 allow_redirects=false 时）
@@ -871,6 +935,8 @@ unsafe extern "C" fn on_succeeded(
     _info: Cronet_UrlResponseInfoPtr,
 ) {
     verbose_log!("[DEBUG] on_succeeded");
+    let context_ptr = Cronet_UrlRequestCallback_GetClientContext(self_) as *mut RequestContext;
+    let _callback_returned = CallbackReturnGuard((&*context_ptr).callback_returned.clone());
     complete_request(self_, Ok(()));
 }
 
@@ -881,6 +947,8 @@ unsafe extern "C" fn on_failed(
     error: Cronet_ErrorPtr,
 ) {
     verbose_log!("[DEBUG] on_failed");
+    let context_ptr = Cronet_UrlRequestCallback_GetClientContext(self_) as *mut RequestContext;
+    let _callback_returned = CallbackReturnGuard((&*context_ptr).callback_returned.clone());
     let msg = CStr::from_ptr(Cronet_Error_message_get(error))
         .to_string_lossy()
         .into_owned();
@@ -895,6 +963,7 @@ unsafe extern "C" fn on_canceled(
     verbose_log!("[DEBUG] on_canceled");
 
     let context_ptr = Cronet_UrlRequestCallback_GetClientContext(self_) as *mut RequestContext;
+    let _callback_returned = CallbackReturnGuard((&*context_ptr).callback_returned.clone());
 
     // 检查 context 是否已被取走，防止双重释放
     let context_ref = &*context_ptr;
@@ -1365,6 +1434,7 @@ impl SessionManager {
             // 创建完成标志
             let completed = Arc::new(AtomicBool::new(false));
             let callback_claimed = Arc::new(AtomicBool::new(false));
+            let callback_returned = Arc::new(AtomicBool::new(false));
 
             let is_streaming = stream_sender.is_some();
             let context = Box::new(RequestContext {
@@ -1374,6 +1444,7 @@ impl SessionManager {
                 status_code: AtomicI32::new(0),
                 completed: completed.clone(),
                 callback_claimed: callback_claimed.clone(),
+                callback_returned: callback_returned.clone(),
                 active_requests,
                 allow_redirects,
                 redirect_response: Mutex::new(None),
@@ -1496,6 +1567,7 @@ impl SessionManager {
                 upload_body_data,
                 completed,
                 callback_claimed,
+                callback_returned,
             };
 
             (request_handle, rx)
@@ -1871,5 +1943,43 @@ mod tests {
         assert!(should_cancel_request(false, false));
         assert!(!should_cancel_request(true, false));
         assert!(!should_cancel_request(false, true));
+    }
+
+    #[test]
+    fn deferred_cleanup_waits_for_callback_return() {
+        let completed = Arc::new(AtomicBool::new(true));
+        let callback_returned = Arc::new(AtomicBool::new(false));
+        let cleanup = DeferredRequestCleanup {
+            ptr: std::ptr::null_mut(),
+            callback_ptr: std::ptr::null_mut(),
+            executor_ptr: std::ptr::null_mut(),
+            executor_context_ptr: std::ptr::null_mut(),
+            owned_engine_ptr: None,
+            upload_data_provider_ptr: None,
+            upload_body_data: None,
+            completed: completed.clone(),
+            callback_returned: callback_returned.clone(),
+            callback_claimed: Arc::new(AtomicBool::new(false)),
+            queued_at: std::time::Instant::now(),
+            cancel_requested: Arc::new(AtomicBool::new(false)),
+        };
+        assert!(!DeferredCleanup::Request(cleanup).is_ready());
+
+        callback_returned.store(true, Ordering::Release);
+        let cleanup = DeferredRequestCleanup {
+            ptr: std::ptr::null_mut(),
+            callback_ptr: std::ptr::null_mut(),
+            executor_ptr: std::ptr::null_mut(),
+            executor_context_ptr: std::ptr::null_mut(),
+            owned_engine_ptr: None,
+            upload_data_provider_ptr: None,
+            upload_body_data: None,
+            completed,
+            callback_returned,
+            callback_claimed: Arc::new(AtomicBool::new(false)),
+            queued_at: std::time::Instant::now(),
+            cancel_requested: Arc::new(AtomicBool::new(false)),
+        };
+        assert!(DeferredCleanup::Request(cleanup).is_ready());
     }
 }

@@ -61,7 +61,8 @@ class Session:
                  params: Optional[Dict[str, Any]] = None,
                  auth=None, proxies=None, timeout=30,
                  allow_redirects: bool = True, max_redirects: int = 30,
-                 impersonate: Optional[str] = None):
+                 impersonate: Optional[str] = None,
+                 random_tls_extension_order: bool = False):
         self._client = client
         self._session_id = session_id
         self._closed = False
@@ -81,6 +82,7 @@ class Session:
         self.timeout = timeout
         self.allow_redirects = allow_redirects
         self.impersonate = impersonate
+        self.random_tls_extension_order = bool(random_tls_extension_order)
         self.base_url = base_url or ""
 
     @property

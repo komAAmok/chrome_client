@@ -4,6 +4,9 @@ Client factory functions for creating Client and AsyncClient.
 
 import os
 import json as json_lib
+import random
+import threading
+from copy import deepcopy
 from functools import wraps
 from typing import Optional, Union, Dict, List
 from urllib.parse import urlparse
@@ -16,6 +19,7 @@ from ._response import ConnectionError, RequestError, Timeout
 # Module-level cache for TLS profiles (loaded once on first use)
 # Users can directly set this to customize TLS profiles without modifying tls_profiles.json
 _TLS_PROFILES_CACHE: Optional[Dict[str, Dict]] = None
+_TLS_PROFILES_LOCK = threading.RLock()
 
 
 def _load_tls_profiles() -> Dict[str, Dict]:
@@ -25,22 +29,21 @@ def _load_tls_profiles() -> Dict[str, Dict]:
     Otherwise, load from tls_profiles.json file.
     """
     global _TLS_PROFILES_CACHE
-
-    # If user has set the cache directly, use it
-    if _TLS_PROFILES_CACHE is not None:
-        return _TLS_PROFILES_CACHE
-
-    # Load from file
-    config_path = os.path.join(os.path.dirname(__file__), "tls_profiles.json")
-    if not os.path.exists(config_path):
-        raise RequestError("TLS profile file not found: %s" % config_path)
-
-    try:
-        with open(config_path, 'r', encoding='utf-8') as f:
-            _TLS_PROFILES_CACHE = json_lib.load(f)
+    with _TLS_PROFILES_LOCK:
+        # If user has set the cache directly, use it
+        if _TLS_PROFILES_CACHE is not None:
             return _TLS_PROFILES_CACHE
-    except (OSError, ValueError) as exc:
-        raise RequestError("Failed to load TLS profiles: %s" % exc) from exc
+
+        config_path = os.path.join(os.path.dirname(__file__), "tls_profiles.json")
+        if not os.path.exists(config_path):
+            raise RequestError("TLS profile file not found: %s" % config_path)
+
+        try:
+            with open(config_path, 'r', encoding='utf-8') as f:
+                _TLS_PROFILES_CACHE = json_lib.load(f)
+                return _TLS_PROFILES_CACHE
+        except (OSError, ValueError) as exc:
+            raise RequestError("Failed to load TLS profiles: %s" % exc) from exc
 
 
 def set_tls_profiles(profiles: Dict[str, Dict]) -> None:
@@ -73,7 +76,8 @@ def set_tls_profiles(profiles: Dict[str, Dict]) -> None:
     global _TLS_PROFILES_CACHE
     if not isinstance(profiles, dict):
         raise TypeError("profiles must be a dictionary")
-    _TLS_PROFILES_CACHE = profiles.copy()
+    with _TLS_PROFILES_LOCK:
+        _TLS_PROFILES_CACHE = deepcopy(profiles)
 
 
 def add_tls_profile(name: str, profile: Dict) -> None:
@@ -97,8 +101,9 @@ def add_tls_profile(name: str, profile: Dict) -> None:
         raise ValueError("profile name must be a non-empty string")
     if not isinstance(profile, dict):
         raise TypeError("profile must be a dictionary")
-    profiles = _load_tls_profiles()
-    profiles[name] = profile
+    with _TLS_PROFILES_LOCK:
+        profiles = _load_tls_profiles()
+        profiles[name] = deepcopy(profile)
 
 
 def get_tls_profiles() -> Dict[str, Dict]:
@@ -107,13 +112,15 @@ def get_tls_profiles() -> Dict[str, Dict]:
     Returns:
         Dictionary of all TLS profiles
     """
-    return _load_tls_profiles().copy()
+    with _TLS_PROFILES_LOCK:
+        return deepcopy(_load_tls_profiles())
 
 
 def clear_tls_profiles_cache() -> None:
     """Clear TLS profiles cache, forcing reload from file on next use"""
     global _TLS_PROFILES_CACHE
-    _TLS_PROFILES_CACHE = None
+    with _TLS_PROFILES_LOCK:
+        _TLS_PROFILES_CACHE = None
 
 
 def _load_tls_profile(impersonate: Optional[str] = None) -> Optional[Dict[str, List[str]]]:
@@ -121,28 +128,31 @@ def _load_tls_profile(impersonate: Optional[str] = None) -> Optional[Dict[str, L
     if impersonate is None:
         return None
 
-    profiles = _load_tls_profiles()
-    if impersonate not in profiles:
-        available = ', '.join(sorted(profiles.keys())) if profiles else 'none'
-        raise RequestError(
-            f"TLS profile '{impersonate}' not found. Available profiles: {available}"
-        )
+    with _TLS_PROFILES_LOCK:
+        profiles = _load_tls_profiles()
+        if impersonate not in profiles:
+            available = ', '.join(sorted(profiles.keys())) if profiles else 'none'
+            raise RequestError(
+                f"TLS profile '{impersonate}' not found. Available profiles: {available}"
+            )
 
-    profile = profiles[impersonate]
-    if not isinstance(profile, dict):
-        raise RequestError("TLS profile %r must be a dictionary" % impersonate)
-    result = {}
-    for key in (
-        "cipher_suites", "tls_curves", "tls_extensions",
-        "signature_algorithms",
-    ):
-        value = profile.get(key, []) or []
-        if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
-            raise RequestError("TLS profile %r field %s must be a list of strings" % (
-                impersonate, key
-            ))
-        result[key] = value
-    return result
+        profile = profiles[impersonate]
+        if not isinstance(profile, dict):
+            raise RequestError("TLS profile %r must be a dictionary" % impersonate)
+        result = {}
+        for key in (
+            "cipher_suites", "tls_curves", "tls_extensions",
+            "signature_algorithms",
+        ):
+            value = profile.get(key, []) or []
+            if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+                raise RequestError("TLS profile %r field %s must be a list of strings" % (
+                    impersonate, key
+                ))
+            # Take an immutable-by-convention snapshot. Callers may update the
+            # profile registry concurrently while new sessions are being created.
+            result[key] = list(value)
+        return result
 
 
 def _extract_base_url_host(base_url: Optional[str]) -> str:
@@ -290,10 +300,19 @@ def _normalise_proxy(proxies, proxy):
     return configured
 
 
-def _create_native_session(verify, proxies, proxy, timeout, timeout_ms, impersonate):
+def _create_native_session(
+    verify, proxies, proxy, timeout, timeout_ms, impersonate,
+    random_tls_extension_order,
+):
     from .cronet_cloak import PyCronetClient
 
     profile = _load_tls_profile(impersonate)
+    if profile and random_tls_extension_order:
+        # Cronet consumes this list in order. This changes the ClientHello
+        # extension order without mutating the shared profile cache.
+        profile = dict(profile)
+        profile["tls_extensions"] = list(profile.get("tls_extensions") or [])
+        random.SystemRandom().shuffle(profile["tls_extensions"])
     client = PyCronetClient()
     session_id = _create_session_with_tls_profile(
         client,
@@ -335,11 +354,15 @@ class Client(_SyncSession):
         default_headers: bool = True,
         timeout_ms: Optional[int] = None,
         default_domain: Optional[str] = None,
+        random_tls_extension_order: bool = False,
     ):
+        if not isinstance(random_tls_extension_order, bool):
+            raise TypeError("random_tls_extension_order must be a bool")
         if not isinstance(max_redirects, int) or max_redirects < 0:
             raise ValueError("max_redirects must be a non-negative integer")
         wrapper, session_id = _create_native_session(
-            verify, proxies, proxy, timeout, timeout_ms, impersonate
+            verify, proxies, proxy, timeout, timeout_ms, impersonate,
+            random_tls_extension_order,
         )
         super().__init__(
             wrapper,
@@ -355,6 +378,7 @@ class Client(_SyncSession):
             allow_redirects=allow_redirects,
             max_redirects=max_redirects,
             impersonate=impersonate,
+            random_tls_extension_order=random_tls_extension_order,
         )
         if cookies:
             self.cookies.update(cookies)
@@ -400,6 +424,7 @@ class Client(_SyncSession):
             params=self.params,
             allow_redirects=self.allow_redirects,
             max_redirects=self.max_redirects,
+            random_tls_extension_order=self.random_tls_extension_order,
         )
         if "proxy" in overrides:
             child_options["proxy"] = overrides["proxy"]
@@ -439,11 +464,15 @@ class AsyncClient(_AsyncSession):
         default_headers: bool = True,
         timeout_ms: Optional[int] = None,
         default_domain: Optional[str] = None,
+        random_tls_extension_order: bool = False,
     ):
+        if not isinstance(random_tls_extension_order, bool):
+            raise TypeError("random_tls_extension_order must be a bool")
         if not isinstance(max_redirects, int) or max_redirects < 0:
             raise ValueError("max_redirects must be a non-negative integer")
         wrapper, session_id = _create_native_session(
-            verify, proxies, proxy, timeout, timeout_ms, impersonate
+            verify, proxies, proxy, timeout, timeout_ms, impersonate,
+            random_tls_extension_order,
         )
         super().__init__(
             wrapper,
@@ -459,6 +488,7 @@ class AsyncClient(_AsyncSession):
             allow_redirects=allow_redirects,
             max_redirects=max_redirects,
             impersonate=impersonate,
+            random_tls_extension_order=random_tls_extension_order,
         )
         if cookies:
             self.cookies.update(cookies)
@@ -503,6 +533,7 @@ class AsyncClient(_AsyncSession):
             params=self.params,
             allow_redirects=self.allow_redirects,
             max_redirects=self.max_redirects,
+            random_tls_extension_order=self.random_tls_extension_order,
         )
         if "proxy" in overrides:
             child_options["proxy"] = overrides["proxy"]
@@ -542,6 +573,7 @@ class Session(Client):
         default_headers: bool = True,
         timeout_ms: Optional[int] = None,
         default_domain: Optional[str] = None,
+        random_tls_extension_order: bool = False,
     ):
         super().__init__(
             verify=verify, proxies=proxies,
@@ -551,6 +583,7 @@ class Session(Client):
             allow_redirects=allow_redirects, max_redirects=max_redirects,
             default_headers=default_headers, timeout_ms=timeout_ms,
             default_domain=default_domain,
+            random_tls_extension_order=random_tls_extension_order,
         )
 
 
