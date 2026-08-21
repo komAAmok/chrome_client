@@ -464,7 +464,6 @@ pub struct CronetRequest {
     // The terminal callback may publish its response before returning to
     // Cronet. Native callback objects are destroyed only after it returns.
     callback_returned: Arc<AtomicBool>,
-    callback_claimed: Arc<AtomicBool>,
 }
 
 unsafe impl Send for CronetRequest {}
@@ -479,6 +478,7 @@ struct DeferredRequestCleanup {
     upload_body_data: Option<Vec<u8>>,
     completed: Arc<AtomicBool>,
     callback_returned: Arc<AtomicBool>,
+    callback_claimed: Arc<AtomicBool>,
     queued_at: std::time::Instant,
     cancel_requested: Arc<AtomicBool>,
 }
