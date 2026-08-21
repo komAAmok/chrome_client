@@ -744,9 +744,10 @@ class AsyncSession:
 
     def _close_sync(self):
         """Release the native handle; used by mixed sync/async response cleanup."""
-        if not self._closed:
-            self._client._client.close_session(self._session_id)
-            self._closed = True
+        with self._state_lock:
+            if not self._closed:
+                self._closed = True
+                self._client._client.close_session(self._session_id)
 
     async def __aenter__(self):
         return self

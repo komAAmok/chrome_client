@@ -50,6 +50,26 @@ fn is_valid_header_value(value: &str) -> bool {
 // Cronet Engine
 // -----------------------------------------------------------------------------
 
+// Cronet engine startup/shutdown touches process-wide native state. Python
+// applications can create and close sessions from many threads, so serialize
+// lifecycle transitions while still allowing requests on different engines to
+// run concurrently.
+fn engine_lifecycle_lock() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+unsafe fn shutdown_destroy_engine(engine: Cronet_EnginePtr) {
+    if engine.is_null() {
+        return;
+    }
+    let _lifecycle = engine_lifecycle_lock();
+    Cronet_Engine_Shutdown(engine);
+    Cronet_Engine_Destroy(engine);
+}
+
 // Engine configuration key for caching
 #[derive(Hash, Eq, PartialEq, Clone, Debug)]
 struct EngineConfig {
@@ -74,6 +94,7 @@ pub struct CronetEngine {
 impl CronetEngine {
     pub fn new(user_agent: &str) -> Self {
         unsafe {
+            let _lifecycle = engine_lifecycle_lock();
             let engine_ptr = Cronet_Engine_Create();
             let params_ptr = Cronet_EngineParams_Create();
 
@@ -102,6 +123,7 @@ impl CronetEngine {
             Cronet_EngineParams_Destroy(params_ptr);
 
             if res != Cronet_RESULT_Cronet_RESULT_SUCCESS {
+                Cronet_Engine_Destroy(engine_ptr);
                 panic!("Failed to start Cronet Engine: {:?}", res);
             }
 
@@ -126,6 +148,7 @@ impl CronetEngine {
 
         verbose_log!("[DEBUG] Creating new engine for config: {:?}", config_key);
         unsafe {
+            let _lifecycle = engine_lifecycle_lock();
             let engine = Cronet_Engine_Create();
             let params = Cronet_EngineParams_Create();
 
@@ -386,14 +409,12 @@ impl Drop for CronetEngine {
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
             for (_, cached) in cache.iter() {
-                Cronet_Engine_Shutdown(cached.ptr);
-                Cronet_Engine_Destroy(cached.ptr);
+                shutdown_destroy_engine(cached.ptr);
             }
             drop(cache);
 
             // Clean up main engine
-            Cronet_Engine_Shutdown(self.ptr);
-            Cronet_Engine_Destroy(self.ptr);
+            shutdown_destroy_engine(self.ptr);
         }
     }
 }
@@ -504,8 +525,7 @@ impl DeferredRequestCleanup {
         }
         drop(self.upload_body_data);
         if let Some(engine_ptr) = self.owned_engine_ptr {
-            Cronet_Engine_Shutdown(engine_ptr);
-            Cronet_Engine_Destroy(engine_ptr);
+            shutdown_destroy_engine(engine_ptr);
         }
     }
 }
@@ -537,8 +557,7 @@ impl DeferredCleanup {
         match self {
             Self::Request(cleanup) => cleanup.destroy(),
             Self::Engine { ptr, .. } => {
-                Cronet_Engine_Shutdown(ptr);
-                Cronet_Engine_Destroy(ptr);
+                shutdown_destroy_engine(ptr);
             }
         }
     }
@@ -1248,10 +1267,7 @@ impl Drop for Session {
 
                 // 所有请求已完成，可以安全销毁
                 verbose_log!("[DEBUG] Session::drop - Calling Cronet_Engine_Shutdown");
-                Cronet_Engine_Shutdown(self.engine_ptr);
-
-                verbose_log!("[DEBUG] Session::drop - Calling Cronet_Engine_Destroy");
-                Cronet_Engine_Destroy(self.engine_ptr);
+                shutdown_destroy_engine(self.engine_ptr);
                 verbose_log!("[DEBUG] Session::drop - Engine destroyed");
             }
         }
@@ -1276,6 +1292,7 @@ impl SessionManager {
         let session_id = Uuid::new_v4().to_string();
 
         unsafe {
+            let _lifecycle = engine_lifecycle_lock();
             let engine = Cronet_Engine_Create();
             let params = Cronet_EngineParams_Create();
 

@@ -116,6 +116,28 @@ import chrome_client
 
 
 class ClientNamesTest(unittest.TestCase):
+    def test_sessions_can_be_recreated_after_threaded_close(self):
+        errors = []
+
+        def create_and_close():
+            try:
+                for _ in range(25):
+                    session = chrome_client.Session(impersonate=None)
+                    session.close()
+                    session.close()  # close remains idempotent under contention
+            except Exception as exc:
+                errors.append(exc)
+
+        threads = [threading.Thread(target=create_and_close) for _ in range(8)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+
+        self.assertEqual(errors, [])
+        with chrome_client.Session(impersonate=None) as session:
+            self.assertEqual(session.get("https://example.test/new").status_code, 200)
+
     def test_impersonate_hints_match_bundled_profiles(self):
         package = Path(__file__).resolve().parents[1] / "python" / "chrome_client"
         tree = ast.parse((package / "_typing.pyi").read_text(encoding="utf-8"))

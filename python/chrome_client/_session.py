@@ -799,9 +799,12 @@ class Session:
 
     def close(self):
         """Close session"""
-        if not self._closed:
-            self._client._client.close_session(self._session_id)
-            self._closed = True
+        with self._state_lock:
+            if not self._closed:
+                # Publish the closed state before native teardown so another
+                # Python thread cannot start work on a session being destroyed.
+                self._closed = True
+                self._client._client.close_session(self._session_id)
 
     def __enter__(self):
         return self
