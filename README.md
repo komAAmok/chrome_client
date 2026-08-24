@@ -743,13 +743,22 @@ client = chrome_client.Client(
 client = chrome_client.Client(
     proxies={
         "http": "http://127.0.0.1:8080",
-        "https": "http://user:password@127.0.0.1:8080",
+        "https": "http://127.0.0.1:8080",
     }
 )
 
 client = chrome_client.Client(
-    proxy="socks5h://user:password@127.0.0.1:1080"
+proxy="socks5h://127.0.0.1:1080"
 )
+```
+
+创建 `Session` 后也可以修改代理和指纹配置；下一次请求会使用新的原生配置：
+
+```python
+session = chrome_client.Session()
+session.proxies = "http://127.0.0.1:8080"
+session.impersonate = "chrome_116"
+response = session.get("https://icanhazip.com/")
 ```
 
 支持协议：

@@ -107,6 +107,39 @@ class Session:
                 cookie.name: marker for cookie in self._cookies.iter_cookies()
             }
 
+    @property
+    def proxies(self):
+        """Proxy configuration used by the native session."""
+        return self._proxies
+
+    @proxies.setter
+    def proxies(self, value) -> None:
+        # Cronet binds the proxy to the Engine at session creation. Keep the
+        # Python attribute assignable, but mark the native configuration stale
+        # so Client.request can rebuild a temporary engine before the request.
+        self._proxies = value
+        if hasattr(self, "_native_proxies"):
+            self._native_proxy_dirty = True
+
+    @property
+    def proxy(self):
+        """Alias for the single proxy configuration."""
+        return self._proxies
+
+    @proxy.setter
+    def proxy(self, value) -> None:
+        self.proxies = value
+
+    @property
+    def impersonate(self):
+        return self._impersonate
+
+    @impersonate.setter
+    def impersonate(self, value) -> None:
+        self._impersonate = value
+        if hasattr(self, "_native_impersonate"):
+            self._native_proxy_dirty = True
+
     def _adjust_chrome_headers(self, headers: Dict[str, str], method: str, has_body: bool = False, is_json: bool = False) -> Dict[str, str]:
         """
         Adjust existing headers to match Chrome browser behavior.

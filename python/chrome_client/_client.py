@@ -293,11 +293,28 @@ def _normalise_proxy(proxies, proxy):
     if isinstance(configured, dict):
         configured = (configured.get("https") or configured.get("http") or
                       configured.get("all") or configured.get("all://"))
-    if configured:
-        _validate_proxy_url(configured)
-        if configured.startswith("socks5h://"):
-            configured = "socks5://" + configured[len("socks5h://"):]
-    return configured
+    if not configured:
+        return None
+
+    _validate_proxy_url(configured)
+    parsed = urlparse(configured)
+    # Cronet's proxy_rules is not a proxy URL. It expects Chromium's fixed
+    # proxy rule syntax (for example, http=127.0.0.1:8080;https=...). Passing
+    # the requests-style URL directly is silently ignored by Cronet.
+    if parsed.username is not None or parsed.password is not None:
+        raise RequestError(
+            "Proxy authentication is not supported by the bundled Cronet ABI; "
+            "use an unauthenticated proxy or add authentication support to the native layer"
+        )
+    host = parsed.hostname
+    if not host or parsed.port is None:
+        raise RequestError("Proxy URL must include an explicit port")
+    hostport = f"[{host}]:{parsed.port}" if ":" in host else f"{host}:{parsed.port}"
+    scheme = parsed.scheme.lower()
+    if scheme == "socks5h":
+        scheme = "socks5"
+    endpoint = hostport if scheme == "http" else f"{scheme}://{hostport}"
+    return f"http={endpoint};https={endpoint}"
 
 
 def _create_native_session(
@@ -380,6 +397,16 @@ class Client(_SyncSession):
             impersonate=impersonate,
             random_tls_extension_order=random_tls_extension_order,
         )
+        # Snapshot the immutable native Engine configuration. If callers
+        # assign session.proxies/impersonate later, request() will create a
+        # correctly configured temporary native session instead of silently
+        # continuing on the old direct engine.
+        self._native_proxies = deepcopy(self.proxies)
+        self._native_impersonate = self.impersonate
+        self._native_verify = self.verify
+        self._native_timeout = self.timeout
+        self._native_random_tls_extension_order = self.random_tls_extension_order
+        self._native_proxy_dirty = False
         if cookies:
             self.cookies.update(cookies)
 
@@ -393,6 +420,19 @@ class Client(_SyncSession):
             overrides["proxy"] = kwargs["proxy"]
         elif "proxies" in kwargs and kwargs["proxies"] is not None:
             overrides["proxies"] = kwargs["proxies"]
+        native_proxy_dirty = (
+            getattr(self, "_native_proxy_dirty", False)
+            or getattr(self, "_native_proxies", self.proxies) != self.proxies
+            or getattr(self, "_native_impersonate", self.impersonate) != self.impersonate
+            or getattr(self, "_native_verify", self.verify) != self.verify
+            or getattr(self, "_native_timeout", self.timeout) != self.timeout
+            or getattr(self, "_native_random_tls_extension_order", self.random_tls_extension_order) != self.random_tls_extension_order
+        )
+        if native_proxy_dirty:
+            overrides["proxies"] = self.proxies
+            overrides["impersonate"] = self.impersonate
+            overrides["verify"] = self.verify
+            overrides["timeout"] = self.timeout
 
         current = {
             "verify": self.verify,
@@ -401,7 +441,9 @@ class Client(_SyncSession):
             "proxies": self.proxies,
             "proxy": self.proxies,
         }
-        if not any(current.get(key) != value for key, value in overrides.items()):
+        if not native_proxy_dirty and not any(
+            current.get(key) != value for key, value in overrides.items()
+        ):
             try:
                 return super().request(method, url, *args, **kwargs)
             except (RequestError, TypeError, ValueError, NotImplementedError):
@@ -490,6 +532,12 @@ class AsyncClient(_AsyncSession):
             impersonate=impersonate,
             random_tls_extension_order=random_tls_extension_order,
         )
+        self._native_proxies = deepcopy(self.proxies)
+        self._native_impersonate = self.impersonate
+        self._native_verify = self.verify
+        self._native_timeout = self.timeout
+        self._native_random_tls_extension_order = self.random_tls_extension_order
+        self._native_proxy_dirty = False
         if cookies:
             self.cookies.update(cookies)
 
@@ -510,7 +558,22 @@ class AsyncClient(_AsyncSession):
             "proxies": self.proxies,
             "proxy": self.proxies,
         }
-        if not any(current.get(key) != value for key, value in overrides.items()):
+        native_proxy_dirty = (
+            getattr(self, "_native_proxy_dirty", False)
+            or getattr(self, "_native_proxies", self.proxies) != self.proxies
+            or getattr(self, "_native_impersonate", self.impersonate) != self.impersonate
+            or getattr(self, "_native_verify", self.verify) != self.verify
+            or getattr(self, "_native_timeout", self.timeout) != self.timeout
+            or getattr(self, "_native_random_tls_extension_order", self.random_tls_extension_order) != self.random_tls_extension_order
+        )
+        if native_proxy_dirty:
+            overrides["proxies"] = self.proxies
+            overrides["impersonate"] = self.impersonate
+            overrides["verify"] = self.verify
+            overrides["timeout"] = self.timeout
+        if not native_proxy_dirty and not any(
+            current.get(key) != value for key, value in overrides.items()
+        ):
             try:
                 return await super().request(method, url, *args, **kwargs)
             except (RequestError, TypeError, ValueError, NotImplementedError):

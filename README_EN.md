@@ -666,15 +666,30 @@ client = chrome_client.Client(proxies="http://127.0.0.1:8080")
 
 client = chrome_client.Client(proxies={
     "http": "http://127.0.0.1:8080",
-    "https": "http://user:password@127.0.0.1:8080",
+    "https": "http://127.0.0.1:8080",
 })
 
 client = chrome_client.Client(
-    proxy="socks5h://user:password@127.0.0.1:1080"
+    proxy="socks5h://127.0.0.1:1080"
 )
 ```
 
 Supported schemes: `http://`, `https://`, `socks5://`, and `socks5h://`.
+
+The bundled Cronet ABI currently supports unauthenticated proxies only. URLs
+containing `user:password@` are rejected explicitly rather than silently
+falling back to a direct connection.
+
+Session settings may also be changed after construction:
+
+```python
+session = chrome_client.Session()
+session.proxies = "http://127.0.0.1:8080"
+session.impersonate = "chrome_116"
+response = session.get("https://icanhazip.com/")
+```
+
+Changing native settings rebuilds a temporary Cronet session for the request.
 
 A Cronet Session ultimately uses one proxy URL. Proxy dictionaries are checked in this order: `https`, `http`, `all`, `all://`.
 
