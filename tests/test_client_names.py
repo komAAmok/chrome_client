@@ -124,6 +124,13 @@ class ClientNamesTest(unittest.TestCase):
             "http=127.0.0.1:8080;https=127.0.0.1:8080",
         )
         self.assertEqual(
+            _normalise_proxy(
+                {"http": "http://49.79.194.39:24255", "https": "http://49.79.194.39:24255/"},
+                None,
+            ),
+            "http=49.79.194.39:24255;https=49.79.194.39:24255",
+        )
+        self.assertEqual(
             _normalise_proxy(None, "socks5h://[::1]:1080"),
             "http=socks5://[::1]:1080;https=socks5://[::1]:1080",
         )

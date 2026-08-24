@@ -290,31 +290,45 @@ def _normalise_proxy(proxies, proxy):
     if proxies is not None and proxy is not None:
         raise TypeError("proxy and proxies are mutually exclusive")
     configured = proxy if proxy is not None else proxies
+
+    def endpoint(value):
+        if not isinstance(value, str):
+            raise RequestError("Proxy URL must be a string")
+        # Requests commonly supplies a trailing slash. It is not part of a
+        # Chromium proxy endpoint and must never reach Cronet's parser.
+        value = value.strip().rstrip("/")
+        _validate_proxy_url(value)
+        parsed = urlparse(value)
+        if parsed.username is not None or parsed.password is not None:
+            raise RequestError(
+                "Proxy authentication is not supported by the bundled Cronet ABI"
+            )
+        host = parsed.hostname
+        if not host or parsed.port is None:
+            raise RequestError("Proxy URL must include an explicit port")
+        hostport = f"[{host}]:{parsed.port}" if ":" in host else f"{host}:{parsed.port}"
+        scheme = parsed.scheme.lower()
+        if scheme == "socks5h":
+            scheme = "socks5"
+        return hostport if scheme == "http" else f"{scheme}://{hostport}"
+
     if isinstance(configured, dict):
-        configured = (configured.get("https") or configured.get("http") or
-                      configured.get("all") or configured.get("all://"))
+        rules = []
+        # Preserve Requests' per-target mapping instead of silently selecting
+        # only the https entry. `all` is a fallback for unspecified targets.
+        fallback = configured.get("all") or configured.get("all://")
+        for target in ("http", "https"):
+            value = configured.get(target) or fallback
+            if value:
+                rules.append(f"{target}={endpoint(value)}")
+        if not rules:
+            return None
+        return ";".join(rules)
+
     if not configured:
         return None
-
-    _validate_proxy_url(configured)
-    parsed = urlparse(configured)
-    # Cronet's proxy_rules is not a proxy URL. It expects Chromium's fixed
-    # proxy rule syntax (for example, http=127.0.0.1:8080;https=...). Passing
-    # the requests-style URL directly is silently ignored by Cronet.
-    if parsed.username is not None or parsed.password is not None:
-        raise RequestError(
-            "Proxy authentication is not supported by the bundled Cronet ABI; "
-            "use an unauthenticated proxy or add authentication support to the native layer"
-        )
-    host = parsed.hostname
-    if not host or parsed.port is None:
-        raise RequestError("Proxy URL must include an explicit port")
-    hostport = f"[{host}]:{parsed.port}" if ":" in host else f"{host}:{parsed.port}"
-    scheme = parsed.scheme.lower()
-    if scheme == "socks5h":
-        scheme = "socks5"
-    endpoint = hostport if scheme == "http" else f"{scheme}://{hostport}"
-    return f"http={endpoint};https={endpoint}"
+    value = endpoint(configured)
+    return f"http={value};https={value}"
 
 
 def _create_native_session(
