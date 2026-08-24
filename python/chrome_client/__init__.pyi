@@ -153,7 +153,6 @@ class Client:
     params: Dict[str, Any]
     auth: Optional[Tuple[str, str]]
     proxies: Union[str, Dict[str, str]]
-    proxy: Union[str, Dict[str, str], None]
     verify: bool
     stream: bool
     cert: Any
@@ -162,7 +161,6 @@ class Client:
     allow_redirects: bool
     impersonate: Optional[BrowserTypeLiteral]
     random_tls_extension_order: bool
-    _native_proxy_dirty: bool
     base_url: str
     @property
     def cookies(self) -> CookieJar: ...
@@ -279,7 +277,6 @@ class AsyncClient:
     params: Dict[str, Any]
     auth: Optional[Tuple[str, str]]
     proxies: Union[str, Dict[str, str]]
-    proxy: Union[str, Dict[str, str], None]
     verify: bool
     stream: bool
     cert: Any
@@ -288,7 +285,6 @@ class AsyncClient:
     allow_redirects: bool
     impersonate: Optional[BrowserTypeLiteral]
     random_tls_extension_order: bool
-    _native_proxy_dirty: bool
     base_url: str
     @property
     def cookies(self) -> CookieJar: ...

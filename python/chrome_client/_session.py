@@ -114,21 +114,9 @@ class Session:
 
     @proxies.setter
     def proxies(self, value) -> None:
-        # Cronet binds the proxy to the Engine at session creation. Keep the
-        # Python attribute assignable, but mark the native configuration stale
-        # so Client.request can rebuild a temporary engine before the request.
+        # Keep assignment compatible with requests.Session. Client.request
+        # compares this value with the native snapshot and rebuilds lazily.
         self._proxies = value
-        if hasattr(self, "_native_proxies"):
-            self._native_proxy_dirty = True
-
-    @property
-    def proxy(self):
-        """Alias for the single proxy configuration."""
-        return self._proxies
-
-    @proxy.setter
-    def proxy(self, value) -> None:
-        self.proxies = value
 
     @property
     def impersonate(self):
@@ -137,8 +125,6 @@ class Session:
     @impersonate.setter
     def impersonate(self, value) -> None:
         self._impersonate = value
-        if hasattr(self, "_native_impersonate"):
-            self._native_proxy_dirty = True
 
     def _adjust_chrome_headers(self, headers: Dict[str, str], method: str, has_body: bool = False, is_json: bool = False) -> Dict[str, str]:
         """

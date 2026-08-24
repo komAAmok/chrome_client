@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "chrome_client"
-version = "0.1.9.1"
+version = "0.1.9.2"
 description = "A Chrome TLS client based on the Chromium network stack (Cronet) ."
 readme = "README.md"
 requires-python = ">=3.6"

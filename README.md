@@ -58,10 +58,6 @@ pip install --upgrade chrome_client
 
 要求 Python `>= 3.6`。
 
-发布的 wheel 使用 `py3-none` Python/ABI 标签（例如
-`chrome_client-0.1.7-py3-none-win_amd64.whl`）。平台标签仍然区分操作系统和架构，
-`Requires-Python >=3.6` 保证只会安装到受支持的 Python 3 版本。
-
 | 平台 | 架构 | 状态 |
 |---|---|---|
 | Windows | x86_64 | 支持 |
@@ -743,22 +739,13 @@ client = chrome_client.Client(
 client = chrome_client.Client(
     proxies={
         "http": "http://127.0.0.1:8080",
-        "https": "http://127.0.0.1:8080",
+        "https": "http://user:password@127.0.0.1:8080",
     }
 )
 
 client = chrome_client.Client(
-proxy="socks5h://127.0.0.1:1080"
+    proxy="socks5h://user:password@127.0.0.1:1080"
 )
-```
-
-创建 `Session` 后也可以修改代理和指纹配置；下一次请求会使用新的原生配置：
-
-```python
-session = chrome_client.Session()
-session.proxies = "http://127.0.0.1:8080"
-session.impersonate = "chrome_116"
-response = session.get("https://icanhazip.com/")
 ```
 
 支持协议：
@@ -769,6 +756,8 @@ response = session.get("https://icanhazip.com/")
 - `socks5h://`
 
 Cronet Session 最终使用一个代理地址；代理字典按 `https`、`http`、`all`、`all://` 顺序选择。
+
+创建 `Session` 后也可以通过 `session.proxies = ...` 更新代理，下一次请求会按新代理重建原生会话。
 
 ### 超时
 

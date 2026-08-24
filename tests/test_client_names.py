@@ -116,40 +116,32 @@ import chrome_client
 
 
 class ClientNamesTest(unittest.TestCase):
-    def test_proxy_is_converted_to_cronet_fixed_rules(self):
+    def test_proxy_normalisation_matches_1_8_1(self):
         from chrome_client._client import _normalise_proxy
 
+        self.assertEqual(_normalise_proxy("http://127.0.0.1:8080", None),
+                         "http://127.0.0.1:8080")
         self.assertEqual(
-            _normalise_proxy("http://127.0.0.1:8080", None),
-            "http=127.0.0.1:8080;https=127.0.0.1:8080",
+            _normalise_proxy(None, "socks5h://[::1]:1080"),
+            "socks5://[::1]:1080",
         )
         self.assertEqual(
             _normalise_proxy(
-                {"http": "http://49.79.194.39:24255", "https": "http://49.79.194.39:24255/"},
+                {"http": "http://127.0.0.1:8080", "https": "http://127.0.0.1:8443"},
                 None,
             ),
-            "http=49.79.194.39:24255;https=49.79.194.39:24255",
+            "http://127.0.0.1:8443",
         )
-        self.assertEqual(
-            _normalise_proxy(None, "socks5h://[::1]:1080"),
-            "http=socks5://[::1]:1080;https=socks5://[::1]:1080",
-        )
-        with self.assertRaises(chrome_client.RequestError):
-            _normalise_proxy("http://user:password@127.0.0.1:8080", None)
 
     def test_assigning_session_proxy_rebuilds_native_configuration(self):
         native.PyCronetClient.create_calls.clear()
         session = chrome_client.Session(impersonate=None)
         initial_count = len(native.PyCronetClient.create_calls)
         session.proxies = "http://127.0.0.1:8080"
-        session.impersonate = None
-        response = session.get("https://example.test/proxy-assignment")
-        self.assertEqual(response.status_code, 200)
+        self.assertEqual(session.get("https://example.test/proxy").status_code, 200)
         self.assertGreater(len(native.PyCronetClient.create_calls), initial_count)
-        self.assertEqual(
-            native.PyCronetClient.create_calls[-1][0],
-            "http=127.0.0.1:8080;https=127.0.0.1:8080",
-        )
+        self.assertEqual(native.PyCronetClient.create_calls[-1][0],
+                         "http://127.0.0.1:8080")
         session.close()
 
     def test_assigning_native_session_options_rebuilds_configuration(self):
