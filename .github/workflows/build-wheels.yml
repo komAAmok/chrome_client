@@ -40,6 +40,7 @@ jobs:
             manifest: bindings/python/Cargo.toml
             interpreter: /opt/python/cp37-cp37m/bin/python3.7
             python-version: "3.10"
+            rustflags: ''
           - target: x86_64-unknown-linux-gnu
             core-target: linux-x86_64
             binding: python36
@@ -49,30 +50,35 @@ jobs:
             # no longer runs on Python 3.6.
             interpreter: /opt/python/cp37-cp37m/bin/python3.7
             python-version: "3.7"
+            rustflags: '--cfg=py_sys_config="WITH_THREAD"'
           - target: i686-unknown-linux-gnu
             core-target: linux-x86
             binding: python
             manifest: bindings/python/Cargo.toml
             interpreter: /opt/python/cp37-cp37m/bin/python3.7
             python-version: "3.10"
+            rustflags: ''
           - target: i686-unknown-linux-gnu
             core-target: linux-x86
             binding: python36
             manifest: bindings/python36/Cargo.toml
             interpreter: /opt/python/cp37-cp37m/bin/python3.7
             python-version: "3.7"
+            rustflags: '--cfg=py_sys_config="WITH_THREAD"'
           - target: aarch64-unknown-linux-gnu
             core-target: linux-arm64
             binding: python
             manifest: bindings/python/Cargo.toml
             interpreter: /opt/python/cp37-cp37m/bin/python3.7
             python-version: "3.10"
+            rustflags: ''
           - target: aarch64-unknown-linux-gnu
             core-target: linux-arm64
             binding: python36
             manifest: bindings/python36/Cargo.toml
             interpreter: /opt/python/cp37-cp37m/bin/python3.7
             python-version: "3.7"
+            rustflags: '--cfg=py_sys_config="WITH_THREAD"'
 
     steps:
       - uses: actions/checkout@v4
@@ -109,9 +115,11 @@ jobs:
           manylinux: "2014"
           docker-options: >-
             -e MINICRONET_REQUIRE_NATIVE=1
-            -e MINICRONET_CORE_DIR=${{ github.workspace }}/core/binaries/${{ matrix.core-target }}
+            -e RUSTFLAGS=${{ matrix.rustflags }}
             -e LD_LIBRARY_PATH=${{ github.workspace }}/core/binaries/${{ matrix.core-target }}:/io/core/binaries/${{ matrix.core-target }}:/usr/lib64:/lib64
             -e AUDITWHEEL_LD_LIBRARY_PATH=${{ github.workspace }}/core/binaries/${{ matrix.core-target }}:/io/core/binaries/${{ matrix.core-target }}:/usr/lib64:/lib64
+          before-script-linux: >-
+            (command -v yum >/dev/null && yum install -y nss nspr) || true
           args: >-
             --release
             --locked
@@ -168,13 +176,6 @@ jobs:
             manifest: bindings/python/Cargo.toml
             python-version: "3.10"
             python-architecture: x64
-          - target: aarch64-pc-windows-msvc
-            core-target: windows-arm64
-            binding: python36
-            manifest: bindings/python36/Cargo.toml
-            python-version: "3.10"
-            python-architecture: x64
-
     steps:
       - uses: actions/checkout@v4
         with:
@@ -193,6 +194,17 @@ jobs:
         shell: pwsh
         run: .\tools\stage-windows-wheel.ps1 -Target ${{ matrix.core-target }} -Binding ${{ matrix.binding }}
 
+      - name: Provide stable Python import library for PyO3 0.15
+        if: matrix.binding == 'python36'
+        shell: pwsh
+        run: |
+          $prefix = python -c "import sys; print(sys.prefix)"
+          $source = Join-Path $prefix "libs\python310.lib"
+          $stable = Join-Path $prefix "libs\python3.lib"
+          if (-not (Test-Path -LiteralPath $source)) { throw "Missing Python import library: $source" }
+          Copy-Item -Force -LiteralPath $source -Destination $stable
+          Write-Host "Using $source as $stable for abi3 linking"
+
       - name: Build Windows wheel
         uses: PyO3/maturin-action@v1
         with:
@@ -202,6 +214,7 @@ jobs:
             --locked
             --manifest-path ${{ matrix.manifest }}
             --target ${{ matrix.target }}
+            -i python
             --out dist
 
       - name: Verify bundled Windows runtime
@@ -223,13 +236,13 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - target: arm64-apple-darwin
+          - target: aarch64-apple-darwin
             core-target: macos-arm64
             binding: python
             manifest: bindings/python/Cargo.toml
             python-version: "3.10"
             runner: macos-14
-          - target: arm64-apple-darwin
+          - target: aarch64-apple-darwin
             core-target: macos-arm64
             binding: python36
             manifest: bindings/python36/Cargo.toml
