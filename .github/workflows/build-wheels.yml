@@ -44,11 +44,11 @@ jobs:
             core-target: linux-x86_64
             binding: python36
             manifest: bindings/python36/Cargo.toml
-            # Use the real CPython 3.6 interpreter with an older maturin that
-            # still supports querying its ABI configuration.
-            interpreter: /opt/python/cp36-cp36m/bin/python3.6
-            python-version: "3.6"
-            maturin-version: "0.14.17"
+            # maturin requires Python >=3.7 to run; the abi3-py36 feature still
+            # produces a cp36-abi3 wheel when built with CPython 3.7.
+            interpreter: /opt/python/cp37-cp37m/bin/python3.7
+            python-version: "3.7"
+            rustflags: '--cfg=py_sys_config="WITH_THREAD"'
             rustflags: '--cfg=py_sys_config="WITH_THREAD"'
           - target: i686-unknown-linux-gnu
             core-target: linux-x86
@@ -60,9 +60,9 @@ jobs:
             core-target: linux-x86
             binding: python36
             manifest: bindings/python36/Cargo.toml
-            interpreter: /opt/python/cp36-cp36m/bin/python3.6
-            python-version: "3.6"
-            maturin-version: "0.14.17"
+            interpreter: /opt/python/cp37-cp37m/bin/python3.7
+            python-version: "3.7"
+            rustflags: '--cfg=py_sys_config="WITH_THREAD"'
             rustflags: '--cfg=py_sys_config="WITH_THREAD"'
           - target: aarch64-unknown-linux-gnu
             core-target: linux-arm64
@@ -74,9 +74,9 @@ jobs:
             core-target: linux-arm64
             binding: python36
             manifest: bindings/python36/Cargo.toml
-            interpreter: /opt/python/cp36-cp36m/bin/python3.6
-            python-version: "3.6"
-            maturin-version: "0.14.17"
+            interpreter: /opt/python/cp37-cp37m/bin/python3.7
+            python-version: "3.7"
+            rustflags: '--cfg=py_sys_config="WITH_THREAD"'
             rustflags: '--cfg=py_sys_config="WITH_THREAD"'
 
     steps:
@@ -116,10 +116,11 @@ jobs:
           docker-options: >-
             -e MINICRONET_REQUIRE_NATIVE=1
             -e RUSTFLAGS=${{ matrix.rustflags || '' }}
+            -e RUSTFLAGS=${{ matrix.rustflags || '' }}
             -e LD_LIBRARY_PATH=${{ github.workspace }}/core/binaries/${{ matrix.core-target }}:/io/core/binaries/${{ matrix.core-target }}:/usr/lib64:/lib64:/usr/lib:/lib:/usr/lib/aarch64-linux-gnu
             -e AUDITWHEEL_LD_LIBRARY_PATH=${{ github.workspace }}/core/binaries/${{ matrix.core-target }}:/io/core/binaries/${{ matrix.core-target }}:/usr/lib64:/lib64:/usr/lib:/lib:/usr/lib/aarch64-linux-gnu
           before-script-linux: >-
-            if command -v yum >/dev/null; then yum install -y nss nspr; elif command -v apt-get >/dev/null; then apt-get update && apt-get install -y libnss3 libnspr4; fi
+            if command -v yum >/dev/null; then yum install -y nss nspr || true; elif command -v apt-get >/dev/null; then apt-get update && apt-get install -y libnss3 libnspr4 || true; fi; true
           args: >-
             --release
             --locked
