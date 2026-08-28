@@ -1,0 +1,15 @@
+{
+  "project": "chrome_client",
+  "core": "minicronet",
+  "abi_version": 7,
+  "chromium_revision": "010786339149198c8c24d58c30cf5a41fcf60c14",
+  "target": "linux-arm64",
+  "triple": "aarch64-unknown-linux-gnu",
+  "library": "libminicronet.so",
+  "sha256": "c47052b54b65b719f763649e2544bf326183436630debe9e5481cfb2fc38c306",
+  "size_bytes": 8431936,
+  "runtime_dependencies": [
+    "libnspr4.so", "libnss3.so", "libnssutil3.so", "libplc4.so", "libplds4.so",
+    "libc.so.6", "libdl.so.2", "libpthread.so.0", "libm.so.6", "libgcc_s.so.1", "ld-linux-aarch64.so.1"
+  ]
+}

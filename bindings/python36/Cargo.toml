@@ -1,0 +1,15 @@
+[package]
+name = "chrome-client-python36"
+version = "0.2.0"
+edition = "2021"
+license = "MIT"
+
+[workspace]
+
+[lib]
+name = "chrome_client_native36"
+crate-type = ["cdylib"]
+
+[dependencies]
+minicronet = { path = "../../crates/minicronet" }
+pyo3 = { version = "=0.15.1", features = ["extension-module", "abi3-py36"] }

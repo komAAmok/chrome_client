@@ -1,0 +1,53 @@
+import("//build/config/cronet/config.gni")
+
+declare_args() {
+  minicronet_profile_verification = false
+}
+
+assert(!is_android && !is_ios && !is_chromeos,
+       "minicronet supports Windows, Linux, and macOS only")
+
+config("public_headers") {
+  include_dirs = [ ".", "../abi" ]
+}
+
+shared_library("minicronet") {
+  sources = [
+    "engine.cc",
+    "minicronet.cc",
+    "profile_context.cc",
+    "profile_ssl_config_service.cc",
+    "request.cc",
+    "websocket.cc",
+    "minicronet/engine.h",
+    "minicronet/error_mapping.h",
+    "minicronet/profile_context.h",
+    "minicronet/profile_table_generated.h",
+    "minicronet/profile_ssl_config_service.h",
+    "minicronet/request.h",
+    "minicronet/websocket.h",
+  ]
+  defines = [ "MINICRONET_IMPLEMENTATION" ]
+  if (minicronet_profile_verification) {
+    defines += [ "MINICRONET_PROFILE_VERIFICATION" ]
+  }
+  public_configs = [ ":public_headers" ]
+  deps = [
+    "//base",
+    "//net",
+  ]
+  if (is_win) {
+    inputs = [ "../exports/minicronet.def" ]
+    ldflags = [ "/DEF:" + rebase_path(inputs[0], root_build_dir) ]
+  } else if (is_linux) {
+    inputs = [ "../exports/minicronet.lds" ]
+    ldflags = [
+      "-Wl,--version-script=" + rebase_path(inputs[0], root_build_dir),
+    ]
+  } else if (is_mac) {
+    inputs = [ "../exports/minicronet.exports" ]
+    ldflags = [
+      "-Wl,-exported_symbols_list," + rebase_path(inputs[0], root_build_dir),
+    ]
+  }
+}

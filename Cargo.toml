@@ -1,0 +1,15 @@
+[workspace]
+members = [
+  "crates/minicronet-sys",
+  "crates/minicronet",
+  "bindings/python",
+]
+resolver = "2"
+
+[workspace.package]
+edition = "2021"
+license = "MIT"
+version = "0.2.0"
+
+[workspace.lints.rust]
+unsafe_op_in_unsafe_fn = "deny"

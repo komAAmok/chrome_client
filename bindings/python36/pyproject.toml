@@ -1,0 +1,14 @@
+[build-system]
+requires = ["maturin>=1.7,<2"]
+build-backend = "maturin"
+
+[project]
+name = "chrome-client"
+version = "0.2.0"
+description = "Chromium Core HTTP client for Python 3.6"
+requires-python = ">=3.6,<3.7"
+
+[tool.maturin]
+manifest-path = "Cargo.toml"
+python-source = "../python"
+module-name = "chrome_client.chrome_client_native36"

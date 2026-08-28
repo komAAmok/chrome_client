@@ -1,0 +1,20 @@
+# GitHub Actions wheel 构建
+
+`.github/workflows/build-wheels.yml` 只构建 Rust/PyO3 绑定，不重新编译 Chromium。构建前必须让 GitHub runner 获得已经审计过的 Core 文件：
+
+```text
+core/binaries/<target>/
+core/dependencies/windows-*/icudtl.dat
+```
+
+这些大文件当前被 `.gitignore` 排除，发布时应使用 Git LFS 或在 workflow 中增加从 GitHub Release 下载并校验 SHA-256 的步骤。工作流中的 `tools/audit-core-binaries.sh` 会在编译前阻止缺失或错误架构的 Core 继续构建。
+
+Linux 使用 `manylinux2014` 容器。该容器以 glibc 2.17 为基线，因此生成的 wheel 兼容 glibc 2.18 及以上版本。`auditwheel` 会收集 `libminicronet.so` 及 NSS/NSPR 私有依赖；不能从 Ubuntu runner 直接收集依赖。
+
+Windows 构建前由 `tools/stage-windows-wheel.ps1` 把匹配架构的 `minicronet.dll` 和 `icudtl.dat` 放到 `chrome_client` 包目录中。Windows 系统 DLL 不随 wheel 携带。
+
+macOS 构建后使用 `delocate-wheel` 收集并修复匹配架构的 `libminicronet.dylib`。
+
+主绑定使用 `cp37-abi3`，Python 3.6 使用独立的 `bindings/python36` 和 `cp36-abi3`。Python 3.6 构建必须使用 manylinux 镜像中真实的 CPython 3.6 解释器；PyO3 0.15.1 不能用 Python 3.12 头文件构建。
+
+Alpine 不在本工作流中伪装成 glibc wheel。`musllinux` wheel 只有在准备好 musl 版 `libminicronet` 后才能增加对应 job；现有 glibc Core 不能放进 Alpine wheel。

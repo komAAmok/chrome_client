@@ -1,17 +1,17 @@
-name: Build wheels
+name: Build Python wheels
 
 on:
-  workflow_dispatch:
-    inputs:
-      publish_to_pypi:
-        description: Publish the built wheels to PyPI
-        type: boolean
-        required: true
-        default: false
+  pull_request:
   push:
     branches: [main]
     tags: ["v*"]
-  pull_request:
+  workflow_dispatch:
+    inputs:
+      publish_to_pypi:
+        description: Publish the resulting wheels to PyPI
+        type: boolean
+        required: true
+        default: false
 
 permissions:
   contents: read
@@ -22,159 +22,275 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  MINICRONET_REQUIRE_NATIVE: "1"
 
 jobs:
+  linux:
+    name: Linux ${{ matrix.core-target }} / ${{ matrix.binding }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            core-target: linux-x86_64
+            binding: python
+            manifest: bindings/python/Cargo.toml
+            interpreter: /opt/python/cp37-cp37m/bin/python3.7
+            python-version: "3.10"
+          - target: x86_64-unknown-linux-gnu
+            core-target: linux-x86_64
+            binding: python36
+            manifest: bindings/python36/Cargo.toml
+            interpreter: /opt/python/cp36-cp36m/bin/python3.6
+            python-version: "3.6"
+          - target: i686-unknown-linux-gnu
+            core-target: linux-x86
+            binding: python
+            manifest: bindings/python/Cargo.toml
+            interpreter: /opt/python/cp37-cp37m/bin/python3.7
+            python-version: "3.10"
+          - target: i686-unknown-linux-gnu
+            core-target: linux-x86
+            binding: python36
+            manifest: bindings/python36/Cargo.toml
+            interpreter: /opt/python/cp36-cp36m/bin/python3.6
+            python-version: "3.6"
+          - target: aarch64-unknown-linux-gnu
+            core-target: linux-arm64
+            binding: python
+            manifest: bindings/python/Cargo.toml
+            interpreter: /opt/python/cp37-cp37m/bin/python3.7
+            python-version: "3.10"
+          - target: aarch64-unknown-linux-gnu
+            core-target: linux-arm64
+            binding: python36
+            manifest: bindings/python36/Cargo.toml
+            interpreter: /opt/python/cp36-cp36m/bin/python3.6
+            python-version: "3.6"
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - name: Verify Core artifact
+        shell: bash
+        run: |
+          test -f "core/binaries/${{ matrix.core-target }}/libminicronet.so"
+          test -f "core/binaries/${{ matrix.core-target }}/manifest.json"
+          python3 - "${{ matrix.core-target }}" <<'PY'
+          import hashlib, json, pathlib, sys
+          target = sys.argv[1]
+          root = pathlib.Path("core/binaries") / target
+          manifest = json.loads((root / "manifest.json").read_text())
+          path = root / manifest["library"]
+          actual = hashlib.sha256(path.read_bytes()).hexdigest()
+          assert actual == manifest["sha256"], (target, actual)
+          assert path.stat().st_size == manifest["size_bytes"], target
+          print("Core artifact verified:", target)
+          PY
+
+      - name: Build manylinux2014 wheel
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.target }}
+          manylinux: "2014"
+          docker-options: >-
+            -e MINICRONET_REQUIRE_NATIVE=1
+            -e MINICRONET_CORE_DIR=/io/core/binaries/${{ matrix.core-target }}
+            -e LD_LIBRARY_PATH=/io/core/binaries/${{ matrix.core-target }}:/usr/lib64:/lib64
+            -e AUDITWHEEL_LD_LIBRARY_PATH=/io/core/binaries/${{ matrix.core-target }}:/usr/lib64:/lib64
+          args: >-
+            --release
+            --locked
+            --manifest-path ${{ matrix.manifest }}
+            --interpreter ${{ matrix.interpreter }}
+            --out dist
+
+      - name: Inspect wheel
+        shell: bash
+        run: |
+          python3 -m pip install --disable-pip-version-check auditwheel
+          auditwheel show dist/*.whl
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheel-linux-${{ matrix.core-target }}-${{ matrix.binding }}
+          path: dist/*.whl
+          if-no-files-found: error
+
   windows:
-    name: Windows ${{ matrix.arch }}
+    name: Windows ${{ matrix.core-target }} / ${{ matrix.binding }}
     runs-on: windows-latest
     strategy:
       fail-fast: false
       matrix:
         include:
-          - arch: x64
-            python-arch: x64
-            target: x86_64-pc-windows-msvc
-            native-dir: windows
-          - arch: x86
-            python-arch: x86
-            target: i686-pc-windows-msvc
-            native-dir: windows32
+          - target: x86_64-pc-windows-msvc
+            core-target: windows-x86_64
+            binding: python
+            manifest: bindings/python/Cargo.toml
+            python-version: "3.10"
+          - target: x86_64-pc-windows-msvc
+            core-target: windows-x86_64
+            binding: python36
+            manifest: bindings/python36/Cargo.toml
+            python-version: "3.6"
+          - target: i686-pc-windows-msvc
+            core-target: windows-x86
+            binding: python
+            manifest: bindings/python/Cargo.toml
+            python-version: "3.10"
+          - target: i686-pc-windows-msvc
+            core-target: windows-x86
+            binding: python36
+            manifest: bindings/python36/Cargo.toml
+            python-version: "3.6"
+          - target: aarch64-pc-windows-msvc
+            core-target: windows-arm64
+            binding: python
+            manifest: bindings/python/Cargo.toml
+            python-version: "3.10"
+          - target: aarch64-pc-windows-msvc
+            core-target: windows-arm64
+            binding: python36
+            manifest: bindings/python36/Cargo.toml
+            python-version: "3.6"
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          lfs: true
 
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.10"
-          architecture: ${{ matrix.python-arch }}
+          python-version: ${{ matrix.python-version }}
 
-      - name: Copy Cronet runtime
+      - name: Install Rust target
         shell: pwsh
-        run: |
-          Copy-Item "cronet-libs/${{ matrix.native-dir }}/cronet.144.0.7506.0.dll" "python/chrome_client/" -Force
+        run: rustup target add ${{ matrix.target }}
 
-      - name: Build wheel
+      - name: Stage Windows Core runtime
+        shell: pwsh
+        run: .\tools\stage-windows-wheel.ps1 -Target ${{ matrix.core-target }} -Binding ${{ matrix.binding }}
+
+      - name: Build Windows wheel
         uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.target }}
-          args: --release --locked --out dist
-
-      - name: Normalize wheel Python tag
-        shell: pwsh
-        run: |
-          python -m pip install --disable-pip-version-check wheel==0.45.1
-          Get-ChildItem dist/*.whl | ForEach-Object {
-            python -m wheel tags --python-tag py3 --abi-tag none --remove $_.FullName
-            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          }
-
-      - name: Upload wheel
-        uses: actions/upload-artifact@v4
-        with:
-          name: chrome-client-windows-${{ matrix.arch }}
-          path: dist/*.whl
-          if-no-files-found: error
-
-  linux:
-    name: Linux x86_64
-    runs-on: ubuntu-latest
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.10"
-
-      - name: Copy Cronet runtime and NSS libraries
-        run: |
-          cp cronet-libs/linux/libcronet.144.0.7506.0.so python/chrome_client/
-          cp linux_deps/*.so python/chrome_client/
-
-      - name: Build manylinux wheel
-        uses: PyO3/maturin-action@v1
-        with:
-          target: x86_64-unknown-linux-gnu
-          # Build in the manylinux2014 container, but skip its 2.17 audit tag:
-          # bundled Cronet requires exactly GLIBC_2.18.
-          manylinux: "off"
-          container: quay.io/pypa/manylinux2014_x86_64:latest
-          # The action can mount the checkout either at /io or at the original
-          # runner path. Cover both so auditwheel can resolve Cronet's SONAME.
-          docker-options: >-
-            -e LD_LIBRARY_PATH=/io/python/chrome_client:/io/linux_deps:/io/target/x86_64-unknown-linux-gnu/release:${{ github.workspace }}/python/chrome_client:${{ github.workspace }}/linux_deps:${{ github.workspace }}/target/x86_64-unknown-linux-gnu/release
-          # Match the Python 3.10 toolchain used by the Windows and macOS jobs.
           args: >-
             --release
             --locked
+            --manifest-path ${{ matrix.manifest }}
+            --target ${{ matrix.target }}
             --out dist
-            --interpreter /opt/python/cp310-cp310/bin/python3.10
 
-      - name: Apply the exact glibc compatibility tag
+      - name: Verify bundled Windows runtime
+        shell: pwsh
         run: |
-          python -m pip install --disable-pip-version-check wheel==0.45.1
-          python -m wheel tags --python-tag py3 --abi-tag none --platform-tag manylinux_2_18_x86_64 --remove dist/*-linux_x86_64.whl
+          $wheel = Get-ChildItem dist\*.whl | Select-Object -First 1
+          python -c "import zipfile; z=zipfile.ZipFile(r'$($wheel.FullName)'); n=set(z.namelist()); assert any(x.endswith('/minicronet.dll') for x in n); assert any(x.endswith('/icudtl.dat') for x in n); print('Windows runtime files present')"
 
-      - name: Upload wheel
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
-          name: chrome-client-linux-x86_64
+          name: wheel-${{ matrix.core-target }}-${{ matrix.binding }}
           path: dist/*.whl
           if-no-files-found: error
 
   macos:
-    name: macOS arm64
+    name: macOS ${{ matrix.core-target }} / ${{ matrix.binding }}
     runs-on: macos-14
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: arm64-apple-darwin
+            core-target: macos-arm64
+            binding: python
+            manifest: bindings/python/Cargo.toml
+            python-version: "3.10"
+          - target: arm64-apple-darwin
+            core-target: macos-arm64
+            binding: python36
+            manifest: bindings/python36/Cargo.toml
+            python-version: "3.6"
+          - target: x86_64-apple-darwin
+            core-target: macos-x86_64
+            binding: python
+            manifest: bindings/python/Cargo.toml
+            python-version: "3.10"
+          - target: x86_64-apple-darwin
+            core-target: macos-x86_64
+            binding: python36
+            manifest: bindings/python36/Cargo.toml
+            python-version: "3.6"
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          lfs: true
 
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.10"
+          python-version: ${{ matrix.python-version }}
 
-      - name: Prepare Cronet runtime for wheel repair
+      - name: Install Rust target
+        run: rustup target add ${{ matrix.target }}
+
+      - name: Verify Core artifact
         run: |
-          cp cronet-bin/mac/libcronet.dylib ./libcronet.144.0.7506.0.dylib
-          cp cronet-bin/mac/libcronet.dylib python/chrome_client/libcronet.144.0.7506.0.dylib
+          test -f "core/binaries/${{ matrix.core-target }}/libminicronet.dylib"
+          python3 - "${{ matrix.core-target }}" <<'PY'
+          import hashlib, json, pathlib, sys
+          target = sys.argv[1]
+          root = pathlib.Path("core/binaries") / target
+          manifest = json.loads((root / "manifest.json").read_text())
+          path = root / manifest["library"]
+          assert hashlib.sha256(path.read_bytes()).hexdigest() == manifest["sha256"]
+          assert path.stat().st_size == manifest["size_bytes"]
+          print("Core artifact verified:", target)
+          PY
 
-      - name: Build arm64 wheel
+      - name: Build macOS wheel
         uses: PyO3/maturin-action@v1
         with:
-          target: aarch64-apple-darwin
-          args: --release --locked --out dist
+          target: ${{ matrix.target }}
+          args: >-
+            --release
+            --locked
+            --manifest-path ${{ matrix.manifest }}
+            --target ${{ matrix.target }}
+            --out dist
 
-      - name: Normalize wheel Python tag
+      - name: Bundle macOS Core dylib
+        shell: bash
         run: |
-          python -m pip install --disable-pip-version-check wheel==0.45.1
-          python -m wheel tags --python-tag py3 --abi-tag none --remove dist/*.whl
+          python3 -m pip install --disable-pip-version-check delocate
+          mkdir repaired
+          DYLD_LIBRARY_PATH="$PWD/core/binaries/${{ matrix.core-target }}" \
+            delocate-wheel -w repaired dist/*.whl
+          rm dist/*.whl
+          mv repaired/*.whl dist/
 
-      - name: Upload wheel
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
-          name: chrome-client-macos-arm64
+          name: wheel-${{ matrix.core-target }}-${{ matrix.binding }}
           path: dist/*.whl
           if-no-files-found: error
 
   publish:
-    name: Publish to PyPI
+    name: Publish wheels
     if: startsWith(github.ref, 'refs/tags/v') || inputs.publish_to_pypi
-    needs: [windows, linux, macos]
+    needs: [linux, windows, macos]
     runs-on: ubuntu-latest
-    environment:
-      name: pypi
-      url: https://pypi.org/p/chrome-client
     permissions:
       contents: read
       id-token: write
-
     steps:
-      - name: Download all wheels
-        uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v4
         with:
-          pattern: chrome-client-*
+          pattern: wheel-*
           path: dist
           merge-multiple: true
-
-      - name: Publish wheels
-        uses: pypa/gh-action-pypi-publish@release/v1
+      - uses: pypa/gh-action-pypi-publish@release/v1

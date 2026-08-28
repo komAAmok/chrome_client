@@ -1,0 +1,24 @@
+MINICRONET_2 {
+  global:
+    mn_abi_version;
+    mn_version_string;
+    mn_engine_create;
+    mn_engine_retain;
+    mn_engine_release;
+    mn_request_create;
+    mn_request_retain;
+    mn_request_release;
+    mn_request_start;
+    mn_request_cancel;
+    mn_request_upload_write;
+    mn_request_follow_redirect;
+    mn_websocket_create;
+    mn_websocket_retain;
+    mn_websocket_release;
+    mn_websocket_start;
+    mn_websocket_send;
+    mn_websocket_close;
+    mn_websocket_cancel;
+  local:
+    *;
+};

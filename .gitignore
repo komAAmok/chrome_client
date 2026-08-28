@@ -18,9 +18,15 @@ venv/
 /dist/
 *.whl
 
-# Native libraries copied into the Python package during wheel builds
-/python/chrome_client/*.dll
-/python/chrome_client/*.so
-/python/chrome_client/*.so.pkg
-/python/chrome_client/*.dylib
-/libcronet.*.dylib
+# Local Core binaries and platform dependencies are release artifacts. Keep
+# target manifests tracked so a loader can verify provenance before loading.
+/core/binaries/*/*.so
+/core/binaries/*/*.dylib
+/core/binaries/*/*.dll
+/core/binaries/*/*.lib
+/core/binaries/*/*.pdb
+/core/dependencies/*/*
+!/core/dependencies/README.md
+
+# Local native staging
+/native/
