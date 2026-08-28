@@ -96,6 +96,12 @@ jobs:
           print("Core artifact verified:", target)
           PY
 
+      - name: Set up QEMU for ARM64 manylinux
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
       - name: Build manylinux2014 wheel
         uses: PyO3/maturin-action@v1
         with:
@@ -127,7 +133,7 @@ jobs:
 
   windows:
     name: Windows ${{ matrix.core-target }} / ${{ matrix.binding }}
-    runs-on: windows-latest
+    runs-on: windows-2022
     strategy:
       fail-fast: false
       matrix:
@@ -137,31 +143,37 @@ jobs:
             binding: python
             manifest: bindings/python/Cargo.toml
             python-version: "3.10"
+            python-architecture: x64
           - target: x86_64-pc-windows-msvc
             core-target: windows-x86_64
             binding: python36
             manifest: bindings/python36/Cargo.toml
             python-version: "3.10"
+            python-architecture: x64
           - target: i686-pc-windows-msvc
             core-target: windows-x86
             binding: python
             manifest: bindings/python/Cargo.toml
             python-version: "3.10"
+            python-architecture: x86
           - target: i686-pc-windows-msvc
             core-target: windows-x86
             binding: python36
             manifest: bindings/python36/Cargo.toml
             python-version: "3.10"
+            python-architecture: x86
           - target: aarch64-pc-windows-msvc
             core-target: windows-arm64
             binding: python
             manifest: bindings/python/Cargo.toml
             python-version: "3.10"
+            python-architecture: x64
           - target: aarch64-pc-windows-msvc
             core-target: windows-arm64
             binding: python36
             manifest: bindings/python36/Cargo.toml
             python-version: "3.10"
+            python-architecture: x64
 
     steps:
       - uses: actions/checkout@v4
@@ -171,6 +183,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
+          architecture: ${{ matrix.python-architecture }}
 
       - name: Install Rust target
         shell: pwsh
@@ -205,7 +218,7 @@ jobs:
 
   macos:
     name: macOS ${{ matrix.core-target }} / ${{ matrix.binding }}
-    runs-on: macos-14
+    runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
@@ -215,21 +228,25 @@ jobs:
             binding: python
             manifest: bindings/python/Cargo.toml
             python-version: "3.10"
+            runner: macos-14
           - target: arm64-apple-darwin
             core-target: macos-arm64
             binding: python36
             manifest: bindings/python36/Cargo.toml
             python-version: "3.10"
+            runner: macos-14
           - target: x86_64-apple-darwin
             core-target: macos-x86_64
             binding: python
             manifest: bindings/python/Cargo.toml
             python-version: "3.10"
+            runner: macos-13
           - target: x86_64-apple-darwin
             core-target: macos-x86_64
             binding: python36
             manifest: bindings/python36/Cargo.toml
             python-version: "3.10"
+            runner: macos-13
 
     steps:
       - uses: actions/checkout@v4
