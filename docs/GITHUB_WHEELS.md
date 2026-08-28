@@ -15,6 +15,6 @@ Windows 构建前由 `tools/stage-windows-wheel.ps1` 把匹配架构的 `minicro
 
 macOS 构建后使用 `delocate-wheel` 收集并修复匹配架构的 `libminicronet.dylib`。
 
-主绑定使用 `cp37-abi3`，Python 3.6 使用独立的 `bindings/python36` 和 `cp36-abi3`。Python 3.6 构建必须使用 manylinux 镜像中真实的 CPython 3.6 解释器；PyO3 0.15.1 不能用 Python 3.12 头文件构建。
+主绑定使用 `cp37-abi3`，Python 3.6 使用独立的 `bindings/python36`、PyO3 0.15.1 和 `cp36-abi3`。当前 maturin 自身只支持 Python 3.7 及以上，因此构建 `cp36-abi3` wheel 时使用受 PyO3 0.15.1 支持的较新解释器；最低兼容版本由 `abi3-py36` feature 和 wheel 的 `cp36-abi3` 标签决定。Python 3.6 的实际导入和运行仍需在独立 Python 3.6 环境中验证。
 
 Alpine 不在本工作流中伪装成 glibc wheel。`musllinux` wheel 只有在准备好 musl 版 `libminicronet` 后才能增加对应 job；现有 glibc Core 不能放进 Alpine wheel。

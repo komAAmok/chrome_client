@@ -44,8 +44,11 @@ jobs:
             core-target: linux-x86_64
             binding: python36
             manifest: bindings/python36/Cargo.toml
-            interpreter: /opt/python/cp36-cp36m/bin/python3.6
-            python-version: "3.6"
+            # Build abi3-py36 with the newest interpreter available in the
+            # manylinux image.  The wheel remains cp36-abi3; maturin itself
+            # no longer runs on Python 3.6.
+            interpreter: /opt/python/cp37-cp37m/bin/python3.7
+            python-version: "3.7"
           - target: i686-unknown-linux-gnu
             core-target: linux-x86
             binding: python
@@ -56,8 +59,8 @@ jobs:
             core-target: linux-x86
             binding: python36
             manifest: bindings/python36/Cargo.toml
-            interpreter: /opt/python/cp36-cp36m/bin/python3.6
-            python-version: "3.6"
+            interpreter: /opt/python/cp37-cp37m/bin/python3.7
+            python-version: "3.7"
           - target: aarch64-unknown-linux-gnu
             core-target: linux-arm64
             binding: python
@@ -68,8 +71,8 @@ jobs:
             core-target: linux-arm64
             binding: python36
             manifest: bindings/python36/Cargo.toml
-            interpreter: /opt/python/cp36-cp36m/bin/python3.6
-            python-version: "3.6"
+            interpreter: /opt/python/cp37-cp37m/bin/python3.7
+            python-version: "3.7"
 
     steps:
       - uses: actions/checkout@v4
@@ -100,9 +103,9 @@ jobs:
           manylinux: "2014"
           docker-options: >-
             -e MINICRONET_REQUIRE_NATIVE=1
-            -e MINICRONET_CORE_DIR=/io/core/binaries/${{ matrix.core-target }}
-            -e LD_LIBRARY_PATH=/io/core/binaries/${{ matrix.core-target }}:/usr/lib64:/lib64
-            -e AUDITWHEEL_LD_LIBRARY_PATH=/io/core/binaries/${{ matrix.core-target }}:/usr/lib64:/lib64
+            -e MINICRONET_CORE_DIR=${{ github.workspace }}/core/binaries/${{ matrix.core-target }}
+            -e LD_LIBRARY_PATH=${{ github.workspace }}/core/binaries/${{ matrix.core-target }}:/io/core/binaries/${{ matrix.core-target }}:/usr/lib64:/lib64
+            -e AUDITWHEEL_LD_LIBRARY_PATH=${{ github.workspace }}/core/binaries/${{ matrix.core-target }}:/io/core/binaries/${{ matrix.core-target }}:/usr/lib64:/lib64
           args: >-
             --release
             --locked
@@ -138,7 +141,7 @@ jobs:
             core-target: windows-x86_64
             binding: python36
             manifest: bindings/python36/Cargo.toml
-            python-version: "3.6"
+            python-version: "3.10"
           - target: i686-pc-windows-msvc
             core-target: windows-x86
             binding: python
@@ -148,7 +151,7 @@ jobs:
             core-target: windows-x86
             binding: python36
             manifest: bindings/python36/Cargo.toml
-            python-version: "3.6"
+            python-version: "3.10"
           - target: aarch64-pc-windows-msvc
             core-target: windows-arm64
             binding: python
@@ -158,7 +161,7 @@ jobs:
             core-target: windows-arm64
             binding: python36
             manifest: bindings/python36/Cargo.toml
-            python-version: "3.6"
+            python-version: "3.10"
 
     steps:
       - uses: actions/checkout@v4
@@ -216,7 +219,7 @@ jobs:
             core-target: macos-arm64
             binding: python36
             manifest: bindings/python36/Cargo.toml
-            python-version: "3.6"
+            python-version: "3.10"
           - target: x86_64-apple-darwin
             core-target: macos-x86_64
             binding: python
@@ -226,7 +229,7 @@ jobs:
             core-target: macos-x86_64
             binding: python36
             manifest: bindings/python36/Cargo.toml
-            python-version: "3.6"
+            python-version: "3.10"
 
     steps:
       - uses: actions/checkout@v4

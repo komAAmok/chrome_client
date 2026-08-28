@@ -24,9 +24,17 @@ fn main() {
     let target = env::var("TARGET").unwrap();
     let target_name = target_directory(&target);
     let default_dir = target_name.map(|name| repository.join("core/binaries").join(name));
-    let core_dir = env::var_os("MINICRONET_CORE_DIR")
-        .map(PathBuf::from)
-        .or(default_dir);
+    // maturin's manylinux container normally mounts the checkout at `/io`, but
+    // this is not guaranteed for every runner/action version.  Prefer the
+    // explicitly supplied directory when it exists; otherwise fall back to the
+    // repository-relative target directory so a stale container path cannot
+    // make an otherwise present Core look missing.
+    let configured_dir = env::var_os("MINICRONET_CORE_DIR").map(PathBuf::from);
+    let core_dir = match configured_dir {
+        Some(path) if path.exists() => Some(path),
+        Some(_) => default_dir.clone(),
+        None => default_dir,
+    };
 
     let Some(core_dir) = core_dir else {
         println!("cargo:warning=unsupported target {target}; native Core linking is disabled");
