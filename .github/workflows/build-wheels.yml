@@ -3,7 +3,9 @@ name: Build Python wheels
 on:
   pull_request:
   push:
-    branches: [main]
+    branches:
+      - main
+      - dev/0.2.0
     tags: ["v*"]
   workflow_dispatch:
     inputs:
