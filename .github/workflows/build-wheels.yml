@@ -40,45 +40,41 @@ jobs:
             manifest: bindings/python/Cargo.toml
             interpreter: /opt/python/cp37-cp37m/bin/python3.7
             python-version: "3.10"
-            rustflags: ''
           - target: x86_64-unknown-linux-gnu
             core-target: linux-x86_64
             binding: python36
             manifest: bindings/python36/Cargo.toml
-            # Build abi3-py36 with the newest interpreter available in the
-            # manylinux image.  The wheel remains cp36-abi3; maturin itself
-            # no longer runs on Python 3.6.
-            interpreter: /opt/python/cp37-cp37m/bin/python3.7
-            python-version: "3.7"
-            rustflags: '--cfg=py_sys_config="WITH_THREAD"'
+            # Use the real CPython 3.6 interpreter with an older maturin that
+            # still supports querying its ABI configuration.
+            interpreter: /opt/python/cp36-cp36m/bin/python3.6
+            python-version: "3.6"
+            maturin-version: "0.14.17"
           - target: i686-unknown-linux-gnu
             core-target: linux-x86
             binding: python
             manifest: bindings/python/Cargo.toml
             interpreter: /opt/python/cp37-cp37m/bin/python3.7
             python-version: "3.10"
-            rustflags: ''
           - target: i686-unknown-linux-gnu
             core-target: linux-x86
             binding: python36
             manifest: bindings/python36/Cargo.toml
-            interpreter: /opt/python/cp37-cp37m/bin/python3.7
-            python-version: "3.7"
-            rustflags: '--cfg=py_sys_config="WITH_THREAD"'
+            interpreter: /opt/python/cp36-cp36m/bin/python3.6
+            python-version: "3.6"
+            maturin-version: "0.14.17"
           - target: aarch64-unknown-linux-gnu
             core-target: linux-arm64
             binding: python
             manifest: bindings/python/Cargo.toml
             interpreter: /opt/python/cp37-cp37m/bin/python3.7
             python-version: "3.10"
-            rustflags: ''
           - target: aarch64-unknown-linux-gnu
             core-target: linux-arm64
             binding: python36
             manifest: bindings/python36/Cargo.toml
-            interpreter: /opt/python/cp37-cp37m/bin/python3.7
-            python-version: "3.7"
-            rustflags: '--cfg=py_sys_config="WITH_THREAD"'
+            interpreter: /opt/python/cp36-cp36m/bin/python3.6
+            python-version: "3.6"
+            maturin-version: "0.14.17"
 
     steps:
       - uses: actions/checkout@v4
@@ -113,13 +109,14 @@ jobs:
         with:
           target: ${{ matrix.target }}
           manylinux: "2014"
+          maturin-version: ${{ matrix.maturin-version || 'latest' }}
           docker-options: >-
             -e MINICRONET_REQUIRE_NATIVE=1
-            -e RUSTFLAGS=${{ matrix.rustflags }}
             -e LD_LIBRARY_PATH=${{ github.workspace }}/core/binaries/${{ matrix.core-target }}:/io/core/binaries/${{ matrix.core-target }}:/usr/lib64:/lib64
             -e AUDITWHEEL_LD_LIBRARY_PATH=${{ github.workspace }}/core/binaries/${{ matrix.core-target }}:/io/core/binaries/${{ matrix.core-target }}:/usr/lib64:/lib64
           before-script-linux: >-
-            (command -v yum >/dev/null && yum install -y nss nspr) || true
+            (command -v yum >/dev/null && yum install -y nss nspr && ldconfig) ||
+            (echo 'Unable to install NSS/NSPR in manylinux image' >&2; exit 1)
           args: >-
             --release
             --locked
@@ -156,8 +153,9 @@ jobs:
             core-target: windows-x86_64
             binding: python36
             manifest: bindings/python36/Cargo.toml
-            python-version: "3.10"
+            python-version: "3.6"
             python-architecture: x64
+            maturin-version: "0.14.17"
           - target: i686-pc-windows-msvc
             core-target: windows-x86
             binding: python
@@ -168,8 +166,9 @@ jobs:
             core-target: windows-x86
             binding: python36
             manifest: bindings/python36/Cargo.toml
-            python-version: "3.10"
+            python-version: "3.6"
             python-architecture: x86
+            maturin-version: "0.14.17"
           - target: aarch64-pc-windows-msvc
             core-target: windows-arm64
             binding: python
@@ -194,27 +193,16 @@ jobs:
         shell: pwsh
         run: .\tools\stage-windows-wheel.ps1 -Target ${{ matrix.core-target }} -Binding ${{ matrix.binding }}
 
-      - name: Provide stable Python import library for PyO3 0.15
-        if: matrix.binding == 'python36'
-        shell: pwsh
-        run: |
-          $prefix = python -c "import sys; print(sys.prefix)"
-          $source = Join-Path $prefix "libs\python310.lib"
-          $stable = Join-Path $prefix "libs\python3.lib"
-          if (-not (Test-Path -LiteralPath $source)) { throw "Missing Python import library: $source" }
-          Copy-Item -Force -LiteralPath $source -Destination $stable
-          Write-Host "Using $source as $stable for abi3 linking"
-
       - name: Build Windows wheel
         uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.target }}
+          maturin-version: ${{ matrix.maturin-version || 'latest' }}
           args: >-
             --release
             --locked
             --manifest-path ${{ matrix.manifest }}
             --target ${{ matrix.target }}
-            -i python
             --out dist
 
       - name: Verify bundled Windows runtime
@@ -246,8 +234,9 @@ jobs:
             core-target: macos-arm64
             binding: python36
             manifest: bindings/python36/Cargo.toml
-            python-version: "3.10"
+            python-version: "3.6"
             runner: macos-14
+            maturin-version: "0.14.17"
           - target: x86_64-apple-darwin
             core-target: macos-x86_64
             binding: python
@@ -258,8 +247,9 @@ jobs:
             core-target: macos-x86_64
             binding: python36
             manifest: bindings/python36/Cargo.toml
-            python-version: "3.10"
+            python-version: "3.6"
             runner: macos-13
+            maturin-version: "0.14.17"
 
     steps:
       - uses: actions/checkout@v4
@@ -291,6 +281,7 @@ jobs:
         uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.target }}
+          maturin-version: ${{ matrix.maturin-version || 'latest' }}
           args: >-
             --release
             --locked
