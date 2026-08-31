@@ -14,6 +14,7 @@ import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import chrome_client
+from chrome_client._python_impl import _proxy_from_proxies
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -106,11 +107,18 @@ class StabilityTests(unittest.TestCase):
         self.assertEqual(
             list(inspect.signature(chrome_client.Client.request).parameters),
             ["self", "method", "url", "params", "data", "json", "headers", "cookies",
-             "timeout", "allow_redirects", "stream", "impersonate", "proxy", "verify",
+             "timeout", "allow_redirects", "stream", "impersonate", "proxy", "proxies", "verify",
              "max_response_bytes"],
         )
         with self.assertRaises(TypeError):
             chrome_client.Client().request("GET", self.url, legacy_field=True)
+
+    def test_proxies_selects_scheme_and_explicit_proxy_wins(self):
+        proxies = {"http": "http://proxy-http", "https": "http://proxy-https", "all": "http://proxy-all"}
+        client = chrome_client.Client(proxies=proxies)
+        self.assertEqual(client.proxies, proxies)
+        self.assertEqual(_proxy_from_proxies("https://example.com", proxies), "http://proxy-https")
+        self.assertEqual(_proxy_from_proxies("ws://example.com", proxies), "http://proxy-http")
 
     def test_async_concurrency_matrix(self):
         async def run():

@@ -267,6 +267,35 @@ def _merge_cookies(defaults, overrides):
     return merged
 
 
+def _proxy_from_proxies(url, proxies):
+    """Select a Requests-style proxy mapping entry for *url*."""
+    if proxies is None:
+        return None
+    if not hasattr(proxies, "items"):
+        raise TypeError("proxies must be a mapping of schemes to proxy URLs")
+    values = {}
+    for key, value in proxies.items():
+        key = str(key).lower()
+        if value is not None and not isinstance(value, str):
+            raise TypeError("proxy values must be strings or None")
+        values[key] = value
+    parts = urlsplit(url)
+    scheme = parts.scheme.lower()
+    proxy_scheme = {"ws": "http", "wss": "https"}.get(scheme, scheme)
+    keys = []
+    if parts.hostname:
+        keys.extend((scheme + "://" + parts.hostname,
+                     proxy_scheme + "://" + parts.hostname))
+    keys.extend((scheme, proxy_scheme))
+    if parts.hostname:
+        keys.append("all://" + parts.hostname)
+    keys.append("all")
+    for key in keys:
+        if key in values:
+            return values[key]
+    return None
+
+
 def _url(url, params):
     if not params:
         return url
@@ -292,8 +321,9 @@ def _body(data, json_value):
 
 class Client:
     def __init__(self, impersonate=None, proxy=None, verify=True, timeout=None,
-                 headers=None, cookies=None, max_response_bytes=None):
+                 headers=None, cookies=None, max_response_bytes=None, proxies=None):
         self.impersonate, self.proxy, self.verify = impersonate, proxy, verify
+        self.proxies = proxies
         self._engine = _native.PyEngine(impersonate, proxy, verify)
         self.timeout = timeout
         self.headers = CaseInsensitiveDict(headers or {})
@@ -307,9 +337,12 @@ class Client:
 
     def request(self, method, url, params=None, data=None, json=None, headers=None, cookies=None,
                 timeout=None, allow_redirects=True, stream=False, impersonate=None,
-                proxy=None, verify=None, max_response_bytes=None):
+                proxy=None, proxies=None, verify=None, max_response_bytes=None):
         self._ensure_open()
         response_limit = self.max_response_bytes if max_response_bytes is None else _validate_max_response_bytes(max_response_bytes)
+        proxy = proxy if proxy is not None else self.proxy
+        if proxy is None:
+            proxy = _proxy_from_proxies(url, self.proxies if proxies is None else proxies)
         request_options = {
             key: value for key, value in (
                 ("impersonate", impersonate),
@@ -365,8 +398,14 @@ class Client:
     def delete(self, url, **kwargs):
         return self.request("DELETE", url, **kwargs)
 
-    def websocket(self, url, origin="", headers=None, timeout=None):
+    def websocket(self, url, origin="", headers=None, timeout=None, proxy=None, proxies=None):
         self._ensure_open()
+        proxy = proxy if proxy is not None else self.proxy
+        if proxy is None:
+            proxy = _proxy_from_proxies(url, self.proxies if proxies is None else proxies)
+        if proxy != self.proxy:
+            return Client(impersonate=self.impersonate, proxy=proxy, verify=self.verify).websocket(
+                url, origin, headers, timeout)
         socket = self._engine.websocket(url, origin, _headers(headers, None), timeout)
         socket.connect()
         return socket
@@ -455,15 +494,26 @@ class _AsyncBodyReader:
 
 
 class AsyncClient(Client):
-    async def websocket(self, url, origin="", headers=None, timeout=None):
+    async def websocket(self, url, origin="", headers=None, timeout=None,
+                        proxy=None, proxies=None):
+        self._ensure_open()
+        proxy = proxy if proxy is not None else self.proxy
+        if proxy is None:
+            proxy = _proxy_from_proxies(url, self.proxies if proxies is None else proxies)
+        if proxy != self.proxy:
+            child = AsyncClient(impersonate=self.impersonate, proxy=proxy, verify=self.verify)
+            return await child.websocket(url, origin, headers, timeout)
         socket = self._engine.websocket(url, origin, _headers(headers, None), timeout)
         return await AsyncWebSocket._open(socket)
 
     async def request(self, method, url, params=None, data=None, json=None, headers=None, cookies=None,
                       timeout=None, allow_redirects=True, stream=False, impersonate=None,
-                      proxy=None, verify=None, max_response_bytes=None):
+                      proxy=None, proxies=None, verify=None, max_response_bytes=None):
         self._ensure_open()
         response_limit = self.max_response_bytes if max_response_bytes is None else _validate_max_response_bytes(max_response_bytes)
+        proxy = proxy if proxy is not None else self.proxy
+        if proxy is None:
+            proxy = _proxy_from_proxies(url, self.proxies if proxies is None else proxies)
         request_options = {
             key: value for key, value in (
                 ("impersonate", impersonate),
@@ -617,7 +667,7 @@ class _RequestsFacade:
 
     def request(self, method, url, **kwargs):
         options = {}
-        for key in ("impersonate", "proxy", "verify", "timeout"):
+        for key in ("impersonate", "proxy", "proxies", "verify", "timeout"):
             if key in kwargs:
                 options[key] = kwargs.pop(key)
         if options:
@@ -634,10 +684,12 @@ requests = _RequestsFacade()
 
 
 class WebSocket:
-    def __init__(self, url, client=None, impersonate=None, proxy=None, verify=True,
+    def __init__(self, url, client=None, impersonate=None, proxy=None, proxies=None, verify=True,
                  origin="", headers=None, timeout=None):
-        client = client or Client(impersonate=impersonate, proxy=proxy, verify=verify)
-        self._inner = client.websocket(url, origin, headers, timeout)
+        client = client or Client(impersonate=impersonate, proxy=proxy,
+                                  proxies=proxies, verify=verify)
+        self._inner = client.websocket(url, origin, headers, timeout,
+                                       proxy=proxy, proxies=proxies)
 
     def send(self, data):
         if isinstance(data, str):

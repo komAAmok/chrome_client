@@ -7,7 +7,9 @@ not implement TLS, HTTP, QUIC, WebSocket, or proxy behavior.
 
 The public facade is `chrome_client.Client`/`Session` and
 `chrome_client.AsyncClient`/`AsyncSession`, with requests-shaped `get`, `post`,
-`json`, `timeout`, `verify`, `proxy`, and `impersonate` parameters. Async
+`json`, `timeout`, `verify`, `proxy`, `proxies`, and `impersonate` parameters.
+`proxies` accepts a Requests-style mapping such as
+`{"http": "http://...", "https": "http://..."}`. Async
 requests are driven by Core callbacks and `asyncio`'s
 `loop.call_soon_threadsafe`; no request thread pool is used. Network callback
 threads only copy native events and schedule the loop, so user Python code is
