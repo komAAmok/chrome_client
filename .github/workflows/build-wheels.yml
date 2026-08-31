@@ -102,11 +102,11 @@ jobs:
           print("Core artifact verified:", target)
           PY
 
-      - name: Set up QEMU for ARM64 manylinux
-        if: matrix.target == 'aarch64-unknown-linux-gnu' && matrix.runner != 'ubuntu-24.04-arm'
+      - name: Set up QEMU for non-native manylinux targets
+        if: matrix.target == 'i686-unknown-linux-gnu' || (matrix.target == 'aarch64-unknown-linux-gnu' && matrix.runner != 'ubuntu-24.04-arm')
         uses: docker/setup-qemu-action@v3
         with:
-          platforms: arm64
+          platforms: arm64,386
 
       - name: Build manylinux2014 wheel
         uses: PyO3/maturin-action@v1
@@ -120,7 +120,7 @@ jobs:
             -e LD_LIBRARY_PATH=${{ github.workspace }}/core/binaries/${{ matrix.core-target }}:/io/core/binaries/${{ matrix.core-target }}:/usr/lib64:/lib64:/usr/lib:/lib:/usr/lib/aarch64-linux-gnu
             -e AUDITWHEEL_LD_LIBRARY_PATH=${{ github.workspace }}/core/binaries/${{ matrix.core-target }}:/io/core/binaries/${{ matrix.core-target }}:/usr/lib64:/lib64:/usr/lib:/lib:/usr/lib/aarch64-linux-gnu
           before-script-linux: >-
-            if command -v yum >/dev/null; then yum install -y nss nspr nss-util || yum install -y nss nspr || true; elif command -v apt-get >/dev/null; then apt-get update && apt-get install -y libnss3 libnspr4 || true; fi; ldconfig || true
+            if command -v yum >/dev/null; then yum install -y nss nspr nss-util nss-libs || yum install -y nss nspr nss-util || yum install -y nss nspr || true; elif command -v apt-get >/dev/null; then apt-get update && apt-get install -y libnss3 libnspr4 || true; fi; ldconfig || true
           args: >-
             --release
             --locked
