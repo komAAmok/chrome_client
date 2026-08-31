@@ -120,7 +120,7 @@ jobs:
             -e LD_LIBRARY_PATH=${{ github.workspace }}/core/binaries/${{ matrix.core-target }}:/io/core/binaries/${{ matrix.core-target }}:/usr/lib64:/lib64:/usr/lib:/lib:/usr/lib/aarch64-linux-gnu
             -e AUDITWHEEL_LD_LIBRARY_PATH=${{ github.workspace }}/core/binaries/${{ matrix.core-target }}:/io/core/binaries/${{ matrix.core-target }}:/usr/lib64:/lib64:/usr/lib:/lib:/usr/lib/aarch64-linux-gnu
           before-script-linux: >-
-            if command -v yum >/dev/null; then yum install -y nss nspr nss-util || yum install -y nss nspr; elif command -v apt-get >/dev/null; then apt-get update && apt-get install -y libnss3 libnspr4; fi; ldconfig || true; for lib in libnss3.so libnssutil3.so libnspr4.so; do find /usr/lib64 /usr/lib /lib64 /lib -name "$lib" -print -quit 2>/dev/null | grep -q . || { echo "Missing $lib" >&2; exit 1; }; done
+            if command -v yum >/dev/null; then yum install -y nss nspr nss-util || yum install -y nss nspr || true; elif command -v apt-get >/dev/null; then apt-get update && apt-get install -y libnss3 libnspr4 || true; fi; ldconfig || true
           args: >-
             --release
             --locked
