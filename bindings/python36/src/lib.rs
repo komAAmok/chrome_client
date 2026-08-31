@@ -297,10 +297,14 @@ impl PyEngine {
     #[args(impersonate = "None", proxy = "None", verify = "true")]
     fn new(impersonate: Option<String>, proxy: Option<String>, verify: bool) -> PyResult<Self> {
         let profile_id = impersonate.map(|value| {
+            // Accept both curl-style `chrome151` and the canonical
+            // `chrome_151`; never turn the latter into `chrome__151`.
+            if let Some(version) = value.strip_prefix("chrome") {
+                if !version.is_empty() && version.chars().all(|c| c.is_ascii_digit()) {
+                    return format!("chrome_{version}");
+                }
+            }
             value
-                .strip_prefix("chrome")
-                .filter(|v| !v.is_empty())
-                .map_or(value.clone(), |v| format!("chrome_{v}"))
         });
         let config = EngineConfig {
             profile_id,
