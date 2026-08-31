@@ -5,7 +5,6 @@ on:
   push:
     branches:
       - main
-      - dev/0.2.0
     tags: ["v*"]
   workflow_dispatch:
     inputs:
