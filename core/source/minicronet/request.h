@@ -10,6 +10,7 @@
 #include "base/memory/ref_counted.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/synchronization/lock.h"
+#include "base/task/sequenced_task_runner.h"
 #include "base/timer/timer.h"
 #include "minicronet.h"
 #include "net/base/chunked_upload_data_stream.h"
@@ -56,6 +57,7 @@ private:
   void ReadMore();
 
   scoped_refptr<Engine> engine_;
+  scoped_refptr<base::SequencedTaskRunner> callback_runner_;
   std::string url_;
   std::string method_;
   std::vector<std::pair<std::string, std::string>> headers_;

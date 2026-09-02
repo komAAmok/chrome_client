@@ -1,6 +1,6 @@
 # Python 资源生命周期与背压改造计划
 
-状态：阶段 1--3 已实现初版；阶段 4--5 尚未实施。
+状态：阶段 1--4 已实现初版；阶段 5 尚未实施。
 
 本文记录 `chrome_client` Python 主版本（3.7--3.13）和 Python 3.6 兼容版本的
 后续改造顺序。目标是减少回调争用、限制 Python/native 内存增长、明确关闭语义，
@@ -89,14 +89,14 @@
 
 ### 4. Core 每请求独立顺序回调
 
-状态：未实施。
+状态：已实现源码初版，待各平台 Core 重建验收。
 
 目标：单个慢请求不能阻塞全局 callback runner，同时保持单请求事件顺序。
 
 计划：
 
-- 将当前全局顺序 callback runner 改为每个 Request/WebSocket 独立的
-  `SequencedTaskRunner`，或使用可按 key 保序的并行 runner。
+- Request/WebSocket 各自创建独立的 `SequencedTaskRunner`；保留 Engine runner
+  仅用于兼容旧内部调用。
 - 同一请求的 response/body/complete 仍严格保序；不同请求可并行派发。
 - callback runner 不得等待 Python consumer；背压必须作用于请求自身，不得阻塞其他
   请求的 callback。
@@ -104,7 +104,8 @@
   FFI 符号不一定变化，但必须重新做 ABI/运行时回归。
 
 验收：一个请求阻塞消费时，其他请求仍可收到 headers/body/complete；32/128/1000
-并发矩阵、取消、超时和大响应测试通过。
+并发矩阵、取消、超时和大响应测试通过。源码改动必须重新编译全部目标平台 Core
+后才能完成最终验收。
 
 ### 5. ABI v8：HTTP/WebSocket pause/resume 背压
 

@@ -2,7 +2,7 @@
 
 ## Version and crates
 
-- Workspace API version: `0.2.0`.
+- Workspace API version: `0.2.1`.
 - The native boundary consumed by `minicronet-sys` is ABI v7.
 - No compatibility aliases or deprecated entry points are provided.
 

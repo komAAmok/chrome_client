@@ -1,57 +1,124 @@
 # chrome_client
 
-基于 Chromium 网络栈的高稳定 HTTP/WebSocket 请求库。项目使用已经编译好的
-`libminicronet` Core，语言绑定不重新实现 TLS、HTTP 或 WebSocket，也不需要重新编译
-Chromium。
+当前版本：`0.2.1`
 
-## 架构
+基于 Chromium 网络栈的 HTTP/WebSocket 客户端。Core 负责 TLS、HTTP、HTTP/2、
+HTTP/3/QUIC、代理和 WebSocket/WSS；Python/Rust 绑定只负责参数、类型、错误和
+生命周期转换，不另实现一套网络协议。
 
-```text
-Python (requests / Client / Session / AsyncClient / AsyncSession)
-Go / Node.js / Rust
-                 │ 薄绑定：类型转换、回调与生命周期
-                 ▼
-        安全 Rust 层：配置校验、所有权、错误与 ABI 边界
-                 │ minicronet-sys
-                 ▼
-       C ABI (ABI v7) ── libminicronet Core ── Chromium 网络栈
-                              │
-             TLS · HTTP/1.1 · HTTP/2 · HTTP/3/QUIC
-                         WebSocket/WSS · Proxy
-```
+[English README](README.en.md) · [构建说明](docs/BUILD.md) · [兼容边界](docs/COMPATIBILITY_BOUNDARY.md)
 
-Core 是唯一的协议实现；绑定层只负责语言适配。平台 Core 二进制按目标架构选择，
-每个产物都带有 ABI、Chromium revision、目标三元组、SHA-256 和运行时依赖清单。
+## 支持范围
 
-## 主要优势
+### 操作系统、架构与绑定
 
-- **浏览器网络行为**：复用 Chromium/BoringSSL，支持 HTTP/1.1、HTTP/2、HTTP/3/QUIC
-  和 WebSocket/WSS；可使用匹配 Core 的 `impersonate` profile。
-- **同步与异步**：Python 提供 requests 风格 API 和 `Client`、`Session`、
-  `AsyncClient`、`AsyncSession`；异步由 Core 回调唤醒事件循环，不为每个请求创建线程池。
-- **高并发与背压**：请求生命周期由 Rust 管理，支持流式响应、响应大小限制、取消、
-  超时和有界 WebSocket 队列，避免 Python GIL 或无界缓存拖垮进程。
-- **兼容性**：主 Python wheel 支持 3.7–3.13；独立 Python 3.6 wheel 使用 `abi3`。
-  支持 Windows、Linux（manylinux2014/glibc 2.17+）和 macOS 的 x86、x86_64、ARM64。
-- **可部署**：绑定与 Core 解耦，使用仓库中现有二进制即可构建 wheel；Windows 随包携带
-  必需的 ICU 数据，Linux/macOS 按平台收集动态依赖。
+| 操作系统 | Core 目标 | Python 3.7–3.13 | Python 3.6 | Rust | 备注 |
+| --- | --- | --- | --- | --- | --- |
+| Linux | x86 (`i686`)、x86_64、ARM64 | ✓ | ✓（独立 abi3 扩展） | ✓ | manylinux/glibc 运行时依赖见 manifest |
+| Windows | x86、x86_64、ARM64 | ✓ | x86/x86_64 ✓ | ✓ | DLL 随 wheel，包含 `icudtl.dat` |
+| macOS | x86_64、ARM64 | ✓ | ✓（独立 abi3 扩展） | ✓ | dylib 按架构匹配 |
 
-## Python 示例
+
+每个 Core 产物位于 `core/binaries/<target>/`，带 ABI 版本、Chromium revision、
+SHA-256 和依赖清单。ABI 当前为 v7。Go 和 Node.js 目录目前是绑定设计说明，
+不是已发布的可安装包。
+
+| Core 目录 | Rust target | Core 文件 |
+| --- | --- | --- |
+| `linux-x86` | `i686-unknown-linux-gnu` | `libminicronet.so` |
+| `linux-x86_64` | `x86_64-unknown-linux-gnu` | `libminicronet.so` |
+| `linux-arm64` | `aarch64-unknown-linux-gnu` | `libminicronet.so` |
+| `windows-x86` | `i686-pc-windows-msvc` | `minicronet.dll` + `minicronet.lib` |
+| `windows-x86_64` | `x86_64-pc-windows-msvc` | `minicronet.dll` + `minicronet.lib` |
+| `windows-arm64` | `aarch64-pc-windows-msvc` | `minicronet.dll` + `minicronet.lib` |
+| `macos-x86_64` | `x86_64-apple-darwin` | `libminicronet.dylib` |
+| `macos-arm64` | `aarch64-apple-darwin` | `libminicronet.dylib` |
+
+### Chrome profile
+
+`impersonate` 推荐使用精确的 `chrome_<major>` 名称（同时接受 curl-cffi 风格的
+`chrome<major>` 别名）。当前支持 Chrome 99–151，共 53 个 profile；没有列出的
+版本会被拒绝，不会静默降级到当前版本。
+
+| Chrome 主版本 | 可用 profile |
+| --- | --- |
+| 99–105 | `chrome_99` … `chrome_105` |
+| 106–112 | `chrome_106` … `chrome_112` |
+| 113–119 | `chrome_113` … `chrome_119` |
+| 120–126 | `chrome_120` … `chrome_126` |
+| 127–133 | `chrome_127` … `chrome_133` |
+| 134–140 | `chrome_134` … `chrome_140` |
+| 141–147 | `chrome_141` … `chrome_147` |
+| 148–151 | `chrome_148`、`chrome_149`、`chrome_150`、`chrome_151` |
+
+Profile 影响 TLS ClientHello、ALPN、HTTP/2 设置、QUIC/H3 和相关 Chromium 网络
+参数；它不是完整 Chrome 浏览器，也不包含 Blink、扩展、Service Worker 或持久化
+浏览器 Profile。
+
+### 功能矩阵
+
+| 功能 | Python | Rust/Core | 说明 |
+| --- | --- | --- | --- |
+| HTTP/1.1、HTTP/2、HTTP/3/QUIC | ✓ | ✓ | 默认由 Chromium 协商；Rust 可强制 H1/H2/H3 |
+| HTTPS/TLS、证书校验 | ✓ | ✓ | `verify=False` 仅在明确需要时使用 |
+| HTTP/HTTPS/SOCKS 代理 | ✓ | ✓ | Python 支持 `proxy` 和 Requests 风格 `proxies` |
+| 同步请求 | ✓ | ✓ | 同步等待释放 GIL |
+| asyncio 请求 | ✓ | — | Core 回调唤醒事件循环，不创建请求线程池 |
+| 流式响应 | `iter_content` / `aiter_bytes` | `ResponseStream` | 每请求 body 队列上限 1MiB |
+| 取消、超时、大小限制 | ✓ | ✓ | `Timeout`、`ResponseTooLarge`、`RequestException` |
+| WebSocket / WSS | ✓ | ✓ | 同步 `recv` 与异步 `recv` |
+| Cookie、内存缓存、重定向、上传 | ✓ | ✓ | Cookie/cache 随 Engine 生命周期存在 |
+
+
+## Python 使用示例
+
+### 同步 GET、参数、请求头和 JSON
 
 ```python
-from chrome_client import requests
+import chrome_client
 
-response = requests.get(
-    "https://example.com",
+response = chrome_client.get(
+    "https://example.com/api",
+    params={"page": 1},
+    headers={"Accept": "application/json"},
     impersonate="chrome_151",
-    proxies={"https": "http://127.0.0.1:8080"},
-    timeout=10,
+    timeout=15,
 )
 response.raise_for_status()
-print(response.status_code, response.text)
+print(response.status_code, response.json())
 ```
 
-异步请求不使用请求线程池：
+其他 Requests 风格方法使用同一组参数：
+
+```python
+with chrome_client.Client() as client:
+    client.head("https://example.com/resource")
+    client.options("https://example.com/resource")
+    client.post("https://example.com/items", json={"name": "demo"})
+    client.put("https://example.com/items/1", data=b"raw body")
+    client.patch("https://example.com/items/1", json={"name": "new"})
+    client.delete("https://example.com/items/1")
+    client.get("https://example.com/redirect", allow_redirects=False)
+```
+
+### Client/Session、Cookie、代理和证书校验
+
+```python
+from chrome_client import Client
+
+with Client(cookies={"session": "abc"}, timeout=10) as client:
+    response = client.get(
+        "https://example.com/private",
+        proxies={"https": "http://127.0.0.1:8080"},
+        verify=True,
+    )
+    print(response.text)
+```
+
+显式 `proxy="http://..."` 优先于 `proxies`；`proxies` 按 `http`、`https`、`all`
+键选择。
+
+### asyncio 并发
 
 ```python
 import asyncio
@@ -59,20 +126,101 @@ from chrome_client import AsyncClient
 
 async def main():
     async with AsyncClient(impersonate="chrome_151") as client:
-        response = await client.get("https://example.com")
-        print(response.status_code)
+        responses = await asyncio.gather(*[
+            client.get("https://example.com") for _ in range(32)
+        ])
+        print([r.status_code for r in responses])
 
 asyncio.run(main())
 ```
 
-## 目录
+### 流式读取、大小限制和取消
 
-- `core/abi/`：稳定 C ABI 合约
-- `core/binaries/`：已审计的各平台 Core 二进制
-- `crates/minicronet/`：安全 Rust API 与资源生命周期
-- `crates/minicronet-sys/`：原始 FFI 与目标平台链接选择
-- `bindings/`：Python、Go、Node.js 绑定
-- `docs/`：迁移、架构、ABI、兼容性、wheel 和 Python 审计文档
+```python
+from chrome_client import Client, ResponseTooLarge
 
-构建与兼容边界见 [`docs/BUILD.md`](docs/BUILD.md)、[`docs/PLATFORM_SUPPORT.md`](docs/PLATFORM_SUPPORT.md)
-和 [`docs/COMPATIBILITY_BOUNDARY.md`](docs/COMPATIBILITY_BOUNDARY.md)。
+with Client() as client:
+    response = client.get("https://example.com/large", stream=True,
+                          max_response_bytes=16 * 1024 * 1024)
+    try:
+        total = 0
+        for chunk in response.iter_content(64 * 1024):
+            total += len(chunk)
+        print("bytes:", total)
+    finally:
+        response.close()       # 未读完时取消 native 请求
+```
+
+异步流使用 `async for chunk in response.aiter_bytes()`，使用完毕调用
+`await response.aclose()`。超过 `max_response_bytes` 会取消请求并抛出
+`ResponseTooLarge`。
+
+### WebSocket / WSS
+
+```python
+from chrome_client import WebSocket
+
+with WebSocket("wss://echo.example.com", impersonate="chrome_151") as socket:
+    socket.send("ping")
+    print(socket.recv())
+```
+
+```python
+import asyncio
+from chrome_client import AsyncClient
+
+async def main():
+    client = AsyncClient(impersonate="chrome_151")
+    socket = await client.websocket("wss://echo.example.com")
+    try:
+        await socket.send("ping")
+        print(await socket.recv())
+    finally:
+        await socket.close()
+        await client.aclose()
+
+asyncio.run(main())
+```
+
+### 超时与错误处理
+
+```python
+import chrome_client
+
+try:
+    chrome_client.get("https://example.com", timeout=0.5)
+except chrome_client.Timeout:
+    print("request timed out")
+except chrome_client.RequestException as error:
+    print("request failed:", error)
+```
+
+## Requests 与 curl-cffi 语法兼容
+
+常用调用参数与 Requests/curl-cffi 对齐，可直接迁移大多数简单 GET/POST 代码：
+
+| 语法/参数 | 支持情况 |
+| --- | --- |
+| `get/post/put/delete`、`Client`、`Session` | ✓；`Session` 等价于 `Client` |
+| `params`、`headers`、`cookies`、`data`、`json` | ✓ |
+| `timeout`、`verify`、`proxies`、`proxy` | ✓ |
+| `impersonate="chrome_151"` | ✓，使用本项目 Chromium profile |
+| `stream=True`、`iter_content` | ✓；异步使用 `aiter_bytes` |
+| `curl_options`、`ja3`、`akamai`、libcurl 句柄 | ✗ |
+| Requests 的全部插件/适配器/持久化 Cookie 功能 | ✗ |
+
+这不是 `curl_cffi.requests` 的替代导入：请将 `from curl_cffi import requests`
+改为 `from chrome_client import requests`，并确认响应流、异常类型和 WebSocket
+接口按本 README 使用。两者都可接受常见的 `impersonate`、代理和超时参数，但
+profile 覆盖范围、TLS 行为和底层连接池由各自实现决定。
+
+## 目录与验证
+
+| 路径 | 内容 |
+| --- | --- |
+| `core/abi/` | 稳定 C ABI v7 |
+| `core/binaries/` | 8 个已审计平台 Core |
+| `crates/minicronet/` | Rust 安全层、流和生命周期 |
+| `bindings/python/` | Python 3.7–3.13 绑定与 facade |
+| `bindings/python36/` | Python 3.6 独立 abi3 绑定 |
+| `docs/` | 构建、平台、ABI、兼容性和审计说明 |

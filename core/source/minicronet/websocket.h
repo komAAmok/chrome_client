@@ -9,6 +9,7 @@
 
 #include "base/memory/ref_counted.h"
 #include "base/memory/scoped_refptr.h"
+#include "base/task/sequenced_task_runner.h"
 #include "base/timer/timer.h"
 #include "minicronet.h"
 
@@ -65,6 +66,7 @@ class WebSocket final : public base::RefCountedThreadSafe<WebSocket> {
   void ReleasePublicOwnership();
 
   scoped_refptr<Engine> engine_;
+  scoped_refptr<base::SequencedTaskRunner> callback_runner_;
   std::string url_;
   std::string origin_;
   std::vector<std::string> protocols_;

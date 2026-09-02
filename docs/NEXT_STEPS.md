@@ -116,7 +116,8 @@
 Python 资源生命周期、流式响应、WebSocket 有界队列、Core 回调隔离以及 ABI v8
 pause/resume 的详细设计和验收门槛见
 [`PYTHON_RESOURCE_BACKPRESSURE_PLAN.md`](PYTHON_RESOURCE_BACKPRESSURE_PLAN.md)。
-当前阶段 1--3 已完成 ABI v7 初版实现；阶段 4 的 Core 回调隔离和阶段 5 的 ABI v8
-pause/resume 仍未实施，不能将其视为已完成能力。
+当前阶段 1--3 已完成 ABI v7 初版实现；阶段 4 已加入每请求/每 WebSocket 的
+独立顺序 callback runner，但必须重建各平台 Core 后才能完成运行时验收；阶段 5
+的 ABI v8 pause/resume 仍未实施，不能将其视为已完成能力。
 
 完成条件是每项都有命令输出或目标机报告；“文件存在”不等于“平台支持完成”。

@@ -8,6 +8,7 @@
 #include "base/functional/bind.h"
 #include "base/location.h"
 #include "base/time/time.h"
+#include "base/task/thread_pool.h"
 #include "base/strings/utf_string_conversions.h"
 #include "minicronet/error_mapping.h"
 #include "net/base/auth.h"
@@ -109,7 +110,9 @@ Request::Request(scoped_refptr<Engine> engine, std::string url,
                  mn_request_priority_t priority,
                  mn_request_callbacks_t callbacks, uint64_t timeout_ms,
                  mn_request_t *public_handle)
-    : engine_(std::move(engine)), url_(std::move(url)),
+    : engine_(std::move(engine)),
+      callback_runner_(base::ThreadPool::CreateSequencedTaskRunner({})),
+      url_(std::move(url)),
       method_(std::move(method)), headers_(std::move(headers)),
       body_(std::move(body)), upload_mode_(upload_mode),
       cache_mode_(cache_mode), redirect_mode_(redirect_mode),
@@ -296,7 +299,7 @@ void Request::OnReceivedRedirect(net::URLRequest *request,
   if (callbacks_.on_redirect) {
     auto callback = callbacks_.on_redirect;
     void *user_data = callbacks_.user_data;
-    engine_->callback_runner()->PostTask(
+    callback_runner_->PostTask(
         FROM_HERE, base::BindOnce(
                        [](mn_request_redirect_fn callback, void *user_data,
                           Request *self, int status_code, std::string headers,
@@ -339,7 +342,7 @@ void Request::OnResponseStarted(net::URLRequest *request, int net_error) {
   if (callbacks_.on_response) {
     auto callback = callbacks_.on_response;
     void *user_data = callbacks_.user_data;
-    engine_->callback_runner()->PostTask(
+    callback_runner_->PostTask(
         FROM_HERE,
         base::BindOnce(
             [](mn_request_response_fn callback, void *user_data, Request *self,
@@ -390,7 +393,7 @@ void Request::OnReadCompleted(net::URLRequest *request, int bytes_read) {
     std::vector<uint8_t> data(bytes.begin(), bytes.end());
     auto callback = callbacks_.on_body;
     void *user_data = callbacks_.user_data;
-    engine_->callback_runner()->PostTask(
+    callback_runner_->PostTask(
         FROM_HERE,
         base::BindOnce(
             [](mn_request_body_fn callback, void *user_data, Request *self,
@@ -419,7 +422,7 @@ void Request::Complete(mn_result_t result, int net_error) {
   auto callback = callbacks_.on_complete;
   void *user_data = callbacks_.user_data;
   scoped_refptr<Request> keep_alive = std::move(keep_alive_);
-  engine_->callback_runner()->PostTask(
+  callback_runner_->PostTask(
       FROM_HERE, base::BindOnce(
                      [](mn_request_complete_fn callback, void *user_data,
                         Request *self, mn_result_t result, int net_error,

@@ -11,16 +11,54 @@ import os
 import threading
 import time
 import unittest
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from socketserver import ThreadingMixIn
+
+try:
+    from http.server import ThreadingHTTPServer
+except ImportError:  # Python 3.6
+    class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
+        daemon_threads = True
 
 import chrome_client
 from chrome_client._python_impl import _proxy_from_proxies
 
 
 class Handler(BaseHTTPRequestHandler):
+    active = 0
+    active_lock = threading.Lock()
+
     def do_GET(self):
         if self.path.startswith("/slow"):
             time.sleep(1.0)
+        if self.path.startswith("/stream"):
+            self.send_response(200)
+            self.send_header("Content-Type", "application/octet-stream")
+            self.end_headers()
+            try:
+                for _ in range(100):
+                    self.wfile.write(b"x" * 32768)
+                    self.wfile.flush()
+                    time.sleep(0.001)
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+            return
+        if self.path.startswith("/infinite"):
+            with self.active_lock:
+                type(self).active += 1
+            self.send_response(200)
+            self.end_headers()
+            try:
+                while True:
+                    self.wfile.write(b"x" * 4096)
+                    self.wfile.flush()
+                    time.sleep(0.005)
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+            finally:
+                with self.active_lock:
+                    type(self).active -= 1
+            return
         size = int(self.headers.get("X-Size", "32"))
         payload = (b"x" * size)
         self.send_response(200)
@@ -47,6 +85,16 @@ class StabilityTests(unittest.TestCase):
     def tearDownClass(cls):
         cls.server.shutdown()
 
+    @staticmethod
+    def run_async(coro):
+        loop = asyncio.new_event_loop()
+        try:
+            asyncio.set_event_loop(loop)
+            return loop.run_until_complete(coro)
+        finally:
+            asyncio.set_event_loop(None)
+            loop.close()
+
     def test_session_defaults_and_header_case(self):
         with chrome_client.Session(headers={"X-Size": "7"}) as session:
             response = session.get(self.url)
@@ -72,8 +120,55 @@ class StabilityTests(unittest.TestCase):
                 self.assertEqual(total, 4096)
                 with self.assertRaises(chrome_client.ResponseTooLarge):
                     await client.get(self.url, headers={"X-Size": "4096"}, max_response_bytes=1024)
+                response = await client.get(self.url, headers={"X-Size": "4096"}, stream=True,
+                                             max_response_bytes=1024)
+                with self.assertRaises(chrome_client.ResponseTooLarge):
+                    async for _chunk in response.aiter_bytes():
+                        pass
 
-        asyncio.run(run())
+        self.run_async(run())
+
+    def test_async_multichunk_stream_completes(self):
+        async def run():
+            async with chrome_client.AsyncClient() as client:
+                response = await client.get(self.url + "stream", stream=True)
+                total = 0
+                async for chunk in response.aiter_bytes(8192):
+                    total += len(chunk)
+                self.assertEqual(total, 100 * 32768)
+
+        self.run_async(run())
+
+    def test_response_close_cancels_stream(self):
+        with chrome_client.Client() as client:
+            response = client.get(self.url + "infinite", stream=True)
+            response.close()
+        deadline = time.time() + 2.0
+        while time.time() < deadline:
+            with Handler.active_lock:
+                if Handler.active == 0:
+                    break
+            time.sleep(0.01)
+        self.assertEqual(Handler.active, 0)
+
+        async def run():
+            async with chrome_client.AsyncClient() as client:
+                response = await client.get(self.url + "infinite", stream=True)
+                await response.aclose()
+
+        self.run_async(run())
+        deadline = time.time() + 2.0
+        while time.time() < deadline:
+            with Handler.active_lock:
+                if Handler.active == 0:
+                    break
+            time.sleep(0.01)
+        self.assertEqual(Handler.active, 0)
+
+    def test_sync_timeout_maps_public_type(self):
+        with chrome_client.Client() as client:
+            with self.assertRaises(chrome_client.Timeout):
+                client.get(self.url + "slow", timeout=0.01)
 
     def test_close_is_idempotent(self):
         client = chrome_client.Client()
@@ -89,7 +184,7 @@ class StabilityTests(unittest.TestCase):
             with self.assertRaises(chrome_client.RequestException):
                 await client.get(self.url)
 
-        asyncio.run(run())
+        self.run_async(run())
 
     def test_public_api_has_no_legacy_exports(self):
         expected = {
@@ -130,12 +225,12 @@ class StabilityTests(unittest.TestCase):
                     self.assertEqual(len(responses), count)
                     self.assertTrue(all(response.status_code == 200 for response in responses))
 
-        asyncio.run(run())
+        self.run_async(run())
 
     def test_async_cancel_timeout_and_large_body(self):
         async def run():
             async with chrome_client.AsyncClient() as session:
-                cancelled = asyncio.create_task(session.get(self.url + "slow"))
+                cancelled = asyncio.ensure_future(session.get(self.url + "slow"))
                 await asyncio.sleep(0.02)
                 cancelled.cancel()
                 with self.assertRaises(asyncio.CancelledError):
@@ -145,7 +240,7 @@ class StabilityTests(unittest.TestCase):
                 response = await session.get(self.url, headers={"X-Size": "4194304"})
                 self.assertEqual(len(response.content), 4194304)
 
-        asyncio.run(run())
+        self.run_async(run())
 
     def test_sync_releases_gil(self):
         counter = [0]
@@ -168,7 +263,7 @@ class StabilityTests(unittest.TestCase):
     def test_event_loop_can_close_after_cancel(self):
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
-        task = loop.create_task(chrome_client.AsyncClient().get(self.url + "slow"))
+        task = asyncio.ensure_future(chrome_client.AsyncClient().get(self.url + "slow"), loop=loop)
         loop.run_until_complete(asyncio.sleep(0.01))
         task.cancel()
         loop.run_until_complete(asyncio.gather(task, return_exceptions=True))
@@ -191,7 +286,7 @@ class StabilityTests(unittest.TestCase):
                     await socket.send("ping")
                     self.assertEqual(await socket.recv(), "ping")
 
-        asyncio.run(run())
+        self.run_async(run())
 
 
 if __name__ == "__main__":

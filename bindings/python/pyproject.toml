@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "chrome-client"
-version = "0.2.0"
+version = "0.2.1"
 description = "Chromium Core HTTP/WebSocket client"
 readme = "../../README.md"
 requires-python = ">=3.7"

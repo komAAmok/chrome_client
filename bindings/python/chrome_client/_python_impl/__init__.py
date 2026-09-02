@@ -60,6 +60,14 @@ class ResponseTooLarge(RequestException):
     pass
 
 
+def _map_native_error(error):
+    """Map native error text to the public exception hierarchy."""
+    message = str(error)
+    if "timeout" in message.lower() or "timed out" in message.lower():
+        return Timeout(message)
+    return RequestException(message)
+
+
 def _validate_max_response_bytes(value):
     if value is None:
         return None
@@ -85,14 +93,21 @@ class _SyncBodyReader:
             if self._limit is not None and self._total > self._limit:
                 try:
                     self._request.cancel()
+                except RuntimeError:
+                    pass
                 finally:
                     self.close()
                 raise ResponseTooLarge("response exceeded max_response_bytes=%d" % self._limit)
             yield bytes(chunk)
 
-    def close(self):
+    def close(self, cancel=False):
         if not self._closed:
             self._closed = True
+            if cancel:
+                try:
+                    self._request.cancel()
+                except RuntimeError:
+                    pass
             try:
                 self._request.detach_callback()
             except RuntimeError:
@@ -164,7 +179,7 @@ class Response:
 
     def close(self):
         if self._body_reader is not None:
-            self._body_reader.close()
+            self._body_reader.close(cancel=True)
             self._body_reader = None
 
     def iter_lines(self, chunk_size=8192, decode_unicode=False):
@@ -200,7 +215,7 @@ class AsyncResponse(Response):
 
     async def aclose(self):
         if self._async_body_reader is not None:
-            await self._async_body_reader.aclose()
+            await self._async_body_reader.aclose(cancel=True)
             self._async_body_reader = None
 
 
@@ -374,7 +389,7 @@ class Client:
                 return Response(native.status_code, native.headers, b"", url, reader)
             content = b"".join(reader)
         except RuntimeError as error:
-            raise RequestException(str(error))
+            raise _map_native_error(error)
         return Response(native.status_code, native.headers, content, url)
 
     def get(self, url, **kwargs):
@@ -426,7 +441,7 @@ Session = Client
 
 
 class _AsyncBodyReader:
-    def __init__(self, request, wake, chunks, state, timeout, limit):
+    def __init__(self, request, wake, chunks, state, timeout, limit, schedule, buffered):
         self._request = request
         self._wake = wake
         self._chunks = chunks
@@ -435,11 +450,16 @@ class _AsyncBodyReader:
         self._limit = limit
         self._total = 0
         self._closed = False
+        self._schedule = schedule
+        self._buffered = buffered
 
     async def _next_event(self):
         while not self._closed:
             if self._chunks:
-                return ("body", 0, b"", self._chunks.popleft(), None)
+                chunk = self._chunks.popleft()
+                self._buffered[0] = max(0, self._buffered[0] - len(chunk))
+                self._schedule()
+                return ("body", 0, b"", chunk, None)
             if self._state["error"] is not None:
                 return ("error", 0, b"", b"", self._state["error"])
             if self._state["done"]:
@@ -471,11 +491,11 @@ class _AsyncBodyReader:
                     raise ResponseTooLarge("response exceeded max_response_bytes=%d" % self._limit)
                 return bytes(chunk)
             if kind == "done":
-                await self.aclose()
+                await self.aclose(cancel=False)
                 raise StopAsyncIteration
             if kind == "error":
-                await self.aclose()
-                raise RequestException(error or "request failed")
+                await self.aclose(cancel=False)
+                raise error if isinstance(error, RequestException) else _map_native_error(error or "request failed")
 
     async def aclose(self, cancel=False):
         if self._closed:
@@ -545,49 +565,59 @@ class AsyncClient(Client):
         body = bytearray()
         body_total = [0]
         stream_chunks = deque()
+        stream_buffered = [0]
+        stream_buffer_limit = 1024 * 1024
         stream_state = {"done": False, "error": None}
 
+        def schedule_notify():
+            if stream and stream_buffered[0] >= stream_buffer_limit:
+                return
+            loop.call_soon(notify)
+
         def notify():
-            while True:
-                event = request.poll_event()
-                if event is None:
-                    return
-                kind, code, raw_headers, chunk, error = event
-                if kind == "response":
-                    status[0], response_headers[0] = code, raw_headers
-                    if stream:
-                        wake.set()
-                        return
-                elif kind == "body":
-                    body_total[0] += len(chunk)
-                    if response_limit is not None and body_total[0] > response_limit:
-                        stream_state["error"] = "response exceeded max_response_bytes=%d" % response_limit
-                        try:
-                            request.cancel()
-                        except RuntimeError:
-                            pass
-                        if not future.done():
-                            future.set_exception(ResponseTooLarge(stream_state["error"]))
-                        wake.set()
-                        return
-                    if stream:
-                        stream_chunks.append(bytes(chunk))
-                        wake.set()
-                        return
-                    else:
-                        body.extend(chunk)
-                elif kind == "error":
-                    stream_state["error"] = error or "request failed"
-                    if not future.done():
-                        future.set_exception(RequestException(error or "request failed"))
-                    return
-                elif kind == "done":
-                    stream_state["done"] = True
-                    if not future.done():
-                        future.set_result(AsyncResponse(status[0], response_headers[0], body, url))
-                    wake.set()
-                    return
+            event = request.poll_event()
+            if event is None:
+                return
+            kind, code, raw_headers, chunk, error = event
+            terminal = False
+            if kind == "response":
+                status[0], response_headers[0] = code, raw_headers
                 wake.set()
+            elif kind == "body":
+                body_total[0] += len(chunk)
+                if response_limit is not None and body_total[0] > response_limit:
+                    message = "response exceeded max_response_bytes=%d" % response_limit
+                    stream_state["error"] = ResponseTooLarge(message)
+                    terminal = True
+                    try:
+                        request.cancel()
+                    except RuntimeError:
+                        pass
+                    if not stream and not future.done():
+                        future.set_exception(stream_state["error"])
+                    wake.set()
+                elif stream:
+                    chunk = bytes(chunk)
+                    stream_chunks.append(chunk)
+                    stream_buffered[0] += len(chunk)
+                    wake.set()
+                else:
+                    body.extend(chunk)
+                    wake.set()
+            elif kind == "error":
+                stream_state["error"] = _map_native_error(error or "request failed")
+                terminal = True
+                if not stream and not future.done():
+                    future.set_exception(stream_state["error"])
+                wake.set()
+            elif kind == "done":
+                stream_state["done"] = True
+                terminal = True
+                if not future.done():
+                    future.set_result(AsyncResponse(status[0], response_headers[0], body, url))
+                wake.set()
+            if not terminal:
+                schedule_notify()
 
         try:
             request.start_async(loop, notify)
@@ -596,11 +626,19 @@ class AsyncClient(Client):
                     await asyncio.wait_for(wake.wait(), timeout) if timeout else await wake.wait()
                     wake.clear()
                     if stream_state["error"] is not None:
-                        raise RequestException(stream_state["error"])
+                        error = stream_state["error"]
+                        raise error if isinstance(error, RequestException) else _map_native_error(error)
                 return AsyncResponse(status[0], response_headers[0], b"", url,
                                      _AsyncBodyReader(request, wake, stream_chunks,
-                                                       stream_state, timeout, response_limit))
+                                                       stream_state, timeout, response_limit,
+                                                       schedule_notify, stream_buffered))
             return await asyncio.wait_for(future, timeout) if timeout else await future
+        except RuntimeError as error:
+            try:
+                request.detach_callback()
+            except RuntimeError:
+                pass
+            raise _map_native_error(error)
         except asyncio.TimeoutError:
             try:
                 request.cancel()

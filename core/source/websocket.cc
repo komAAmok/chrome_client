@@ -6,6 +6,7 @@
 #include "base/compiler_specific.h"
 #include "base/functional/bind.h"
 #include "base/location.h"
+#include "base/task/thread_pool.h"
 #include "base/strings/utf_string_conversions.h"
 #include "minicronet/engine.h"
 #include "minicronet/error_mapping.h"
@@ -182,6 +183,7 @@ WebSocket::WebSocket(
     uint64_t timeout_ms,
     mn_websocket_t* public_handle)
     : engine_(std::move(engine)),
+      callback_runner_(base::ThreadPool::CreateSequencedTaskRunner({})),
       url_(std::move(url)),
       origin_(std::move(origin)),
       protocols_(std::move(protocols)),
@@ -318,7 +320,7 @@ void WebSocket::CancelOnNetworkThread() {
   auto callback = callbacks_.on_failure;
   void* user_data = callbacks_.user_data;
   scoped_refptr<WebSocket> keep_alive = std::move(keep_alive_);
-  engine_->callback_runner()->PostTask(
+  callback_runner_->PostTask(
       FROM_HERE,
       base::BindOnce(
           [](mn_websocket_failure_fn callback, void* user_data,
@@ -345,7 +347,7 @@ void WebSocket::OnOpen(const std::string& protocol,
   }
   auto callback = callbacks_.on_open;
   void* user_data = callbacks_.user_data;
-  engine_->callback_runner()->PostTask(
+  callback_runner_->PostTask(
       FROM_HERE,
       base::BindOnce(
           [](mn_websocket_open_fn callback, void* user_data, WebSocket* self,
@@ -378,7 +380,7 @@ void WebSocket::OnMessage(bool final,
   std::vector<uint8_t> data(payload.begin(), payload.end());
   auto callback = callbacks_.on_message;
   void* user_data = callbacks_.user_data;
-  engine_->callback_runner()->PostTask(
+  callback_runner_->PostTask(
       FROM_HERE,
       base::BindOnce(
           [](mn_websocket_message_fn callback, void* user_data,
@@ -414,7 +416,7 @@ void WebSocket::OnClosing() {
   }
   auto callback = callbacks_.on_closing;
   void* user_data = callbacks_.user_data;
-  engine_->callback_runner()->PostTask(
+  callback_runner_->PostTask(
       FROM_HERE,
       base::BindOnce(
           [](mn_websocket_closing_fn callback, void* user_data,
@@ -440,7 +442,7 @@ void WebSocket::OnClosed(bool was_clean,
   auto callback = callbacks_.on_closed;
   void* user_data = callbacks_.user_data;
   scoped_refptr<WebSocket> keep_alive = std::move(keep_alive_);
-  engine_->callback_runner()->PostTask(
+  callback_runner_->PostTask(
       FROM_HERE,
       base::BindOnce(
           [](mn_websocket_closed_fn callback, void* user_data,
@@ -479,7 +481,7 @@ void WebSocket::CompleteFailure(mn_result_t result,
   auto callback = callbacks_.on_failure;
   void* user_data = callbacks_.user_data;
   scoped_refptr<WebSocket> keep_alive = std::move(keep_alive_);
-  engine_->callback_runner()->PostTask(
+  callback_runner_->PostTask(
       FROM_HERE,
       base::BindOnce(
           [](mn_websocket_failure_fn callback, void* user_data,
