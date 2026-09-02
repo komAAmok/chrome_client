@@ -1,0 +1,132 @@
+diff --git a/net/http/http_network_session.h b/net/http/http_network_session.h
+--- a/net/http/http_network_session.h
++++ b/net/http/http_network_session.h
+@@ -117,5 +117,7 @@ struct NET_EXPORT HttpNetworkSessionParams {
+   // coexist in one process without mutating FeatureList.
+   bool randomize_socket_pool_limit = true;
+   bool randomize_proxy_socket_pool_limit = true;
++  // Whether H2/H3 request HEADERS automatically include RFC 9218 priority.
++  bool send_priority_header = true;
+   // If true, a setting parameter with reserved identifier will be sent in every
+   // initial SETTINGS frame, see
+diff --git a/net/http/http_stream_factory_job.cc b/net/http/http_stream_factory_job.cc
+--- a/net/http/http_stream_factory_job.cc
++++ b/net/http/http_stream_factory_job.cc
+@@ -1113,5 +1113,6 @@ int HttpStreamFactory::Job::DoInitConnectionComplete(int result) {
+       }
+       auto dns_aliases =
+           session->GetDnsAliasesForSessionKey(quic_request_.session_key());
+-      stream_ = std::make_unique<QuicHttpStream>(std::move(session),
+-                                                 std::move(dns_aliases));
++      stream_ = std::make_unique<QuicHttpStream>(
++          std::move(session), std::move(dns_aliases),
++          session_->params().send_priority_header);
+@@ -1202,4 +1203,5 @@ int HttpStreamFactory::Job::SetSpdyHttpStreamOrBidirectionalStreamImpl(
+-  stream_ = std::make_unique<SpdyHttpStream>(session, net_log_.source(),
+-                                             std::move(dns_aliases));
++  stream_ = std::make_unique<SpdyHttpStream>(
++      session, net_log_.source(), std::move(dns_aliases),
++      session_->params().send_priority_header);
+   return OK;
+ }
+diff --git a/net/http/http_stream_pool_attempt_manager.cc b/net/http/http_stream_pool_attempt_manager.cc
+--- a/net/http/http_stream_pool_attempt_manager.cc
++++ b/net/http/http_stream_pool_attempt_manager.cc
+@@ -1882,4 +1882,7 @@ void HttpStreamPool::AttemptManager::MaybeCreateSpdyStreamAndNotify(
+   std::vector<std::unique_ptr<SpdyHttpStream>> streams(request_jobs_.size());
+   std::ranges::generate(streams, [&] {
+     return std::make_unique<SpdyHttpStream>(spdy_session, net_log().source(),
+-                                            dns_aliases);
++                                            dns_aliases,
++                                            http_network_session()
++                                                ->params()
++                                                .send_priority_header);
+@@ -1910,3 +1913,4 @@ void HttpStreamPool::AttemptManager::MaybeCreateQuicStreamAndNotify(
+   std::ranges::generate(streams, [&] {
+     return std::make_unique<QuicHttpStream>(
+-        quic_session->CreateHandle(stream_key().destination()), dns_aliases);
++        quic_session->CreateHandle(stream_key().destination()), dns_aliases,
++        http_network_session()->params().send_priority_header);
+   });
+diff --git a/net/http/http_stream_pool_job_controller.cc b/net/http/http_stream_pool_job_controller.cc
+--- a/net/http/http_stream_pool_job_controller.cc
++++ b/net/http/http_stream_pool_job_controller.cc
+@@ -542,3 +542,4 @@ HttpStreamPool::JobController::MaybeCreateStreamFromExistingSession() {
+     auto http_stream = std::make_unique<SpdyHttpStream>(
+         spdy_session, stream_request_->net_log().source(),
+-        spdy_session_pool()->GetDnsAliasesForSessionKey(spdy_session_key));
++        spdy_session_pool()->GetDnsAliasesForSessionKey(spdy_session_key),
++        pool_->http_network_session()->params().send_priority_header);
+@@ -605,3 +606,4 @@ HttpStreamPool::JobController::MaybeCreateStreamFromExistingQuicSessionInternal(
+   return std::make_unique<QuicHttpStream>(
+       quic_session->CreateHandle(key.destination()),
+-      quic_session->GetDnsAliasesForSessionKey(key.session_key()));
++      quic_session->GetDnsAliasesForSessionKey(key.session_key()),
++      pool_->http_network_session()->params().send_priority_header);
+ }
+diff --git a/net/quic/quic_http_stream.cc b/net/quic/quic_http_stream.cc
+--- a/net/quic/quic_http_stream.cc
++++ b/net/quic/quic_http_stream.cc
+@@ -38,5 +38,7 @@ namespace net {
+ QuicHttpStream::QuicHttpStream(
+     std::unique_ptr<QuicChromiumClientSession::Handle> session,
+-    std::set<std::string> dns_aliases)
++    std::set<std::string> dns_aliases,
++    bool send_priority_header)
+     : MultiplexedHttpStream(std::move(session)),
+-      dns_aliases_(std::move(dns_aliases)) {}
++      dns_aliases_(std::move(dns_aliases)),
++      send_priority_header_(send_priority_header) {}
+@@ -129,2 +131,4 @@ int QuicHttpStream::SendRequest(const HttpRequestHeaders& request_headers,
+-  CreateSpdyHeadersFromHttpRequest(*request_info_, priority_, request_headers,
+-                                   &request_headers_);
++  CreateSpdyHeadersFromHttpRequest(
++      *request_info_, send_priority_header_ ? std::optional(priority_)
++                                            : std::nullopt,
++      request_headers, &request_headers_);
+diff --git a/net/quic/quic_http_stream.h b/net/quic/quic_http_stream.h
+--- a/net/quic/quic_http_stream.h
++++ b/net/quic/quic_http_stream.h
+@@ -44,3 +44,4 @@ class NET_EXPORT_PRIVATE QuicHttpStream : public MultiplexedHttpStream {
+   explicit QuicHttpStream(
+       std::unique_ptr<QuicChromiumClientSession::Handle> session,
+-      std::set<std::string> dns_aliases);
++      std::set<std::string> dns_aliases,
++      bool send_priority_header = true);
+@@ -238,1 +239,2 @@ class NET_EXPORT_PRIVATE QuicHttpStream : public MultiplexedHttpStream {
+   std::set<std::string> dns_aliases_;
++  const bool send_priority_header_;
+diff --git a/net/spdy/spdy_http_stream.cc b/net/spdy/spdy_http_stream.cc
+--- a/net/spdy/spdy_http_stream.cc
++++ b/net/spdy/spdy_http_stream.cc
+@@ -41,3 +41,4 @@ const size_t SpdyHttpStream::kRequestBodyBufferSize = kMaxSpdyFrameChunkSize;
+ SpdyHttpStream::SpdyHttpStream(const base::WeakPtr<SpdySession>& spdy_session,
+                                NetLogSource source_dependency,
+-                               std::set<std::string> dns_aliases)
++                               std::set<std::string> dns_aliases,
++                               bool send_priority_header)
+@@ -51,3 +53,4 @@ SpdyHttpStream::SpdyHttpStream(const base::WeakPtr<SpdySession>& spdy_session,
+       is_reused_(spdy_session_->IsReused()),
+       source_dependency_(source_dependency),
+-      dns_aliases_(std::move(dns_aliases)) {
++      dns_aliases_(std::move(dns_aliases)),
++      send_priority_header_(send_priority_header) {
+@@ -265,2 +267,4 @@ int SpdyHttpStream::SendRequest(const HttpRequestHeaders& request_headers,
+-  CreateSpdyHeadersFromHttpRequest(*request_info_, priority_, request_headers,
+-                                   &headers);
++  CreateSpdyHeadersFromHttpRequest(
++      *request_info_, send_priority_header_ ? std::optional(priority_)
++                                            : std::nullopt,
++      request_headers, &headers);
+diff --git a/net/spdy/spdy_http_stream.h b/net/spdy/spdy_http_stream.h
+--- a/net/spdy/spdy_http_stream.h
++++ b/net/spdy/spdy_http_stream.h
+@@ -43,3 +43,4 @@ class NET_EXPORT_PRIVATE SpdyHttpStream : public SpdyStream::Delegate,
+   SpdyHttpStream(const base::WeakPtr<SpdySession>& spdy_session,
+                  NetLogSource source_dependency,
+-                 std::set<std::string> dns_aliases);
++                 std::set<std::string> dns_aliases,
++                 bool send_priority_header = true);
+@@ -225,1 +226,2 @@ class NET_EXPORT_PRIVATE SpdyHttpStream : public SpdyStream::Delegate,
+   RequestPriority priority_ = RequestPriority::DEFAULT_PRIORITY;
++  const bool send_priority_header_;

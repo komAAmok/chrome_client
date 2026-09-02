@@ -1,0 +1,130 @@
+diff --git a/net/socket/ssl_client_socket_impl.cc b/net/socket/ssl_client_socket_impl.cc
+index daf2491519..701ddd5088 100644
+--- a/net/socket/ssl_client_socket_impl.cc
++++ b/net/socket/ssl_client_socket_impl.cc
+@@ -687,6 +687,23 @@ int SSLClientSocketImpl::Init() {
+   ssl_.reset(SSL_new(context->ssl_ctx()));
+   if (!ssl_ || !context->SetClientSocketForSSL(ssl_.get(), this))
+     return ERR_UNEXPECTED;
++  const bool has_profile =
++      !context_->config().profile_tls_extension_ids.empty();
++  if (has_profile &&
++      (context_->config().profile_tls_extension_order_policy > 1 ||
++       !context_->config().profile_tls_grease_per_connection)) {
++    // Policy 0 is per-connection Fisher-Yates; policy 1 is the historical
++    // native callback order. Neither policy accepts a caller seed or order.
++    return ERR_UNEXPECTED;
++  }
++  SSL_set_grease_enabled(ssl_.get(),
++                         context_->config().profile_tls_grease_enabled);
++  SSL_set_grease_sigalgs_enabled(
++      ssl_.get(), context_->config().profile_grease_signature_algorithms &&
++                      base::FeatureList::IsEnabled(
++                          features::kTlsGreaseSigalgs));
++  SSL_set_client_hello_padding_enabled(
++      ssl_.get(), context_->config().profile_client_hello_padding_enabled);
++  SSL_set_client_hello_padding_length(
++      ssl_.get(), context_->config().profile_client_hello_padding_length);
+ 
+   const bool host_is_ip_address =
+       HostIsIPAddressNoBrackets(host_and_port_.host());
+@@ -772,7 +789,25 @@ int SSLClientSocketImpl::Init() {
+ 
+   // Use BoringSSL defaults, but disable 3DES and HMAC-SHA1 ciphers in ECDSA.
+   // These are the remaining CBC-mode ECDSA ciphers.
+-  std::string command("ALL:!aPSK:!ECDSA+SHA1:!3DES");
++  std::string command;
++  const auto& profile_ciphers = context_->config().profile_cipher_suites;
++  if (!profile_ciphers.empty()) {
++    for (uint16_t id : profile_ciphers) {
++      const SSL_CIPHER* cipher = SSL_get_cipher_by_value(id);
++      if (!cipher) {
++        continue;
++      }
++      if (!command.empty()) {
++        command.push_back(':');
++      }
++      command.append(SSL_CIPHER_get_name(cipher));
++    }
++    if (command.empty()) {
++      return ERR_UNEXPECTED;
++    }
++  } else {
++    command = "ALL:!aPSK:!ECDSA+SHA1:!3DES";
++  }
+ 
+   if (ssl_config_.require_ecdhe)
+     command.append(":!kRSA");
+@@ -807,13 +842,21 @@ int SSLClientSocketImpl::Init() {
+       SSL_SIGN_RSA_PSS_RSAE_SHA512,
+       SSL_SIGN_RSA_PKCS1_SHA512,
+   };
+-  if (!SSL_set_verify_algorithm_prefs(ssl_.get(), kVerifyPrefs,
+-                                      std::size(kVerifyPrefs))) {
++  const auto& profile_sigalgs =
++      context_->config().profile_signature_algorithms;
++  const uint16_t* sigalgs = profile_sigalgs.empty()
++                                ? kVerifyPrefs
++                                : profile_sigalgs.data();
++  size_t sigalg_count = profile_sigalgs.empty()
++                            ? std::size(kVerifyPrefs)
++                            : profile_sigalgs.size();
++  if (!SSL_set_verify_algorithm_prefs(ssl_.get(), sigalgs, sigalg_count)) {
+     return ERR_UNEXPECTED;
+   }
+ 
+   SSL_set_alps_use_new_codepoint(
+       ssl_.get(),
++      context_->config().profile_use_new_alps_codepoint &&
+       base::FeatureList::IsEnabled(features::kUseNewAlpsCodepointHttp2));
+ 
+   if (!ssl_config_.alpn_protos.empty()) {
+@@ -861,7 +904,10 @@ int SSLClientSocketImpl::Init() {
+     return rv;
+   }
+ 
+-  SSL_set_permute_extensions(ssl_.get(), 1);
++  // Policy 0 is BoringSSL's connection-level Fisher-Yates permutation. No
++  // profile may provide a fixed extension order.
++  SSL_set_permute_extensions(
++      ssl_.get(), context_->config().profile_tls_extension_order_policy == 0);
+ 
+   // Configure BoringSSL to send Trust Anchor IDs, if provided.
+   if (ssl_config_.trust_anchor_ids.has_value()) {
+diff --git a/net/ssl/ssl_config_service.h b/net/ssl/ssl_config_service.h
+index 8329b02b85..e581778a8a 100644
+--- a/net/ssl/ssl_config_service.h
++++ b/net/ssl/ssl_config_service.h
+@@ -83,6 +83,32 @@ struct NET_EXPORT SSLContextConfig {
+   // disable TLS_ECDH_ECDSA_WITH_RC4_128_SHA, specify 0xC002.
+   std::vector<uint16_t> disabled_cipher_suites;
+ 
++  // When non-empty, use exactly this ordered cipher-suite list for the
++  // profile-bound ClientHello instead of the built-in ALL policy.
++  std::vector<uint16_t> profile_cipher_suites;
++
++  // Profile-specific ordered TLS signature algorithms.
++  std::vector<uint16_t> profile_signature_algorithms;
++
++  // Profile-specific TLS extension set. The set is evidence/configuration;
++  // extension order remains connection-level BoringSSL randomness.
++  std::vector<uint16_t> profile_tls_extension_ids;
++  uint8_t profile_tls_extension_order_policy = 0;
++  bool profile_tls_grease_enabled = true;
++  bool profile_tls_grease_per_connection = true;
++
++  // Whether this connection profile GREASEs signature algorithms.
++  bool profile_grease_signature_algorithms = true;
++
++  // Whether BoringSSL may add the compatibility padding extension.
++  bool profile_client_hello_padding_enabled = true;
++
++  // A non-zero value forces the exact ClientHello padding payload length.
++  uint16_t profile_client_hello_padding_length = 0;
++
++  // Whether the profile offers the new ALPS extension codepoint.
++  bool profile_use_new_alps_codepoint = true;
++
+   // This configures a compliance policy that sets the cipher order for
+   // TLS 1.3 to prefer AES-256-GCM over AES-128-GCM over ChaCha20-Poly1305.
+   bool tls13_cipher_prefer_aes_256 = false;

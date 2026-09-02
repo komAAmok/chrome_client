@@ -1,0 +1,419 @@
+diff --git a/base/BUILD.gn b/base/BUILD.gn
+index c6ae66b00e..36ed406138 100644
+--- a/base/BUILD.gn
++++ b/base/BUILD.gn
+@@ -2396,7 +2396,13 @@ component("base") {
+       "process/set_process_title_linux.h",
+       "system/sys_info_linux.cc",
+     ]
+-    if (!is_cronet_build) {
++    if (is_minicronet_build) {
++      sources += [
++        "nix/xdg_util_minicronet.cc",
++        "nix/xdg_util.h",
++      ]
++      deps += [ "//base/third_party/xdg_user_dirs" ]
++    } else if (!is_cronet_build) {
+       # These dependencies are not required on Android.
+       sources += [
+         "nix/mime_util_xdg.cc",
+diff --git a/build/config/cronet/config.gni b/build/config/cronet/config.gni
+index e529cc5da1..2291850e69 100644
+--- a/build/config/cronet/config.gni
++++ b/build/config/cronet/config.gni
+@@ -29,6 +29,10 @@ declare_args() {
+   # Signals that Cronet is being built. Building within Android always implies
+   # that Cronet is being built.
+   is_cronet_build = is_cronet_for_aosp_build
++
++  # A desktop-only Chromium network library with a C ABI. Unlike Cronet's
++  # Android build this keeps WebSocket and desktop certificate support.
++  is_minicronet_build = false
+ }
+ 
+ # This should only ever happen if one decides to override, at the same time,
+@@ -39,3 +43,4 @@ assert(
+     "`is_cronet_build` cannot be disabled when `is_cronet_for_aosp_build` is enabled.")
+ 
+ assert(!is_cronet_for_aosp_build || target_os == "android")
++assert(!is_minicronet_build || is_win || is_linux || is_mac)
+diff --git a/build_overrides/build.gni b/build_overrides/build.gni
+index ea33019983..a0f9378273 100644
+--- a/build_overrides/build.gni
++++ b/build_overrides/build.gni
+@@ -29,7 +29,7 @@ build_with_v8_embedder = build_with_chromium
+ # `use_custom_libcxx = true`.
+ enable_safe_libcxx = true
+ 
+-if (is_cronet_build) {
++if (is_cronet_build || is_minicronet_build) {
+   # Used by //third_party/perfetto.
+   # Disabled for Cronet, where JSON support is not used and tends to cause
+   # problems (especially when building in the Android platform).
+@@ -53,7 +53,8 @@ declare_args() {
+ declare_args() {
+   # Use Perfetto's trace processor for converting protobuf-encoded traces to
+   # the legacy JSON format in base::TraceLog.
+-  use_perfetto_trace_processor = !is_cronet_build
++  use_perfetto_trace_processor =
++      !is_cronet_build && !is_minicronet_build
+ }
+ 
+ # Allows different projects to specify their own suppression/ignore lists for
+diff --git a/net/BUILD.gn b/net/BUILD.gn
+index be3159b3f9..73f9a0dac0 100644
+--- a/net/BUILD.gn
++++ b/net/BUILD.gn
+@@ -86,6 +86,7 @@ buildflag_header("buildflags") {
+     "ENABLE_DEVICE_BOUND_SESSIONS=$enable_device_bound_sessions",
+     "ENABLE_BRACKETED_PROXY_URIS=$enable_bracketed_proxy_uris",
+     "ENABLE_QUIC_PROXY_SUPPORT=$enable_quic_proxy_support",
++    "MINICRONET_BUILD=$is_minicronet_build",
+   ]
+ }
+ 
+@@ -1190,6 +1191,26 @@ component("net") {
+     "url_request/websocket_handshake_userdata_key.h",
+   ]
+ 
++  # MiniCronet keeps in-memory HTTP and cookie caches, but excludes shared
++  # dictionaries. Disk-cache sources provide Chromium's memory backend without
++  # enabling disk persistence.
++  if (is_minicronet_build) {
++    sources -= [
++      # MiniCronet exposes WebSocket (including H2/H3 Extended CONNECT),
++      # but not the separate WebTransport API/client.
++      "quic/dedicated_web_transport_http3_client.cc",
++      "quic/dedicated_web_transport_http3_client.h",
++      "quic/web_transport_client.cc",
++      "quic/web_transport_client.h",
++      "quic/web_transport_error.cc",
++      "quic/web_transport_error.h",
++      "shared_dictionary/shared_dictionary_header_checker_source_stream.cc",
++      "shared_dictionary/shared_dictionary_isolation_key.cc",
++      "shared_dictionary/shared_dictionary_network_transaction.cc",
++      "shared_dictionary/shared_dictionary_network_transaction_factory.cc",
++    ]
++  }
++
+   if (is_posix || is_fuchsia) {
+     sources += [ "base/net_errors_posix.cc" ]
+   }
+@@ -1211,12 +1232,15 @@ component("net") {
+     ":cronet_buildflags",
+     ":net_deps",
+     "//components/network_time/time_tracker",
+-    "//components/unexportable_keys",
+     "//net/http:transport_security_state_generated_files",
+     "//third_party/rust/sfv/v0_15/wrapper",
+     "//third_party/simdutf",
+   ]
+ 
++  if (enable_device_bound_sessions) {
++    deps += [ "//components/unexportable_keys" ]
++  }
++
+   public_deps = [
+     ":disk_cache_buildflags",
+     ":net_features",
+@@ -1749,19 +1773,6 @@ component("net") {
+ 
+   if (enable_websockets) {
+     sources += [
+-      "server/http_connection.cc",
+-      "server/http_connection.h",
+-      "server/http_server.cc",
+-      "server/http_server.h",
+-      "server/http_server_request_info.cc",
+-      "server/http_server_request_info.h",
+-      "server/http_server_response_info.cc",
+-      "server/http_server_response_info.h",
+-      "server/web_socket.cc",
+-      "server/web_socket.h",
+-      "server/web_socket_encoder.cc",
+-      "server/web_socket_encoder.h",
+-      "server/web_socket_parse_result.h",
+       "websockets/websocket_basic_handshake_stream.cc",
+       "websockets/websocket_basic_handshake_stream.h",
+       "websockets/websocket_basic_stream.cc",
+@@ -1814,6 +1825,33 @@ component("net") {
+       "websockets/websocket_stream.cc",
+       "websockets/websocket_stream.h",
+     ]
++
++    # Cronet uses Android's platform ICU alternatives, but WebSocket message
++    # validation only needs this standalone, ICU-free UTF-8 state machine.
++    if (is_cronet_build && use_platform_icu_alternatives) {
++      sources += [
++        "//base/i18n/streaming_utf8_validator.cc",
++        "//base/i18n/utf8_validator_tables.cc",
++      ]
++    }
++
++    if (!is_cronet_build && !is_minicronet_build) {
++      sources += [
++        "server/http_connection.cc",
++        "server/http_connection.h",
++        "server/http_server.cc",
++        "server/http_server.h",
++        "server/http_server_request_info.cc",
++        "server/http_server_request_info.h",
++        "server/http_server_response_info.cc",
++        "server/http_server_response_info.h",
++        "server/web_socket.cc",
++        "server/web_socket.h",
++        "server/web_socket_encoder.cc",
++        "server/web_socket_encoder.h",
++        "server/web_socket_parse_result.h",
++      ]
++    }
+   }
+ 
+   # ICU support.
+diff --git a/net/features.gni b/net/features.gni
+index 29c0520cc3..9f4a2350b6 100644
+--- a/net/features.gni
++++ b/net/features.gni
+@@ -10,16 +10,17 @@ import("//extensions/buildflags/buildflags.gni")
+ declare_args() {
+   # Disables support for file URLs.  File URL support requires use of icu.
+   # Cronet does not support file URLs.
+-  disable_file_support = is_cronet_build
++  disable_file_support = is_cronet_build || is_minicronet_build
+ 
+   # WebSockets and socket stream code are not used when Cronet is being built.
+-  enable_websockets = !is_cronet_build
++  enable_websockets = !is_cronet_build || is_minicronet_build
+ 
+   # Enable Kerberos authentication. It is disabled by default on iOS, Fuchsia
+   # and Chromecast, at least for now. This feature needs configuration
+   # (krb5.conf and so on).
+   # TODO(fuchsia): Enable kerberos on Fuchsia when it's implemented there.
+-  use_kerberos = !is_ios && !is_fuchsia && !is_castos && !is_cast_android
++  use_kerberos = !is_minicronet_build && !is_ios && !is_fuchsia &&
++                 !is_castos && !is_cast_android
+ 
+   # Do not disable brotli filter by default.
+   disable_brotli_filter = false
+@@ -29,11 +30,12 @@ declare_args() {
+   disable_zstd_filter = false
+ 
+   # Multicast DNS. Enabled on desktop Android for the chrome.mdns extension API.
+-  enable_mdns = is_win || is_linux || is_chromeos || is_fuchsia || is_apple ||
+-                enable_desktop_android_extensions
++  enable_mdns = !is_minicronet_build &&
++                (is_win || is_linux || is_chromeos || is_fuchsia || is_apple ||
++                 enable_desktop_android_extensions)
+ 
+   # Reporting not used on iOS.
+-  enable_reporting = !is_ios
++  enable_reporting = !is_ios && !is_minicronet_build
+ 
+   # Includes the transport security state preload list. This list includes
+   # mechanisms (e.g. HSTS, HPKP) to enforce trusted connections to a significant
+@@ -56,7 +59,8 @@ declare_args() {
+   chrome_root_store_only = is_win || is_mac || is_linux || is_chromeos
+ 
+   # DBSC is only supported on Windows, Linux and Mac for now.
+-  enable_device_bound_sessions = is_win || is_linux || is_mac
++  enable_device_bound_sessions =
++      !is_minicronet_build && (is_win || is_linux || is_mac)
+ 
+   # Bracketed URIs parsing is only available for debug builds.
+   # TODO(crbug.com/365771838): Ensure tests are updated if needed if this
+@@ -72,9 +76,10 @@ declare_args() {
+   # It is enabled only in specific build configurations to avoid increasing the
+   # build size.
+   enable_disk_cache_sql_backend =
+-      (is_linux && !is_castos) ||
+-      (is_android && !is_cast_android && !is_cronet_build) || is_win ||
+-      is_mac || is_chromeos
++      !is_minicronet_build &&
++      ((is_linux && !is_castos) ||
++       (is_android && !is_cast_android && !is_cronet_build) || is_win ||
++       is_mac || is_chromeos)
+ }
+ 
+ assert(!chrome_root_store_optional || !chrome_root_store_only,
+diff --git a/net/log/net_log_util.cc b/net/log/net_log_util.cc
+index db5da46bc6..53caf1269d 100644
+--- a/net/log/net_log_util.cc
++++ b/net/log/net_log_util.cc
+@@ -21,22 +21,28 @@
+ #include "base/time/time.h"
+ #include "base/trace_event/trace_event.h"  // IWYU pragma: export
+ #include "base/values.h"
++#include "build/buildflag.h"
+ #include "net/base/address_family.h"
+ #include "net/base/load_states.h"
+ #include "net/base/net_errors.h"
+ #include "net/base/net_info_source_list.h"
+ #include "net/cert/cert_verifier.h"
++#if !BUILDFLAG(MINICRONET_BUILD)
+ #include "net/disk_cache/disk_cache.h"
++#endif
+ #include "net/dns/host_cache.h"
+ #include "net/dns/host_resolver.h"
+ #include "net/dns/public/dns_query_type.h"
+ #include "net/dns/public/doh_provider_entry.h"
+ #include "net/dns/public/secure_dns_mode.h"
++#if !BUILDFLAG(MINICRONET_BUILD)
+ #include "net/http/http_cache.h"
++#endif
+ #include "net/http/http_network_session.h"
+ #include "net/http/http_server_properties.h"
+ #include "net/http/http_stream_pool.h"
+ #include "net/http/http_transaction_factory.h"
++#include "net/net_buildflags.h"
+ #include "net/log/net_log_capture_mode.h"
+ #include "net/log/net_log_entry.h"
+ #include "net/log/net_log_event_type.h"
+@@ -97,6 +103,7 @@ const int16_t kNetErrors[] = {
+ 
+ // Returns the disk cache backend for |context| if there is one, or NULL.
+ // Despite the name, can return an in memory "disk cache".
++#if !BUILDFLAG(MINICRONET_BUILD)
+ disk_cache::Backend* GetDiskCacheBackend(URLRequestContext* context) {
+   if (!context->http_transaction_factory())
+     return nullptr;
+@@ -107,6 +114,7 @@ disk_cache::Backend* GetDiskCacheBackend(URLRequestContext* context) {
+ 
+   return http_cache->GetCurrentBackend();
+ }
++#endif
+ 
+ // Returns true if |request1| was created before |request2|.
+ bool RequestCreatedBefore(const URLRequest* request1,
+@@ -453,6 +461,7 @@ NET_EXPORT base::DictValue GetNetInfo(URLRequestContext* context) {
+     base::DictValue info_dict;
+     base::DictValue stats_dict;
+ 
++#if !BUILDFLAG(MINICRONET_BUILD)
+     disk_cache::Backend* disk_cache = GetDiskCacheBackend(context);
+ 
+     if (disk_cache) {
+@@ -463,6 +472,7 @@ NET_EXPORT base::DictValue GetNetInfo(URLRequestContext* context) {
+         stats_dict.Set(stat.first, std::move(stat.second));
+       }
+     }
++#endif
+     info_dict.Set("stats", std::move(stats_dict));
+ 
+     net_info_dict.Set(kNetInfoHTTPCache, std::move(info_dict));
+diff --git a/net/url_request/url_request_context.cc b/net/url_request/url_request_context.cc
+index efb430bbf2..7ea35d20e4 100644
+--- a/net/url_request/url_request_context.cc
++++ b/net/url_request/url_request_context.cc
+@@ -15,7 +15,6 @@
+ #include "base/strings/string_util.h"
+ #include "base/types/pass_key.h"
+ #include "build/build_config.h"
+-#include "components/unexportable_keys/unexportable_key_service.h"
+ #include "net/base/http_user_agent_settings.h"
+ #include "net/base/network_delegate.h"
+ #include "net/base/proxy_delegate.h"
+@@ -50,6 +49,7 @@
+ #endif  // BUILDFLAG(ENABLE_REPORTING)
+ 
+ #if BUILDFLAG(ENABLE_DEVICE_BOUND_SESSIONS)
++#include "components/unexportable_keys/unexportable_key_service.h"
+ #include "net/device_bound_sessions/session_service.h"
+ #include "net/device_bound_sessions/session_store.h"
+ #endif  // BUILDFLAG(ENABLE_DEVICE_BOUND_SESSIONS)
+diff --git a/net/url_request/url_request_context_builder.cc b/net/url_request/url_request_context_builder.cc
+index a6292daadf..9f338efbc6 100644
+--- a/net/url_request/url_request_context_builder.cc
++++ b/net/url_request/url_request_context_builder.cc
+@@ -52,7 +52,9 @@
+ #include "net/proxy_resolution/configured_proxy_resolution_service.h"
+ #include "net/quic/quic_context.h"
+ #include "net/quic/quic_session_pool.h"
++#if !BUILDFLAG(MINICRONET_BUILD)
+ #include "net/shared_dictionary/shared_dictionary_network_transaction_factory.h"
++#endif
+ #include "net/socket/network_binding_client_socket_factory.h"
+ #include "net/ssl/ech_mode_getter.h"
+ #include "net/ssl/ssl_config_service_defaults.h"
+@@ -575,12 +577,22 @@ std::unique_ptr<URLRequestContext> URLRequestContextBuilder::Build() {
+             : std::move(network_layer);
+   }
+ 
++#if !BUILDFLAG(MINICRONET_BUILD)
+   if (enable_shared_dictionary_) {
+     http_transaction_factory =
+         std::make_unique<SharedDictionaryNetworkTransactionFactory>(
+             std::move(http_transaction_factory), enable_shared_zstd_);
+   }
++#endif
+ 
++#if BUILDFLAG(MINICRONET_BUILD)
++  if (http_cache_enabled_) {
++    http_transaction_factory = std::make_unique<HttpCache>(
++        std::move(http_transaction_factory),
++        HttpCache::DefaultBackend::InMemory(http_cache_params_.max_size),
++        /*file_operations=*/nullptr);
++  }
++#else
+   std::unique_ptr<NoVarySearchCacheStorageFileOperations> file_operations;
+ 
+   if (http_cache_enabled_) {
+@@ -630,6 +642,7 @@ std::unique_ptr<URLRequestContext> URLRequestContextBuilder::Build() {
+         std::move(http_transaction_factory), std::move(http_cache_backend),
+         std::move(file_operations));
+   }
++#endif
+   context->set_http_transaction_factory(std::move(http_transaction_factory));
+   context->set_cache_encryption_delegate(std::move(cache_encryption_delegate_));
+ 
+diff --git a/base/nix/xdg_util_minicronet.cc b/base/nix/xdg_util_minicronet.cc
+new file mode 100644
+index 0000000000..0cde180b2d
+--- /dev/null
++++ b/base/nix/xdg_util_minicronet.cc
+@@ -0,0 +1,46 @@
++// Copyright 2026 The Chromium Authors
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#include "base/nix/xdg_util.h"
++
++#include <cstdlib>
++
++#include "base/base_paths.h"
++#include "base/environment.h"
++#include "base/files/file_path.h"
++#include "base/path_service.h"
++#include "base/third_party/xdg_user_dirs/xdg_user_dir_lookup.h"
++
++namespace base::nix {
++
++FilePath GetXDGDirectory(Environment* env,
++                         cstring_view env_name,
++                         const char* fallback_dir) {
++  FilePath path;
++  if (auto value = env->GetVar(env_name).value_or(""); !value.empty()) {
++    path = FilePath(value);
++  } else {
++    PathService::Get(DIR_HOME, &path);
++    path = path.Append(fallback_dir);
++  }
++  return path.StripTrailingSeparators();
++}
++
++FilePath GetXDGUserDirectory(const char* dir_name, const char* fallback_dir) {
++  FilePath path;
++  if (char* value = xdg_user_dir_lookup(dir_name)) {
++    path = FilePath(value);
++    free(value);
++  } else {
++    PathService::Get(DIR_HOME, &path);
++    path = path.Append(fallback_dir);
++  }
++  return path.StripTrailingSeparators();
++}
++
++FilePath GetXDGDataWriteLocation(Environment* env) {
++  return GetXDGDirectory(env, "XDG_DATA_HOME", ".local/share");
++}
++
++}  // namespace base::nix

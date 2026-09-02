@@ -1,0 +1,162 @@
+--- a/net/http/http_network_session.h
++++ b/net/http/http_network_session.h
+@@ -72,6 +72,13 @@
+ // The maximum size of header list that the server is allowed to send.
+ const uint32_t kSpdyMaxHeaderListSize = 256 * 1024;
+ 
++enum class HttpProtocolMode {
++  kNative,
++  kHttp11,
++  kHttp2,
++  kHttp3,
++};
++
+ // Self-contained structure with all the simple configuration options
+ // supported by the HttpNetworkSession.
+ struct NET_EXPORT HttpNetworkSessionParams {
+@@ -87,6 +94,7 @@
+   // Use SPDY ping frames to test for connection health after idle.
+   bool enable_spdy_ping_based_connection_checking = true;
+   bool enable_http2 = true;
++  HttpProtocolMode protocol_mode = HttpProtocolMode::kNative;
+   size_t spdy_session_max_recv_window_size;
+   // Maximum number of capped frames that can be queued at any time.
+   int spdy_session_max_queued_capped_frames;
+@@ -299,6 +307,8 @@
+   // Returns protocols to be used with ALPN.
+   const NextProtoVector& GetAlpnProtos() const { return next_protos_; }
+ 
++  HttpProtocolMode protocol_mode() const { return params_.protocol_mode; }
++
+   // Returns ALPS data to be sent to server for each NextProto.
+   // Data might be empty.
+   const SSLConfig::ApplicationSettings& GetApplicationSettings() const {
+--- a/net/http/http_network_session.cc
++++ b/net/http/http_network_session.cc
+@@ -214,7 +214,9 @@
+           !params.ignore_ip_address_changes, params.randomize_socket_pool_limit,
+           params.randomize_proxy_socket_pool_limit);
+ 
+-  if (params_.enable_http2) {
++  if (params_.protocol_mode != HttpProtocolMode::kHttp11 &&
++      params_.protocol_mode != HttpProtocolMode::kHttp3 &&
++      params_.enable_http2) {
+     next_protos_.push_back(NextProto::kProtoHTTP2);
+     if (params.enable_alps_for_http2) {
+       // Enable ALPS for HTTP/2 with empty data.
+@@ -222,7 +224,10 @@
+     }
+   }
+ 
+-  next_protos_.push_back(NextProto::kProtoHTTP11);
++  if (params_.protocol_mode != HttpProtocolMode::kHttp2 &&
++      params_.protocol_mode != HttpProtocolMode::kHttp3) {
++    next_protos_.push_back(NextProto::kProtoHTTP11);
++  }
+ 
+   http_server_properties_->SetMaxServerConfigsStoredInProperties(
+       context.quic_context->params()->max_server_configs_stored_in_properties);
+@@ -407,8 +412,9 @@
+   if (!proxy_info.is_direct() && !proxy_info.proxy_chain().Last().is_quic()) {
+     return false;
+   }
+-  return OriginToForceQuicOnInternal(*context_.quic_context->params(),
+-                                     destination) &&
++  return (params_.protocol_mode == HttpProtocolMode::kHttp3 ||
++          OriginToForceQuicOnInternal(*context_.quic_context->params(),
++                                      destination)) &&
+          GURL::SchemeIsCryptographic(destination.scheme());
+ }
+ 
+--- a/net/http/http_stream_factory_job.cc
++++ b/net/http/http_stream_factory_job.cc
+@@ -143,6 +143,7 @@
+       using_ssl_(request_info_.url.SchemeIs(url::kHttpsScheme) ||
+                  request_info_.url.SchemeIs(url::kWssScheme)),
+       using_quic_(
++          session->protocol_mode() == HttpProtocolMode::kHttp3 ||
+           alternative_protocol == NextProto::kProtoQUIC ||
+           session->ShouldForceQuic(destination_, proxy_info, is_websocket_) ||
+           job_type == DNS_ALPN_H3 || job_type == PRECONNECT_DNS_ALPN_H3 ||
+@@ -1053,6 +1054,10 @@
+   if (expect_spdy_ && !using_spdy()) {
+     return ERR_ALPN_NEGOTIATION_FAILED;
+   }
++  if (result == OK && session_->protocol_mode() == HttpProtocolMode::kHttp2 &&
++      !using_quic_ && !using_spdy()) {
++    return ERR_ALPN_NEGOTIATION_FAILED;
++  }
+ 
+   // |result| may be the result of any of the stacked protocols. The following
+   // logic is used when determining how to interpret an error.
+--- a/net/http/http_stream_factory_job_controller.cc
++++ b/net/http/http_stream_factory_job_controller.cc
+@@ -977,6 +977,19 @@
+     main_job_->Preconnect(num_streams_);
+     return OK;
+   }
++
++  // MiniCronet FORCE_H3 is fail-closed: create only the QUIC main job. The
++  // normal TCP, Alt-Svc and DNS-ALPN backup jobs are intentionally omitted.
++  if (session_->protocol_mode() == HttpProtocolMode::kHttp3) {
++    main_job_ = job_factory_->CreateJob(
++        this, MAIN, session_, request_info_, priority_, proxy_info_,
++        allowed_bad_certs_, std::move(destination), is_websocket_,
++        enable_ip_based_pooling_for_h2_, net_log_.net_log(),
++        NextProto::kProtoUnknown, quic::ParsedQuicVersion::Unsupported(),
++        management_config_);
++    main_job_->Start(request_->stream_type());
++    return OK;
++  }
+   // WebSocket-over-HTTP/3 reuse: check for an existing QUIC session that
+   // supports Extended CONNECT before creating `main_job_`, so that
+   // `ws_over_h3_job_` can consume `destination` directly without copying.
+@@ -1632,10 +1645,24 @@
+ 
+   bool disable_cert_network_fetches =
+       disable_cert_verification_network_fetches();
+-  NextProtoSet allowed_alpns =
+-      request_info_.is_http1_allowed
+-          ? NextProtoSet::All()
+-          : NextProtoSet{NextProto::kProtoHTTP2, NextProto::kProtoQUIC};
++  NextProtoSet allowed_alpns;
++  switch (session_->protocol_mode()) {
++    case HttpProtocolMode::kHttp11:
++      allowed_alpns = {NextProto::kProtoHTTP11};
++      break;
++    case HttpProtocolMode::kHttp2:
++      allowed_alpns = {NextProto::kProtoHTTP2};
++      break;
++    case HttpProtocolMode::kHttp3:
++      allowed_alpns = {NextProto::kProtoQUIC};
++      break;
++    case HttpProtocolMode::kNative:
++      allowed_alpns = request_info_.is_http1_allowed
++                          ? NextProtoSet::All()
++                          : NextProtoSet{NextProto::kProtoHTTP2,
++                                         NextProto::kProtoQUIC};
++      break;
++  }
+   url::SchemeHostPort destination(request_info_.url);
+   session_->ApplyTestingFixedPort(destination);
+   HttpStreamPoolRequestInfo pool_request_info(
+--- a/net/http/http_stream_pool_job_controller.cc
++++ b/net/http/http_stream_pool_job_controller.cc
+@@ -369,6 +369,17 @@
+     std::optional<SessionSource> session_source) {
+   TRACE_EVENT("net.stream", "JobController::OnStreamReady", flow_);
+ 
++  const HttpProtocolMode mode =
++      pool_->http_network_session()->protocol_mode();
++  if ((mode == HttpProtocolMode::kHttp2 &&
++       negotiated_protocol != NextProto::kProtoHTTP2) ||
++      (mode == HttpProtocolMode::kHttp3 &&
++       negotiated_protocol != NextProto::kProtoQUIC)) {
++    stream.reset();
++    OnStreamFailed(job, ERR_ALPN_NEGOTIATION_FAILED, NetErrorDetails(),
++                   ResolveErrorInfo());
++    return;
++  }
+   SetJobResult(job, OK);
+ 
+   // If there's already a `pending_stream_` or the callback has already been

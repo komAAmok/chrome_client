@@ -1,0 +1,29 @@
+diff --git a/net/socket/ssl_client_socket_impl.cc b/net/socket/ssl_client_socket_impl.cc
+--- a/net/socket/ssl_client_socket_impl.cc
++++ b/net/socket/ssl_client_socket_impl.cc
+@@ -691,6 +691,10 @@ int SSLClientSocketImpl::Init() {
+       ssl_.get(), context_->config().profile_grease_signature_algorithms &&
+                       base::FeatureList::IsEnabled(
+                           features::kTlsGreaseSigalgs));
++  SSL_set_client_hello_padding_enabled(
++      ssl_.get(), context_->config().profile_client_hello_padding_enabled);
++  SSL_set_client_hello_padding_length(
++      ssl_.get(), context_->config().profile_client_hello_padding_length);
+ 
+   const bool host_is_ip_address =
+       HostIsIPAddressNoBrackets(host_and_port_.host());
+diff --git a/net/ssl/ssl_config_service.h b/net/ssl/ssl_config_service.h
+--- a/net/ssl/ssl_config_service.h
++++ b/net/ssl/ssl_config_service.h
+@@ -94,5 +94,11 @@ struct NET_EXPORT SSLContextConfig {
+   // Whether this connection profile GREASEs signature algorithms.
+   bool profile_grease_signature_algorithms = true;
+ 
++  // Whether BoringSSL may add the compatibility padding extension.
++  bool profile_client_hello_padding_enabled = true;
++
++  // A non-zero value forces the exact ClientHello padding payload length.
++  uint16_t profile_client_hello_padding_length = 0;
++
+   // Whether the profile offers the new ALPS extension codepoint.
+   bool profile_use_new_alps_codepoint = true;

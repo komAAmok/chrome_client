@@ -1,0 +1,407 @@
+diff --git a/net/http/http_network_session.cc b/net/http/http_network_session.cc
+index 0ccbec3fcc..794027c1f9 100644
+--- a/net/http/http_network_session.cc
++++ b/net/http/http_network_session.cc
+@@ -56,9 +56,12 @@ namespace {
+ // Keep all HTTP2 parameters in |http2_settings|, even the ones that are not
+ // implemented, to be sent to the server.
+ // Set default values for settings that |http2_settings| does not specify.
+-spdy::SettingsMap AddDefaultHttp2Settings(spdy::SettingsMap http2_settings) {
++spdy::SettingsMap AddDefaultHttp2Settings(spdy::SettingsMap http2_settings,
++                                          bool send_enable_push) {
+   // Server push is not supported.
+-  http2_settings[spdy::SETTINGS_ENABLE_PUSH] = kSpdyDisablePush;
++  if (send_enable_push) {
++    http2_settings[spdy::SETTINGS_ENABLE_PUSH] = kSpdyDisablePush;
++  }
+ 
+   // For other setting parameters, set default values only if |http2_settings|
+   // does not have a value set for given setting.
+@@ -175,7 +178,9 @@ HttpNetworkSession::HttpNetworkSession(const HttpNetworkSessionParams& params,
+                          params.enable_quic,
+                          params.spdy_session_max_recv_window_size,
+                          params.spdy_session_max_queued_capped_frames,
+-                         AddDefaultHttp2Settings(params.http2_settings),
++                         AddDefaultHttp2Settings(
++                             params.http2_settings,
++                             params.send_http2_enable_push_setting),
+                          params.enable_http2_settings_grease,
+                          params.greased_http2_frame,
+                          params.http2_end_stream_with_data_frame,
+@@ -198,14 +203,16 @@ HttpNetworkSession::HttpNetworkSession(const HttpNetworkSessionParams& params,
+       CreateCommonConnectJobParams(true /* for_websockets */),
+       SocketPoolType::kNormal,
+       // cleanup_on_ip_address_change
+-      !params.ignore_ip_address_changes);
++      !params.ignore_ip_address_changes, params.randomize_socket_pool_limit,
++      params.randomize_proxy_socket_pool_limit);
+   websocket_socket_pool_manager_ =
+       std::make_unique<ClientSocketPoolManagerImpl>(
+           CreateCommonConnectJobParams(false /* for_websockets */),
+           CreateCommonConnectJobParams(true /* for_websockets */),
+           SocketPoolType::kWebSocket,
+           // cleanup_on_ip_address_change
+-          !params.ignore_ip_address_changes);
++          !params.ignore_ip_address_changes, params.randomize_socket_pool_limit,
++          params.randomize_proxy_socket_pool_limit);
+ 
+   if (params_.enable_http2) {
+     next_protos_.push_back(NextProto::kProtoHTTP2);
+diff --git a/net/http/http_network_session.h b/net/http/http_network_session.h
+index 0097a398b6..31a6f5c266 100644
+--- a/net/http/http_network_session.h
++++ b/net/http/http_network_session.h
+@@ -109,6 +109,14 @@ struct NET_EXPORT HttpNetworkSessionParams {
+   // The same setting will be sent on every connection to prevent the retry
+   // logic from hiding broken servers.
+   spdy::SettingsMap http2_settings;
++  // Whether SETTINGS_ENABLE_PUSH=0 is present in the initial SETTINGS frame.
++  // MiniCronet profiles older than Chrome 106 predate this setting.
++  bool send_http2_enable_push_setting = true;
++  // Whether direct and proxied TCP socket pools may randomly expand beyond
++  // their soft limits. Kept per session so immutable MiniCronet profiles can
++  // coexist in one process without mutating FeatureList.
++  bool randomize_socket_pool_limit = true;
++  bool randomize_proxy_socket_pool_limit = true;
+   // If true, a setting parameter with reserved identifier will be sent in every
+   // initial SETTINGS frame, see
+   // https://tools.ietf.org/html/draft-bishop-httpbis-grease-00.
+diff --git a/net/http/http_network_transaction_unittest.cc b/net/http/http_network_transaction_unittest.cc
+index 4da7489bfb..3d70ce2a08 100644
+--- a/net/http/http_network_transaction_unittest.cc
++++ b/net/http/http_network_transaction_unittest.cc
+@@ -28521,9 +28521,13 @@ TEST_P(HttpNetworkTransactionTest, ProxyAdditionalCapacity) {
+       SocketPoolAdditionalCapacity::CreateForTest(
+           /*base=*/0.1, /*capacity=*/128, /*minimum=*/0.3, /*noise=*/0.4);
+   for (bool allow_proxy_pool_randomization : {true, false}) {
+-    ClientSocketPoolManager::set_allow_size_randomization_for_proxy(
+-        allow_proxy_pool_randomization);
+-    std::unique_ptr<HttpNetworkSession> session = CreateSession(&session_deps_);
++    HttpNetworkSessionParams params =
++        SpdySessionDependencies::CreateSessionParams(&session_deps_);
++    params.randomize_socket_pool_limit = true;
++    params.randomize_proxy_socket_pool_limit = allow_proxy_pool_randomization;
++    HttpNetworkSessionContext context =
++        SpdySessionDependencies::CreateSessionContext(&session_deps_);
++    auto session = std::make_unique<HttpNetworkSession>(params, context);
+     EXPECT_EQ(session
+                   ->GetSocketPool(HttpNetworkSession::SocketPoolType::kNormal,
+                                   ProxyChain::Direct())
+diff --git a/net/socket/client_socket_pool.cc b/net/socket/client_socket_pool.cc
+index 43431cba1d..2727d9c5e5 100644
+--- a/net/socket/client_socket_pool.cc
++++ b/net/socket/client_socket_pool.cc
+@@ -21,7 +21,6 @@
+ #include "net/http/http_proxy_connect_job.h"
+ #include "net/log/net_log_event_type.h"
+ #include "net/log/net_log_with_source.h"
+-#include "net/socket/client_socket_pool_manager.h"
+ #include "net/socket/connect_job.h"
+ #include "net/socket/connect_job_factory.h"
+ #include "net/socket/socks_connect_job.h"
+@@ -187,11 +186,11 @@ ClientSocketPool::ClientSocketPool(
+     const ProxyChain& proxy_chain,
+     bool is_for_websockets,
+     const CommonConnectJobParams* common_connect_job_params,
+-    std::unique_ptr<ConnectJobFactory> connect_job_factory)
++    std::unique_ptr<ConnectJobFactory> connect_job_factory,
++    bool randomize_socket_pool_limit)
+     : socket_soft_cap_(socket_soft_cap),
+       additional_capacity_(
+-          (proxy_chain.is_direct() ||
+-           ClientSocketPoolManager::allow_size_randomization_for_proxy())
++          randomize_socket_pool_limit
+               ? SocketPoolAdditionalCapacity::Create(socket_soft_cap)
+               : SocketPoolAdditionalCapacity::CreateEmpty()),
+       proxy_chain_(proxy_chain),
+diff --git a/net/socket/client_socket_pool.h b/net/socket/client_socket_pool.h
+index 5db1b533d3..06c93e7cf6 100644
+--- a/net/socket/client_socket_pool.h
++++ b/net/socket/client_socket_pool.h
+@@ -392,7 +392,8 @@ class NET_EXPORT ClientSocketPool : public LowerLayeredPool {
+                    const ProxyChain& proxy_chain,
+                    bool is_for_websockets,
+                    const CommonConnectJobParams* common_connect_job_params,
+-                   std::unique_ptr<ConnectJobFactory> connect_job_factory);
++                   std::unique_ptr<ConnectJobFactory> connect_job_factory,
++                   bool randomize_socket_pool_limit = true);
+ 
+   void NetLogTcpClientSocketPoolRequestedSocket(const NetLogWithSource& net_log,
+                                                 const GroupId& group_id);
+diff --git a/net/socket/client_socket_pool_manager.cc b/net/socket/client_socket_pool_manager.cc
+index 7c7946b3b9..f7b112e1fc 100644
+--- a/net/socket/client_socket_pool_manager.cc
++++ b/net/socket/client_socket_pool_manager.cc
+@@ -65,8 +65,6 @@ std::array<size_t, kSocketPoolTypesSize> g_max_sockets_per_proxy_chain =
+         128   // kWebSocket
+     });
+ 
+-bool g_allow_size_randomization_for_proxy = true;
+-
+ // TODO(crbug.com/40609237) In order to resolve longstanding issues
+ // related to pooling distinguishable sockets together, get rid of SocketParams
+ // entirely.
+@@ -180,11 +178,6 @@ size_t ClientSocketPoolManager::max_sockets_per_proxy_chain(
+   return g_max_sockets_per_proxy_chain[std::to_underlying(pool_type)];
+ }
+ 
+-// static
+-bool ClientSocketPoolManager::allow_size_randomization_for_proxy() {
+-  return g_allow_size_randomization_for_proxy;
+-}
+-
+ // static
+ void ClientSocketPoolManager::set_max_sockets_per_proxy_chain(
+     HttpNetworkSession::SocketPoolType pool_type,
+@@ -198,12 +191,6 @@ void ClientSocketPoolManager::set_max_sockets_per_proxy_chain(
+   g_max_sockets_per_proxy_chain[std::to_underlying(pool_type)] = socket_count;
+ }
+ 
+-// static
+-void ClientSocketPoolManager::set_allow_size_randomization_for_proxy(
+-    bool allow) {
+-  g_allow_size_randomization_for_proxy = allow;
+-}
+-
+ // static
+ base::TimeDelta ClientSocketPoolManager::unused_idle_socket_timeout(
+     HttpNetworkSession::SocketPoolType pool_type) {
+diff --git a/net/socket/client_socket_pool_manager.h b/net/socket/client_socket_pool_manager.h
+index 9ce5cf8881..9c89a066be 100644
+--- a/net/socket/client_socket_pool_manager.h
++++ b/net/socket/client_socket_pool_manager.h
+@@ -52,14 +52,12 @@ class NET_EXPORT_PRIVATE ClientSocketPoolManager {
+ 
+   static size_t max_sockets_per_proxy_chain(
+       HttpNetworkSession::SocketPoolType pool_type);
+-  static bool allow_size_randomization_for_proxy();
+-  // Unlike the other `set_` methods, these ones are used in production code and
++  // Unlike the other `set_` methods, this one is used in production code and
+   // thus cannot be marked as `_for_test`. Usage should be carefully audited.
+   // Caller is responsible for following max/min CHECKs on socket_count.
+   static void set_max_sockets_per_proxy_chain(
+       HttpNetworkSession::SocketPoolType pool_type,
+       size_t socket_count);
+-  static void set_allow_size_randomization_for_proxy(bool allow);
+ 
+   static base::TimeDelta unused_idle_socket_timeout(
+       HttpNetworkSession::SocketPoolType pool_type);
+diff --git a/net/socket/client_socket_pool_manager_impl.cc b/net/socket/client_socket_pool_manager_impl.cc
+index 8b402f81ce..8d4916936e 100644
+--- a/net/socket/client_socket_pool_manager_impl.cc
++++ b/net/socket/client_socket_pool_manager_impl.cc
+@@ -30,11 +30,15 @@ ClientSocketPoolManagerImpl::ClientSocketPoolManagerImpl(
+     const CommonConnectJobParams& common_connect_job_params,
+     const CommonConnectJobParams& websocket_common_connect_job_params,
+     HttpNetworkSession::SocketPoolType pool_type,
+-    bool cleanup_on_ip_address_change)
++    bool cleanup_on_ip_address_change,
++    bool randomize_socket_pool_limit,
++    bool randomize_proxy_socket_pool_limit)
+     : common_connect_job_params_(common_connect_job_params),
+       websocket_common_connect_job_params_(websocket_common_connect_job_params),
+       pool_type_(pool_type),
+-      cleanup_on_ip_address_change_(cleanup_on_ip_address_change) {
++      cleanup_on_ip_address_change_(cleanup_on_ip_address_change),
++      randomize_socket_pool_limit_(randomize_socket_pool_limit),
++      randomize_proxy_socket_pool_limit_(randomize_proxy_socket_pool_limit) {
+   // |websocket_endpoint_lock_manager| must only be set for websocket
+   // connections.
+   DCHECK(!common_connect_job_params_.websocket_endpoint_lock_manager);
+@@ -84,13 +88,15 @@ ClientSocketPool* ClientSocketPoolManagerImpl::GetSocketPool(
+       proxy_chain.is_direct()) {
+     new_pool = std::make_unique<WebSocketTransportClientSocketPool>(
+         sockets_per_proxy_chain, proxy_chain,
+-        &websocket_common_connect_job_params_);
++        &websocket_common_connect_job_params_, randomize_socket_pool_limit_);
+   } else {
+     new_pool = std::make_unique<TransportClientSocketPool>(
+         sockets_per_proxy_chain, sockets_per_group,
+         unused_idle_socket_timeout(pool_type_), proxy_chain,
+         pool_type_ == HttpNetworkSession::SocketPoolType::kWebSocket,
+-        &common_connect_job_params_, cleanup_on_ip_address_change_);
++        &common_connect_job_params_, cleanup_on_ip_address_change_,
++        proxy_chain.is_direct() ? randomize_socket_pool_limit_
++                                : randomize_proxy_socket_pool_limit_);
+   }
+ 
+   std::pair<SocketPoolMap::iterator, bool> ret =
+diff --git a/net/socket/client_socket_pool_manager_impl.h b/net/socket/client_socket_pool_manager_impl.h
+index 93235445ec..02f24c15a8 100644
+--- a/net/socket/client_socket_pool_manager_impl.h
++++ b/net/socket/client_socket_pool_manager_impl.h
+@@ -33,7 +33,9 @@ class NET_EXPORT_PRIVATE ClientSocketPoolManagerImpl
+       const CommonConnectJobParams& common_connect_job_params,
+       const CommonConnectJobParams& websocket_common_connect_job_params,
+       HttpNetworkSession::SocketPoolType pool_type,
+-      bool cleanup_on_ip_address_change = true);
++      bool cleanup_on_ip_address_change = true,
++      bool randomize_socket_pool_limit = true,
++      bool randomize_proxy_socket_pool_limit = true);
+ 
+   ClientSocketPoolManagerImpl(const ClientSocketPoolManagerImpl&) = delete;
+   ClientSocketPoolManagerImpl& operator=(const ClientSocketPoolManagerImpl&) =
+@@ -60,6 +62,8 @@ class NET_EXPORT_PRIVATE ClientSocketPoolManagerImpl
+   const HttpNetworkSession::SocketPoolType pool_type_;
+ 
+   const bool cleanup_on_ip_address_change_;
++  const bool randomize_socket_pool_limit_;
++  const bool randomize_proxy_socket_pool_limit_;
+ 
+   SocketPoolMap socket_pools_;
+ 
+diff --git a/net/socket/transport_client_socket_pool.cc b/net/socket/transport_client_socket_pool.cc
+index ef2c11648a..7498524f8d 100644
+--- a/net/socket/transport_client_socket_pool.cc
++++ b/net/socket/transport_client_socket_pool.cc
+@@ -135,7 +135,8 @@ TransportClientSocketPool::TransportClientSocketPool(
+     const ProxyChain& proxy_chain,
+     bool is_for_websockets,
+     const CommonConnectJobParams* common_connect_job_params,
+-    bool cleanup_on_ip_address_change)
++    bool cleanup_on_ip_address_change,
++    bool randomize_socket_pool_limit)
+     : TransportClientSocketPool(socket_soft_cap,
+                                 max_sockets_per_group,
+                                 unused_idle_socket_timeout,
+@@ -146,7 +147,8 @@ TransportClientSocketPool::TransportClientSocketPool(
+                                 cleanup_on_ip_address_change,
+                                 std::make_unique<ConnectJobFactory>(),
+                                 common_connect_job_params->ssl_client_context,
+-                                /*connect_backup_jobs_enabled=*/true) {}
++                                /*connect_backup_jobs_enabled=*/true,
++                                randomize_socket_pool_limit) {}
+ 
+ TransportClientSocketPool::~TransportClientSocketPool() {
+   // Clean up any idle sockets and pending connect jobs.  Assert that we have no
+@@ -184,7 +186,8 @@ TransportClientSocketPool::CreateForTesting(
+           used_idle_socket_timeout, proxy_chain, is_for_websockets,
+           common_connect_job_params,
+           /*cleanup_on_ip_address_change=*/true, std::move(connect_job_factory),
+-          ssl_client_context, connect_backup_jobs_enabled));
++          ssl_client_context, connect_backup_jobs_enabled,
++          /*randomize_socket_pool_limit=*/true));
+ }
+ 
+ TransportClientSocketPool::CallbackResultPair::CallbackResultPair()
+@@ -834,12 +837,14 @@ TransportClientSocketPool::TransportClientSocketPool(
+     bool cleanup_on_ip_address_change,
+     std::unique_ptr<ConnectJobFactory> connect_job_factory,
+     SSLClientContext* ssl_client_context,
+-    bool connect_backup_jobs_enabled)
++    bool connect_backup_jobs_enabled,
++    bool randomize_socket_pool_limit)
+     : ClientSocketPool(socket_soft_cap,
+                        proxy_chain,
+                        is_for_websockets,
+                        common_connect_job_params,
+-                       std::move(connect_job_factory)),
++                       std::move(connect_job_factory),
++                       randomize_socket_pool_limit),
+       max_sockets_per_group_(max_sockets_per_group),
+       unused_idle_socket_timeout_(unused_idle_socket_timeout),
+       used_idle_socket_timeout_(used_idle_socket_timeout),
+diff --git a/net/socket/transport_client_socket_pool.h b/net/socket/transport_client_socket_pool.h
+index 3ca97feff5..b310693887 100644
+--- a/net/socket/transport_client_socket_pool.h
++++ b/net/socket/transport_client_socket_pool.h
+@@ -159,7 +159,8 @@ class NET_EXPORT_PRIVATE TransportClientSocketPool
+       const ProxyChain& proxy_chain,
+       bool is_for_websockets,
+       const CommonConnectJobParams* common_connect_job_params,
+-      bool cleanup_on_ip_address_change = true);
++      bool cleanup_on_ip_address_change = true,
++      bool randomize_socket_pool_limit = true);
+ 
+   TransportClientSocketPool(const TransportClientSocketPool&) = delete;
+   TransportClientSocketPool& operator=(const TransportClientSocketPool&) =
+@@ -595,7 +596,8 @@ class NET_EXPORT_PRIVATE TransportClientSocketPool
+       bool cleanup_on_ip_address_change,
+       std::unique_ptr<ConnectJobFactory> connect_job_factory,
+       SSLClientContext* ssl_client_context,
+-      bool connect_backup_jobs_enabled);
++      bool connect_backup_jobs_enabled,
++      bool randomize_socket_pool_limit);
+ 
+   base::TimeDelta ConnectRetryInterval() const {
+     // TODO(mbelshe): Make this tuned dynamically based on measured RTT.
+diff --git a/net/socket/websocket_transport_client_socket_pool.cc b/net/socket/websocket_transport_client_socket_pool.cc
+index eadc1444a0..f2b73f2b78 100644
+--- a/net/socket/websocket_transport_client_socket_pool.cc
++++ b/net/socket/websocket_transport_client_socket_pool.cc
+@@ -33,12 +33,14 @@ namespace net {
+ WebSocketTransportClientSocketPool::WebSocketTransportClientSocketPool(
+     size_t socket_soft_cap,
+     const ProxyChain& proxy_chain,
+-    const CommonConnectJobParams* common_connect_job_params)
++    const CommonConnectJobParams* common_connect_job_params,
++    bool randomize_socket_pool_limit)
+     : ClientSocketPool(socket_soft_cap,
+                        proxy_chain,
+                        /*is_for_websockets=*/true,
+                        common_connect_job_params,
+-                       std::make_unique<ConnectJobFactory>()) {
++                       std::make_unique<ConnectJobFactory>(),
++                       randomize_socket_pool_limit) {
+   DCHECK(common_connect_job_params->websocket_endpoint_lock_manager);
+ }
+ 
+diff --git a/net/socket/websocket_transport_client_socket_pool.h b/net/socket/websocket_transport_client_socket_pool.h
+index e1c7c7a4fa..b6ea50e5ec 100644
+--- a/net/socket/websocket_transport_client_socket_pool.h
++++ b/net/socket/websocket_transport_client_socket_pool.h
+@@ -43,7 +43,8 @@ class NET_EXPORT_PRIVATE WebSocketTransportClientSocketPool
+   WebSocketTransportClientSocketPool(
+       size_t socket_soft_cap,
+       const ProxyChain& proxy_chain,
+-      const CommonConnectJobParams* common_connect_job_params);
++      const CommonConnectJobParams* common_connect_job_params,
++      bool randomize_socket_pool_limit = true);
+ 
+   WebSocketTransportClientSocketPool(
+       const WebSocketTransportClientSocketPool&) = delete;
+
+diff --git a/net/quic/quic_context.h b/net/quic/quic_context.h
+--- a/net/quic/quic_context.h
++++ b/net/quic/quic_context.h
+@@ -138,6 +138,12 @@ struct NET_EXPORT QuicParams {
+   // Set of QUIC tags to send in the handshake's connection options that only
+   // affect the client.
+   quic::QuicTagVector client_connection_options;
++  // Historical MiniCronet profiles can replace the process FeatureList's
++  // default QUIC option policy without changing global state.
++  bool use_feature_quic_options = true;
++  // Chrome 145 also sent Google's legacy version-information transport
++  // parameter alongside RFC 9368 version_information.
++  bool send_legacy_version_information = false;
+   // Enables experimental optimization for receiving data in UDPSocket.
+   bool enable_socket_recv_optimization = false;
+
+diff --git a/net/quic/quic_context.cc b/net/quic/quic_context.cc
+--- a/net/quic/quic_context.cc
++++ b/net/quic/quic_context.cc
+@@ -97,5 +97,11 @@ quic::QuicConfig InitializeQuicConfig(const QuicParams& params) {
+   config.SetInitialStreamFlowControlWindowToSend(kQuicStreamMaxRecvWindowSize);
+   config.SetBytesForConnectionIdToSend(0);
++  if (params.send_legacy_version_information) {
++    constexpr auto kLegacyVersionInformation =
++        static_cast<quic::TransportParameters::TransportParameterId>(0x4752);
++    config.custom_transport_parameters_to_send()[kLegacyVersionInformation] =
++        std::string("\x00\x00\x00\x01", 4);
++  }
+   return config;
+ }
+
+diff --git a/net/quic/quic_session_pool.cc b/net/quic/quic_session_pool.cc
+--- a/net/quic/quic_session_pool.cc
++++ b/net/quic/quic_session_pool.cc
+@@ -2132,7 +2132,8 @@ int QuicSessionPool::CreateSession(
+     config.AddConnectionOptionsToSend({quic::kDSNI});
+   }
+
+-  if (base::FeatureList::IsEnabled(features::kTryQuicByDefault)) {
++  if (params_.use_feature_quic_options &&
++      base::FeatureList::IsEnabled(features::kTryQuicByDefault)) {
+     config.AddConnectionOptionsToSend(
+         quic::ParseQuicTagVector(features::kQuicOptions.Get()));
+   }

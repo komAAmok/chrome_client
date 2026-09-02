@@ -1,0 +1,25 @@
+diff --git a/build/config/compiler/BUILD.gn b/build/config/compiler/BUILD.gn
+--- a/build/config/compiler/BUILD.gn
++++ b/build/config/compiler/BUILD.gn
+@@ -3103,10 +3103,19 @@ config("minimal_symbols") {
+ # names in the final debug information.
+ config("no_symbols") {
+   if (is_win) {
+-    ldflags = [ "/DEBUG" ]
++    # MiniCronet release DLLs do not ship a PDB. Besides being unnecessary for
++    # the stable C ABI, omitting /DEBUG avoids references to vendor CRT PDBs
++    # that are not present in an xwin cross sysroot.
++    if (is_minicronet_build) {
++      ldflags = []
++    } else {
++      ldflags = [ "/DEBUG" ]
++    }
+ 
+     # All configs using /DEBUG should include this:
+-    configs = [ ":win_pdbaltpath" ]
++    if (!is_minicronet_build) {
++      configs = [ ":win_pdbaltpath" ]
++    }
+   } else {
+     cflags = [ "-g0" ]
+     asmflags = cflags

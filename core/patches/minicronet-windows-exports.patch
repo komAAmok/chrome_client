@@ -1,0 +1,30 @@
+diff --git a/base/BUILD.gn b/base/BUILD.gn
+index c6ae66b00e..dd750587ff 100644
+--- a/base/BUILD.gn
++++ b/base/BUILD.gn
+@@ -1831,6 +1831,9 @@ component("base") {
+ 
+   # Windows.
+   if (is_win) {
++    if (is_minicronet_build) {
++      defines += [ "MINICRONET_BUILD" ]
++    }
+     sources += [
+       "debug/debugger_win.cc",
+       "debug/gdi_debug_util_win.cc",
+diff --git a/base/win/scoped_handle_verifier.cc b/base/win/scoped_handle_verifier.cc
+index b184be34d7..b8276cb36b 100644
+--- a/base/win/scoped_handle_verifier.cc
++++ b/base/win/scoped_handle_verifier.cc
+@@ -24,7 +24,11 @@
+ #include "base/win/scoped_handle.h"
+ 
+ extern "C" {
++#if defined(MINICRONET_BUILD)
++void* GetHandleVerifier();
++#else
+ __declspec(dllexport) void* GetHandleVerifier();
++#endif
+ 
+ void* GetHandleVerifier() {
+   return base::win::internal::ScopedHandleVerifier::Get();
