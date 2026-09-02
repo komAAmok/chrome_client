@@ -1,10 +1,8 @@
 # chrome_client
 
-当前版本：`0.2.1`
-
 基于 Chromium 网络栈的 HTTP/WebSocket 客户端。Core 负责 TLS、HTTP、HTTP/2、
 HTTP/3/QUIC、代理和 WebSocket/WSS；Python/Rust 绑定只负责参数、类型、错误和
-生命周期转换，不另实现一套网络协议。
+生命周期转换，不另实现一套网络协议。兼容requests和curl-cffi。
 
 [English README](README.en.md) · [构建说明](docs/BUILD.md) · [兼容边界](docs/COMPATIBILITY_BOUNDARY.md)
 
