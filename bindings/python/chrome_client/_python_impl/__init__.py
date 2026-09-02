@@ -244,6 +244,25 @@ class CaseInsensitiveDict(dict):
             self[key] = value
 
 
+class CookieJar(dict):
+    """Requests-shaped view over a client's configured cookies.
+
+    The Core's Chromium CookieStore owns cookies received from responses and is
+    not reachable through ABI v7, so this jar holds only the name/value pairs the
+    caller configured for outgoing requests. It carries no domain or path
+    metadata and therefore rejects filtered lookups instead of answering them
+    with unfiltered data.
+    """
+
+    def get_dict(self, domain=None, path=None):
+        if domain is not None or path is not None:
+            raise ValueError(
+                "get_dict(domain=..., path=...) is unsupported: configured cookies "
+                "carry no domain or path metadata"
+            )
+        return dict(self)
+
+
 def _parse_headers(raw):
     headers = CaseInsensitiveDict()
     if isinstance(raw, bytes):
@@ -342,7 +361,7 @@ class Client:
         self._engine = _native.PyEngine(impersonate, proxy, verify)
         self.timeout = timeout
         self.headers = CaseInsensitiveDict(headers or {})
-        self.cookies = dict(cookies or {})
+        self.cookies = CookieJar(cookies or {})
         self.max_response_bytes = _validate_max_response_bytes(max_response_bytes)
         self._closed = False
 
@@ -865,6 +884,6 @@ def delete(url, **kwargs):
 
 __all__ = [
     "AsyncClient", "AsyncResponse", "AsyncSession", "AsyncWebSocket", "Client", "RequestException",
-    "CaseInsensitiveDict", "Response", "ResponseTooLarge", "Session", "Timeout", "WebSocket", "delete", "get", "head",
-    "options", "patch", "post", "put", "requests",
+    "CaseInsensitiveDict", "CookieJar", "Response", "ResponseTooLarge", "Session", "Timeout", "WebSocket",
+    "delete", "get", "head", "options", "patch", "post", "put", "requests",
 ]

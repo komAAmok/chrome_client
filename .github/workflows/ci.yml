@@ -15,6 +15,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - run: tools/audit-abi.sh
+      - run: tools/audit-readme.sh
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy

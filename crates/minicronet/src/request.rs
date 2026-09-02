@@ -178,7 +178,13 @@ impl RequestShared {
     fn schedule_event(&self) {
         // The callback only schedules work on the consumer's event loop. It
         // must not perform user work or wait for network progress here.
-        if let Some(callback) = lock(&self.event_callback).clone() {
+        //
+        // The hook must run with no Rust lock held. Bindings acquire a host
+        // runtime lock inside it (the Python GIL), while a consumer thread that
+        // already holds that lock may call `clear_event_callback`. Cloning into
+        // a binding and releasing the guard first keeps that ordering one-way.
+        let callback = lock(&self.event_callback).clone();
+        if let Some(callback) = callback {
             callback();
         }
     }
@@ -706,5 +712,31 @@ mod tests {
         assert_eq!(body.blocking_next().unwrap().unwrap(), b"body");
         assert!(body.blocking_next().is_none());
         assert!(!shared.callback_ref_live.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn event_hook_runs_without_the_callback_lock_held() {
+        let shared = Arc::new(RequestShared::new());
+        let observed = Arc::new(AtomicBool::new(false));
+        let hook_shared = Arc::downgrade(&shared);
+        let hook_observed = Arc::clone(&observed);
+        *lock(&shared.event_callback) = Some(Arc::new(move || {
+            let Some(shared) = hook_shared.upgrade() else {
+                return;
+            };
+            // A binding hook acquires the host runtime lock here, so the caller
+            // must no longer hold `event_callback`.
+            let free = shared.event_callback.try_lock().is_ok();
+            hook_observed.store(free, Ordering::Release);
+        }));
+
+        let user_data = Arc::into_raw(Arc::clone(&shared)).cast_mut().cast();
+        unsafe { on_body(user_data, std::ptr::null_mut(), b"x".as_ptr(), 1) };
+        release_callback_ref(user_data.cast());
+
+        assert!(
+            observed.load(Ordering::Acquire),
+            "schedule_event held event_callback while invoking the hook"
+        );
     }
 }

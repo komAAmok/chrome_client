@@ -1,13 +1,13 @@
 # chrome_client
 
-Current release: `0.2.1`
+Current release: `0.2.1.1`
 
 An HTTP/WebSocket client built on the Chromium network stack. The native Core
 owns TLS, HTTP/1.1, HTTP/2, HTTP/3/QUIC, proxy handling and WebSocket/WSS.
 Language bindings only translate arguments, types, errors and lifetimes; they do
 not ship a second networking stack.
 
-[中文 README](README.md) · [Build guide](docs/BUILD.md) · [Compatibility boundary](docs/COMPATIBILITY_BOUNDARY.md)
+[中文 README](https://github.com/komAAmok/chrome_client/blob/main/README.md) · [Build guide](https://github.com/komAAmok/chrome_client/blob/main/docs/BUILD.md) · [Compatibility boundary](https://github.com/komAAmok/chrome_client/blob/main/docs/COMPATIBILITY_BOUNDARY.md)
 
 ## Support matrix
 
@@ -135,6 +135,22 @@ with Client(cookies={"session": "abc"}, timeout=10) as client:
 An explicit `proxy="http://..."` wins over `proxies`; mappings use `http`,
 `https` and `all` keys.
 
+`client.cookies` is a `CookieJar` (a `dict` subclass) that supports the
+Requests-style `get_dict()`:
+
+```python
+with Client(cookies={"session": "abc"}) as client:
+    client.cookies["extra"] = "1"
+    print(client.cookies.get_dict())   # {'session': 'abc', 'extra': '1'}
+```
+
+It holds only the cookies the caller configured for outgoing requests. Cookies
+returned by responses are owned by the Chromium CookieStore inside the Core,
+which ABI v7 does not export, so they never appear in this jar and Python never
+re-attaches them. The jar carries no domain or path metadata, so
+`get_dict(domain=...)` and `get_dict(path=...)` raise `ValueError` instead of
+returning unfiltered data.
+
 ### asyncio concurrency
 
 ```python
@@ -221,6 +237,7 @@ The common call shape is intentionally compatible with Requests and curl-cffi:
 | `timeout`, `verify`, `proxies`, `proxy` | ✓ |
 | `impersonate="chrome_151"` | ✓, using this project's Chromium profile |
 | `stream=True`, `iter_content` | ✓; async uses `aiter_bytes` |
+| `session.cookies.get_dict()` | ✓; configured outgoing cookies only, no response cookies |
 | `curl_options`, `ja3`, `akamai`, libcurl handles | ✗ |
 | Every Requests adapter/plugin/persistent-cookie feature | ✗ |
 

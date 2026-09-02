@@ -43,6 +43,13 @@ class Handler(BaseHTTPRequestHandler):
             except (BrokenPipeError, ConnectionResetError):
                 pass
             return
+        if self.path.startswith("/echo-cookie"):
+            payload = self.headers.get("Cookie", "").encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+            return
         if self.path.startswith("/infinite"):
             with self.active_lock:
                 type(self).active += 1
@@ -101,6 +108,25 @@ class StabilityTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(len(response.content), 7)
         self.assertEqual(response.headers["Content-Length"], "7")
+
+    def test_session_cookies_get_dict_and_request_merge(self):
+        with chrome_client.Session(cookies={"session": "abc"}) as session:
+            self.assertIsInstance(session.cookies, chrome_client.CookieJar)
+            self.assertEqual(session.cookies.get_dict(), {"session": "abc"})
+
+            session.cookies["extra"] = "1"
+            self.assertEqual(session.cookies.get_dict(), {"session": "abc", "extra": "1"})
+
+            body = session.get(self.url + "echo-cookie").text
+            self.assertIn("session=abc", body)
+            self.assertIn("extra=1", body)
+
+            body = session.get(self.url + "echo-cookie", cookies={"extra": "2"}).text
+            self.assertIn("extra=2", body)
+            self.assertEqual(session.cookies.get_dict(), {"session": "abc", "extra": "1"})
+
+            with self.assertRaises(ValueError):
+                session.cookies.get_dict(domain="example.com")
 
     def test_streaming_and_response_limit(self):
         with chrome_client.Client() as client:
@@ -189,8 +215,8 @@ class StabilityTests(unittest.TestCase):
     def test_public_api_has_no_legacy_exports(self):
         expected = {
             "Client", "Session", "AsyncClient", "AsyncSession", "Response",
-            "AsyncResponse", "WebSocket", "AsyncWebSocket", "CaseInsensitiveDict", "ResponseTooLarge",
-            "RequestException", "Timeout", "requests", "get", "options", "head",
+            "AsyncResponse", "WebSocket", "AsyncWebSocket", "CaseInsensitiveDict", "CookieJar",
+            "ResponseTooLarge", "RequestException", "Timeout", "requests", "get", "options", "head",
             "post", "put", "patch", "delete",
         }
         self.assertEqual(set(chrome_client.__all__), expected)

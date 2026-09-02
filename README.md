@@ -4,7 +4,7 @@
 HTTP/3/QUIC、代理和 WebSocket/WSS；Python/Rust 绑定只负责参数、类型、错误和
 生命周期转换，不另实现一套网络协议。兼容requests和curl-cffi。
 
-[English README](README.en.md) · [构建说明](docs/BUILD.md) · [兼容边界](docs/COMPATIBILITY_BOUNDARY.md)
+[English README](https://github.com/komAAmok/chrome_client/blob/main/README.en.md) · [构建说明](https://github.com/komAAmok/chrome_client/blob/main/docs/BUILD.md) · [兼容边界](https://github.com/komAAmok/chrome_client/blob/main/docs/COMPATIBILITY_BOUNDARY.md)
 
 ## 支持范围
 
@@ -116,6 +116,20 @@ with Client(cookies={"session": "abc"}, timeout=10) as client:
 显式 `proxy="http://..."` 优先于 `proxies`；`proxies` 按 `http`、`https`、`all`
 键选择。
 
+`client.cookies` 是 `CookieJar`（`dict` 子类），支持 Requests 风格的
+`get_dict()`：
+
+```python
+with Client(cookies={"session": "abc"}) as client:
+    client.cookies["extra"] = "1"
+    print(client.cookies.get_dict())   # {'session': 'abc', 'extra': '1'}
+```
+
+它只包含调用方为出站请求配置的 cookie。响应返回的 cookie 由 Core 内的 Chromium
+CookieStore 拥有，ABI v7 不导出该存储，因此不会出现在这个 jar 里，也不需要在
+Python 侧重复附加。jar 没有 domain/path 元数据，`get_dict(domain=...)` 或
+`get_dict(path=...)` 会抛 `ValueError` 而不是返回未过滤的数据。
+
 ### asyncio 并发
 
 ```python
@@ -204,6 +218,7 @@ except chrome_client.RequestException as error:
 | `timeout`、`verify`、`proxies`、`proxy` | ✓ |
 | `impersonate="chrome_151"` | ✓，使用本项目 Chromium profile |
 | `stream=True`、`iter_content` | ✓；异步使用 `aiter_bytes` |
+| `session.cookies.get_dict()` | ✓；只返回已配置的出站 cookie，不含响应 cookie |
 | `curl_options`、`ja3`、`akamai`、libcurl 句柄 | ✗ |
 | Requests 的全部插件/适配器/持久化 Cookie 功能 | ✗ |
 
