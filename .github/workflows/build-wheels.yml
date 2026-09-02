@@ -49,6 +49,7 @@ jobs:
             # produces a cp36-abi3 wheel when built with CPython 3.7.
             interpreter: /opt/python/cp37-cp37m/bin/python3.7
             python-version: "3.7"
+            maturin-version: "0.14.17"
             rustflags: '--cfg=py_sys_config="WITH_THREAD"'
           - target: i686-unknown-linux-gnu
             core-target: linux-x86
@@ -62,6 +63,7 @@ jobs:
             manifest: bindings/python36/Cargo.toml
             interpreter: /opt/python/cp37-cp37m/bin/python3.7
             python-version: "3.7"
+            maturin-version: "0.14.17"
             rustflags: '--cfg=py_sys_config="WITH_THREAD"'
           - target: aarch64-unknown-linux-gnu
             core-target: linux-arm64
@@ -76,6 +78,7 @@ jobs:
             manifest: bindings/python36/Cargo.toml
             interpreter: /opt/python/cp37-cp37m/bin/python3.7
             python-version: "3.7"
+            maturin-version: "0.14.17"
             rustflags: '--cfg=py_sys_config="WITH_THREAD"'
             runner: ubuntu-24.04-arm
 
