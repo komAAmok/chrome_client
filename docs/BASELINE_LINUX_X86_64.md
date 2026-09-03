@@ -155,6 +155,28 @@ LD_LIBRARY_PATH=/home/sj/chromium/src/out/MiniCronet-linux-x86_64 \
   tools/bench-core-baseline.py                    # 重建 Core，含隔离用例
 ```
 
+## 已排除的精简候选
+
+### `optional_trace_events_enabled = false` —— 零收益
+
+Chromium 自己在 `base/trace_event/tracing.gni:18` 的注释说这个开关在 Android/ChromeOS
+默认关闭是「due to binary size impact」，所以它是本轮排序里的第二候选。
+
+实测结论是**没有任何影响**：
+
+| 检查 | 结果 |
+| --- | --- |
+| `args.gn` 含该开关 | 是 |
+| `gen/base/tracing_buildflags.h` | 翻转为 `(0)` |
+| 产物 SHA-256 | `9a221045…` → `9a221045…`，**逐字节一致** |
+
+也就是说 `OPTIONAL_TRACE_EVENT` 宏没有出现在任何进入这个精简 Core 的代码路径里，
+`--gc-sections`、`--icf=all` 和 ThinLTO 已经把它们清干净了。这个候选可以从清单上
+划掉，不必再试。
+
+`tools/build-core-linux-x86_64.sh` 保留了 `DISABLE_OPTIONAL_TRACE_EVENTS=1` 开关，
+方便以后 Core 范围扩大后重新测量。
+
 ## 本仓库尚未拥有的构建输入
 
 阶段 0 迁入了 11 个补丁（`core/patches/`）、8 个平台构建脚本、3 个平台审计脚本、

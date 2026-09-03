@@ -58,6 +58,9 @@ use_glib = false
 use_ozone = false
 use_udev = false
 EOF
+if [[ ${DISABLE_OPTIONAL_TRACE_EVENTS:-0} == 1 ]]; then
+  printf '%s\n' 'optional_trace_events_enabled = false' >>"$OUT_DIR/args.gn"
+fi
 if [[ ${PROFILE_VERIFICATION:-0} == 1 ]]; then
   printf '%s\n' 'minicronet_profile_verification = true' >>"$OUT_DIR/args.gn"
 fi
