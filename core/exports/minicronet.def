@@ -12,6 +12,7 @@ EXPORTS
   mn_request_cancel
   mn_request_upload_write
   mn_request_follow_redirect
+  mn_request_resume_read
   mn_websocket_create
   mn_websocket_retain
   mn_websocket_release

@@ -146,7 +146,7 @@ with Client(cookies={"session": "abc"}) as client:
 
 It holds only the cookies the caller configured for outgoing requests. Cookies
 returned by responses are owned by the Chromium CookieStore inside the Core,
-which ABI v7 does not export, so they never appear in this jar and Python never
+which ABI v8 does not export, so they never appear in this jar and Python never
 re-attaches them. The jar carries no domain or path metadata, so
 `get_dict(domain=...)` and `get_dict(path=...)` raise `ValueError` instead of
 returning unfiltered data.
@@ -251,7 +251,7 @@ their profile coverage, TLS behavior and connection pools are independent.
 
 | Path | Contents |
 | --- | --- |
-| `core/abi/` | Stable C ABI v7 |
+| `core/abi/` | Stable C ABI v8 |
 | `core/binaries/` | Eight audited Core targets |
 | `crates/minicronet/` | Rust safety layer, streams and lifetimes |
 | `bindings/python/` | Python 3.7–3.13 binding and facade |

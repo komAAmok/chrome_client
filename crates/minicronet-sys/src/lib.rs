@@ -4,7 +4,7 @@
 
 use core::ffi::c_void;
 
-pub const MN_ABI_VERSION: u32 = 7;
+pub const MN_ABI_VERSION: u32 = 8;
 
 #[repr(C)]
 pub struct mn_engine_t {
@@ -160,10 +160,19 @@ impl mn_request_priority_t {
     pub const MN_REQUEST_PRIORITY_IDLE: Self = Self(5);
 }
 
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct mn_read_disposition_t(pub i32);
+
+impl mn_read_disposition_t {
+    pub const MN_READ_PAUSE: Self = Self(0);
+    pub const MN_READ_CONTINUE: Self = Self(1);
+}
+
 pub type mn_request_response_fn =
     unsafe extern "C" fn(*mut c_void, *mut mn_request_t, i32, *const i8, usize);
 pub type mn_request_body_fn =
-    unsafe extern "C" fn(*mut c_void, *mut mn_request_t, *const u8, usize);
+    unsafe extern "C" fn(*mut c_void, *mut mn_request_t, *const u8, usize) -> mn_read_disposition_t;
 pub type mn_request_complete_fn =
     unsafe extern "C" fn(*mut c_void, *mut mn_request_t, mn_result_t, i32);
 pub type mn_request_redirect_fn = unsafe extern "C" fn(
@@ -292,6 +301,7 @@ extern "C" {
         final_chunk: i32,
     ) -> mn_result_t;
     pub fn mn_request_follow_redirect(request: *mut mn_request_t) -> mn_result_t;
+    pub fn mn_request_resume_read(request: *mut mn_request_t) -> mn_result_t;
     pub fn mn_websocket_create(
         engine: *mut mn_engine_t,
         config: *const mn_websocket_config_t,
@@ -797,6 +807,9 @@ mod abi_layout_tests {
         assert_eq!(mn_upload_mode_t::MN_UPLOAD_CHUNKED.0, 2);
         assert_eq!(mn_cache_mode_t::MN_CACHE_ONLY_IF_CACHED.0, 5);
         assert_eq!(mn_redirect_mode_t::MN_REDIRECT_ERROR.0, 2);
+        assert_eq!(mn_read_disposition_t::MN_READ_PAUSE.0, 0);
+        assert_eq!(mn_read_disposition_t::MN_READ_CONTINUE.0, 1);
+        assert_eq!(MN_ABI_VERSION, 8);
         assert_eq!(mn_request_priority_t::MN_REQUEST_PRIORITY_IDLE.0, 5);
         assert_eq!(
             mn_websocket_message_type_t::MN_WEBSOCKET_MESSAGE_BINARY.0,

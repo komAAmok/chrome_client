@@ -40,12 +40,11 @@ InvokeResponseCallback(mn_request_response_fn callback, void *user_data,
   callback(user_data, request, status_code, headers, headers_length);
 }
 
-DISABLE_CFI_ICALL void InvokeBodyCallback(mn_request_body_fn callback,
-                                          void *user_data,
-                                          mn_request_t *request,
-                                          const uint8_t *data,
-                                          size_t data_length) {
-  callback(user_data, request, data, data_length);
+DISABLE_CFI_ICALL mn_read_disposition_t
+InvokeBodyCallback(mn_request_body_fn callback, void *user_data,
+                   mn_request_t *request, const uint8_t *data,
+                   size_t data_length) {
+  return callback(user_data, request, data, data_length);
 }
 
 DISABLE_CFI_ICALL void InvokeCompleteCallback(mn_request_complete_fn callback,
@@ -350,9 +349,7 @@ void Request::OnResponseStarted(net::URLRequest *request, int net_error) {
               InvokeResponseCallback(callback, user_data, self->public_handle_,
                                      status_code, headers.data(),
                                      headers.size());
-              self->engine_->task_runner()->PostTask(
-                  FROM_HERE,
-                  base::BindOnce(&Request::ReadMore, base::RetainedRef(self)));
+              self->PostReadMore();
             },
             callback, user_data, base::RetainedRef(this), status_code,
             std::move(headers)));
@@ -398,16 +395,48 @@ void Request::OnReadCompleted(net::URLRequest *request, int bytes_read) {
         base::BindOnce(
             [](mn_request_body_fn callback, void *user_data, Request *self,
                std::vector<uint8_t> data) {
-              InvokeBodyCallback(callback, user_data, self->public_handle_,
-                                 data.data(), data.size());
-              self->engine_->task_runner()->PostTask(
-                  FROM_HERE,
-                  base::BindOnce(&Request::ReadMore, base::RetainedRef(self)));
+              const mn_read_disposition_t disposition = InvokeBodyCallback(
+                  callback, user_data, self->public_handle_, data.data(),
+                  data.size());
+              if (disposition == MN_READ_PAUSE) {
+                self->PauseRead();
+                return;
+              }
+              self->PostReadMore();
             },
             callback, user_data, base::RetainedRef(this), std::move(data)));
   } else {
     ReadMore();
   }
+}
+
+void Request::PostReadMore() {
+  engine_->task_runner()->PostTask(
+      FROM_HERE, base::BindOnce(&Request::ReadMore, base::RetainedRef(this)));
+}
+
+void Request::PauseRead() {
+  int expected = kReadReading;
+  if (read_state_.compare_exchange_strong(expected, kReadPaused)) {
+    return;
+  }
+  // ResumeRead already ran, so the pause would strand the request. Take the
+  // pending resume and keep reading.
+  read_state_.store(kReadReading);
+  PostReadMore();
+}
+
+mn_result_t Request::ResumeRead() {
+  int expected = kReadPaused;
+  if (read_state_.compare_exchange_strong(expected, kReadReading)) {
+    PostReadMore();
+    return MN_OK;
+  }
+  // The pause has not landed yet. Record the resume so PauseRead consumes it;
+  // one extra read is harmless, a lost resume is not. ReadMore is a no-op once
+  // the request has completed, so a late resume is safe.
+  read_state_.store(kReadResumeRequested);
+  return MN_OK;
 }
 
 void Request::Complete(mn_result_t result, int net_error) {

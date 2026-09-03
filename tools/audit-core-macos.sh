@@ -85,5 +85,5 @@ if ((bytes > MAX_BYTES)); then
   exit 1
 fi
 
-printf 'Audited %s: %s bytes, nineteen public ABI symbols (%s)\n' \
+printf 'Audited %s: %s bytes, twenty public ABI symbols (%s)\n' \
   "$LIB" "$bytes" "$target_label"

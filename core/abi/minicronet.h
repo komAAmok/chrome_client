@@ -20,7 +20,7 @@
 extern "C" {
 #endif
 
-#define MN_ABI_VERSION 7u
+#define MN_ABI_VERSION 8u
 
 typedef struct mn_engine mn_engine_t;
 typedef struct mn_request mn_request_t;
@@ -161,15 +161,25 @@ typedef enum mn_request_priority {
   MN_REQUEST_PRIORITY_IDLE = 5,
 } mn_request_priority_t;
 
+typedef enum mn_read_disposition {
+  /* Stop reading the response body. The Core delivers no further body data and
+   * no terminal callback for body progress until mn_request_resume_read runs.
+   * Nothing blocks: the callback returns and the Core simply stops issuing
+   * reads, so a slow consumer holds no Core thread. */
+  MN_READ_PAUSE = 0,
+  /* Keep reading. */
+  MN_READ_CONTINUE = 1,
+} mn_read_disposition_t;
+
 typedef void(MN_CALL *mn_request_response_fn)(void *user_data,
                                               mn_request_t *request,
                                               int status_code,
                                               const char *headers,
                                               size_t headers_length);
-typedef void(MN_CALL *mn_request_body_fn)(void *user_data,
-                                          mn_request_t *request,
-                                          const uint8_t *data,
-                                          size_t data_length);
+typedef mn_read_disposition_t(MN_CALL *mn_request_body_fn)(void *user_data,
+                                                          mn_request_t *request,
+                                                          const uint8_t *data,
+                                                          size_t data_length);
 typedef void(MN_CALL *mn_request_complete_fn)(void *user_data,
                                               mn_request_t *request,
                                               mn_result_t result,
@@ -222,6 +232,10 @@ MN_EXPORT mn_result_t MN_CALL mn_request_upload_write(mn_request_t *request,
                                                       size_t data_length,
                                                       int final_chunk);
 MN_EXPORT mn_result_t MN_CALL mn_request_follow_redirect(mn_request_t *request);
+/* Resumes body reads after on_body returned MN_READ_PAUSE. Safe to call from
+ * any thread, more than once, and after completion; a resume that arrives
+ * before the pause takes effect is not lost. */
+MN_EXPORT mn_result_t MN_CALL mn_request_resume_read(mn_request_t *request);
 
 typedef enum mn_websocket_message_type {
   MN_WEBSOCKET_MESSAGE_CONTINUATION = 0,

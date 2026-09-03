@@ -8,24 +8,24 @@ assert(!is_android && !is_ios && !is_chromeos,
        "minicronet supports Windows, Linux, and macOS only")
 
 config("public_headers") {
-  include_dirs = [ ".", "../abi" ]
+  include_dirs = [ "." ]
 }
 
 shared_library("minicronet") {
   sources = [
     "engine.cc",
-    "minicronet.cc",
+    "engine.h",
+    "error_mapping.h",
     "profile_context.cc",
+    "profile_context.h",
     "profile_ssl_config_service.cc",
+    "profile_ssl_config_service.h",
+    "profile_table_generated.h",
+    "minicronet.cc",
     "request.cc",
+    "request.h",
     "websocket.cc",
-    "minicronet/engine.h",
-    "minicronet/error_mapping.h",
-    "minicronet/profile_context.h",
-    "minicronet/profile_table_generated.h",
-    "minicronet/profile_ssl_config_service.h",
-    "minicronet/request.h",
-    "minicronet/websocket.h",
+    "websocket.h",
   ]
   defines = [ "MINICRONET_IMPLEMENTATION" ]
   if (minicronet_profile_verification) {
@@ -37,17 +37,83 @@ shared_library("minicronet") {
     "//net",
   ]
   if (is_win) {
-    inputs = [ "../exports/minicronet.def" ]
+    inputs = [ "minicronet.def" ]
     ldflags = [ "/DEF:" + rebase_path(inputs[0], root_build_dir) ]
   } else if (is_linux) {
-    inputs = [ "../exports/minicronet.lds" ]
+    inputs = [ "minicronet.lds" ]
     ldflags = [
       "-Wl,--version-script=" + rebase_path(inputs[0], root_build_dir),
     ]
   } else if (is_mac) {
-    inputs = [ "../exports/minicronet.exports" ]
+    inputs = [ "minicronet.exports" ]
     ldflags = [
       "-Wl,-exported_symbols_list," + rebase_path(inputs[0], root_build_dir),
     ]
   }
+}
+
+executable("minicronet_smoke") {
+  sources = [ "smoke.c" ]
+  configs += [ ":public_headers" ]
+  deps = [ ":minicronet" ]
+}
+
+executable("minicronet_websocket_smoke") {
+  sources = [ "websocket_smoke.c" ]
+  configs += [ ":public_headers" ]
+  deps = [ ":minicronet" ]
+}
+
+executable("minicronet_abi_cpp_smoke") {
+  sources = [ "abi_cpp_smoke.cc" ]
+  configs += [ ":public_headers" ]
+  deps = [ ":minicronet" ]
+  testonly = true
+}
+
+executable("profile_probe") {
+  sources = [ "profile_probe.c" ]
+  configs += [ ":public_headers" ]
+  deps = [ ":minicronet" ]
+  testonly = true
+}
+
+if (minicronet_profile_verification) {
+  executable("minicronet_websocket_extended_connect_probe") {
+    sources = [ "websocket_extended_connect_probe.c" ]
+    configs += [ ":public_headers" ]
+    deps = [ ":minicronet" ]
+    testonly = true
+  }
+  executable("profile_isolation_probe") {
+    sources = [ "profile_isolation_probe.c" ]
+    configs += [ ":public_headers" ]
+    deps = [ ":minicronet" ]
+    testonly = true
+  }
+
+  executable("profile_feature_probe") {
+    sources = [ "profile_feature_probe.cc", "profile_context.cc" ]
+    defines = [ "MINICRONET_PROFILE_VERIFICATION" ]
+    configs += [ ":public_headers" ]
+    deps = [ "//base" ]
+    testonly = true
+  }
+
+  executable("profile_state_isolation_probe") {
+    sources = [
+      "engine.cc",
+      "profile_context.cc",
+      "profile_ssl_config_service.cc",
+      "profile_state_isolation_probe.cc",
+    ]
+    testonly = true
+    defines = [
+      "MINICRONET_PROFILE_VERIFICATION",
+      "MINICRONET_STATE_SEQUENCE_PROBE",
+    ]
+    configs += [ ":public_headers" ]
+    deps = [ "//base", "//net" ]
+  }
+
 }

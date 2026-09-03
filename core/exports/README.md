@@ -1,6 +1,6 @@
 # Core export definitions
 
-These three files are the platform-specific spelling of the same ABI v7
+These three files are the platform-specific spelling of the same ABI v8
 symbol set. They must remain identical in membership and order:
 
 - `minicronet.def` for Windows;

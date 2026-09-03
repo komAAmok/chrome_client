@@ -18,8 +18,9 @@ use minicronet_sys as sys;
 
 use crate::{ffi_bytes, lock, timeout_ms, Engine, Error};
 
-// Backpressure ceiling per request. Core callback threads wait once this
-// queue is full; consumers wake them after taking a chunk.
+// Backpressure ceiling per request. Reaching it answers on_body with
+// MN_READ_PAUSE, so the Core stops issuing reads instead of holding a callback
+// thread; consumers resume it after taking a chunk.
 const BODY_BUFFER_LIMIT: usize = 1024 * 1024;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -141,6 +142,9 @@ struct RequestState {
     response_taken: bool,
     body: VecDeque<Vec<u8>>,
     body_bytes: usize,
+    // Set when on_body answered MN_READ_PAUSE. The consumer clears it and calls
+    // `Request::resume_read` once the queue drops back under the ceiling.
+    read_paused: bool,
     redirects: VecDeque<Redirect>,
     terminal: Option<Result<i32, RequestError>>,
     terminal_error_taken: bool,
@@ -309,7 +313,14 @@ impl Request {
         }
         Ok(ResponseFuture {
             shared: Arc::clone(&self.0.shared),
+            request: self.clone(),
         })
+    }
+
+    /// Resumes Core body reads after the queue ceiling paused them. Streams call
+    /// this automatically; it is idempotent and safe after completion.
+    pub fn resume_read(&self) -> Result<(), Error> {
+        result(unsafe { sys::mn_request_resume_read(self.0.raw.as_ptr()) })
     }
 
     /// Installs a lightweight notification hook for event-driven bindings.
@@ -383,6 +394,7 @@ impl Request {
 
 pub struct ResponseFuture {
     shared: Arc<RequestShared>,
+    request: Request,
 }
 
 impl ResponseFuture {
@@ -390,13 +402,13 @@ impl ResponseFuture {
     /// a response yet; the installed request event callback will wake callers.
     pub fn try_take(&mut self) -> Option<Result<Response, RequestError>> {
         let mut state = lock(&self.shared.state);
-        take_response(&self.shared, &mut state)
+        take_response(&self.shared, &self.request, &mut state)
     }
 
     pub fn wait(self) -> Result<Response, RequestError> {
         let mut state = lock(&self.shared.state);
         loop {
-            if let Some(response) = take_response(&self.shared, &mut state) {
+            if let Some(response) = take_response(&self.shared, &self.request, &mut state) {
                 return response;
             }
             state = self
@@ -413,7 +425,7 @@ impl Future for ResponseFuture {
 
     fn poll(self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<Self::Output> {
         let mut state = lock(&self.shared.state);
-        if let Some(response) = take_response(&self.shared, &mut state) {
+        if let Some(response) = take_response(&self.shared, &self.request, &mut state) {
             return Poll::Ready(response);
         }
         state.response_waker = Some(context.waker().clone());
@@ -423,6 +435,7 @@ impl Future for ResponseFuture {
 
 pub struct ResponseStream {
     shared: Arc<RequestShared>,
+    request: Request,
 }
 
 impl std::fmt::Debug for ResponseStream {
@@ -437,18 +450,22 @@ impl ResponseStream {
     /// Takes one body event without blocking. `None` means no event is ready.
     pub fn try_next(&mut self) -> Option<Option<Result<Vec<u8>, RequestError>>> {
         let mut state = lock(&self.shared.state);
-        let item = take_body(&mut state);
-        if item.is_some() {
-            self.shared.changed.notify_all();
-        }
-        item
+        let item = take_body(&mut state)?;
+        let resume = clear_pause(&mut state);
+        self.shared.changed.notify_all();
+        drop(state);
+        self.resume_if(resume);
+        Some(item)
     }
 
     pub fn blocking_next(&mut self) -> Option<Result<Vec<u8>, RequestError>> {
         let mut state = lock(&self.shared.state);
         loop {
             if let Some(item) = take_body(&mut state) {
+                let resume = clear_pause(&mut state);
                 self.shared.changed.notify_all();
+                drop(state);
+                self.resume_if(resume);
                 return item;
             }
             state = self
@@ -456,6 +473,14 @@ impl ResponseStream {
                 .changed
                 .wait(state)
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
+        }
+    }
+
+    /// Resumes Core reads outside the state lock. The Core treats a resume that
+    /// arrives before the pause lands, or after completion, as a no-op.
+    fn resume_if(&self, resume: bool) {
+        if resume {
+            let _ = self.request.resume_read();
         }
     }
 }
@@ -466,7 +491,10 @@ impl Stream for ResponseStream {
     fn poll_next(self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let mut state = lock(&self.shared.state);
         if let Some(item) = take_body(&mut state) {
+            let resume = clear_pause(&mut state);
             self.shared.changed.notify_all();
+            drop(state);
+            self.resume_if(resume);
             return Poll::Ready(item);
         }
         state.body_waker = Some(context.waker().clone());
@@ -476,6 +504,7 @@ impl Stream for ResponseStream {
 
 fn take_response(
     shared: &Arc<RequestShared>,
+    request: &Request,
     state: &mut RequestState,
 ) -> Option<Result<Response, RequestError>> {
     if !state.response_taken {
@@ -486,6 +515,7 @@ fn take_response(
                 headers,
                 body: ResponseStream {
                     shared: Arc::clone(shared),
+                    request: request.clone(),
                 },
             }));
         }
@@ -495,6 +525,17 @@ fn take_response(
         }
     }
     None
+}
+
+/// Clears a recorded pause once the queue is back under the ceiling. The caller
+/// must release the state lock before resuming Core reads.
+fn clear_pause(state: &mut RequestState) -> bool {
+    if state.read_paused && state.body_bytes < BODY_BUFFER_LIMIT {
+        state.read_paused = false;
+        true
+    } else {
+        false
+    }
 }
 
 fn take_body(state: &mut RequestState) -> Option<Option<Result<Vec<u8>, RequestError>>> {
@@ -600,28 +641,28 @@ unsafe extern "C" fn on_body(
     _request: *mut sys::mn_request_t,
     data: *const u8,
     data_length: usize,
-) {
+) -> sys::mn_read_disposition_t {
     let shared = unsafe { shared(user_data) };
-    if catch_unwind(AssertUnwindSafe(|| {
+    match catch_unwind(AssertUnwindSafe(|| {
         let mut state = lock(&shared.state);
-        while state.body_bytes > 0
-            && state.body_bytes.saturating_add(data_length) > BODY_BUFFER_LIMIT
-            && state.terminal.is_none()
-        {
-            state = shared
-                .changed
-                .wait(state)
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-        }
         state.body.push_back(copy_bytes(data, data_length));
         state.body_bytes = state.body_bytes.saturating_add(data_length);
+        // Never pause after a terminal result: nothing would resume the request.
+        let pause = state.body_bytes >= BODY_BUFFER_LIMIT && state.terminal.is_none();
+        state.read_paused |= pause;
         shared.notify(&mut state);
         drop(state);
         shared.schedule_event();
-    }))
-    .is_err()
-    {
-        shared.callback_panicked();
+        pause
+    })) {
+        Ok(true) => sys::mn_read_disposition_t::MN_READ_PAUSE,
+        Ok(false) => sys::mn_read_disposition_t::MN_READ_CONTINUE,
+        Err(_) => {
+            shared.callback_panicked();
+            // Keep reading so a panicking consumer cannot strand the Core
+            // request in a paused state that nothing will resume.
+            sys::mn_read_disposition_t::MN_READ_CONTINUE
+        }
     }
 }
 
@@ -702,15 +743,59 @@ mod tests {
             on_body(user_data, std::ptr::null_mut(), b"body".as_ptr(), 4);
             on_complete(user_data, std::ptr::null_mut(), sys::mn_result_t::MN_OK, 0);
         }
-        let response = ResponseFuture {
-            shared: Arc::clone(&shared),
-        }
-        .wait()
-        .unwrap();
-        assert_eq!(response.status_code, 200);
-        let mut body = response.body;
-        assert_eq!(body.blocking_next().unwrap().unwrap(), b"body");
-        assert!(body.blocking_next().is_none());
+        // Asserted against the shared state rather than through ResponseStream:
+        // building one needs a live Core request handle, which these offline
+        // tests do not have.
+        let mut state = lock(&shared.state);
+        let (status_code, headers) = state.response.take().unwrap();
+        assert_eq!(status_code, 200);
+        assert_eq!(headers, b"h\n");
+        assert_eq!(take_body(&mut state).unwrap().unwrap().unwrap(), b"body");
+        assert!(take_body(&mut state).unwrap().is_none());
+        drop(state);
+        assert!(!shared.callback_ref_live.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn body_pauses_at_the_ceiling_and_resumes_after_draining() {
+        let shared = Arc::new(RequestShared::new());
+        let user_data = Arc::into_raw(Arc::clone(&shared)).cast_mut().cast();
+        let chunk = vec![0u8; BODY_BUFFER_LIMIT / 2];
+
+        // The first half-ceiling chunk keeps Core reading; the second reaches the
+        // ceiling and must pause instead of blocking this thread.
+        let first =
+            unsafe { on_body(user_data, std::ptr::null_mut(), chunk.as_ptr(), chunk.len()) };
+        assert_eq!(first, sys::mn_read_disposition_t::MN_READ_CONTINUE);
+        let second =
+            unsafe { on_body(user_data, std::ptr::null_mut(), chunk.as_ptr(), chunk.len()) };
+        assert_eq!(second, sys::mn_read_disposition_t::MN_READ_PAUSE);
+        assert!(lock(&shared.state).read_paused);
+
+        // Draining one chunk drops below the ceiling and asks for a resume once.
+        let mut state = lock(&shared.state);
+        assert!(take_body(&mut state).is_some());
+        assert!(clear_pause(&mut state));
+        assert!(!clear_pause(&mut state));
+        assert!(!state.read_paused);
+        drop(state);
+
+        release_callback_ref(user_data.cast());
+    }
+
+    #[test]
+    fn body_never_pauses_after_a_terminal_result() {
+        let shared = Arc::new(RequestShared::new());
+        let user_data = Arc::into_raw(Arc::clone(&shared)).cast_mut().cast();
+        unsafe { on_complete(user_data, std::ptr::null_mut(), sys::mn_result_t::MN_OK, 0) };
+
+        // A pause here would strand the Core request: no consumer resume can
+        // follow a terminal callback.
+        let chunk = vec![0u8; BODY_BUFFER_LIMIT + 1];
+        let disposition =
+            unsafe { on_body(user_data, std::ptr::null_mut(), chunk.as_ptr(), chunk.len()) };
+        assert_eq!(disposition, sys::mn_read_disposition_t::MN_READ_CONTINUE);
+        assert!(!lock(&shared.state).read_paused);
         assert!(!shared.callback_ref_live.load(Ordering::Acquire));
     }
 

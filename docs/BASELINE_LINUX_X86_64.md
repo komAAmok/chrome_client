@@ -60,18 +60,20 @@ manifest 另外声明了 `libplc4.so` 和 `libplds4.so`，但它们不在 `DT_NE
 41.0 ms，每次新建连接时只有 1.0 ms。基准脚本因此关闭 Nagle 并把小响应合并成一次
 写入。任何改写这个 handler 的人都要保持这两点，否则数字会被服务端噪声淹没。
 
-| 指标 | 旧 Core `7ed677ae` | 新 Core `b7eed689` |
-| --- | --- | --- |
-| 同步顺序 1 KiB，p50 延迟 | 1.30 ms | 1.38 ms |
-| 同步顺序 1 KiB，吞吐 | 738.8 req/s | 701.7 req/s |
-| asyncio 并发 32 | 682.5 req/s | 627.3 req/s |
-| asyncio 并发 128 | 322.3 req/s | 307.9 req/s |
-| 流式 64 MiB（64 KiB 分块读） | 148.5 MiB/s | 138.9 MiB/s |
-| 慢消费者隔离，同 Engine | **永久挂死** | 20/20 完成，p50 1.28 ms |
-| 慢消费者隔离，另一 Engine | 未能到达 | 20/20 完成，p50 1.36 ms |
+| 指标 | 旧 Core `7ed677ae`（v7 已发布） | 重建 v7 `b7eed689` | ABI v8 `5115bf07` |
+| --- | --- | --- | --- |
+| 同步顺序 1 KiB，p50 延迟 | 1.30 ms | 1.38 ms | 1.20 ms |
+| 同步顺序 1 KiB，吞吐 | 738.8 req/s | 701.7 req/s | 804.6 req/s |
+| asyncio 并发 32 | 682.5 req/s | 627.3 req/s | 579.6 req/s |
+| asyncio 并发 128 | 322.3 req/s | 307.9 req/s | 315.7 req/s |
+| 流式 64 MiB（64 KiB 分块读） | 148.5 MiB/s | 138.9 MiB/s | 150.9 MiB/s |
+| 慢消费者隔离，同 Engine | **永久挂死** | 20/20，p50 1.28 ms | 20/20，p50 1.35 ms |
+| 慢消费者隔离，另一 Engine | 未能到达 | 20/20，p50 1.36 ms | 20/20，p50 1.32 ms |
 
-新 Core 在纯吞吐上慢约 5%（每请求创建独立 sequenced runner 的代价），换来的是
-慢消费者不再拖垮其它请求。
+重建的 v7 在纯吞吐上比已发布版慢约 5%（每请求创建独立 sequenced runner 的代价），
+换来慢消费者不再拖垮其它请求。ABI v8 把这部分代价拿回来还有盈余：同步吞吐和流式
+吞吐都超过已发布的 v7，因为 pause/resume 取消了 Condvar 阻塞和随之而来的线程唤醒。
+asyncio 并发路径在三者之间的差异处于运行间抖动范围内，没有明确趋势。
 
 ### 已发布 Core 的挂死可复现
 
@@ -134,24 +136,31 @@ FeatureList 审计和 profile 表生成器。
 
 仍然只存在于 `/home/sj/桌面/new` 或 `/home/sj/chromium/src` 的部分：
 
-- `minicronet/BUILD.gn` 与 smoke/probe 源码（`smoke.c`、`websocket_smoke.c`、
-  `abi_cpp_smoke.cc`、`profile_probe.c` 等）。`tools/sync-core.sh` 只校验它们存在。
+- 仅在 `minicronet_profile_verification=true` 下编译的 4 个校验探针
+  （`profile_isolation_probe.c`、`profile_feature_probe.cc`、
+  `profile_state_isolation_probe.cc`、`websocket_extended_connect_probe.c`），
+  它们依赖 profile 证据流水线。`tools/sync-core.sh` 只校验它们存在。
 - profile 证据与 `profiles/normalized_profiles.json` 等三个输入，因此
   `profile_table_generated.h` 目前作为已提交的生成产物使用，重新生成需要显式
   设置 `REGENERATE_PROFILE_TABLE=1` 和 `PROFILE_EVIDENCE_DIR`。
 - 抓包证据与 wire 校验工具链。
+- Linux x86/ARM64 交叉编译需要 `new/.tools/pkgconf`，通过
+  `MINICRONET_PKGCONF_DIR` 指定；x86_64 用系统 pkg-config 即可。
+
+发布路径（默认 args.gn，不含校验探针）已经完全由本仓库自有源码驱动：ABI v8 那轮
+把 `BUILD.gn` 和 4 个 smoke/probe 源码迁入 `core/source/` 后重建，产物哈希与迁入前
+一致，说明 chromium 树里不再残留手改。
 
 所以 `docs/MIGRATION_FROM_NEW.md` 里「目标仓库不再依赖 new/ 才能构建」这条门槛
-仍未达成，收尾放在阶段 4。
+对发布路径已成立，对 profile 证据与校验探针仍未成立，收尾放在阶段 4。
 
 ## 布局差异
 
 本仓库把 Core 头文件放在 `core/source/minicronet/`、ABI 头放在 `core/abi/`、导出表
 放在 `core/exports/`；Chromium 则从自己的源码根解析 `#include "minicronet/x.h"`，
-要求同目录平铺。`tools/sync-core.sh` 负责这个转换：把 13 个 Core 源文件、ABI 头和
-三份导出表平铺进 `$CHROMIUM_SRC/minicronet/`。
+要求同目录平铺。`tools/sync-core.sh` 负责这个转换：把库源码、smoke/probe 源码、
+`BUILD.gn`、ABI 头和三份导出表平铺进 `$CHROMIUM_SRC/minicronet/`。
 
-两边的 `BUILD.gn` 因此不同 —— 本仓库那份用嵌套路径和 `../abi`、`../exports`，
-Chromium 那份用平铺路径并且额外包含 8 个 smoke/probe 目标。同步脚本不覆盖
-Chromium 侧的 `BUILD.gn`，只校验它存在。这是当前的已知分叉点。
+`core/source/BUILD.gn` 现在就是 Chromium 编译的那一份（平铺路径），不再有仓库本地
+的嵌套变体，所以只有一处需要维护。
 

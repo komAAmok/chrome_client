@@ -10,9 +10,12 @@ set -Eeuo pipefail
 # from its own source root, so every file is flattened into
 # `$CHROMIUM_SRC/minicronet/`.
 #
-# Not yet owned by this repository: `minicronet/BUILD.gn` and the smoke/probe
-# sources. They stay in the Chromium checkout and this script only verifies they
-# are present. Migrating them is tracked in docs/MIGRATION_FROM_NEW.md.
+# Not yet owned by this repository: the profile-verification probes
+# (profile_isolation_probe.c, profile_feature_probe.cc,
+# profile_state_isolation_probe.cc, websocket_extended_connect_probe.c). They
+# only build with minicronet_profile_verification=true and depend on the profile
+# evidence pipeline, so they stay in the Chromium checkout for now. Migrating
+# them is tracked in docs/MIGRATION_FROM_NEW.md.
 
 ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 CHROMIUM_SRC=${CHROMIUM_SRC:-/home/sj/chromium/src}
@@ -87,21 +90,30 @@ test -f "$CHROMIUM_SRC/base/nix/xdg_util_minicronet.cc" \
   || die "minicronet-core.patch is partially applied: base/nix/xdg_util_minicronet.cc missing"
 
 DEST=$CHROMIUM_SRC/minicronet
-test -f "$DEST/BUILD.gn" \
-  || die "$DEST/BUILD.gn missing; it is not owned by this repository yet"
-
 install -d "$DEST"
-for source in "$ROOT_DIR"/core/source/*.cc; do
+
+# Library sources plus the ABI-conformance smoke/probe sources. The smoke targets
+# exercise the callback signatures, so they must travel with the ABI they test.
+for source in "$ROOT_DIR"/core/source/*.cc "$ROOT_DIR"/core/source/*.c; do
   install -m 644 "$source" "$DEST/$(basename "$source")"
 done
 for header in "$ROOT_DIR"/core/source/minicronet/*.h; do
   install -m 644 "$header" "$DEST/$(basename "$header")"
 done
+install -m 644 "$ROOT_DIR/core/source/BUILD.gn" "$DEST/BUILD.gn"
 install -m 644 "$ROOT_DIR/core/abi/minicronet.h" "$DEST/minicronet.h"
 for table in "$ROOT_DIR"/core/exports/minicronet.{def,exports,lds}; do
   install -m 644 "$table" "$DEST/$(basename "$table")"
 done
 
+# The verification-only probes are not in this repository; fail loudly rather
+# than silently dropping targets BUILD.gn still declares.
+for probe in profile_isolation_probe.c profile_feature_probe.cc \
+             profile_state_isolation_probe.cc websocket_extended_connect_probe.c; do
+  test -f "$DEST/$probe" || die "$DEST/$probe missing; it is not owned by this repository yet"
+done
+
 printf 'Synced %d Core sources to %s\n' \
-  "$(ls "$ROOT_DIR"/core/source/*.cc "$ROOT_DIR"/core/source/minicronet/*.h | wc -l)" \
+  "$(ls "$ROOT_DIR"/core/source/*.cc "$ROOT_DIR"/core/source/*.c \
+       "$ROOT_DIR"/core/source/minicronet/*.h | wc -l)" \
   "$DEST"

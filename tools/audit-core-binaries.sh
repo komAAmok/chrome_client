@@ -17,7 +17,7 @@ symbols=(
   mn_engine_create mn_engine_retain mn_engine_release
   mn_request_create mn_request_retain mn_request_release
   mn_request_start mn_request_cancel mn_request_upload_write
-  mn_request_follow_redirect
+  mn_request_follow_redirect mn_request_resume_read
   mn_websocket_create mn_websocket_retain mn_websocket_release
   mn_websocket_start mn_websocket_send mn_websocket_close
   mn_websocket_cancel
@@ -27,8 +27,8 @@ die() { printf 'audit: %s\n' "$*" >&2; exit 1; }
 command -v sha256sum >/dev/null || die "sha256sum is required"
 command -v file >/dev/null || die "file is required"
 
-grep -Eq '^#define MN_ABI_VERSION 7u$' "$HEADER" \
-  || die "header ABI version is not 7"
+grep -Eq '^#define MN_ABI_VERSION 8u$' "$HEADER" \
+  || die "header ABI version is not 8"
 
 for target in "${targets[@]}"; do
   dir="$BINARIES/$target"
@@ -48,7 +48,7 @@ if missing:
     raise SystemExit(f"missing fields: {', '.join(missing)}")
 if data["project"] != "chrome_client" or data["core"] != "minicronet":
     raise SystemExit("unexpected project/core")
-if data["abi_version"] != 7 or data["target"] != expected_target:
+if data["abi_version"] != 8 or data["target"] != expected_target:
     raise SystemExit("ABI or target mismatch")
 if not isinstance(data["runtime_dependencies"], list):
     raise SystemExit("runtime_dependencies must be an array")

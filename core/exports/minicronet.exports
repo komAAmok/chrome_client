@@ -10,6 +10,7 @@ _mn_request_start
 _mn_request_cancel
 _mn_request_upload_write
 _mn_request_follow_redirect
+_mn_request_resume_read
 _mn_websocket_create
 _mn_websocket_retain
 _mn_websocket_release

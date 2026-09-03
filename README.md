@@ -18,7 +18,7 @@ HTTP/3/QUIC、代理和 WebSocket/WSS；Python/Rust 绑定只负责参数、类�
 
 
 每个 Core 产物位于 `core/binaries/<target>/`，带 ABI 版本、Chromium revision、
-SHA-256 和依赖清单。ABI 当前为 v7。Go 和 Node.js 目录目前是绑定设计说明，
+SHA-256 和依赖清单。ABI 当前为 v8。Go 和 Node.js 目录目前是绑定设计说明，
 不是已发布的可安装包。
 
 | Core 目录 | Rust target | Core 文件 |
@@ -126,7 +126,7 @@ with Client(cookies={"session": "abc"}) as client:
 ```
 
 它只包含调用方为出站请求配置的 cookie。响应返回的 cookie 由 Core 内的 Chromium
-CookieStore 拥有，ABI v7 不导出该存储，因此不会出现在这个 jar 里，也不需要在
+CookieStore 拥有，ABI v8 不导出该存储，因此不会出现在这个 jar 里，也不需要在
 Python 侧重复附加。jar 没有 domain/path 元数据，`get_dict(domain=...)` 或
 `get_dict(path=...)` 会抛 `ValueError` 而不是返回未过滤的数据。
 
@@ -231,7 +231,7 @@ profile 覆盖范围、TLS 行为和底层连接池由各自实现决定。
 
 | 路径 | 内容 |
 | --- | --- |
-| `core/abi/` | 稳定 C ABI v7 |
+| `core/abi/` | 稳定 C ABI v8 |
 | `core/binaries/` | 8 个已审计平台 Core |
 | `crates/minicronet/` | Rust 安全层、流和生命周期 |
 | `bindings/python/` | Python 3.7–3.13 绑定与 facade |

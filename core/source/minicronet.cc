@@ -420,6 +420,10 @@ mn_result_t MN_CALL mn_request_follow_redirect(mn_request_t *request) {
   return request ? request->impl->FollowRedirect() : MN_ERROR_INVALID_ARGUMENT;
 }
 
+mn_result_t MN_CALL mn_request_resume_read(mn_request_t *request) {
+  return request ? request->impl->ResumeRead() : MN_ERROR_INVALID_ARGUMENT;
+}
+
 mn_result_t MN_CALL mn_websocket_create(mn_engine_t *engine,
                                         const mn_websocket_config_t *config,
                                         mn_websocket_t **out_websocket) {

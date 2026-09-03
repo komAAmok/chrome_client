@@ -36,6 +36,7 @@ public:
   mn_result_t Cancel();
   mn_result_t UploadWrite(std::vector<uint8_t> data, bool final_chunk);
   mn_result_t FollowRedirect();
+  mn_result_t ResumeRead();
 
   void OnReceivedRedirect(net::URLRequest *request,
                           const net::RedirectInfo &redirect_info,
@@ -55,6 +56,9 @@ private:
   void FollowRedirectOnNetworkThread();
   void Complete(mn_result_t result, int net_error);
   void ReadMore();
+  void PostReadMore();
+  // Runs on the callback runner once on_body has returned MN_READ_PAUSE.
+  void PauseRead();
 
   scoped_refptr<Engine> engine_;
   scoped_refptr<base::SequencedTaskRunner> callback_runner_;
@@ -79,6 +83,15 @@ private:
   base::Lock upload_lock_;
   bool upload_finished_ = false;
   std::atomic_bool redirect_deferred_{false};
+  // Read flow control. PauseRead and ResumeRead run on different threads, so
+  // the third state records a resume that arrived before the pause landed;
+  // without it that resume would be dropped and the request would stall.
+  enum ReadState : int {
+    kReadReading = 0,
+    kReadPaused = 1,
+    kReadResumeRequested = 2,
+  };
+  std::atomic<int> read_state_{kReadReading};
 };
 
 } // namespace minicronet

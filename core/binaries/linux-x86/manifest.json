@@ -1,15 +1,22 @@
 {
   "project": "chrome_client",
   "core": "minicronet",
-  "abi_version": 7,
+  "abi_version": 8,
   "chromium_revision": "010786339149198c8c24d58c30cf5a41fcf60c14",
   "target": "linux-x86",
   "triple": "i686-unknown-linux-gnu",
   "library": "libminicronet.so",
-  "sha256": "694fedb03f51270439dca026560286751b8c62237fdbc0e44932341099f163c6",
-  "size_bytes": 8614500,
+  "sha256": "e287d8b368a6ee28b4559ee28b13855d1df9e9ff36c0c79213e8d1e10f4a502f",
+  "size_bytes": 8614180,
   "runtime_dependencies": [
-    "libnspr4.so", "libnss3.so", "libnssutil3.so", "libplc4.so", "libplds4.so",
-    "libc.so.6", "libdl.so.2", "libpthread.so.0", "libm.so.6", "libgcc_s.so.1", "ld-linux.so.2"
+    "libc.so.6",
+    "libdl.so.2",
+    "libgcc_s.so.1",
+    "libm.so.6",
+    "libnspr4.so",
+    "libnss3.so",
+    "libnssutil3.so",
+    "libpthread.so.0",
+    "ld-linux.so.2"
   ]
 }

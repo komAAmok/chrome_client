@@ -38,7 +38,7 @@ behavior fails closed instead of silently using current Chromium defaults.
 
 ## ABI consequences
 
-- ABI v7 accepts only the current complete configuration and callback
+- ABI v8 accepts only the current complete configuration and callback
   structures; older prefixes are rejected.
 - Engine creation freezes profile, User-Agent, cache mode, protocol mode, and
   TLS verification policy.

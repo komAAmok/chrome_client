@@ -1,6 +1,7 @@
 # Python 资源生命周期与背压改造计划
 
-状态：阶段 1--4 已实现初版；阶段 5 尚未实施。
+状态：阶段 1--4 已实现初版；阶段 5 的 HTTP 部分已随 ABI v8 落地，WebSocket
+部分仍未实施。
 
 本文记录 `chrome_client` Python 主版本（3.7--3.13）和 Python 3.6 兼容版本的
 后续改造顺序。目标是减少回调争用、限制 Python/native 内存增长、明确关闭语义，
@@ -21,7 +22,7 @@
 
 ### 1. callback 幂等清理与 Client 关闭
 
-状态：已实现初版（ABI v7）。
+状态：已实现（ABI v8）。
 
 目标：所有完成、错误、超时、取消和事件循环关闭路径都能安全解除回调引用。
 
@@ -43,7 +44,7 @@
 
 ### 2. HTTP 真流式响应与响应大小限制
 
-状态：已实现初版（ABI v7）。
+状态：已实现（ABI v8）。
 
 目标：`stream=True` 不再先聚合完整 body，超大并发响应不会同时复制到多个
 `bytearray`。
@@ -68,7 +69,7 @@
 
 ### 3. WebSocket native 有界队列与 Future 唤醒
 
-状态：已实现初版（ABI v7）；队列超限采用取消/错误，尚未具备 Core pause/resume。
+状态：HTTP 已具备 Core pause/resume（ABI v8）；WebSocket 队列超限仍采用取消/错误。
 
 目标：移除 Python 层无界 `asyncio.Queue`，让消息背压和生命周期由 Rust/native
 统一管理。
@@ -89,7 +90,7 @@
 
 ### 4. Core 每请求独立顺序回调
 
-状态：已实现源码初版，待各平台 Core 重建验收。
+状态：已实现并完成 8 个平台 Core 重建。
 
 目标：单个慢请求不能阻塞全局 callback runner，同时保持单请求事件顺序。
 
@@ -109,18 +110,29 @@
 
 ### 5. ABI v8：HTTP/WebSocket pause/resume 背压
 
-状态：未实施。
+状态：HTTP 已实施；WebSocket 未实施。
 
 目标：实现端到端暂停读取，而不是在 callback runner 或 native 队列中等待。
 
-候选 ABI（名称最终以 ABI 审计为准）：
+最终 ABI 只增加一个符号，而不是计划中的四个：
 
 ```c
-mn_request_pause_read(mn_request_t *request);
-mn_request_resume_read(mn_request_t *request);
-mn_websocket_pause_read(mn_websocket_t *websocket);
-mn_websocket_resume_read(mn_websocket_t *websocket);
+/* on_body 现在返回读取处置，取代独立的 pause 调用。 */
+typedef mn_read_disposition_t(MN_CALL *mn_request_body_fn)(
+    void *user_data, mn_request_t *request,
+    const uint8_t *data, size_t data_length);
+mn_result_t mn_request_resume_read(mn_request_t *request);
 ```
+
+用返回值而不是独立的 `mn_request_pause_read` 是为了消除竞态：pause 作为单独调用
+时，回调返回到 pause 生效之间 Core 可能已经投递了下一次读取。返回值把决策点放在
+回调内部，这个窗口不存在。Core 侧用三态 `read_state_`（reading / paused /
+resume_requested）吸收「resume 比 pause 先到」的交错，否则那次 resume 会丢失并
+永久挂住请求。
+
+WebSocket 保持原有的 `pending_data_` 计数加 `ResumeReading()`：它本来就不阻塞
+线程，只是队列超限时按 fail-closed 关闭连接。把它改成消费者驱动的 pause/resume
+需要能端到端验证的 WS/WSS 环境，留到后续版本；本轮不引入无法验证的 ABI 面。
 
 实施要求：
 

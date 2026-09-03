@@ -1,5 +1,5 @@
 {
-  "abi_version": 7,
+  "abi_version": 8,
   "targets": {
     "linux-x86": {
       "triple": "i686-unknown-linux-gnu",

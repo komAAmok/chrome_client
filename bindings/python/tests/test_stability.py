@@ -165,6 +165,34 @@ class StabilityTests(unittest.TestCase):
 
         self.run_async(run())
 
+    def test_stalled_stream_does_not_block_other_requests(self):
+        """A stalled consumer must pause only its own request.
+
+        Reading one chunk and then stopping leaves the Rust body queue at its
+        1 MiB ceiling. Before ABI v8 that blocked a Core callback thread, and
+        because callbacks shared one process-wide sequenced runner every later
+        request on the Engine stopped returning -- timeouts included, since the
+        timeout's completion callback queued behind the blocked one. ABI v8
+        answers on_body with MN_READ_PAUSE instead, so nothing blocks.
+        """
+        with chrome_client.Client() as stalled_client, \
+                chrome_client.Client() as other_client:
+            stalled = stalled_client.get(self.url + "infinite", stream=True)
+            chunks = stalled.iter_content(65536)
+            next(iter(chunks))
+            time.sleep(0.5)  # let the queue reach the ceiling
+
+            try:
+                for client in (stalled_client, other_client):
+                    for _ in range(3):
+                        begin = time.time()
+                        response = client.get(self.url, headers={"X-Size": "16"},
+                                              timeout=5)
+                        self.assertEqual(response.status_code, 200)
+                        self.assertLess(time.time() - begin, 5.0)
+            finally:
+                stalled.close()
+
     def test_response_close_cancels_stream(self):
         with chrome_client.Client() as client:
             response = client.get(self.url + "infinite", stream=True)

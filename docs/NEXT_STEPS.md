@@ -116,8 +116,12 @@
 Python 资源生命周期、流式响应、WebSocket 有界队列、Core 回调隔离以及 ABI v8
 pause/resume 的详细设计和验收门槛见
 [`PYTHON_RESOURCE_BACKPRESSURE_PLAN.md`](PYTHON_RESOURCE_BACKPRESSURE_PLAN.md)。
-当前阶段 1--3 已完成 ABI v7 初版实现；阶段 4 已加入每请求/每 WebSocket 的
-独立顺序 callback runner，但必须重建各平台 Core 后才能完成运行时验收；阶段 5
-的 ABI v8 pause/resume 仍未实施，不能将其视为已完成能力。
+当前阶段 1--3 已完成 ABI v8 实现；阶段 4 的每请求/每 WebSocket 独立顺序 callback
+runner 已随 8 个平台 Core 重建上线；阶段 5 的 HTTP pause/resume 已落地为
+`mn_request_resume_read` 加 `on_body` 返回值，WebSocket 侧仍保持 fail-closed 的
+有界队列，尚未改为消费者驱动的 pause/resume。
+
+Linux x86_64 的可复现构建、体积构成和吞吐/并发基线见
+[`BASELINE_LINUX_X86_64.md`](BASELINE_LINUX_X86_64.md)。
 
 完成条件是每项都有命令输出或目标机报告；“文件存在”不等于“平台支持完成”。

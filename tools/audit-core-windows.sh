@@ -68,6 +68,7 @@ expected=$(printf '%s\n' \
   mn_request_cancel \
   mn_request_create \
   mn_request_follow_redirect \
+  mn_request_resume_read \
   mn_request_release \
   mn_request_retain \
   mn_request_start \
@@ -89,5 +90,5 @@ if ((bytes > MAX_BYTES)); then
   exit 1
 fi
 
-printf 'Audited %s: %s bytes, nineteen public ABI exports (%s)\n' \
+printf 'Audited %s: %s bytes, twenty public ABI exports (%s)\n' \
   "$LIB" "$bytes" "$target_label"
