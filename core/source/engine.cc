@@ -14,6 +14,7 @@
 #include "build/build_config.h"
 #endif
 #include "base/functional/bind.h"
+#include "base/i18n/icu_util.h"
 #include "base/message_loop/message_pump_type.h"
 #include "base/no_destructor.h"
 #include "base/synchronization/waitable_event.h"
@@ -168,6 +169,11 @@ public:
     if (!base::ThreadPoolInstance::Get()) {
       base::ThreadPoolInstance::CreateAndStartWithDefaultParams("minicronet");
     }
+    // The IDNA-only dataset is linked into this library, so this only wires up
+    // the already-present data. Without it Chromium's URL canonicalizer aborts
+    // the process on any internationalized hostname, so a failure here has to
+    // fail Engine creation rather than be ignored.
+    icu_ready_ = base::i18n::InitializeICU();
 #if defined(MINICRONET_PROFILE_VERIFICATION)
     if (const char *value = std::getenv("MINICRONET_SSL_KEY_LOG_FILE")) {
 #if BUILDFLAG(IS_WIN)
@@ -209,8 +215,11 @@ public:
     return callback_runner_;
   }
 
+  bool icu_ready() const { return icu_ready_; }
+
 private:
   base::AtExitManager at_exit_manager_;
+  bool icu_ready_ = false;
   base::Thread network_thread_{"MiniCronetNet"};
   scoped_refptr<base::SequencedTaskRunner> callback_runner_;
   std::unique_ptr<net::NetworkChangeNotifier> network_change_notifier_;
@@ -238,7 +247,9 @@ scoped_refptr<Engine> Engine::Create(std::string user_agent,
                                      mn_tls_verify_mode_t tls_verify_mode,
                                      std::string custom_ca_pem,
                                      ProfileContext profile) {
-  GetRuntime();
+  if (!GetRuntime().icu_ready()) {
+    return nullptr;
+  }
   // Construct here so the private constructor remains part of the Core API
   // boundary while scoped_refptr still owns the object.
   scoped_refptr<Engine> engine(new Engine(

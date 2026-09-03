@@ -57,6 +57,10 @@ use_gio = false
 use_glib = false
 use_ozone = false
 use_udev = false
+# Embed the IDNA-only ICU dataset instead of shipping icudtl.dat beside the
+# library. Stub data must go with it or the linker sees two data symbols.
+icu_use_data_file = false
+icu_use_stub_data = false
 EOF
 if [[ ${DISABLE_OPTIONAL_TRACE_EVENTS:-0} == 1 ]]; then
   printf '%s\n' 'optional_trace_events_enabled = false' >>"$OUT_DIR/args.gn"

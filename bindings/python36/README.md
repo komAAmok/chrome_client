@@ -13,7 +13,7 @@ HTTP/3/QUIC、代理和 WebSocket/WSS；Python/Rust 绑定只负责参数、类�
 | 操作系统 | Core 目标 | Python 3.7–3.13 | Python 3.6 | Rust | 备注 |
 | --- | --- | --- | --- | --- | --- |
 | Linux | x86 (`i686`)、x86_64、ARM64 | ✓ | ✓（独立 abi3 扩展） | ✓ | manylinux/glibc 运行时依赖见 manifest |
-| Windows | x86、x86_64、ARM64 | ✓ | x86/x86_64 ✓ | ✓ | DLL 随 wheel，包含 `icudtl.dat` |
+| Windows | x86、x86_64、ARM64 | ✓ | x86/x86_64 ✓ | ✓ | DLL 随 wheel；ICU 数据已编入库中 |
 | macOS | x86_64、ARM64 | ✓ | ✓（独立 abi3 扩展） | ✓ | dylib 按架构匹配 |
 
 

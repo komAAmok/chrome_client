@@ -19,7 +19,6 @@ $manifestPath = Join-Path $core "manifest.json"
 foreach ($path in @(
     (Join-Path $core "minicronet.dll"),
     (Join-Path $core "minicronet.lib"),
-    (Join-Path $deps "icudtl.dat"),
     $manifestPath
 )) {
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
@@ -31,8 +30,8 @@ $manifest = Get-Content -Raw -LiteralPath $manifestPath | ConvertFrom-Json
 if ($manifest.target -ne $Target -or $manifest.library -ne "minicronet.dll") {
     throw "Core manifest does not match target $Target"
 }
-if (-not ($manifest.runtime_dependencies -contains "icudtl.dat")) {
-    throw "$Target manifest does not declare icudtl.dat"
+if ($manifest.runtime_dependencies.Count -ne 0) {
+    throw "$Target manifest declares runtime dependencies; the ICU dataset is embedded"
 }
 
 $dll = Join-Path $core "minicronet.dll"
@@ -42,5 +41,5 @@ if ($dllHash -ne $manifest.sha256) {
 }
 
 New-Item -ItemType Directory -Force -Path $package | Out-Null
-Copy-Item -Force -LiteralPath $dll, (Join-Path $deps "icudtl.dat") -Destination $package
-Write-Host "Staged minicronet.dll and icudtl.dat in $package"
+Copy-Item -Force -LiteralPath $dll -Destination $package
+Write-Host "Staged minicronet.dll in $package"

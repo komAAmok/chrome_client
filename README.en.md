@@ -16,7 +16,7 @@ not ship a second networking stack.
 | OS | Core targets | Python 3.7–3.13 | Python 3.6 | Rust | Notes |
 | --- | --- | --- | --- | --- | --- |
 | Linux | x86 (`i686`), x86_64, ARM64 | ✓ | ✓ (separate abi3 extension) | ✓ | Runtime dependencies are listed in each manifest |
-| Windows | x86, x86_64, ARM64 | ✓ | x86/x86_64 ✓ | ✓ | Wheels bundle the DLL and `icudtl.dat` |
+| Windows | x86, x86_64, ARM64 | ✓ | x86/x86_64 ✓ | ✓ | Wheels bundle the DLL; ICU data is linked in |
 | macOS | x86_64, ARM64 | ✓ | ✓ (separate abi3 extension) | ✓ | dylib is architecture-specific |
 
 

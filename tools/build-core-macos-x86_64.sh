@@ -49,6 +49,10 @@ use_gio = false
 use_glib = false
 use_ozone = false
 use_udev = false
+# Embed the IDNA-only ICU dataset instead of shipping icudtl.dat beside the
+# library. Stub data must go with it or the linker sees two data symbols.
+icu_use_data_file = false
+icu_use_stub_data = false
 EOF
 
 cd "$CHROMIUM_SRC"

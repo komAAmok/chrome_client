@@ -1,0 +1,24 @@
+diff --git a/BUILD.gn b/BUILD.gn
+index 5f01574..5b9556e 100644
+--- a/BUILD.gn
++++ b/BUILD.gn
+@@ -4,6 +4,7 @@
+ 
+ import("//build/config/features.gni")
+ import("//build/config/host_byteorder.gni")
++import("//build/config/cronet/config.gni")
+ import("config.gni")
+ import("sources.gni")
+ 
+@@ -449,6 +450,11 @@ if (is_android) {
+ } else if (icu_is_in_fuchsia && icu_fuchsia_override_data_dir != "") {
+   # See //config.gni for details.
+   data_dir = icu_fuchsia_override_data_dir
++} else if (is_minicronet_build) {
++  # IDNA-only dataset: the Core needs UTS #46 for internationalized hostnames
++  # and nothing else ICU ships. See core/icu/README.md in the chrome_client
++  # repository for the filter and how the file is regenerated.
++  data_dir = "minicronet"
+ } else {
+   data_dir = "common"
+ }

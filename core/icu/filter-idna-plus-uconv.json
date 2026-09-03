@@ -1,0 +1,30 @@
+// MiniCronet ICU data filter: keep only what the Core actually uses.
+//
+// The Core needs UTS #46 for internationalized hostnames (url/ IDNA) plus the
+// charset converters. Everything else in the full 10.9 MB dataset -- collation,
+// currency/language/region/locale trees, timezones, break iterators, character
+// names, transliteration, old IDNA stringprep -- is unreachable from a network
+// stack with no UI, no text layout and no locale-aware formatting.
+{
+  "featureFilters": {
+    "brkitr_dictionaries": { "filterType": "exclude" },
+    "brkitr_rules": { "filterType": "exclude" },
+    "brkitr_tree": { "filterType": "exclude" },
+    "coll_tree": { "filterType": "exclude" },
+    "coll_ucadata": { "filterType": "exclude" },
+    "confusables": { "filterType": "exclude" },
+    "curr_tree": { "filterType": "exclude" },
+    "lang_tree": { "filterType": "exclude" },
+    "locales_tree": { "filterType": "exclude" },
+    "misc": { "includelist": [ "icustd", "icuver", "likelySubtags" ] },
+    "normalization": { "includelist": [ "nfc", "nfkc", "uts46" ] },
+    "rbnf_tree": { "filterType": "exclude" },
+    "rbnf_index": { "filterType": "exclude" },
+    "region_tree": { "filterType": "exclude" },
+    "stringprep": { "filterType": "exclude" },
+    "translit": { "filterType": "exclude" },
+    "unames": { "filterType": "exclude" },
+    "unit_tree": { "filterType": "exclude" },
+    "zone_tree": { "filterType": "exclude" }
+  }
+}

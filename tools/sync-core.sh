@@ -85,6 +85,15 @@ apply_patch profile-boringssl.patch third_party/boringssl/src \
   'include/openssl/ssl.h:SSL_set_client_hello_padding_length' \
   'include/openssl/ssl.h:SSL_GROUP_X25519_KYBER768' \
   'ssl/ssl_key_share.cc:SSL_GROUP_X25519_KYBER768'
+apply_patch icu-minicronet-data.patch third_party/icu \
+  'BUILD.gn:data_dir = "minicronet"'
+
+# The IDNA-only ICU dataset is embedded into the library, so it has to be in the
+# Chromium checkout before gn runs. Without it the build falls back to nothing
+# and every internationalized hostname aborts the process.
+install -d "$CHROMIUM_SRC/third_party/icu/minicronet"
+install -m 644 "$ROOT_DIR/core/icu/icudtl.dat" \
+  "$CHROMIUM_SRC/third_party/icu/minicronet/icudtl.dat"
 
 test -f "$CHROMIUM_SRC/base/nix/xdg_util_minicronet.cc" \
   || die "minicronet-core.patch is partially applied: base/nix/xdg_util_minicronet.cc missing"

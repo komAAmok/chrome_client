@@ -212,7 +212,7 @@ jobs:
         shell: pwsh
         run: |
           $wheel = Get-ChildItem dist\*.whl | Select-Object -First 1
-          python -c "import zipfile; z=zipfile.ZipFile(r'$($wheel.FullName)'); n=set(z.namelist()); assert any(x.endswith('/minicronet.dll') for x in n); assert any(x.endswith('/icudtl.dat') for x in n); print('Windows runtime files present')"
+          python -c "import zipfile; z=zipfile.ZipFile(r'$($wheel.FullName)'); n=set(z.namelist()); assert any(x.endswith('/minicronet.dll') for x in n); print('Windows runtime DLL present')"
 
       - uses: actions/upload-artifact@v4
         with:

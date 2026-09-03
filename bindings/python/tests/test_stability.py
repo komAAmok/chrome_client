@@ -193,19 +193,25 @@ class StabilityTests(unittest.TestCase):
             finally:
                 stalled.close()
 
-    def test_non_ascii_host_is_rejected_without_crashing(self):
-        """An internationalized hostname must fail closed, not abort the process.
+    def test_internationalized_host_is_canonicalized(self):
+        """An internationalized hostname must reach the network like its punycode form.
 
-        The Core links ICU but never initializes it, so letting Chromium
-        canonicalize a non-ASCII host CHECK-failed and killed the interpreter
-        with SIGTRAP. Non-ASCII path and query bytes stay supported because
-        Chromium percent-encodes them without ICU.
+        The Core embeds an IDNA-only ICU dataset and initializes ICU at Engine
+        creation. Before that it linked ICU without initializing it, so Chromium's
+        URL canonicalizer CHECK-failed and killed the interpreter with SIGTRAP on
+        any non-ASCII host.
         """
         with chrome_client.Client() as client:
-            with self.assertRaises(chrome_client.RequestException):
-                client.get("http://例え.テスト/", timeout=2)
-            with self.assertRaises(chrome_client.RequestException):
+            # Both spellings of the same non-existent host must fail the same way:
+            # resolution/connection, not argument validation.
+            for url in ("http://例え.テスト/", "http://xn--r8jz45g.xn--zckzah/"):
+                with self.assertRaises(chrome_client.RequestException) as caught:
+                    client.get(url, timeout=2)
+                self.assertNotIn("InvalidArgument", str(caught.exception))
+
+            with self.assertRaises(chrome_client.RequestException) as caught:
                 client.get("not-a-url", timeout=2)
+            self.assertIn("InvalidArgument", str(caught.exception))
 
             response = client.get(self.url + "path/路径?q=值", timeout=5)
             self.assertEqual(response.status_code, 200)

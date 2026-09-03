@@ -107,8 +107,10 @@ PY
 )"
     [[ -n "$expected_import_sha" && "$import_sha" == "$expected_import_sha" ]] \
       || die "$target: import library SHA-256 mismatch"
-    [[ -f "$ROOT/core/dependencies/$target/icudtl.dat" ]] \
-      || die "$target: missing core/dependencies/$target/icudtl.dat"
+    # ABI v8 links the IDNA-only ICU dataset into the library, so no external
+    # icudtl.dat may travel with a Windows artifact any more.
+    [[ ! -e "$ROOT/core/dependencies/$target/icudtl.dat" ]] \
+      || die "$target: stale core/dependencies/$target/icudtl.dat; ICU data is embedded"
   fi
 
   # Linux nm is available on the build host. For foreign formats use llvm-nm

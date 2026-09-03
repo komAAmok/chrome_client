@@ -100,11 +100,11 @@ asyncio 并发路径在三者之间的差异处于运行间抖动范围内，没
 - 上面的 42 ms 教训说明基准数字必须先做服务端对照，否则很容易把测量工具的缺陷
   当成被测对象的缺陷。
 
-## ICU 与 IDN：一个曾经的进程级崩溃
+## ICU 与 IDN：从进程级崩溃到内嵌 IDNA 数据
 
 排查 Windows wheel 里那份 10.8 MB `icudtl.dat` 时发现，**Core 从不调用
-`base::i18n::InitializeICU()`**（`core/source/` 里没有任何 ICU 初始化），但 `net`/`url`
-仍把 ICU 链进依赖图。后果不是体积浪费而已：
+`base::i18n::InitializeICU()`**，但 `net`/`url` 仍把 ICU 链进依赖图。后果不是体积
+浪费而已：
 
 ```
 chrome_client.get("http://例え.テスト/")   # 曾经 SIGTRAP，整个宿主进程被终止
@@ -113,32 +113,68 @@ chrome_client.get("http://例え.テスト/")   # 曾经 SIGTRAP，整个宿主�
 信号 5（SIGTRAP，Chromium 的 `IMMEDIATE_CRASH`）来自 URL 规范化 —— 非 ASCII 主机名
 需要 IDNA，而 ICU 数据从未注册。任何调用方传入国际化域名都会打掉宿主进程。
 
-已修复：`mn_request_create` 在 Chromium 规范化之前用 `url::ParseStandardURL` 做纯
-语法切分，只检查主机段是否为 ASCII，非 ASCII 则返回 `MN_ERROR_INVALID_ARGUMENT`。
-路径和查询里的非 ASCII 不受影响 —— Chromium 不需要 ICU 就能百分号编码，实测
-`/路径` 和 `?q=值` 均正常返回 200。`GURL(url).is_valid()` 也一并加上，顺带把
-`not-a-url`、`http://` 这类畸形 URL 提前拦在创建期而不是拖到网络层。
+### 三种数据集的实测体积
 
-不能用 `GURL` 来做这个校验：构造 `GURL` 本身就会崩，所以检查必须早于任何 Chromium
-URL 解析。
+用同一份 ICU 源码（`third_party/icu/source/data`，102 MB）配不同过滤器构建：
 
-### 由此得到的体积结论（待 Windows runner 确认）
+| 数据集 | 大小 | 说明 |
+| --- | --- | --- |
+| Chromium `common/icudtl.dat` | 10,876,560 | 完整数据 |
+| IDNA + 全部字符集转换器 | 6,276,640 | `core/icu/filter-idna-plus-uconv.json` |
+| **仅 IDNA（采用）** | **191,056** | `core/icu/filter.json` |
 
-既然 ICU 从未初始化，那份数据文件就永远不会被打开：
+字符集转换器占了第二种方案的 **97%**（6.09 MB）。内嵌它会让每个平台的库从 9.0 MB
+涨到 15.3 MB，与轻量化目标相反；而 Core 把响应头以原始字节交给绑定层解码，从不调用
+ICU 转换器。所以只保留 IDNA。这不是功能回退 —— 此前 ICU 完全没有初始化，没有任何
+现有功能依赖过 ICU 转换器。
 
-- `core/dependencies/windows-{x86,x86_64,arm64}/icudtl.dat` 共 32 MB 在仓库里
-- 每个 Windows wheel 携带 10.8 MB，比 DLL 本身还大
-- Linux 和 macOS 从未携带它，行为与 Windows 一致（同样不支持 IDN）
+最终数据集 9 个条目：`uts46.nrm`、`nfkc.nrm`、`cnvalias.icu`、`uemoji.icu`、
+`ulayout.icu`、`icustd.res`、`icuver.res`、`curr/supplementalData.res`、
+`zone/tzdbNames.res`。生成方式见 `core/icu/README.md`。
 
-预期收益是每个 Windows wheel 减少 10.8 MB。但**本机无法验证 Windows 运行时**，而
-项目自己的规则要求「需要真实运行的架构使用对应 runner，交叉编译成功不等于运行时
-成功」。所以本轮只记录结论，不动 `tools/stage-windows-wheel.ps1`、Windows manifest
-的 `runtime_dependencies` 和 workflow 里的断言。移除前应在 Windows runner 上确认
-wheel 仍可导入并通过测试。
+### 各平台体积变化
 
-要真正支持 IDN（Chrome 支持）则是相反方向：需要初始化 ICU 并在**每个**平台携带
-数据。全量数据 10.8 MB 显然不可接受，可行路径是用 `ICU_DATA_FILTER_FILE` 只保留
-IDNA/uconv。这是一个功能取舍，不是纯粹的体积优化，需要单独决策。
+数据用 `icu_use_data_file = false` 编入库中，不再随产物携带外挂文件。
+
+| 目标 | 内嵌前 | 内嵌后 | 增量 |
+| --- | --- | --- | --- |
+| linux-x86 | 8,614,628 | 8,805,412 | +190,784 |
+| linux-x86_64 | 9,033,552 | 9,320,288 | +286,736 |
+| linux-arm64 | 8,432,256 | 8,717,840 | +285,584 |
+| windows-x86 | 9,063,424 | 9,254,912 | +191,488 |
+| windows-x86_64 | 11,266,560 | 11,457,024 | +190,464 |
+| windows-arm64 | 9,313,792 | 9,504,256 | +190,464 |
+| macos-x86_64 | 8,651,552 | 8,844,064 | +192,512 |
+| macos-arm64 | 7,823,120 | 8,021,264 | +198,144 |
+
+**Windows wheel 净减 10.69 MB**：库增加约 190 KB，但不再携带 10,876,560 字节的
+`icudtl.dat`。Linux 和 macOS 各增加约 190--287 KB，换来此前会崩溃的 IDN 支持。
+
+仓库里 `core/dependencies/windows-*/icudtl.dat` 三份共 32 MB 已删除，
+`tools/audit-core-binaries.sh` 反向断言它们不得再出现。
+
+`tools/audit-core-linux.sh` 的体积上限相应从 9,050,000 提到 9,400,000。
+
+### IDN 现在真正可用
+
+`mn_request_create` 保留了 `GURL(url).is_valid()` 校验，把 `not-a-url`、`http://`
+这类畸形 URL 拦在创建期；`engine.cc` 在 `Runtime` 构造时初始化 ICU，失败则 Engine
+创建返回 `MN_ERROR_INITIALIZATION_FAILED`，而不是留到规范化时崩溃。
+
+验收标准是 IDN 主机名与其 punycode 形式行为一致：
+
+| 输入 | 结果 |
+| --- | --- |
+| `http://例え.テスト/` | `Timeout`（net error -7，走到 DNS） |
+| `http://xn--r8jz45g.xn--zckzah/` | `Timeout`（同上） |
+| `http://<local>/path/路径?q=值` | 200，路径按百分号编码 |
+| `not-a-url` | `RequestException: InvalidArgument` |
+
+`test_internationalized_host_is_canonicalized` 覆盖这四种情况。
+
+内嵌 ICU 后的基准（同口径）：同步顺序 833.5 req/s、p50 1.17 ms；流式 152.8 MiB/s；
+并发 32 为 742.0 req/s、并发 128 为 363.4 req/s；慢消费者隔离两个 Engine 均 20/20。
+与 ABI v8 内嵌前相比没有退化。
 
 
 ```sh

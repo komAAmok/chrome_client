@@ -4,14 +4,13 @@
 
 ```text
 core/binaries/<target>/
-core/dependencies/windows-*/icudtl.dat
 ```
 
 这些大文件当前被 `.gitignore` 排除，发布时应使用 Git LFS 或在 workflow 中增加从 GitHub Release 下载并校验 SHA-256 的步骤。工作流中的 `tools/audit-core-binaries.sh` 会在编译前阻止缺失或错误架构的 Core 继续构建。
 
 Linux 使用 `manylinux2014` 容器。该容器以 glibc 2.17 为基线，因此生成的 wheel 兼容 glibc 2.18 及以上版本。`auditwheel` 会收集 `libminicronet.so` 及 NSS/NSPR 私有依赖；不能从 Ubuntu runner 直接收集依赖。
 
-Windows 构建前由 `tools/stage-windows-wheel.ps1` 把匹配架构的 `minicronet.dll` 和 `icudtl.dat` 放到 `chrome_client` 包目录中。Windows 系统 DLL 不随 wheel 携带。
+Windows 构建前由 `tools/stage-windows-wheel.ps1` 把匹配架构的 `minicronet.dll` 放到 `chrome_client` 包目录中。ABI v8 起 ICU 数据已编入库中，不再携带 `icudtl.dat`（每个 Windows wheel 因此少 10.8 MB），Windows 系统 DLL 同样不随 wheel 携带。
 
 macOS 构建后使用 `delocate-wheel` 收集并修复匹配架构的 `libminicronet.dylib`。
 
