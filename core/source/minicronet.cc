@@ -18,6 +18,7 @@
 #include "net/http/http_util.h"
 #include "net/proxy_resolution/proxy_config.h"
 #include "url/gurl.h"
+#include "url/third_party/mozilla/url_parse.h"
 #include "url/origin.h"
 
 struct mn_engine {
@@ -334,6 +335,27 @@ mn_result_t MN_CALL mn_request_create(mn_engine_t *engine,
   std::string method(config->method, config->method_length);
   if (url.find('\0') != std::string::npos ||
       !net::HttpUtil::IsValidHeaderName(method)) {
+    return MN_ERROR_INVALID_ARGUMENT;
+  }
+  // Reject a non-ASCII host before Chromium canonicalizes the URL. GURL
+  // CHECK-fails on an internationalized hostname because the Core links ICU but
+  // never initializes it, and that aborts the embedding process. Non-ASCII in
+  // the path or query is fine -- Chromium percent-encodes it without ICU -- so
+  // the syntactic parser is used to test the host alone. Supporting IDN would
+  // mean initializing ICU and shipping its data on every platform.
+  url::Parsed parsed_url;
+  UNSAFE_BUFFERS(url::ParseStandardURL(url.data(),
+                                       static_cast<int>(url.size()),
+                                       &parsed_url));
+  if (parsed_url.host.is_valid()) {
+    const std::string_view host = std::string_view(url).substr(
+        static_cast<size_t>(parsed_url.host.begin),
+        static_cast<size_t>(parsed_url.host.len));
+    if (!base::IsStringASCII(host)) {
+      return MN_ERROR_INVALID_ARGUMENT;
+    }
+  }
+  if (!GURL(url).is_valid()) {
     return MN_ERROR_INVALID_ARGUMENT;
   }
 

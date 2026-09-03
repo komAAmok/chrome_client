@@ -100,7 +100,46 @@ asyncio 并发路径在三者之间的差异处于运行间抖动范围内，没
 - 上面的 42 ms 教训说明基准数字必须先做服务端对照，否则很容易把测量工具的缺陷
   当成被测对象的缺陷。
 
-## 复现命令
+## ICU 与 IDN：一个曾经的进程级崩溃
+
+排查 Windows wheel 里那份 10.8 MB `icudtl.dat` 时发现，**Core 从不调用
+`base::i18n::InitializeICU()`**（`core/source/` 里没有任何 ICU 初始化），但 `net`/`url`
+仍把 ICU 链进依赖图。后果不是体积浪费而已：
+
+```
+chrome_client.get("http://例え.テスト/")   # 曾经 SIGTRAP，整个宿主进程被终止
+```
+
+信号 5（SIGTRAP，Chromium 的 `IMMEDIATE_CRASH`）来自 URL 规范化 —— 非 ASCII 主机名
+需要 IDNA，而 ICU 数据从未注册。任何调用方传入国际化域名都会打掉宿主进程。
+
+已修复：`mn_request_create` 在 Chromium 规范化之前用 `url::ParseStandardURL` 做纯
+语法切分，只检查主机段是否为 ASCII，非 ASCII 则返回 `MN_ERROR_INVALID_ARGUMENT`。
+路径和查询里的非 ASCII 不受影响 —— Chromium 不需要 ICU 就能百分号编码，实测
+`/路径` 和 `?q=值` 均正常返回 200。`GURL(url).is_valid()` 也一并加上，顺带把
+`not-a-url`、`http://` 这类畸形 URL 提前拦在创建期而不是拖到网络层。
+
+不能用 `GURL` 来做这个校验：构造 `GURL` 本身就会崩，所以检查必须早于任何 Chromium
+URL 解析。
+
+### 由此得到的体积结论（待 Windows runner 确认）
+
+既然 ICU 从未初始化，那份数据文件就永远不会被打开：
+
+- `core/dependencies/windows-{x86,x86_64,arm64}/icudtl.dat` 共 32 MB 在仓库里
+- 每个 Windows wheel 携带 10.8 MB，比 DLL 本身还大
+- Linux 和 macOS 从未携带它，行为与 Windows 一致（同样不支持 IDN）
+
+预期收益是每个 Windows wheel 减少 10.8 MB。但**本机无法验证 Windows 运行时**，而
+项目自己的规则要求「需要真实运行的架构使用对应 runner，交叉编译成功不等于运行时
+成功」。所以本轮只记录结论，不动 `tools/stage-windows-wheel.ps1`、Windows manifest
+的 `runtime_dependencies` 和 workflow 里的断言。移除前应在 Windows runner 上确认
+wheel 仍可导入并通过测试。
+
+要真正支持 IDN（Chrome 支持）则是相反方向：需要初始化 ICU 并在**每个**平台携带
+数据。全量数据 10.8 MB 显然不可接受，可行路径是用 `ICU_DATA_FILTER_FILE` 只保留
+IDNA/uconv。这是一个功能取舍，不是纯粹的体积优化，需要单独决策。
+
 
 ```sh
 # 重建并审计（增量约 23 秒）

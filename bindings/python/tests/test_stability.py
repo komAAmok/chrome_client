@@ -193,6 +193,23 @@ class StabilityTests(unittest.TestCase):
             finally:
                 stalled.close()
 
+    def test_non_ascii_host_is_rejected_without_crashing(self):
+        """An internationalized hostname must fail closed, not abort the process.
+
+        The Core links ICU but never initializes it, so letting Chromium
+        canonicalize a non-ASCII host CHECK-failed and killed the interpreter
+        with SIGTRAP. Non-ASCII path and query bytes stay supported because
+        Chromium percent-encodes them without ICU.
+        """
+        with chrome_client.Client() as client:
+            with self.assertRaises(chrome_client.RequestException):
+                client.get("http://例え.テスト/", timeout=2)
+            with self.assertRaises(chrome_client.RequestException):
+                client.get("not-a-url", timeout=2)
+
+            response = client.get(self.url + "path/路径?q=值", timeout=5)
+            self.assertEqual(response.status_code, 200)
+
     def test_response_close_cancels_stream(self):
         with chrome_client.Client() as client:
             response = client.get(self.url + "infinite", stream=True)

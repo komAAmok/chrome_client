@@ -400,8 +400,10 @@ class Client:
             _headers(_merge_headers(self.headers, headers), _merge_cookies(self.cookies, cookies)), body,
             self.timeout if timeout is None else timeout, allow_redirects,
         )
-        request = self._engine.request(*request_args)
+        # Request creation validates the URL, so it belongs inside the try: a
+        # rejected URL must raise RequestException like every other failure.
         try:
+            request = self._engine.request(*request_args)
             native = request.start_stream()
             reader = _SyncBodyReader(request, response_limit)
             if stream:
@@ -570,12 +572,17 @@ class AsyncClient(Client):
                                        cookies=cookies, timeout=timeout, allow_redirects=allow_redirects,
                                        stream=stream, max_response_bytes=response_limit)
         url = _url(url, params)
-        request = self._engine.request(
-            str(method).upper(), url,
-            _headers(_merge_headers(self.headers, headers), _merge_cookies(self.cookies, cookies)),
-            _body(data, json),
-            self.timeout if timeout is None else timeout, allow_redirects,
-        )
+        # Request creation validates the URL; map its failure to the public
+        # exception hierarchy instead of leaking a bare RuntimeError.
+        try:
+            request = self._engine.request(
+                str(method).upper(), url,
+                _headers(_merge_headers(self.headers, headers), _merge_cookies(self.cookies, cookies)),
+                _body(data, json),
+                self.timeout if timeout is None else timeout, allow_redirects,
+            )
+        except RuntimeError as error:
+            raise _map_native_error(error)
         loop = asyncio.get_running_loop() if hasattr(asyncio, "get_running_loop") else asyncio.get_event_loop()
         future = loop.create_future()
         wake = asyncio.Event()
