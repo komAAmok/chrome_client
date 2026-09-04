@@ -163,9 +163,9 @@ Request 与 WebSocket 在 ABI v8 里各自建独立 sequenced runner，`Engine` 
 收益主要在 manylinux 打包健壮性（少 3 个私有依赖 `libnss3`/`libnspr4`/`libnssutil3`），
 不在体积。
 
-### chrome_152：指纹差异已查明，但仍不能添加
+### chrome_152：证据已备齐，只剩一个取值决定
 
-拿到一份 Chrome 152 的真实抓包（`~/桌面/152.json`，tls.peet.ws，UA
+拿到 4 次独立的 Chrome 152 抓包（tls.peet.ws，UA
 `Chrome/152.0.0.0`）后，与仓库里已 `wire_verified` 的 chrome_151 抓包逐项对照，
 **152 与 151 在 wire 上只差两点**：
 
@@ -189,50 +189,62 @@ JA4 的 `1516` → `1517` 正是「扩展从 16 个变 17 个」，cipher 哈希
 UA 那条已经天然满足：`core/source/minicronet.cc:52` 对 major > 104 直接生成
 `<major>.0.0.0`，加一个 `chrome_152` 表项就会得到 `Chrome/152.0.0.0`。
 
-**但仍然不能加，有三个独立的阻塞：**
+**一、随机性门禁：已通过。** 4 次独立连接（4 个不同源端口），client_random /
+session_id / extension_order / grease_values / key_share / ech 各有 **4 个不同值**
+（门槛是 3）。去掉 GREASE 后的 cipher / 曲线 / 签名算法列表、H2 指纹、
+trust_anchors 载荷、UA 在 4 次里逐字节相同。扩展集合只差一个
+`pre_shared_key (41)`——只出现在复用会话的那 3 次，属于预期。
+`tools/verify-wire-capture.py` 把这套门禁在本仓库实现，输出
+`profiles/chrome-152/validation.json`，`wire_verified: true`。
 
-**一、Core 现在根本发不出这个扩展。** `ShouldAdvertiseTrustAnchorIDs()`
-（`net/ssl/ssl_config_service.cc:84`）要求 `!trust_anchor_ids.empty()`，而
-`core/source/profile_ssl_config_service.cc` 从不设置这个字段。所以即使表里写上
-0xca34，wire 上也不会出现——profile 声明的指纹与实际发出的不一致，正是规则禁止的
-情形。
+**二、源码证据：已取得。** 不需要第二份 70 GB 检出——`evidence.source_files` 只涉及
+12 个文件，`tools/collect-profile-evidence.py` 直接从 googlesource 按 release tag
+逐个取。该工具先用 chrome_151 做了校验：**12 个文件的字节数、SHA-256、全部信号计数
+与行号，以及 DEPS 里的 boringssl / quiche revision，与已审计的 chrome_151 记录零差异。**
 
-**二、扩展内容不是版本常量，无法从源码复现。** 载荷是 186 字节、28 个具体的 trust
-anchor ID。它的来源是 PKI Metadata 组件更新
-（`chrome/browser/component_updater/pki_metadata_component_installer.cc:373`
-`UpdateTrustAnchorIDsImpl`），启动时先用编译进去的根库初始化，之后被组件更新替换。
-把本仓库固定的 Chromium 树（MAJOR=153）的编译期根库拿来比：
+chrome_152 固定在 `152.0.7977.83`（commit `79460ebe…`，boringssl `572a4c68…`，
+quiche `1ba0d99a…`）。UA 只暴露主版本，无法归因到具体 patch build；改为验证分支稳定
+性：把该分支首个（`152.0.7977.42`，08-12）与最后一个（`.83`，09-03）stable 的 12 个
+文件对比，**12/12 完全相同**，所以具体 build 不影响指纹。
 
-| 项 | 数量 |
-| --- | --- |
-| 固定树 `root_store.textproto` 里的 ID | 32 |
-| 抓包里实际通告的 ID | 28 |
-| 抓包有而固定树没有的 | 0 |
-| 固定树有而抓包没有的 | 4（`d6790902`/`03`/`09`/`0e`，均为 11129.9.x） |
+**三、trust anchor ID 的取值：仍是唯一未决项。** 载荷形状本身没问题——
+`AddTrustAnchorIdToEncodedList`、`ShouldAdvertiseTrustAnchorIDs`、
+`SelectAllTrustAnchorIDs` 这三个函数在 152 tag 与本仓库固定树里**逐字节相同**，所以
+本仓库编译出的 Core 会产出与 Chrome 152 一致的编码，顺序由我们喂进去的顺序决定。
 
-顺序也完全不同：抓包以 `82df130206` 开头，根库以 `839a648c9b2d010a` 开头。也就是说
-照固定树编译会发出 32 个 ID、另一种顺序、另一个长度——与真实 Chrome 152 不一致，而且
-每次根库数据变动都会再漂移一次。
+不能从源码得出的是「哪些 ID」。4 次抓包一致通告 28 个（186 字节载荷）；而编译期
+Chrome Root Store 在 152 tag 和固定树里都是 32 个，28 个是其严格子集，少了
+`d6790902`/`03`/`09`/`0e`（均为 11129.9.x），顺序也不同（wire 以 `82df130206` 开头，
+根库以 `839a648c9b2d010a` 开头）。抓包机器的根库被 PKI Metadata 组件更新过，那个状态
+不存在于任何源码树。
 
-**三、随机性证据不足。** chrome_151 的 `wire_verified` 是靠 3 次独立连接达成的，
-`validation.json` 的 `stochastic.unique_counts` 要求 client_random / session_id /
-extension_order / grease_values / key_share_digest / ech_digest 各有 3 个不同值。
-152 目前只有 1 份 JSON、0 个 pcap，`multi_connection_randomness_verified` 无从建立。
+两条路，证据已排除其中一条：
 
-**另外一个值得注意的结论：这个扩展未必是版本标记。** 它的出现取决于组件更新下来的
-数据加两个默认开启的 feature（`net/base/features.cc:682,684` 的 `kTLSTrustAnchorIDs`
-与 `kNonMtcTrustAnchorIDs` 都是 `FEATURE_ENABLED_BY_DEFAULT`），而不是浏览器主版本。
-一台组件已更新的 Chrome 151 也可能发出它。所以把 0xca34 当成「chrome_152 专属指纹」
-本身站不住——151 与 152 之间除 UA 之外可能并不存在稳定的版本级 wire 差异。
+- **从编译期根库导出**：可从源码复现，但会发出 32 个 ID、不同顺序、不同长度，
+  不匹配任何真实 Chrome，**不满足保真要求**
+- **冻结抓到的 28 个 ID（按观测顺序）**：与抓包逐字节一致，也和 profile 其它字段的
+  做法一致——cipher / 曲线 / 扩展列表本来就是冻结常量而不是从构建读出来的。代价是它
+  是一个快照，真实 152 装机会随组件更新变化
 
-**解锁需要（按依赖顺序）：**
+冻结是唯一满足保真要求的选项，但它把一个「组件更新值」放进版本索引表，需要你签字。
+落地还要改 Core：`core/source/profile_ssl_config_service.cc` 从 profile 填
+`SSLContextConfig::trust_anchor_ids`、profile 表加一个字段、8 个平台重建。151 及更早
+的 profile 保持空列表，`ShouldAdvertiseTrustAnchorIDs()` 对它们返回 false，因此逐字节
+不变——这个改动天然 fail-closed。
 
-1. ≥3 次独立的 Chrome 152 抓包（pcap + response JSON），补齐随机性门禁
-2. Chrome 152 对应 tag 的源码树，用于生成 `evidence.source_files` 的逐文件 SHA-256、
-   字节数和信号行号。本机是 depth-1、`blob:none`、0 个 tag 的浅克隆，做不到
-3. 一个关于 trust anchor ID 取值的决定：是把抓到的 28 个 ID 按观测顺序冻结进 profile
-   （忠于那一次抓包，但真实 Chrome 会随组件更新变化），还是从编译期根库导出
-   （可从源码复现，但不匹配任何真实 Chrome）。两者都不是「正确」，需要你定
+**订正此前一个错误结论。** 之前写过「这个扩展未必是版本标记，组件已更新的 Chrome 151
+也可能发出它」。拿到两个 tag 的源码后证明是错的：
+
+| | Chrome 151 | Chrome 152 |
+| --- | --- | --- |
+| `kTLSTrustAnchorIDs` | `FEATURE_DISABLED_BY_DEFAULT` | `FEATURE_ENABLED_BY_DEFAULT` |
+| `kNonMtcTrustAnchorIDs` | 不存在 | `FEATURE_ENABLED_BY_DEFAULT` |
+| 选择逻辑 | `SelectTrustAnchorIDs()`，只发与服务端通告的交集 | `SelectAllTrustAnchorIDs()`，无条件发全部 |
+
+151 的开关是编译期关闭的，所以无论组件多新都不会发这个扩展。**0xca34 是真正的版本级
+差异**，chrome_152 有独立于 UA 的指纹依据。
+
+证据与说明都在 [`profiles/chrome-152/`](../profiles/chrome-152/README.md)。
 
 ### 其它待确认
 

@@ -1,0 +1,92 @@
+{
+  "connections": 4,
+  "independent_source_ports": 4,
+  "matches": {
+    "ciphers": true,
+    "extension_set": true,
+    "groups": true,
+    "http2_fingerprint": true,
+    "signature_algorithms": true,
+    "trust_anchors_payload": true,
+    "user_agent": true
+  },
+  "mismatches": {},
+  "profile_id": "chrome_152",
+  "stable_expectations": {
+    "cipher_suites": [
+      "TLS_AES_128_GCM_SHA256",
+      "TLS_AES_256_GCM_SHA384",
+      "TLS_CHACHA20_POLY1305_SHA256",
+      "TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256",
+      "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256",
+      "TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384",
+      "TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384",
+      "TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256",
+      "TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256",
+      "TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA",
+      "TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA",
+      "TLS_RSA_WITH_AES_128_GCM_SHA256",
+      "TLS_RSA_WITH_AES_256_GCM_SHA384",
+      "TLS_RSA_WITH_AES_128_CBC_SHA",
+      "TLS_RSA_WITH_AES_256_CBC_SHA"
+    ],
+    "extension_set": [
+      0,
+      5,
+      10,
+      11,
+      13,
+      16,
+      18,
+      23,
+      27,
+      35,
+      43,
+      45,
+      51,
+      17613,
+      51764,
+      65037,
+      65281
+    ],
+    "http2_fingerprint": "1:65536;2:0;4:6291456;6:262144|15663105|0|m,a,s,p",
+    "resumption_extensions_observed": [
+      41
+    ],
+    "signature_algorithms": [
+      "0x904",
+      "0x905",
+      "0x906",
+      "ecdsa_secp256r1_sha256",
+      "rsa_pss_rsae_sha256",
+      "rsa_pkcs1_sha256",
+      "ecdsa_secp384r1_sha384",
+      "rsa_pss_rsae_sha384",
+      "rsa_pkcs1_sha384",
+      "rsa_pss_rsae_sha512",
+      "rsa_pkcs1_sha512"
+    ],
+    "supported_groups": [
+      "X25519MLKEM768 (4588)",
+      "X25519 (29)",
+      "P-256 (23)",
+      "P-384 (24)"
+    ],
+    "trust_anchors_payload_bytes": 186
+  },
+  "stochastic": {
+    "fixed_seed_allowed": false,
+    "grease_present": true,
+    "minimum_required": 3,
+    "multi_connection_randomness_verified": true,
+    "unique_counts": {
+      "client_random": 4,
+      "ech_digest": 4,
+      "extension_ids": 4,
+      "grease_values": 4,
+      "key_share_digest": 4,
+      "session_id": 4
+    }
+  },
+  "wire_verified": true
+}
