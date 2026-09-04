@@ -53,6 +53,11 @@ use_udev = false
 # library. Stub data must go with it or the linker sees two data symbols.
 icu_use_data_file = false
 icu_use_stub_data = false
+# Control-flow integrity costs jump tables and metadata in a library whose
+# only entry points are 20 audited C functions; the size is worth more here.
+# Upstream only turns is_cfi on for official linux-x64, so this line changes
+# nothing here; it is kept so all eight targets carry identical arguments.
+is_cfi = false
 EOF
 
 cd "$CHROMIUM_SRC"

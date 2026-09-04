@@ -191,6 +191,59 @@ LD_LIBRARY_PATH=/home/sj/chromium/src/out/MiniCronet-linux-x86_64 \
   tools/bench-core-baseline.py                    # 重建 Core，含隔离用例
 ```
 
+## `is_cfi = false` —— 减 147,456 字节
+
+Chromium 在 `build/config/sanitizers/sanitizers.gni:58` 只对
+`is_official_build && is_clang && linux-x64`（以及 ChromeOS 设备）默认打开
+`is_cfi`，`use_cfi_icall` 的 cflags 也嵌在 `if (is_cfi)` 分支里。所以这个开关
+**只影响 linux-x86_64 一个目标**。
+
+| 段 | is_cfi=true | is_cfi=false | 差 |
+| --- | --- | --- | --- |
+| `.text` | 6,217,433 | 6,093,696 | −123,737 |
+| `.eh_frame` + `.eh_frame_hdr` | 46,524 | 36,204 | −10,320 |
+| `.data.rel.ro` | 223,952 | 217,872 | −6,080 |
+| `.rela.dyn` | 444,192 | 439,320 | −4,872 |
+| `.relro_padding` | 3,824 | 592 | −3,232 |
+| `.rodata` | 2,280,447 | 2,281,215 | +768 |
+| 文件总计 | **9,320,288** | **9,172,832** | **−147,456（−1.58%）** |
+
+`cfi-vcall` 的跳转表占了绝大部分。同一份配置连续两次独立编译得到同一哈希
+`3c09b8dd…14a0c0`，可复现性与 ICU 那轮一致。
+`tools/audit-core-linux.sh` 的体积上限相应从 9,400,000 收到 9,250,000。
+
+### 吞吐没有可测量的变化
+
+在同一次会话里交替跑三轮（新旧 Core 都在本机，避免跨天机器状态差异），下表取
+中位数并给出三轮区间：
+
+| 指标 | is_cfi=true | is_cfi=false |
+| --- | --- | --- |
+| 同步顺序 1 KiB | 794.4 [769.7–797.4] req/s | 809.4 [770.8–810.3] req/s |
+| 同步 p50 延迟 | 1.2 ms | 1.2 ms |
+| asyncio 并发 32 | 760.6 [749.9–783.9] req/s | 733.0 [729.1–752.4] req/s |
+| asyncio 并发 128 | 382.8 [377.5–404.9] req/s | 387.3 [377.6–395.5] req/s |
+| 流式 64 MiB | 162.4 [158.4–164.0] MiB/s | 161.3 [144.4–162.7] MiB/s |
+| 慢消费者隔离 | 3 × 20/20 | 3 × 20/20 |
+
+区间互相重叠，没有方向一致的变化。这符合预期：热路径是网络 I/O，间接调用检查
+不在瓶颈上。功能面 16 个 Python 用例全过（1 个因缺 WS 端点 skip），
+`minicronet_smoke`、`run-http-smoke.py` 与 4 个 audit 脚本全过。
+
+### 这是安全性换体积
+
+去掉 `cfi-vcall` 和 `cfi-icall` 之后，一旦网络栈出现内存破坏漏洞，攻击者劫持
+虚表或函数指针的门槛就降低了。用户已确认接受这个取舍。
+
+### 其余 7 个目标：零改动，已实测
+
+`is_cfi = false` 写进 8 个构建脚本只是为了参数统一。对非 linux-x64 目标它不改变
+任何生成物：把这一行加进 `args.gn` 后重新 `gn gen`，
+`obj/minicronet/minicronet.ninja` 与 `toolchain.ninja` 的 md5 和加之前完全相同
+（已在 linux-arm64、windows-x86_64、macos-arm64 上实测），
+`--fail-on-unused-args` 也不报错。剩下 4 个目标共用同一条默认值表达式，因此
+这 7 个平台的已发布二进制无需重建。
+
 ## 已排除的精简候选
 
 ### `optional_trace_events_enabled = false` —— 零收益

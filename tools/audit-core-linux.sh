@@ -6,8 +6,9 @@ CHROMIUM_SRC=${CHROMIUM_SRC:-/home/sj/chromium/src}
 # Runtime profile table is required for the single-library 99--151 selector.
 # Keep the allowance narrow; v7's Engine-level CA verifier is intentional.
 # Raised for ABI v8, which embeds the 191 KB IDNA-only ICU dataset so no external
-# icudtl.dat travels with the library.
-MAX_BYTES=${MAX_BYTES:-9400000}
+# icudtl.dat travels with the library, then lowered again after is_cfi = false
+# removed 147,456 bytes of jump tables. Current artifact is 9,172,832 bytes.
+MAX_BYTES=${MAX_BYTES:-9250000}
 LIB=$OUT_DIR/libminicronet.so
 READELF=$CHROMIUM_SRC/third_party/llvm-build/Release+Asserts/bin/llvm-readelf
 NM=$CHROMIUM_SRC/third_party/llvm-build/Release+Asserts/bin/llvm-nm
