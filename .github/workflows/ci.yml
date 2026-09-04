@@ -17,6 +17,11 @@ jobs:
       - uses: actions/checkout@v4
       - run: tools/audit-abi.sh
       - run: tools/audit-readme.sh
+      # Pure static audit of the committed Core artifacts: manifest fields,
+      # SHA-256, size, the twenty ABI exports per platform and the reverse
+      # assertion that no icudtl.dat travels with a Windows build. Needs no
+      # Chromium checkout, so it belongs in the structure job.
+      - run: tools/audit-core-binaries.sh
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
@@ -25,3 +30,36 @@ jobs:
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace --all-targets
       - run: cargo test --manifest-path bindings/python36/Cargo.toml --locked
+
+  python-regression:
+    # The Linux x86_64 Core is committed, so the 16-case regression suite can
+    # run here. It covers streaming, backpressure, cancellation, IDN and the
+    # public API surface -- the checks that would otherwise only exist on the
+    # maintainer's machine.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: dtolnay/rust-toolchain@stable
+      # The Core links NSS for the system trust store; see
+      # core/binaries/linux-x86_64/manifest.json runtime_dependencies.
+      - run: sudo apt-get update && sudo apt-get install -y libnss3
+      - name: Verify the Core loads before running the suite
+        run: |
+          set -Eeuo pipefail
+          core=$PWD/core/binaries/linux-x86_64
+          ldd "$core/libminicronet.so" | grep -q 'not found' \
+            && { ldd "$core/libminicronet.so"; exit 1; }
+          echo "all DT_NEEDED entries resolve"
+      - name: Build the native extension against the committed Core
+        run: cargo build --release -p chrome-client-python
+        env:
+          MINICRONET_CORE_DIR: ${{ github.workspace }}/core/binaries/linux-x86_64
+      - name: Run the Python regression suite
+        run: python -m unittest bindings/python/tests/test_stability.py -v
+        env:
+          PYTHONPATH: ${{ github.workspace }}/bindings/python:${{ github.workspace }}/target/release
+          MINICRONET_CORE_DIR: ${{ github.workspace }}/core/binaries/linux-x86_64
+          LD_LIBRARY_PATH: ${{ github.workspace }}/core/binaries/linux-x86_64

@@ -211,7 +211,9 @@ SHA-256、字节数和 CSPRNG / GREASE / 扩展置换 / key_share 的行号级�
 
 ### 阶段 4：补测试与迁移收尾
 
-- `tests/` 下 core/rust/python/node/go 五个目录仍是空的
+- `tests/` 下 core/rust/python/node/go 五个目录在本机存在但**从未被 git 跟踪**，仓库里
+  没有这一层。真实测试在 `bindings/python/tests/test_stability.py` 和各 crate 的
+  `#[cfg(test)]` 里。要么补内容，要么删掉这个空壳，不要让它继续冒充测试布局
 - 迁入 4 个 `profile_verification` 探针与 profile 证据流水线，让
   `MIGRATION_FROM_NEW.md` 的「不再依赖 new/」对全部路径成立
 - Linux x86/ARM64 交叉编译目前还依赖 `new/.tools/pkgconf`（通过
@@ -237,14 +239,21 @@ PyPI 上的 0.2.1.1 同时存在背压挂死和 IDN 崩溃，两者都已在本�
 
 ## 门禁现状
 
-| 检查 | 状态 |
-| --- | --- |
-| `tools/audit-abi.sh` | 20 个符号，header / FFI / Core / 三份导出表一致 |
-| `tools/audit-core-binaries.sh` | 8 个平台通过 |
-| `tools/audit-core-linux.sh` | 通过（体积上限 9,250,000） |
-| `tools/audit-readme.sh` | 通过 |
-| `cargo fmt` / `clippy -D warnings` | 通过 |
-| `cargo test --workspace` | 8 个单元测试通过（6 个回调/背压 + 2 个 ABI 布局） |
-| Python 套件 | 16 个用例通过，1 个 skip（需 WS 端点） |
+| 检查 | 状态 | 在 CI |
+| --- | --- | --- |
+| `tools/audit-abi.sh` | 20 个符号，header / FFI / Core / 三份导出表一致 | 是 |
+| `tools/audit-core-binaries.sh` | 8 个平台通过 | 是 |
+| `tools/audit-readme.sh` | 通过 | 是 |
+| `cargo fmt` / `clippy -D warnings` | 通过 | 是 |
+| `cargo test --workspace` | 8 个单元测试通过（6 个回调/背压 + 2 个 ABI 布局） | 是 |
+| Python 套件 | 16 个用例通过，1 个 skip（需 WS 端点） | 是 |
+| `tools/audit-core-linux.sh` | 通过（体积上限 9,250,000） | 否，需 Chromium 树 |
+| 8 个平台构建 | 全部通过 | 否，需 Chromium 树与交叉工具链 |
 
-CI 只跑 Rust 结构检查加 ABI/README 审计；Core 二进制审计和平台构建未接入 CI。
+Python 套件能进 CI 是因为 linux-x86_64 Core 已提交在仓库里；已用一份浅克隆验证过
+从零检出可以跑通（装 `libnss3`、`cargo build --release -p chrome-client-python`、
+16 个用例 15 通过 1 skip）。
+
+仍在 CI 之外的是需要 Chromium 源码树的两项：`audit-core-linux.sh` 的源码级审计
+（529 个 net 源文件、166 处 FeatureList 读取、体积上限）和 8 个平台的构建。它们依赖
+一份 70 GB 的固定 revision 检出加 xwin/osxcross 工具链，免费 runner 承担不了。
