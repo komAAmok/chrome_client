@@ -79,6 +79,24 @@ Chromium 只对 `is_official_build && is_clang && linux-x64` 默认开 CFI
 这是安全性换体积：没有 `cfi-vcall`/`cfi-icall`，网络栈一旦出现内存破坏漏洞，劫持
 虚表或函数指针的门槛就降低。用户已确认接受。
 
+### 阶段 3 首项：删除 `Engine::callback_runner()` 死代码
+
+Request 与 WebSocket 在 ABI v8 里各自建独立 sequenced runner，`Engine` 上那条通往
+`Runtime` 的进程级 runner 已无调用方。删掉两个访问器、一个成员和 `Runtime` 构造里
+那次 `CreateSequencedTaskRunner`，8 个平台全部重建。
+
+- 体积基本不变：只有 linux-x86 少 64 字节，其余 7 个目标各段大小一字不差；被删代码
+  不在导出表里，剩下的指令差被 `.text` 对齐填充吃掉
+- 8 份产物的 SHA-256 全部变化，manifest 已刷新
+- 收益是每进程少一个没人用的 sequenced task runner，以及少一条误导性线索
+- 顺带发现：`FROM_HERE`/`CHECK` 把 `__LINE__` 编进产物，纯加一个空行就让哈希变化
+  6 个字节（每处 +1）。做 A/B 实验前必须先对齐源码行号
+
+同一轮还给 `net/features.gni` 的 `enable_websockets` 加了意图注释。原先记为「逻辑
+写歪了」，重核后不成立：两个 arg 相互独立，四种组合结果都正确，第二个操作数是
+防御性的（C ABI 导出 `mn_websocket_*`，WebSocket 必须编进来）。它在 8 个发布配置下
+恒真冗余，不是错误。注释零影响已验证：1,674 个 `.ninja` 文件逐字节相同。
+
 ### 其它已修复
 
 - **GIL 与 Rust Mutex 加锁顺序反转导致的死锁**（`schedule_event` 在 edition 2021 下
@@ -99,10 +117,8 @@ Chromium 只对 `is_official_build && is_clang && linux-x64` 默认开 CFI
 
 ## 进行中
 
-### 阶段 3：删除 `Engine::callback_runner()` 死代码
-
-Request 与 WebSocket 在 ABI v8 里各自建独立 sequenced runner，`Engine` 上那个进程级
-runner 已无调用方。删除它需要重建 8 个平台的 Core。
+没有正在执行的改动。下一步的候选见「后续计划」，其中阶段 3 剩下的两项（进程级唯一
+网络线程、body 三次拷贝）都需要先量化再动手。
 
 ## 已知缺陷与阻塞
 
@@ -178,8 +194,6 @@ SHA-256、字节数和 CSPRNG / GREASE / 扩展置换 / key_share 的行号级�
   需要先量化再决定动不动
 - **每块 body 拷三次**：Core 侧 `std::vector`、Rust `copy_bytes`、Python `bytes()`。
   ABI 契约要求 Rust 必须拷一次，能省的是 Core 侧那次（直接传 `IOBuffer`）
-- `net/features.gni` 里 `enable_websockets = !is_cronet_build || is_minicronet_build`
-  逻辑写歪了（`||` 使后半段无作用），当前结果正确但意图没表达出来
 
 ### 阶段 4：补测试与迁移收尾
 

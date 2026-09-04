@@ -8,7 +8,6 @@
 
 #include "base/memory/ref_counted.h"
 #include "base/memory/scoped_refptr.h"
-#include "base/task/sequenced_task_runner.h"
 #include "base/task/single_thread_task_runner.h"
 #include "minicronet.h"
 #include "net/proxy_resolution/proxy_config.h"
@@ -35,7 +34,6 @@ public:
                                       std::string custom_ca_pem,
                                       ProfileContext profile);
   scoped_refptr<base::SingleThreadTaskRunner> task_runner() const;
-  scoped_refptr<base::SequencedTaskRunner> callback_runner() const;
   net::URLRequestContext *context() const { return context_.get(); }
   const ProfileContext& profile() const { return profile_; }
   const std::string& user_agent() const { return user_agent_; }

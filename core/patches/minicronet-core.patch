@@ -171,10 +171,10 @@ index be3159b3f9..73f9a0dac0 100644
  
    # ICU support.
 diff --git a/net/features.gni b/net/features.gni
-index 29c0520cc3..9f4a2350b6 100644
+index 29c0520cc3..04588ba12b 100644
 --- a/net/features.gni
 +++ b/net/features.gni
-@@ -10,16 +10,17 @@ import("//extensions/buildflags/buildflags.gni")
+@@ -10,16 +10,19 @@ import("//extensions/buildflags/buildflags.gni")
  declare_args() {
    # Disables support for file URLs.  File URL support requires use of icu.
    # Cronet does not support file URLs.
@@ -183,6 +183,8 @@ index 29c0520cc3..9f4a2350b6 100644
  
    # WebSockets and socket stream code are not used when Cronet is being built.
 -  enable_websockets = !is_cronet_build
++  # MiniCronet's C ABI exports mn_websocket_*, so WebSockets stay compiled in
++  # even if a build also sets is_cronet_build; no release configuration does.
 +  enable_websockets = !is_cronet_build || is_minicronet_build
  
    # Enable Kerberos authentication. It is disabled by default on iOS, Fuchsia

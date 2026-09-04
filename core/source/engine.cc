@@ -19,7 +19,6 @@
 #include "base/no_destructor.h"
 #include "base/synchronization/waitable_event.h"
 #include "base/time/time.h"
-#include "base/task/thread_pool.h"
 #include "base/task/thread_pool/thread_pool_instance.h"
 #include "base/threading/thread.h"
 #include "net/base/network_change_notifier.h"
@@ -189,7 +188,6 @@ public:
       }
     }
 #endif
-    callback_runner_ = base::ThreadPool::CreateSequencedTaskRunner({});
 
     base::Thread::Options options;
     options.message_pump_type = base::MessagePumpType::IO;
@@ -211,17 +209,12 @@ public:
     return network_thread_.task_runner();
   }
 
-  scoped_refptr<base::SequencedTaskRunner> callback_runner() const {
-    return callback_runner_;
-  }
-
   bool icu_ready() const { return icu_ready_; }
 
 private:
   base::AtExitManager at_exit_manager_;
   bool icu_ready_ = false;
   base::Thread network_thread_{"MiniCronetNet"};
-  scoped_refptr<base::SequencedTaskRunner> callback_runner_;
   std::unique_ptr<net::NetworkChangeNotifier> network_change_notifier_;
 };
 
@@ -263,10 +256,6 @@ scoped_refptr<Engine> Engine::Create(std::string user_agent,
 
 scoped_refptr<base::SingleThreadTaskRunner> Engine::task_runner() const {
   return GetRuntime().task_runner();
-}
-
-scoped_refptr<base::SequencedTaskRunner> Engine::callback_runner() const {
-  return GetRuntime().callback_runner();
 }
 
 Engine::Engine(std::string user_agent, std::string accept_language,

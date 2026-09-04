@@ -244,6 +244,56 @@ Chromium 在 `build/config/sanitizers/sanitizers.gni:58` 只对
 `--fail-on-unused-args` 也不报错。剩下 4 个目标共用同一条默认值表达式，因此
 这 7 个平台的已发布二进制无需重建。
 
+## 阶段 3：删除 `Engine::callback_runner()` 死代码
+
+ABI v8 让 Request 和 WebSocket 各自建独立 sequenced runner（`request.cc:113`、
+`websocket.cc:186`），`Engine` 那条通往 `Runtime` 的进程级 runner 从此没有调用方。
+这次删掉 `Engine::callback_runner()`、`Runtime::callback_runner()` 和
+`Runtime::callback_runner_`，连带 `Runtime` 构造里那次
+`base::ThreadPool::CreateSequencedTaskRunner({})` 和两个不再需要的 include。
+
+八个平台重建后只有 linux-x86 缩了 64 字节（8,805,412 → 8,805,348），其余七个目标
+每个段的大小都一字不差 —— 但 8 份产物的 SHA-256 全部变了。被删的三个访问器不在导出
+表里，ThinLTO 与 `--gc-sections` 之后剩下的指令本就极少；真正的差异是 `Runtime` 少
+一个 8 字节成员、构造函数少一次 runner 创建。这点差异在 7 个目标上被 `.text` 的 64
+字节对齐填充吃掉，只有 linux-x86 越过了对齐边界。
+
+所以这一步的收益不是体积，而是：每个进程不再创建一个没人使用的 sequenced task
+runner，以及少了一条会让读者误以为「Engine 层有统一回调队列」的线索。
+
+验收：8 个平台 audit 全过；linux-x86_64 上 16 个 Python 用例通过（1 skip）、
+`minicronet_smoke` 与 `run-http-smoke.py` 通过；基准与删除前同口径
+（同步 784.1 req/s、p50 1.22 ms、并发 32 为 727.6、并发 128 为 373.1、流式
+159.1 MiB/s、慢消费者隔离两个 Engine 均 20/20），全部落在此前建立的抖动区间内。
+
+### 行号会进产物：6 个字节的教训
+
+删完之后为可读性补回一个空行，产物哈希又变了一次（`7d9192b0…` → `ca78db07…`），
+体积不变。逐字节比对只有 **6 处不同，每处 +1**：都是 `FROM_HERE` 和 `CHECK` 展开出
+来的 `__LINE__` 立即数。
+
+也就是说任何让 `FROM_HERE`/`CHECK` 所在行号位移的编辑——包括纯空行——都会改变产物
+哈希，而指令语义一个都没变。做 A/B 实验前必须确认两边源码行号一致，否则「哈希不同」
+这个信号说明不了任何事。
+
+## `enable_websockets`：不是逻辑错误，是缺注释
+
+`net/features.gni` 里这一行长期被记成「逻辑写歪了，`||` 使后半段无作用」：
+
+```gn
+enable_websockets = !is_cronet_build || is_minicronet_build
+```
+
+重新核对后结论不同。两个 arg 相互独立（`build/config/cronet/config.gni` 里
+`is_cronet_build = is_cronet_for_aosp_build`，`is_minicronet_build = false`），四种
+取值组合下这个表达式都给出正确结果，第二个操作数是防御性的：MiniCronet 的 C ABI
+导出 `mn_websocket_*`，WebSocket 编不进来 ABI 就残缺。8 个发布配置都不设
+`is_cronet_build`，所以它在今天是恒真冗余，而不是错误。
+
+补丁因此只加两行注释把这个约束写在原地。注释零影响已验证：加与不加各
+`gn gen` 一次，out 目录里 1,674 个 `.ninja` 文件逐字节相同，
+`gen/net/net_buildflags.h` 也相同。
+
 ## 已排除的精简候选
 
 ### `optional_trace_events_enabled = false` —— 零收益
