@@ -11,10 +11,19 @@ stack rather than a network path. Point the loader at the Core under test:
 The `stalled_consumer_isolation` case is the one that matters for the
 backpressure work: it stalls one streaming consumer past the 1 MiB queue
 ceiling and then measures whether unrelated requests still complete.
+
+The concurrency cases give every request a distinct URL. Chromium's HttpCache
+serializes transactions that share one cache key, so hammering a single URL
+measures that serialization rather than client concurrency: at concurrency 128
+throughput scales with the number of distinct URLs (492 req/s with one, 1,604
+with eight) and then plateaus. Keep the `n=` disambiguator, or the concurrency
+numbers stop describing concurrency. `--single-url-concurrency` reproduces the
+contention deliberately.
 """
 
 import argparse
 import asyncio
+import itertools
 import json
 import statistics
 import sys
@@ -93,7 +102,9 @@ def sync_sequential(url, count):
     }
 
 
-def async_concurrent(url, count, concurrency):
+def async_concurrent(url, count, concurrency, share_cache_key=False):
+    counter = itertools.count()
+
     async def run():
         async with chrome_client.AsyncClient() as client:
             await client.get(url)
@@ -101,7 +112,9 @@ def async_concurrent(url, count, concurrency):
 
             async def one():
                 async with semaphore:
-                    response = await client.get(url)
+                    target = url if share_cache_key \
+                        else "%s&n=%d" % (url, next(counter))
+                    response = await client.get(target)
                     assert response.status_code == 200, response.status_code
 
             start = time.perf_counter()
@@ -112,6 +125,7 @@ def async_concurrent(url, count, concurrency):
     return {
         "requests": count,
         "concurrency": concurrency,
+        "distinct_cache_keys": 1 if share_cache_key else count,
         "seconds": round(elapsed, 3),
         "requests_per_second": round(count / elapsed, 1),
     }
@@ -188,6 +202,9 @@ def main():
     parser.add_argument("--probes", type=int, default=20)
     parser.add_argument("--probe-timeout", type=float, default=5.0)
     parser.add_argument("--skip-isolation", action="store_true")
+    parser.add_argument("--single-url-concurrency", action="store_true",
+                        help="point every concurrent request at one URL to "
+                             "measure HttpCache same-key serialization")
     args = parser.parse_args()
 
     server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
@@ -204,9 +221,11 @@ def main():
         report["sync_sequential_1kib"] = sync_sequential(
             base_url + "/small?size=1024", args.requests)
         report["async_concurrency_32"] = async_concurrent(
-            base_url + "/small?size=1024", args.requests, 32)
+            base_url + "/small?size=1024", args.requests, 32,
+            args.single_url_concurrency)
         report["async_concurrency_128"] = async_concurrent(
-            base_url + "/small?size=1024", args.requests, 128)
+            base_url + "/small?size=1024", args.requests, 128,
+            args.single_url_concurrency)
         report["stream_throughput_64mib"] = stream_throughput(
             base_url + "/stream?chunks=%d&size=65536" % args.stream_chunks,
             64 * 1024)

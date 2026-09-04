@@ -97,6 +97,29 @@ Request 与 WebSocket 在 ABI v8 里各自建独立 sequenced runner，`Engine` 
 防御性的（C ABI 导出 `mn_websocket_*`，WebSocket 必须编进来）。它在 8 个发布配置下
 恒真冗余，不是错误。注释零影响已验证：1,674 个 `.ninja` 文件逐字节相同。
 
+### 阶段 3 第二项：并发倒挂已定位，是基准的缺陷
+
+「并发 128 比并发 32 慢一倍」挂了三个阶段，原先怀疑网络线程和 `poll_event`。都不是。
+
+用安全 Rust 层写一个无 Python 的多线程压测，倒挂照样出现（并发 8 → 128 是
+1,360 → 510 req/s），排除绑定层。网络线程确实稳定占单核 88–93%、限高约
+2,250 req/s，但加 Engine 也不加吞吐（1/2/4 个 Engine 都是约 2,250），而无缓存竞争时
+并发 128 并不掉，所以它只是限高，不产生倒挂。
+
+真正的原因是 **`HttpCache` 按 cache key 串行**。固定并发 128 只改不同 URL 的数量，
+吞吐从 492（1 个）线性升到 1,604 req/s（8 个）后撞上限高。让响应带
+`Cache-Control: no-store` 仍然倒挂，说明不是写缓存的开销，而是同 key 事务在
+`ActiveEntry` 上排队。并发超过不同 URL 数之后只增加队列深度。这是 Chromium 的缓存
+语义，真实 Chrome 一样，不是缺陷。
+
+缺陷在基准：`tools/bench-core-baseline.py` 让 200 个并发请求全打同一个 URL。改成
+每请求带 `n=` 序号后，并发 32 从 737 升到 1,294 req/s、并发 128 从 377 升到
+1,227 req/s。`--single-url-concurrency` 保留用于故意复现竞争。这是「先做对照再下
+结论」那条教训的第二次出现，第一次是 40 ms 延迟 ACK。
+
+顺手试过让 asyncio 的 `notify` 每次唤醒排空至多 64 个事件，插桩显示实际每次唤醒
+96% 只有 1 个事件可取，零收益，已丢弃。
+
 ### 其它已修复
 
 - **GIL 与 Rust Mutex 加锁顺序反转导致的死锁**（`schedule_event` 在 edition 2021 下
@@ -161,17 +184,6 @@ SHA-256、字节数和 CSPRNG / GREASE / 扩展置换 / key_share 的行号级�
 
 解锁需要：Chrome 152 的 wire 抓包，或一个带 tag 的完整 Chromium 克隆。
 
-### 并发 128 比并发 32 慢一倍
-
-322 vs 683 req/s（v7）、315 vs 742（v8 内嵌 ICU 后）。提高并发反而降低吞吐，三个
-版本一致，说明与 pause/resume 无关。怀疑是进程级唯一网络线程加上每事件绕一次事件
-循环的 `poll_event`。未定位。
-
-### `bindings/python36/target/` 被 git 跟踪
-
-约 1400 个构建产物在索引里。用 `git add -A -- bindings` 会把它们全部暂存。建议单独
-提一个 commit 移出索引并加进 `.gitignore`。
-
 ### 其它待确认
 
 - Windows manifest 的 `runtime_dependencies` 曾声明 `libplc4.so`/`libplds4.so`，
@@ -190,8 +202,10 @@ SHA-256、字节数和 CSPRNG / GREASE / 扩展置换 / key_share 的行号级�
 
 ### 阶段 3：设计优化
 
-- **进程级唯一网络线程**：`Runtime` 单例只有一个 `base::Thread`，所有 Engine 共享。
-  需要先量化再决定动不动
+- **进程级唯一网络线程**：`Runtime` 单例只有一个 `base::Thread`，所有 Engine 共享，
+  已量化为单核 88–93%、约 2,250 req/s 的限高。加 Engine 不加吞吐。要突破得给每个
+  Engine 一条网络线程，或让 `Runtime` 持有线程池。这会改变 profile 隔离的推理方式
+  （连接池、会话缓存都挂在 context 上），需要单独设计
 - **每块 body 拷三次**：Core 侧 `std::vector`、Rust `copy_bytes`、Python `bytes()`。
   ABI 契约要求 Rust 必须拷一次，能省的是 Core 侧那次（直接传 `IOBuffer`）
 
