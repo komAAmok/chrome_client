@@ -12,7 +12,11 @@ ROOT = Path(__file__).resolve().parents[1]
 INPUT = ROOT / "profiles" / "normalized_profiles.json"
 EFFECTIVE = ROOT / "profiles" / "effective_protocol_params.json"
 FEATURES = ROOT / "profiles" / "network_feature_snapshots.json"
-OUTPUT = ROOT / "core" / "profile_table_generated.h"
+OUTPUT = ROOT / "core" / "source" / "minicronet" / "profile_table_generated.h"
+
+# Highest profile in the table. Bumping it requires a wire-verified capture set
+# and a source-evidence entry for that release; see profiles/chrome-152/.
+LAST_PROFILE_MAJOR = 152
 
 FEATURE_BITS = {
     "alps_for_http2": 1 << 0,
@@ -90,6 +94,11 @@ CODEBOOKS = {
         "application_settings_old": 17513,
         "application_settings": 17613,
         "extensionEncryptedClientHello": 0xfe0d,
+        # TLSEXT_TYPE_trust_anchors. Chrome 152 flipped kTLSTrustAnchorIDs to
+        # enabled and switched to SelectAllTrustAnchorIDs(), so 152 is the first
+        # profile that carries it. The payload is a separate field: unlike every
+        # other extension its content is not a constant of the release.
+        "trust_anchors": 0xca34,
     },
 }
 
@@ -104,10 +113,13 @@ def main():
     profiles = json.loads(INPUT.read_text())["profiles"]
     effective = json.loads(EFFECTIVE.read_text())["profiles"]
     _, feature_flags = load_feature_flags()
-    if [p["profile_id"] for p in profiles] != [f"chrome_{n}" for n in range(99, 152)]:
-        raise SystemExit("profile table must contain chrome_99..chrome_151 in order")
+    if [p["profile_id"] for p in profiles] != [
+            f"chrome_{n}" for n in range(99, LAST_PROFILE_MAJOR + 1)]:
+        raise SystemExit(
+            f"profile table must contain chrome_99..chrome_{LAST_PROFILE_MAJOR} in order")
     if set(feature_flags) != {p["profile_id"] for p in profiles}:
-        raise SystemExit("network feature snapshot must cover chrome_99..chrome_151")
+        raise SystemExit(
+            f"network feature snapshot must cover chrome_99..chrome_{LAST_PROFILE_MAJOR}")
     expected_pool_boundary = {
         "chrome_122": (False, False),
         "chrome_123": (False, False),
@@ -254,6 +266,13 @@ def main():
         "  bool client_hello_padding_enabled;",
         "  uint16_t client_hello_padding_length;",
         "  uint8_t network_feature_flags;",
+        "  // Encoded trust_anchors (0xca34) payload: a sequence of",
+        "  // one-byte-length-prefixed IDs, exactly as",
+        "  // net::AddTrustAnchorIdToEncodedList emits them. Empty for every",
+        "  // profile before 152, which is what keeps",
+        "  // SSLContextConfig::ShouldAdvertiseTrustAnchorIDs() false and the",
+        "  // extension off the wire for them.",
+        "  base::span<const uint8_t> trust_anchor_ids;",
         "  bool wire_verified;",
         "};",
         "",
@@ -316,6 +335,41 @@ def main():
         out.extend(f"    0x{value:04x}," for value in values)
         out.append("};")
         out.append("")
+
+    # Encoded trust_anchors payloads. A profile without one references no array
+    # and gets an empty span, so the extension stays off its wire.
+    anchor_arrays = {}
+    for p in profiles:
+        encoded = p["tls"].get("trust_anchor_ids_encoded")
+        if not encoded:
+            if "trust_anchors" in set(p["tls"]["extensions"]):
+                raise SystemExit(
+                    f"{p['profile_id']} lists the trust_anchors extension but "
+                    "carries no trust_anchor_ids_encoded payload")
+            continue
+        if "trust_anchors" not in set(p["tls"]["extensions"]):
+            raise SystemExit(
+                f"{p['profile_id']} carries a trust_anchor_ids_encoded payload "
+                "but does not list the trust_anchors extension")
+        payload = bytes.fromhex(encoded)
+        # Reject a payload whose length prefixes do not tile it exactly; a
+        # truncated list would be sent verbatim and silently mismatch.
+        index = 0
+        while index < len(payload):
+            length = payload[index]
+            if length == 0 or index + 1 + length > len(payload):
+                raise SystemExit(
+                    f"{p['profile_id']}: malformed trust_anchor_ids payload")
+            index += 1 + length
+        if payload not in anchor_arrays:
+            anchor_arrays[payload] = f"trust_anchor_ids_{len(anchor_arrays)}"
+    for payload, name in anchor_arrays.items():
+        out.append(f"inline constexpr uint8_t {name}[] = {{")
+        for start in range(0, len(payload), 12):
+            chunk = payload[start:start + 12]
+            out.append("    " + " ".join(f"0x{b:02x}," for b in chunk))
+        out.append("};")
+        out.append("")
     out.extend([
         "inline constexpr H2RuntimeParams kH2RuntimeParams[] = {{",
         "    65536, 6291456, 16384, 262144, 15728640, false,",
@@ -331,6 +385,13 @@ def main():
         "",
     ])
     out.append("inline constexpr RuntimeProfileData kRuntimeProfiles[] = {")
+
+    def anchor_span(profile):
+        encoded = profile["tls"].get("trust_anchor_ids_encoded")
+        if not encoded:
+            return "{}"
+        return f"base::span({anchor_arrays[bytes.fromhex(encoded)]})"
+
     for p in profiles:
         ident = p["profile_id"].replace("-", "_")
         tls = p["tls"]
@@ -403,6 +464,7 @@ def main():
             "    true,",
             f"    {408 if major <= 118 else 0},",
             f"    0x{flags:04x},",
+            f"    {anchor_span(p)},",
             f"    {'true' if p['evidence']['wire_verified'] else 'false'},",
         ])
         out.append("  },")

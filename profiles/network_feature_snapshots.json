@@ -1,0 +1,32 @@
+{
+  "features": {
+    "alps_for_http2": "ALPS application_settings on the HTTP/2 TLS path",
+    "try_quic_by_default": "default QUIC attempt policy"
+  },
+  "platform": "linux-x86_64",
+  "policy": {
+    "fixed_random_values": false,
+    "process_global_feature_list": "never used for profile selection",
+    "unknown_features": "disabled"
+  },
+  "ranges": [
+    {
+      "enabled": [
+        "alps_for_http2"
+      ],
+      "first": 99,
+      "last": 122
+    },
+    {
+      "enabled": [
+        "alps_for_http2",
+        "try_quic_by_default"
+      ],
+      "first": 123,
+      "last": 152
+    }
+  ],
+  "schema": 1,
+  "scope": "network-core-only",
+  "source": "net/base/features.cc and matching revision audits"
+}

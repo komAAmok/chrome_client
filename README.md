@@ -35,7 +35,7 @@ SHA-256 和依赖清单。ABI 当前为 v8。Go 和 Node.js 目录目前是绑�
 ### Chrome profile
 
 `impersonate` 推荐使用精确的 `chrome_<major>` 名称（同时接受 curl-cffi 风格的
-`chrome<major>` 别名）。当前支持 Chrome 99–151，共 53 个 profile；没有列出的
+`chrome<major>` 别名）。当前支持 Chrome 99–152，共 54 个 profile；没有列出的
 版本会被拒绝，不会静默降级到当前版本。
 
 | Chrome 主版本 | 可用 profile |
@@ -47,7 +47,7 @@ SHA-256 和依赖清单。ABI 当前为 v8。Go 和 Node.js 目录目前是绑�
 | 127–133 | `chrome_127` … `chrome_133` |
 | 134–140 | `chrome_134` … `chrome_140` |
 | 141–147 | `chrome_141` … `chrome_147` |
-| 148–151 | `chrome_148`、`chrome_149`、`chrome_150`、`chrome_151` |
+| 148–152 | `chrome_148`、`chrome_149`、`chrome_150`、`chrome_151`、`chrome_152` |
 
 Profile 影响 TLS ClientHello、ALPN、HTTP/2 设置、QUIC/H3 和相关 Chromium 网络
 参数；它不是完整 Chrome 浏览器，也不包含 Blink、扩展、Service Worker 或持久化

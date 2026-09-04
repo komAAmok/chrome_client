@@ -7,8 +7,8 @@
     "hex": "0xca34",
     "name": "TLSEXT_TYPE_trust_anchors"
   },
-  "encoded_payload_hex": "00b80582df13020604d679090808839a648c9b2d011204d679090a0582df13021204d679090708839a648c9b2d01080582df13020f0582df1302140582df13020e08839a648c9b2d011304d679090508839a648c9b2d01090582df13020104d679090608839a648c9b2d010c04d679090b08839a648c9b2d010708839a648c9b2d010a0582df13020d04d679090c08839a648c9b2d010d04d679090104d679090d08839a648c9b2d010b0582df13021304d679090f04d6790904",
-  "encoded_payload_bytes": 186,
+  "encoded_payload_hex": "0582df13020604d679090808839a648c9b2d011204d679090a0582df13021204d679090708839a648c9b2d01080582df13020f0582df1302140582df13020e08839a648c9b2d011304d679090508839a648c9b2d01090582df13020104d679090608839a648c9b2d010c04d679090b08839a648c9b2d010708839a648c9b2d010a0582df13020d04d679090c08839a648c9b2d010d04d679090104d679090d08839a648c9b2d010b0582df13021304d679090f04d6790904",
+  "encoded_payload_bytes": 184,
   "count": 28,
   "trust_anchor_ids": [
     "82df130206",
@@ -41,5 +41,8 @@
     "d6790904"
   ],
   "status": "observed_only_not_activated",
-  "note": "Order is the observed wire order and is significant: SelectAllTrustAnchorIDs() emits the list in the order it is given. Not derivable from any source tree; the compiled-in Chrome Root Store in both the 152 tag and this repository's pinned tree holds 32 IDs in a different order."
+  "note": "Order is the observed wire order and is significant: SelectAllTrustAnchorIDs() emits the list in the order it is given. Not derivable from any source tree; the compiled-in Chrome Root Store in both the 152 tag and this repository's pinned tree holds 32 IDs in a different order.",
+  "wire_extension_contents_hex": "00b80582df13020604d679090808839a648c9b2d011204d679090a0582df13021204d679090708839a648c9b2d01080582df13020f0582df1302140582df13020e08839a648c9b2d011304d679090508839a648c9b2d01090582df13020104d679090608839a648c9b2d010c04d679090b08839a648c9b2d010708839a648c9b2d010a0582df13020d04d679090c08839a648c9b2d010d04d679090104d679090d08839a648c9b2d010b0582df13021304d679090f04d6790904",
+  "wire_extension_contents_bytes": 186,
+  "encoding": "Sequence of one-byte-length-prefixed IDs, as net::AddTrustAnchorIdToEncodedList emits and SSL_set1_requested_trust_anchors consumes. BoringSSL adds the u16 list length when serializing, which is why the wire contents are two bytes longer."
 }

@@ -35,6 +35,30 @@ net::SSLContextConfig ProfileSSLConfigService::GetSSLContextConfig() {
   }
   config.ech_enabled = profile_.ech_enabled;
   config.profile_use_new_alps_codepoint = profile_.use_new_alps_codepoint;
+  // The trust_anchors (0xca34) payload arrives as the encoded sequence
+  // SelectAllTrustAnchorIDs() would have built, so it is split back into the
+  // per-ID entries that function iterates. An empty span leaves the field empty,
+  // which is what makes ShouldAdvertiseTrustAnchorIDs() false and keeps the
+  // extension off the wire for every profile before 152.
+  //
+  // Only the set is profile data. The wire order is deliberately not: the field
+  // is an absl::flat_hash_set, whose iteration order absl seeds from ASLR and so
+  // varies per process. Reproducing a captured order would make every instance
+  // emit the same permutation, which real Chrome does not.
+  config.trust_anchor_ids.clear();
+  for (size_t offset = 0; offset < profile_.trust_anchor_ids.size();) {
+    const size_t length = profile_.trust_anchor_ids[offset];
+    // The generator rejects a payload whose prefixes do not tile it exactly;
+    // stop rather than read past the end if that ever changes.
+    if (length == 0 ||
+        offset + 1 + length > profile_.trust_anchor_ids.size()) {
+      config.trust_anchor_ids.clear();
+      break;
+    }
+    const auto id = profile_.trust_anchor_ids.subspan(offset + 1, length);
+    config.trust_anchor_ids.emplace(id.begin(), id.end());
+    offset += 1 + length;
+  }
   return config;
 }
 

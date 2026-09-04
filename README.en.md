@@ -39,8 +39,8 @@ installable packages.
 ### Chrome profiles
 
 Pass an exact `chrome_<major>` string through `impersonate` (the curl-cffi-style
-`chrome<major>` alias is also accepted). Chrome 99 through 151 are supported
-(53 profiles); an unknown version is rejected rather than silently downgraded.
+`chrome<major>` alias is also accepted). Chrome 99 through 152 are supported
+(54 profiles); an unknown version is rejected rather than silently downgraded.
 
 | Chrome major | Profile IDs |
 | --- | --- |
@@ -51,7 +51,7 @@ Pass an exact `chrome_<major>` string through `impersonate` (the curl-cffi-style
 | 127–133 | `chrome_127` … `chrome_133` |
 | 134–140 | `chrome_134` … `chrome_140` |
 | 141–147 | `chrome_141` … `chrome_147` |
-| 148–151 | `chrome_148`, `chrome_149`, `chrome_150`, `chrome_151` |
+| 148–152 | `chrome_148`, `chrome_149`, `chrome_150`, `chrome_151`, `chrome_152` |
 
 Profiles control TLS ClientHello, ALPN, HTTP/2 settings, QUIC/H3 and related
 Chromium network parameters. This is not a full browser: Blink, extensions,

@@ -48,6 +48,13 @@ struct RuntimeProfileData {
   bool client_hello_padding_enabled;
   uint16_t client_hello_padding_length;
   uint8_t network_feature_flags;
+  // Encoded trust_anchors (0xca34) payload: a sequence of
+  // one-byte-length-prefixed IDs, exactly as
+  // net::AddTrustAnchorIdToEncodedList emits them. Empty for every
+  // profile before 152, which is what keeps
+  // SSLContextConfig::ShouldAdvertiseTrustAnchorIDs() false and the
+  // extension off the wire for them.
+  base::span<const uint8_t> trust_anchor_ids;
   bool wire_verified;
 };
 
@@ -209,6 +216,45 @@ inline constexpr uint16_t tls_extension_ids_3[] = {
     0xff01,
 };
 
+inline constexpr uint16_t tls_extension_ids_4[] = {
+    0x0000,
+    0x0005,
+    0x000a,
+    0x000b,
+    0x000d,
+    0x0010,
+    0x0012,
+    0x0017,
+    0x001b,
+    0x0023,
+    0x002b,
+    0x002d,
+    0x0033,
+    0x44cd,
+    0xca34,
+    0xfe0d,
+    0xff01,
+};
+
+inline constexpr uint8_t trust_anchor_ids_0[] = {
+    0x05, 0x82, 0xdf, 0x13, 0x02, 0x06, 0x04, 0xd6, 0x79, 0x09, 0x08, 0x08,
+    0x83, 0x9a, 0x64, 0x8c, 0x9b, 0x2d, 0x01, 0x12, 0x04, 0xd6, 0x79, 0x09,
+    0x0a, 0x05, 0x82, 0xdf, 0x13, 0x02, 0x12, 0x04, 0xd6, 0x79, 0x09, 0x07,
+    0x08, 0x83, 0x9a, 0x64, 0x8c, 0x9b, 0x2d, 0x01, 0x08, 0x05, 0x82, 0xdf,
+    0x13, 0x02, 0x0f, 0x05, 0x82, 0xdf, 0x13, 0x02, 0x14, 0x05, 0x82, 0xdf,
+    0x13, 0x02, 0x0e, 0x08, 0x83, 0x9a, 0x64, 0x8c, 0x9b, 0x2d, 0x01, 0x13,
+    0x04, 0xd6, 0x79, 0x09, 0x05, 0x08, 0x83, 0x9a, 0x64, 0x8c, 0x9b, 0x2d,
+    0x01, 0x09, 0x05, 0x82, 0xdf, 0x13, 0x02, 0x01, 0x04, 0xd6, 0x79, 0x09,
+    0x06, 0x08, 0x83, 0x9a, 0x64, 0x8c, 0x9b, 0x2d, 0x01, 0x0c, 0x04, 0xd6,
+    0x79, 0x09, 0x0b, 0x08, 0x83, 0x9a, 0x64, 0x8c, 0x9b, 0x2d, 0x01, 0x07,
+    0x08, 0x83, 0x9a, 0x64, 0x8c, 0x9b, 0x2d, 0x01, 0x0a, 0x05, 0x82, 0xdf,
+    0x13, 0x02, 0x0d, 0x04, 0xd6, 0x79, 0x09, 0x0c, 0x08, 0x83, 0x9a, 0x64,
+    0x8c, 0x9b, 0x2d, 0x01, 0x0d, 0x04, 0xd6, 0x79, 0x09, 0x01, 0x04, 0xd6,
+    0x79, 0x09, 0x0d, 0x08, 0x83, 0x9a, 0x64, 0x8c, 0x9b, 0x2d, 0x01, 0x0b,
+    0x05, 0x82, 0xdf, 0x13, 0x02, 0x13, 0x04, 0xd6, 0x79, 0x09, 0x0f, 0x04,
+    0xd6, 0x79, 0x09, 0x04,
+};
+
 inline constexpr H2RuntimeParams kH2RuntimeParams[] = {{
     65536, 6291456, 16384, 262144, 15728640, false,
     base::span(h2_settings_order_0),
@@ -248,6 +294,7 @@ inline constexpr RuntimeProfileData kRuntimeProfiles[] = {
     true,
     408,
     0x0001,
+    {},
     true,
   },
   {
@@ -276,6 +323,7 @@ inline constexpr RuntimeProfileData kRuntimeProfiles[] = {
     true,
     408,
     0x0001,
+    {},
     true,
   },
   {
@@ -304,6 +352,7 @@ inline constexpr RuntimeProfileData kRuntimeProfiles[] = {
     true,
     408,
     0x0001,
+    {},
     true,
   },
   {
@@ -332,6 +381,7 @@ inline constexpr RuntimeProfileData kRuntimeProfiles[] = {
     true,
     408,
     0x0001,
+    {},
     true,
   },
   {
@@ -360,6 +410,7 @@ inline constexpr RuntimeProfileData kRuntimeProfiles[] = {
     true,
     408,
     0x0001,
+    {},
     true,
   },
   {
@@ -388,6 +439,7 @@ inline constexpr RuntimeProfileData kRuntimeProfiles[] = {
     true,
     408,
     0x0001,
+    {},
     true,
   },
   {
@@ -416,6 +468,7 @@ inline constexpr RuntimeProfileData kRuntimeProfiles[] = {
     true,
     408,
     0x0001,
+    {},
     true,
   },
   {
@@ -444,6 +497,7 @@ inline constexpr RuntimeProfileData kRuntimeProfiles[] = {
     true,
     408,
     0x0001,
+    {},
     true,
   },
   {
@@ -472,6 +526,7 @@ inline constexpr RuntimeProfileData kRuntimeProfiles[] = {
     true,
     408,
     0x0001,
+    {},
     true,
   },
   {
@@ -500,6 +555,7 @@ inline constexpr RuntimeProfileData kRuntimeProfiles[] = {
     true,
     408,
     0x0001,
+    {},
     true,
   },
   {
@@ -528,6 +584,7 @@ inline constexpr RuntimeProfileData kRuntimeProfiles[] = {
     true,
     408,
     0x0001,
+    {},
     true,
   },
   {
@@ -556,6 +613,7 @@ inline constexpr RuntimeProfileData kRuntimeProfiles[] = {
     true,
     408,
     0x0001,
+    {},
     true,
   },
   {
@@ -584,6 +642,7 @@ inline constexpr RuntimeProfileData kRuntimeProfiles[] = {
     true,
     408,
     0x0001,
+    {},
     true,
   },
   {
@@ -612,6 +671,7 @@ inline constexpr RuntimeProfileData kRuntimeProfiles[] = {
     true,
     408,
     0x0001,
+    {},
     true,
   },
   {
@@ -640,6 +700,7 @@ inline constexpr RuntimeProfileData kRuntimeProfiles[] = {
     true,
     408,
     0x0001,
+    {},
     true,
   },
   {
@@ -668,6 +729,7 @@ inline constexpr RuntimeProfileData kRuntimeProfiles[] = {
     true,
     408,
     0x0001,
+    {},
     true,
   },
   {
@@ -696,6 +758,7 @@ inline constexpr RuntimeProfileData kRuntimeProfiles[] = {
     true,
     408,
     0x0001,
+    {},
     true,
   },
   {
@@ -724,6 +787,7 @@ inline constexpr RuntimeProfileData kRuntimeProfiles[] = {
     true,
     408,
     0x0001,
+    {},
     true,
   },
   {
@@ -752,6 +816,7 @@ inline constexpr RuntimeProfileData kRuntimeProfiles[] = {
     true,
     408,
     0x0001,
+    {},
     true,
   },
   {
@@ -780,6 +845,7 @@ inline constexpr RuntimeProfileData kRuntimeProfiles[] = {
     true,
     408,
     0x0001,
+    {},
     true,
   },
   {
@@ -808,6 +874,7 @@ inline constexpr RuntimeProfileData kRuntimeProfiles[] = {
     true,
     0,
     0x0001,
+    {},
     true,
   },
   {
@@ -836,6 +903,7 @@ inline constexpr RuntimeProfileData kRuntimeProfiles[] = {
     true,
     0,
     0x0001,
+    {},
     true,
   },
   {
@@ -864,6 +932,7 @@ inline constexpr RuntimeProfileData kRuntimeProfiles[] = {
     true,
     0,
     0x0001,
+    {},
     true,
   },
   {
@@ -892,6 +961,7 @@ inline constexpr RuntimeProfileData kRuntimeProfiles[] = {
     true,
     0,
     0x0001,
+    {},
     true,
   },
   {
@@ -920,6 +990,7 @@ inline constexpr RuntimeProfileData kRuntimeProfiles[] = {
     true,
     0,
     0x0003,
+    {},
     true,
   },
   {
@@ -948,6 +1019,7 @@ inline constexpr RuntimeProfileData kRuntimeProfiles[] = {
     true,
     0,
     0x0003,
+    {},
     true,
   },
   {
@@ -976,6 +1048,7 @@ inline constexpr RuntimeProfileData kRuntimeProfiles[] = {
     true,
     0,
     0x0003,
+    {},
     true,
   },
   {
@@ -1004,6 +1077,7 @@ inline constexpr RuntimeProfileData kRuntimeProfiles[] = {
     true,
     0,
     0x0003,
+    {},
     true,
   },
   {
@@ -1032,6 +1106,7 @@ inline constexpr RuntimeProfileData kRuntimeProfiles[] = {
     true,
     0,
     0x0003,
+    {},
     true,
   },
   {
@@ -1060,6 +1135,7 @@ inline constexpr RuntimeProfileData kRuntimeProfiles[] = {
     true,
     0,
     0x0003,
+    {},
     true,
   },
   {
@@ -1088,6 +1164,7 @@ inline constexpr RuntimeProfileData kRuntimeProfiles[] = {
     true,
     0,
     0x0003,
+    {},
     true,
   },
   {
@@ -1116,6 +1193,7 @@ inline constexpr RuntimeProfileData kRuntimeProfiles[] = {
     true,
     0,
     0x0003,
+    {},
     true,
   },
   {
@@ -1144,6 +1222,7 @@ inline constexpr RuntimeProfileData kRuntimeProfiles[] = {
     true,
     0,
     0x0003,
+    {},
     true,
   },
   {
@@ -1172,6 +1251,7 @@ inline constexpr RuntimeProfileData kRuntimeProfiles[] = {
     true,
     0,
     0x0003,
+    {},
     true,
   },
   {
@@ -1200,6 +1280,7 @@ inline constexpr RuntimeProfileData kRuntimeProfiles[] = {
     true,
     0,
     0x0003,
+    {},
     true,
   },
   {
@@ -1228,6 +1309,7 @@ inline constexpr RuntimeProfileData kRuntimeProfiles[] = {
     true,
     0,
     0x0003,
+    {},
     true,
   },
   {
@@ -1256,6 +1338,7 @@ inline constexpr RuntimeProfileData kRuntimeProfiles[] = {
     true,
     0,
     0x0003,
+    {},
     true,
   },
   {
@@ -1284,6 +1367,7 @@ inline constexpr RuntimeProfileData kRuntimeProfiles[] = {
     true,
     0,
     0x0003,
+    {},
     true,
   },
   {
@@ -1312,6 +1396,7 @@ inline constexpr RuntimeProfileData kRuntimeProfiles[] = {
     true,
     0,
     0x0003,
+    {},
     true,
   },
   {
@@ -1340,6 +1425,7 @@ inline constexpr RuntimeProfileData kRuntimeProfiles[] = {
     true,
     0,
     0x0003,
+    {},
     true,
   },
   {
@@ -1368,6 +1454,7 @@ inline constexpr RuntimeProfileData kRuntimeProfiles[] = {
     true,
     0,
     0x0003,
+    {},
     true,
   },
   {
@@ -1396,6 +1483,7 @@ inline constexpr RuntimeProfileData kRuntimeProfiles[] = {
     true,
     0,
     0x0003,
+    {},
     true,
   },
   {
@@ -1424,6 +1512,7 @@ inline constexpr RuntimeProfileData kRuntimeProfiles[] = {
     true,
     0,
     0x0003,
+    {},
     true,
   },
   {
@@ -1452,6 +1541,7 @@ inline constexpr RuntimeProfileData kRuntimeProfiles[] = {
     true,
     0,
     0x0003,
+    {},
     true,
   },
   {
@@ -1480,6 +1570,7 @@ inline constexpr RuntimeProfileData kRuntimeProfiles[] = {
     true,
     0,
     0x0003,
+    {},
     true,
   },
   {
@@ -1508,6 +1599,7 @@ inline constexpr RuntimeProfileData kRuntimeProfiles[] = {
     true,
     0,
     0x0003,
+    {},
     true,
   },
   {
@@ -1536,6 +1628,7 @@ inline constexpr RuntimeProfileData kRuntimeProfiles[] = {
     true,
     0,
     0x0003,
+    {},
     true,
   },
   {
@@ -1564,6 +1657,7 @@ inline constexpr RuntimeProfileData kRuntimeProfiles[] = {
     true,
     0,
     0x0003,
+    {},
     true,
   },
   {
@@ -1592,6 +1686,7 @@ inline constexpr RuntimeProfileData kRuntimeProfiles[] = {
     true,
     0,
     0x0003,
+    {},
     true,
   },
   {
@@ -1620,6 +1715,7 @@ inline constexpr RuntimeProfileData kRuntimeProfiles[] = {
     true,
     0,
     0x0003,
+    {},
     true,
   },
   {
@@ -1648,6 +1744,7 @@ inline constexpr RuntimeProfileData kRuntimeProfiles[] = {
     true,
     0,
     0x0003,
+    {},
     true,
   },
   {
@@ -1676,6 +1773,7 @@ inline constexpr RuntimeProfileData kRuntimeProfiles[] = {
     true,
     0,
     0x0003,
+    {},
     true,
   },
   {
@@ -1704,6 +1802,36 @@ inline constexpr RuntimeProfileData kRuntimeProfiles[] = {
     true,
     0,
     0x0003,
+    {},
+    true,
+  },
+  {
+    "chrome_152",
+    base::span(cipher_suites_0),
+    base::span(curves_2),
+    2,
+    base::span(signature_algorithms_1),
+    base::span(tls_extension_ids_4),
+    RuntimeProfileData::TlsExtensionOrderPolicy::kBoringSslRandomFisherYates,
+    true,
+    true,
+    true,
+    true,
+    true,
+    true,
+    false,
+    0,
+    true,
+    true,
+    true,
+    true,
+    false,
+    true,
+    true,
+    true,
+    0,
+    0x0003,
+    base::span(trust_anchor_ids_0),
     true,
   },
 };

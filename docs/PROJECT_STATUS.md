@@ -13,7 +13,7 @@
 
 - Chromium revision：`010786339149198c8c24d58c30cf5a41fcf60c14`（MAJOR=153，2026-08-04）
 - Python 发布版本 0.2.1.1，crate 版本 0.2.2（Cargo 不接受四段版本号）
-- Chrome profile：`chrome_99` — `chrome_151`，53 个
+- Chrome profile：`chrome_99` — `chrome_152`，54 个
 
 ## 已完成
 
@@ -120,6 +120,55 @@ Request 与 WebSocket 在 ABI v8 里各自建独立 sequenced runner，`Engine` 
 顺手试过让 asyncio 的 `notify` 每次唤醒排空至多 64 个事件，插桩显示实际每次唤醒
 96% 只有 1 个事件可取，零收益，已丢弃。
 
+### chrome_152 已加入（54 个 profile）
+
+与 chrome_151 相比，wire 上只差三处，全部可从源码证明：
+
+1. UA 版本号 `151.0.0.0` → `152.0.0.0`，其余 token 一字不差。`minicronet.cc` 对
+   major > 104 本来就生成 `<major>.0.0.0`，无需改代码
+2. 多一个扩展 **0xca34 `TLSEXT_TYPE_trust_anchors`**。151 里
+   `kTLSTrustAnchorIDs` 是 `FEATURE_DISABLED_BY_DEFAULT`、`kNonMtcTrustAnchorIDs`
+   不存在，且只发与服务端通告的交集；152 两个 feature 都默认开，改用
+   `SelectAllTrustAnchorIDs()` 无条件发全部。151 的开关是编译期关闭的，组件再新也
+   不会发，所以这是真正的版本级差异
+3. **`signature_algorithms` 里多一个 GREASE 值**。`kTlsGreaseSigalgs` 是 152 新增
+   且默认开（`features.cc:965`），`ssl_client_socket_impl.cc:211` 调用
+   `SSL_CTX_set_grease_sigalgs_enabled`。这一项不需要新机制：
+   `grease_signature_algorithms` 是已有字段，Core 本来就按
+   `has_profile ? profile 字段 : feature 默认值` 逐 socket 解析
+
+JA4 从 `t13d1516h2_8daaf6152771_806a8c22fdea` 变成
+`t13d1517h2_8daaf6152771_cb7bf5808d99`（扩展 16→17，cipher 哈希不变），Akamai H2
+指纹逐字节相同。为稳妥起见还把两个 tag 的 140 个 net feature 默认值全量对比了一遍：
+两个翻转、五个新增且默认开、七个移除，其中只有
+`kTcpSocketPoolLimitRandomizationForProxy` 涉及 profile 字段，而它 gate 的行为在 152
+里变成无条件开启，所以 `randomize_proxy_socket_pool_limit` 仍为 true。
+
+**trust_anchors 载荷：集合是 profile 数据，顺序不是。** 28 个 ID 按观测冻结——编译期
+根库在 152 tag 和固定树里都是 32 个，抓包那 28 个是子集，机器的根库被 PKI Metadata
+组件更新过，任何源码树里都没有这个状态。但顺序**故意不冻结**：
+`SSLContextConfig::trust_anchor_ids` 是 `absl::flat_hash_set`，absl 给每个表实例单独
+撒种（`raw_hash_set.h`：*"Per table hash salt … randomize iteration order
+per-table"*），所以顺序是表实例的属性而非版本的属性。Chrome 每个浏览器进程建一次表，
+这就是它 4 次抓包顺序一致、重启后又变的原因。Core 复现机制而不是复现结果：把 28 个 ID
+插进同一种容器，让 absl 排序。实测一个 Engine 内 4 次请求 1 种顺序、同进程 4 个 Engine
+4 种顺序、集合恒定——Engine 扮演浏览器进程的角色。冻结顺序反而会让每个实例发出同一个
+排列，那是真实 Chrome 不会有的行为。
+
+**不影响其它版本，已用 wire 验证。** 新增 `tools/inspect-client-hello.py`
+从本地 socket 把 ClientHello 读回来解析，不靠表自证。采样次数很关键：BoringSSL 的
+RFC 7685 padding 依赖长度，而 ECH GREASE 载荷长度逐连接变化，所以同一个 profile 的
+`padding` 会时有时无，单次采样会把它误读成指纹变化。用 `--repeat 4` 对横跨 99–151 的
+11 个 profile 在改动前后各采一轮：11 个的稳定集合与浮动集合完全一致，且没有任何
+152 之前的 profile 发出 `trust_anchors`——空 span 让
+`ShouldAdvertiseTrustAnchorIDs()` 返回 false，这是结构上的保证。
+
+profile 表重新生成的可信度也先证明过：迁入 `profiles/` 三份输入后重新生成，与已提交的
+表**逐字节一致**；加入 chrome_152 后 diff 是纯增量——**删除 0 行**，53 个旧 profile 各
+多一个空 `{}` 字段。
+
+证据与复现命令见 [`profiles/chrome-152/`](../profiles/chrome-152/README.md)。
+
 ### 其它已修复
 
 - **GIL 与 Rust Mutex 加锁顺序反转导致的死锁**（`schedule_event` 在 edition 2021 下
@@ -163,89 +212,6 @@ Request 与 WebSocket 在 ABI v8 里各自建独立 sequenced runner，`Engine` 
 收益主要在 manylinux 打包健壮性（少 3 个私有依赖 `libnss3`/`libnspr4`/`libnssutil3`），
 不在体积。
 
-### chrome_152：证据已备齐，只剩一个取值决定
-
-拿到 4 次独立的 Chrome 152 抓包（tls.peet.ws，UA
-`Chrome/152.0.0.0`）后，与仓库里已 `wire_verified` 的 chrome_151 抓包逐项对照，
-**152 与 151 在 wire 上只差两点**：
-
-1. UA 版本号 `151.0.0.0` → `152.0.0.0`（`sec-ch-ua` 同步变），其余 token 一字不差
-2. 多一个 TLS 扩展 **0xca34 / 51764 = `TLSEXT_TYPE_trust_anchors`**
-   （`third_party/boringssl/src/include/openssl/tls1.h:141`）
-
-其余全部相同，用 JA3/JA4/Akamai 三个指纹交叉确认：
-
-| 指纹 | chrome_151 | chrome_152 |
-| --- | --- | --- |
-| JA3 cipher 段 | `4865-…-53` | 完全相同 |
-| JA3 曲线段 | `4588-29-23-24` | 完全相同 |
-| JA4 | `t13d1516h2_8daaf6152771_806a8c22fdea` | `t13d1517h2_8daaf6152771_cb7bf5808d99` |
-| Akamai H2 | `1:65536;2:0;4:6291456;6:262144\|15663105\|0\|m,a,s,p` | 逐字节相同 |
-
-JA4 的 `1516` → `1517` 正是「扩展从 16 个变 17 个」，cipher 哈希 `8daaf6152771`
-两边一致。H2 侧连 WINDOW_UPDATE 增量 15,663,105（= 15,728,640 − 65,535）都相同，
-说明 `h2_params_0` 不用改。
-
-UA 那条已经天然满足：`core/source/minicronet.cc:52` 对 major > 104 直接生成
-`<major>.0.0.0`，加一个 `chrome_152` 表项就会得到 `Chrome/152.0.0.0`。
-
-**一、随机性门禁：已通过。** 4 次独立连接（4 个不同源端口），client_random /
-session_id / extension_order / grease_values / key_share / ech 各有 **4 个不同值**
-（门槛是 3）。去掉 GREASE 后的 cipher / 曲线 / 签名算法列表、H2 指纹、
-trust_anchors 载荷、UA 在 4 次里逐字节相同。扩展集合只差一个
-`pre_shared_key (41)`——只出现在复用会话的那 3 次，属于预期。
-`tools/verify-wire-capture.py` 把这套门禁在本仓库实现，输出
-`profiles/chrome-152/validation.json`，`wire_verified: true`。
-
-**二、源码证据：已取得。** 不需要第二份 70 GB 检出——`evidence.source_files` 只涉及
-12 个文件，`tools/collect-profile-evidence.py` 直接从 googlesource 按 release tag
-逐个取。该工具先用 chrome_151 做了校验：**12 个文件的字节数、SHA-256、全部信号计数
-与行号，以及 DEPS 里的 boringssl / quiche revision，与已审计的 chrome_151 记录零差异。**
-
-chrome_152 固定在 `152.0.7977.83`（commit `79460ebe…`，boringssl `572a4c68…`，
-quiche `1ba0d99a…`）。UA 只暴露主版本，无法归因到具体 patch build；改为验证分支稳定
-性：把该分支首个（`152.0.7977.42`，08-12）与最后一个（`.83`，09-03）stable 的 12 个
-文件对比，**12/12 完全相同**，所以具体 build 不影响指纹。
-
-**三、trust anchor ID 的取值：仍是唯一未决项。** 载荷形状本身没问题——
-`AddTrustAnchorIdToEncodedList`、`ShouldAdvertiseTrustAnchorIDs`、
-`SelectAllTrustAnchorIDs` 这三个函数在 152 tag 与本仓库固定树里**逐字节相同**，所以
-本仓库编译出的 Core 会产出与 Chrome 152 一致的编码，顺序由我们喂进去的顺序决定。
-
-不能从源码得出的是「哪些 ID」。4 次抓包一致通告 28 个（186 字节载荷）；而编译期
-Chrome Root Store 在 152 tag 和固定树里都是 32 个，28 个是其严格子集，少了
-`d6790902`/`03`/`09`/`0e`（均为 11129.9.x），顺序也不同（wire 以 `82df130206` 开头，
-根库以 `839a648c9b2d010a` 开头）。抓包机器的根库被 PKI Metadata 组件更新过，那个状态
-不存在于任何源码树。
-
-两条路，证据已排除其中一条：
-
-- **从编译期根库导出**：可从源码复现，但会发出 32 个 ID、不同顺序、不同长度，
-  不匹配任何真实 Chrome，**不满足保真要求**
-- **冻结抓到的 28 个 ID（按观测顺序）**：与抓包逐字节一致，也和 profile 其它字段的
-  做法一致——cipher / 曲线 / 扩展列表本来就是冻结常量而不是从构建读出来的。代价是它
-  是一个快照，真实 152 装机会随组件更新变化
-
-冻结是唯一满足保真要求的选项，但它把一个「组件更新值」放进版本索引表，需要你签字。
-落地还要改 Core：`core/source/profile_ssl_config_service.cc` 从 profile 填
-`SSLContextConfig::trust_anchor_ids`、profile 表加一个字段、8 个平台重建。151 及更早
-的 profile 保持空列表，`ShouldAdvertiseTrustAnchorIDs()` 对它们返回 false，因此逐字节
-不变——这个改动天然 fail-closed。
-
-**订正此前一个错误结论。** 之前写过「这个扩展未必是版本标记，组件已更新的 Chrome 151
-也可能发出它」。拿到两个 tag 的源码后证明是错的：
-
-| | Chrome 151 | Chrome 152 |
-| --- | --- | --- |
-| `kTLSTrustAnchorIDs` | `FEATURE_DISABLED_BY_DEFAULT` | `FEATURE_ENABLED_BY_DEFAULT` |
-| `kNonMtcTrustAnchorIDs` | 不存在 | `FEATURE_ENABLED_BY_DEFAULT` |
-| 选择逻辑 | `SelectTrustAnchorIDs()`，只发与服务端通告的交集 | `SelectAllTrustAnchorIDs()`，无条件发全部 |
-
-151 的开关是编译期关闭的，所以无论组件多新都不会发这个扩展。**0xca34 是真正的版本级
-差异**，chrome_152 有独立于 UA 的指纹依据。
-
-证据与说明都在 [`profiles/chrome-152/`](../profiles/chrome-152/README.md)。
-
 ### 其它待确认
 
 - Windows manifest 的 `runtime_dependencies` 曾声明 `libplc4.so`/`libplds4.so`，
@@ -278,8 +244,12 @@ Chrome Root Store 在 152 tag 和固定树里都是 32 个，28 个是其严格�
 - `tests/` 下 core/rust/python/node/go 五个目录在本机存在但**从未被 git 跟踪**，仓库里
   没有这一层。真实测试在 `bindings/python/tests/test_stability.py` 和各 crate 的
   `#[cfg(test)]` 里。要么补内容，要么删掉这个空壳，不要让它继续冒充测试布局
-- 迁入 4 个 `profile_verification` 探针与 profile 证据流水线，让
-  `MIGRATION_FROM_NEW.md` 的「不再依赖 new/」对全部路径成立
+- profile 表的三份输入（`normalized_profiles.json`、`effective_protocol_params.json`、
+  `network_feature_snapshots.json`）已随 chrome_152 迁入 `profiles/`，
+  `tools/generate-profile-table.py` 现在能在本仓库直接重新生成。**仍在 `new/` 的**是
+  上游那几个 audit 生成器（`extract-*`、`build-normalized-profiles.py`）和 4 个
+  `profile_verification` 探针；新增 profile 目前靠 `tools/collect-profile-evidence.py`
+  加 `tools/verify-wire-capture.py` 走通，全流水线迁移还没做
 - Linux x86/ARM64 交叉编译目前还依赖 `new/.tools/pkgconf`（通过
   `MINICRONET_PKGCONF_DIR` 指定）
 
@@ -313,6 +283,9 @@ PyPI 上的 0.2.1.1 同时存在背压挂死和 IDN 崩溃，两者都已在本�
 | Python 套件 | 16 个用例通过，1 个 skip（需 WS 端点） | 是 |
 | `tools/audit-core-linux.sh` | 通过（体积上限 9,250,000） | 否，需 Chromium 树 |
 | 8 个平台构建 | 全部通过 | 否，需 Chromium 树与交叉工具链 |
+| `tools/generate-profile-table.py` | 重新生成与已提交表逐字节一致 | 否，未接入 |
+| `tools/verify-wire-capture.py` | chrome_152 `wire_verified: true` | 否，需抓包 |
+| `tools/inspect-client-hello.py` | 11 个 profile 改动前后指纹一致 | 否，需已构建扩展 |
 
 Python 套件能进 CI 是因为 linux-x86_64 Core 已提交在仓库里；已用一份浅克隆验证过
 从零检出可以跑通（装 `libnss3`、`cargo build --release -p chrome-client-python`、
