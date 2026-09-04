@@ -145,44 +145,94 @@ Request 与 WebSocket 在 ABI v8 里各自建独立 sequenced runner，`Engine` 
 
 ## 已知缺陷与阻塞
 
-### 不链接 NSS：上游不支持该配置
+### NSS 保留（已决策，不再是阻塞）
 
-`use_nss_certs = false` 在 Linux 上**编译不过**，两处上游缺口：
+曾考虑用 `use_nss_certs = false` 去掉 3 个私有依赖（`libnss3`/`libnspr4`/`libnssutil3`）。
+**决策：不移除。** 两个理由：
 
-1. `net::TestRootCerts::Init()` —— `test_root_certs_builtin.cc` 只在
-   `use_nss_certs` 分支里被加入 Linux 源码集（已用一行 GN 补丁解决）
-2. `net::CreateSslSystemTrustStoreChromeRoot()` —— `system_trust_store.cc` 的平台
-   `#if/#elif` 链里，**Linux 只有 `USE_NSS_CERTS` 一个分支**
-   （`SystemTrustStoreChrome(chrome_root, TrustStoreNSS(...))`）
+1. 上游不支持该配置。`use_nss_certs = false` 在 Linux 上编译不过：
+   `net::TestRootCerts::Init()` 只在 `use_nss_certs` 分支里进 Linux 源码集（一行 GN
+   补丁可解），但 `net::CreateSslSystemTrustStoreChromeRoot()` 在
+   `system_trust_store.cc` 的平台 `#if/#elif` 链里 **Linux 只有 `USE_NSS_CERTS`
+   一个分支**，必须自己实现一个「只用 Chrome Root Store、不读系统信任库」的版本
+2. 那会改变证书校验语义——系统与企业安装的根证书不再被承认，而真实 Chrome 在 Linux
+   上是会读的。本项目的契约是与真实 Chrome 一致，所以这是功能行为变更，不可接受
 
-第 2 点无法只靠 GN 解决，必须新增一个「只用 Chrome Root Store、不读系统信任库」的
-实现。**这会改变证书校验语义**：系统/企业安装的根证书不再被承认。真实 Chrome 在
-Linux 上是会读的，所以这是一个功能行为变更，不只是去掉依赖。
+收益本来也只在 manylinux 打包健壮性，不在体积。构建脚本里没有这个开关，不需要改动。
 
-缓解手段存在：ABI 的 `MN_TLS_VERIFY_CUSTOM_CA` 允许调用方自带 PEM，而
-`COMPATIBILITY_BOUNDARY.md` 描述的契约本来就是「Chrome Root Store」。
-
-当前状态：已撤回 `use_nss_certs = false`，保留 `is_cfi = false`，等决策。
 收益主要在 manylinux 打包健壮性（少 3 个私有依赖 `libnss3`/`libnspr4`/`libnssutil3`），
 不在体积。
 
-### chrome_152：证据缺失
+### chrome_152：指纹差异已查明，但仍不能添加
 
-无法添加。每个 profile 的 `evidence` 要求匹配该 Chrome 版本源码树的逐文件
-SHA-256、字节数和 CSPRNG / GREASE / 扩展置换 / key_share 的行号级定位，加上
-`wire_verified` 的真实抓包。本机情况：
+拿到一份 Chrome 152 的真实抓包（`~/桌面/152.json`，tls.peet.ws，UA
+`Chrome/152.0.0.0`）后，与仓库里已 `wire_verified` 的 chrome_151 抓包逐项对照，
+**152 与 151 在 wire 上只差两点**：
 
-| 需要的输入 | 状态 |
+1. UA 版本号 `151.0.0.0` → `152.0.0.0`（`sec-ch-ua` 同步变），其余 token 一字不差
+2. 多一个 TLS 扩展 **0xca34 / 51764 = `TLSEXT_TYPE_trust_anchors`**
+   （`third_party/boringssl/src/include/openssl/tls1.h:141`）
+
+其余全部相同，用 JA3/JA4/Akamai 三个指纹交叉确认：
+
+| 指纹 | chrome_151 | chrome_152 |
+| --- | --- | --- |
+| JA3 cipher 段 | `4865-…-53` | 完全相同 |
+| JA3 曲线段 | `4588-29-23-24` | 完全相同 |
+| JA4 | `t13d1516h2_8daaf6152771_806a8c22fdea` | `t13d1517h2_8daaf6152771_cb7bf5808d99` |
+| Akamai H2 | `1:65536;2:0;4:6291456;6:262144\|15663105\|0\|m,a,s,p` | 逐字节相同 |
+
+JA4 的 `1516` → `1517` 正是「扩展从 16 个变 17 个」，cipher 哈希 `8daaf6152771`
+两边一致。H2 侧连 WINDOW_UPDATE 增量 15,663,105（= 15,728,640 − 65,535）都相同，
+说明 `h2_params_0` 不用改。
+
+UA 那条已经天然满足：`core/source/minicronet.cc:52` 对 major > 104 直接生成
+`<major>.0.0.0`，加一个 `chrome_152` 表项就会得到 `Chrome/152.0.0.0`。
+
+**但仍然不能加，有三个独立的阻塞：**
+
+**一、Core 现在根本发不出这个扩展。** `ShouldAdvertiseTrustAnchorIDs()`
+（`net/ssl/ssl_config_service.cc:84`）要求 `!trust_anchor_ids.empty()`，而
+`core/source/profile_ssl_config_service.cc` 从不设置这个字段。所以即使表里写上
+0xca34，wire 上也不会出现——profile 声明的指纹与实际发出的不一致，正是规则禁止的
+情形。
+
+**二、扩展内容不是版本常量，无法从源码复现。** 载荷是 186 字节、28 个具体的 trust
+anchor ID。它的来源是 PKI Metadata 组件更新
+（`chrome/browser/component_updater/pki_metadata_component_installer.cc:373`
+`UpdateTrustAnchorIDsImpl`），启动时先用编译进去的根库初始化，之后被组件更新替换。
+把本仓库固定的 Chromium 树（MAJOR=153）的编译期根库拿来比：
+
+| 项 | 数量 |
 | --- | --- |
-| `profiles/` 里的 152 数据 | 0 条 |
-| `captures/` 里的 152 抓包 | 0 组 |
-| Chromium 树里的 152 tag | 0 个（单 revision 浅克隆） |
-| 本机 Chrome 152 浏览器 | 无 |
+| 固定树 `root_store.textproto` 里的 ID | 32 |
+| 抓包里实际通告的 ID | 28 |
+| 抓包有而固定树没有的 | 0 |
+| 固定树有而抓包没有的 | 4（`d6790902`/`03`/`09`/`0e`，均为 11129.9.x） |
 
-复制 chrome_151 的参数改标签会让调用方以为在模拟 152 而实际发出 151 的指纹，
-版本号与指纹不匹配本身就是检测信号。项目规则也明确要求 fail-closed。
+顺序也完全不同：抓包以 `82df130206` 开头，根库以 `839a648c9b2d010a` 开头。也就是说
+照固定树编译会发出 32 个 ID、另一种顺序、另一个长度——与真实 Chrome 152 不一致，而且
+每次根库数据变动都会再漂移一次。
 
-解锁需要：Chrome 152 的 wire 抓包，或一个带 tag 的完整 Chromium 克隆。
+**三、随机性证据不足。** chrome_151 的 `wire_verified` 是靠 3 次独立连接达成的，
+`validation.json` 的 `stochastic.unique_counts` 要求 client_random / session_id /
+extension_order / grease_values / key_share_digest / ech_digest 各有 3 个不同值。
+152 目前只有 1 份 JSON、0 个 pcap，`multi_connection_randomness_verified` 无从建立。
+
+**另外一个值得注意的结论：这个扩展未必是版本标记。** 它的出现取决于组件更新下来的
+数据加两个默认开启的 feature（`net/base/features.cc:682,684` 的 `kTLSTrustAnchorIDs`
+与 `kNonMtcTrustAnchorIDs` 都是 `FEATURE_ENABLED_BY_DEFAULT`），而不是浏览器主版本。
+一台组件已更新的 Chrome 151 也可能发出它。所以把 0xca34 当成「chrome_152 专属指纹」
+本身站不住——151 与 152 之间除 UA 之外可能并不存在稳定的版本级 wire 差异。
+
+**解锁需要（按依赖顺序）：**
+
+1. ≥3 次独立的 Chrome 152 抓包（pcap + response JSON），补齐随机性门禁
+2. Chrome 152 对应 tag 的源码树，用于生成 `evidence.source_files` 的逐文件 SHA-256、
+   字节数和信号行号。本机是 depth-1、`blob:none`、0 个 tag 的浅克隆，做不到
+3. 一个关于 trust anchor ID 取值的决定：是把抓到的 28 个 ID 按观测顺序冻结进 profile
+   （忠于那一次抓包，但真实 Chrome 会随组件更新变化），还是从编译期根库导出
+   （可从源码复现，但不匹配任何真实 Chrome）。两者都不是「正确」，需要你定
 
 ### 其它待确认
 
@@ -196,7 +246,9 @@ SHA-256、字节数和 CSPRNG / GREASE / 扩展置换 / key_share 的行号级�
 
 ### 阶段 2 剩余
 
-1. NSS 依赖移除——等证书校验语义的决策
+阶段 2 已收尾，两个候选都有结论、都不再执行：
+
+1. NSS 依赖移除——**已决策不做**，见「已知缺陷与阻塞」里的说明
 2. `.rela.dyn` 432 KB 用 DT_RELR 可压到约 50 KB，但 manylinux2014 是 glibc 2.17，
    加载器不支持，**已排除**
 
