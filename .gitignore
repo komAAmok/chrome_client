@@ -13,8 +13,10 @@ __pycache__/
 .venv/
 venv/
 
-# Rust/Python build output
+# Rust/Python build output. bindings/python36 is a separate crate with its own
+# target directory, which the root pattern does not reach.
 /target/
+/bindings/*/target/
 /dist/
 *.whl
 

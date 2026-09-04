@@ -1,7 +1,0 @@
-cargo:rerun-if-changed=/home/sj/桌面/chrome_client/core/abi/minicronet.h
-cargo:rustc-link-search=native=/home/sj/桌面/chrome_client/core/binaries/linux-x86_64
-cargo:rustc-link-lib=dylib=minicronet
-cargo:rerun-if-changed=/home/sj/桌面/chrome_client/core/binaries/linux-x86_64/libminicronet.so
-cargo:rerun-if-changed=/home/sj/桌面/chrome_client/core/binaries/linux-x86_64/libminicronet.so
-cargo:rerun-if-env-changed=MINICRONET_CORE_DIR
-cargo:rerun-if-env-changed=MINICRONET_REQUIRE_NATIVE
