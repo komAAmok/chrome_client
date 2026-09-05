@@ -25,6 +25,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+      # `cargo test --all-targets` executes the example binaries, which link the
+      # Core; its DT_NEEDED list includes NSS. The runner image happens to ship
+      # it, but an explicit install keeps the job from depending on that.
+      - run: sudo apt-get update && sudo apt-get install -y libnss3
       - run: cargo fmt --all -- --check
       - run: cargo check --workspace --all-targets
       - run: cargo clippy --workspace --all-targets -- -D warnings
@@ -46,6 +50,11 @@ jobs:
       # The Core links NSS for the system trust store; see
       # core/binaries/linux-x86_64/manifest.json runtime_dependencies.
       - run: sudo apt-get update && sudo apt-get install -y libnss3
+      # test_compat.CertificateErrorTests generates its own CA and three
+      # defective leaf certificates. Without this the whole class skips, and the
+      # check that a rejected certificate reports ERR_CERT_* rather than
+      # ERR_ABORTED would silently not run.
+      - run: python -m pip install --disable-pip-version-check cryptography
       - name: Verify the Core loads before running the suite
         run: |
           set -Eeuo pipefail
