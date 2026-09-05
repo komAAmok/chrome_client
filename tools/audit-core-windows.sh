@@ -5,8 +5,10 @@ OUT_DIR=${1:?usage: audit-core-windows.sh OUT_DIR}
 CHROMIUM_SRC=${CHROMIUM_SRC:-/home/sj/chromium/src}
 # Static MSVC/UCRT adds roughly 2 MB compared with the Linux shared libc
 # build; keep a strict platform-specific ceiling instead of hiding it in the
-# build output.
-MAX_BYTES=${MAX_BYTES:-12000000}
+# build output. Lowered after the memory-only disk cache patch: the largest
+# Windows artifact is x86_64 at 11,291,648 bytes (x86 8,971,264,
+# arm64 9,221,120).
+MAX_BYTES=${MAX_BYTES:-11400000}
 ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 RG=${RG:-$(command -v rg || true)}
 if [[ -z $RG ]]; then

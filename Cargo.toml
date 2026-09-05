@@ -9,9 +9,7 @@ resolver = "2"
 [workspace.package]
 edition = "2021"
 license = "MIT"
-# Cargo requires semver, so the four-component Python release 0.2.1.1 maps to
-# the 0.2.2 crate version. Both ship from this commit.
-version = "0.2.2"
+version = "0.3.0"
 
 [workspace.lints.rust]
 unsafe_op_in_unsafe_fn = "deny"

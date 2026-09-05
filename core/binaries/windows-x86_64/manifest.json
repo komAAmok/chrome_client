@@ -7,8 +7,8 @@
   "triple": "x86_64-pc-windows-msvc",
   "library": "minicronet.dll",
   "import_library": "minicronet.lib",
-  "sha256": "4e1782b01757e164e35ebe00a2559c69542beda860545ed4b7a3ce64717f164d",
+  "sha256": "504868b04c106c21cbc7c69167b1741b7cbbfc83fe20f630fe5ccbde96c891cb",
   "import_library_sha256": "c5ef409b8c559f2138f93e8cd8cbc64462263948f82fbe9d35706df01965fb4b",
-  "size_bytes": 11460608,
+  "size_bytes": 11291648,
   "runtime_dependencies": []
 }

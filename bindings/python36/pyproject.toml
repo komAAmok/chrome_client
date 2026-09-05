@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "chrome-client"
-version = "0.2.1.1"
+version = "0.3.0"
 description = "Chromium Core HTTP/WebSocket client"
 # Must render the same project introduction as bindings/python: both wheels
 # publish to the same PyPI release, so a differing readme makes the project page

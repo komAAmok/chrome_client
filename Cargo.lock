@@ -14,7 +14,7 @@ dependencies = [
 
 [[package]]
 name = "chrome-client-python"
-version = "0.2.2"
+version = "0.3.0"
 dependencies = [
  "minicronet",
  "pyo3",
@@ -46,7 +46,7 @@ checksum = "3eaf3ede3fee6db1a4c2ee091bf8a8b4dccdc6d17f656fb07896ee72867612f2"
 
 [[package]]
 name = "minicronet"
-version = "0.2.2"
+version = "0.3.0"
 dependencies = [
  "futures-core",
  "minicronet-sys",
@@ -54,7 +54,7 @@ dependencies = [
 
 [[package]]
 name = "minicronet-sys"
-version = "0.2.2"
+version = "0.3.0"
 
 [[package]]
 name = "once_cell"

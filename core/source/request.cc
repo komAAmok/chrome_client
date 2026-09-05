@@ -22,6 +22,7 @@
 #include "net/base/upload_bytes_element_reader.h"
 #include "net/http/http_request_headers.h"
 #include "net/http/http_response_headers.h"
+#include "net/ssl/ssl_info.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
 #include "net/url_request/redirect_info.h"
 #include "net/url_request/url_request_context.h"
@@ -258,6 +259,26 @@ void Request::OnAuthRequired(net::URLRequest *request,
   request->SetAuth(net::AuthCredentials(
       base::UTF8ToUTF16(engine_->proxy_username()),
       base::UTF8ToUTF16(engine_->proxy_password())));
+}
+
+void Request::OnSSLCertificateError(net::URLRequest *request, int net_error,
+                                    const net::SSLInfo &ssl_info, bool fatal) {
+  // Cancel with the certificate error, not with ERR_ABORTED.
+  //
+  // URLRequest::NotifySSLCertificateError hands the real code (for example
+  // ERR_CERT_DATE_INVALID) to this delegate method and then relies on the
+  // delegate to end the request. The base implementation calls
+  // URLRequest::Cancel(), which is DoCancel(ERR_ABORTED, SSLInfo()): it discards
+  // both the certificate error and the SSLInfo, so a caller cannot tell a
+  // rejected certificate from a cancellation it asked for itself.
+  //
+  // CancelWithSSLError is what services/network/url_loader.cc calls when it
+  // decides not to proceed, so this keeps the Core on Chromium's own path.
+  // `fatal` (an HSTS or policy pin that forbids bypassing) is not forwarded: ABI
+  // v8 has no field for it, and the Core never offers to proceed regardless --
+  // relaxing verification is an Engine-level decision made before a request
+  // starts, so no per-request bypass exists to gate.
+  request->CancelWithSSLError(net_error, ssl_info);
 }
 
 void Request::UploadWriteOnNetworkThread(std::vector<uint8_t> data,

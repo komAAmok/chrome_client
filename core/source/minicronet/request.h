@@ -43,6 +43,10 @@ public:
                           bool *defer_redirect) override;
   void OnAuthRequired(net::URLRequest *request,
                       const net::AuthChallengeInfo &auth_info) override;
+  // Overridden so a rejected certificate reports its own error code; the base
+  // implementation cancels with ERR_ABORTED and loses it.
+  void OnSSLCertificateError(net::URLRequest *request, int net_error,
+                             const net::SSLInfo &ssl_info, bool fatal) override;
   void OnResponseStarted(net::URLRequest *request, int net_error) override;
   void OnReadCompleted(net::URLRequest *request, int bytes_read) override;
 

@@ -32,10 +32,10 @@ jobs:
       - run: cargo test --manifest-path bindings/python36/Cargo.toml --locked
 
   python-regression:
-    # The Linux x86_64 Core is committed, so the 16-case regression suite can
-    # run here. It covers streaming, backpressure, cancellation, IDN and the
-    # public API surface -- the checks that would otherwise only exist on the
-    # maintainer's machine.
+    # The Linux x86_64 Core is committed, so both regression suites can run
+    # here: test_stability.py covers streaming, backpressure, cancellation, IDN
+    # and lifetimes, and test_compat.py covers the requests/curl-cffi surface,
+    # cookie sessions, proxy routing, the async leak bound and concurrency.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -57,8 +57,8 @@ jobs:
         run: cargo build --release -p chrome-client-python
         env:
           MINICRONET_CORE_DIR: ${{ github.workspace }}/core/binaries/linux-x86_64
-      - name: Run the Python regression suite
-        run: python -m unittest bindings/python/tests/test_stability.py -v
+      - name: Run the Python regression suites
+        run: python -m unittest discover -s bindings/python/tests -p "test_*.py" -v
         env:
           PYTHONPATH: ${{ github.workspace }}/bindings/python:${{ github.workspace }}/target/release
           MINICRONET_CORE_DIR: ${{ github.workspace }}/core/binaries/linux-x86_64

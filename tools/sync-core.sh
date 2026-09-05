@@ -74,6 +74,12 @@ apply_patch profile-feature-isolation-net.patch . \
   'net/socket/socket_pool_additional_capacity.cc:#if BUILDFLAG(MINICRONET_BUILD)'
 apply_patch protocol-mode-net.patch . \
   'net/http/http_network_session.h:enum class HttpProtocolMode'
+# The Core only ever asks for net::MEMORY_CACHE and its ABI exposes no cache
+# directory, so the blockfile and simple disk backends are unreachable. Cutting
+# the one live reference to them lets the linker drop both (-221,184 bytes on
+# linux-x86_64).
+apply_patch minicronet-disk-cache-memory-only.patch . \
+  'net/disk_cache/disk_cache.cc:#if BUILDFLAG(MINICRONET_BUILD)'
 apply_patch minicronet-windows-exports.patch . \
   'base/win/scoped_handle_verifier.cc:#if defined(MINICRONET_BUILD)'
 apply_patch xwin-clang-cross.patch . \

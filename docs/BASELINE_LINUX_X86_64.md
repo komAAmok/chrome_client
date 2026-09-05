@@ -448,3 +448,111 @@ FeatureList 审计和 profile 表生成器。
 `core/source/BUILD.gn` 现在就是 Chromium 编译的那一份（平铺路径），不再有仓库本地
 的嵌套变体，所以只有一处需要维护。
 
+## 阶段 4 续：内存唯一磁盘缓存后端（2026-09-05）
+
+### 起点：先量清楚体积花在哪
+
+在未 strip 的 linux-x86_64 镜像（14,229,040 字节）上按符号归并，得到 8,838,336
+字节的符号覆盖。前几名：
+
+| 组 | 字节 | 占已装产物 | 说明 |
+| --- | --- | --- | --- |
+| HSTS 预载表（`kPreloadedHSTSData` + `kHostPins`） | 764,848 | 8.3% | 单个最大符号就是 753,232 字节 |
+| ICU（IDNA-only 数据 + trie） | 389,842 | 4.2% | 已经是最小数据集，见阶段 2 |
+| simdutf 转换表 | 377,542 | 4.1% | base 的 UTF-8/16 转换，正确性相关 |
+| 磁盘缓存 simple + blockfile 后端 | 163,847 | 1.8% | **Core 用不到** |
+| brotli 静态字典 | 122,960 | 1.3% | Chrome 通告 `br`，必需 |
+| zstd 解码表 | 103,512 | 1.1% | Chrome 通告 `zstd`，必需 |
+| `kDafsa`（public suffix list） | 51,764 | 0.6% | cookie 域规则依赖，必需 |
+
+按命名空间：`net::` 2,815,683、`base::` 717,197、`quic::` 625,698、`std::`
+585,483、`bssl::` 428,138。这些是 Chromium 网络栈本体，不是可裁剪的边角。
+
+节段构成（三个 Linux 目标一致的量级）：`.text` 6.09 MB、`.rodata` 2.28 MB、
+`.rela.dyn` 439 KB、`.data.rel.ro` 219 KB、`.eh_frame` 30.6 KB。
+
+### 已采纳：磁盘缓存后端不再进链接产物
+
+Core 的 `Engine::InitializeOnNetworkThread` 只请求
+`HttpCacheParams::IN_MEMORY`（`core/source/engine.cc:454-457`），ABI v8 也没有任何
+缓存目录参数，所以 blockfile 和 simple 两个磁盘后端在这份构建里不可达。但它们仍然
+进了产物，因为 `disk_cache::CreateCacheBackendImpl` 在 `MEMORY_CACHE` 分支之后会构造
+`CacheCreator`，而 `CacheCreator` 同时引用两个后端——这一处引用就是链接器不敢丢它们的
+唯一原因。
+
+`core/patches/minicronet-disk-cache-memory-only.patch` 在 `MEMORY_CACHE` 分支之后加了
+一个 `BUILDFLAG(MINICRONET_BUILD)` 早返回。**没有改 `net/BUILD.gn` 的源码清单**：源文件
+照旧编译，只是没人引用，`--gc-sections` 自然把它们清掉。这样即使将来有别处引用它们，
+构建仍然通过，不会变成链接错误。
+
+选择这个做法而不是删源码，是因为删源码会把「不可达」变成「不存在」——一旦上游或本项目
+将来真的需要磁盘后端，删源码的版本会在链接期爆掉，而现在这个版本只会在运行期返回
+`ERR_NOT_IMPLEMENTED`，且那条路径本来就无法从 ABI 触达。
+
+符号层面的验证（未 strip 镜像，`llvm-nm`）：
+
+| 符号组 | 修改前 | 修改后 |
+| --- | --- | --- |
+| `disk_cache::Simple*` | 100,051 字节 / 604 个 | 1,134 字节 / 6 个 |
+| blockfile `BackendImpl` | 24,888 / 146 | 0 / 0 |
+| blockfile `EntryImpl` | 26,140 / 138 | 0 / 0 |
+| `MemBackendImpl` | 5,420 / 48 | **5,420 / 48（保留）** |
+| `MemEntryImpl` | 9,934 / 56 | **9,934 / 56（保留）** |
+
+八个平台的实测收益（比预估的 164 KB 更多，因为后端的传递依赖也一起被丢弃）：
+
+| 目标 | 之前 | 之后 | 差值 | 占比 |
+| --- | --- | --- | --- | --- |
+| linux-x86 | 8,807,564 | 8,555,652 | −251,912 | −2.86% |
+| linux-x86_64 | 9,176,928 | 8,955,744 | −221,184 | −2.41% |
+| linux-arm64 | 8,720,656 | 8,490,832 | −229,824 | −2.64% |
+| windows-x86 | 9,256,448 | 8,971,264 | −285,184 | −3.08% |
+| windows-x86_64 | 11,460,608 | 11,291,648 | −168,960 | −1.47% |
+| windows-arm64 | 9,506,816 | 9,221,120 | −285,696 | −3.01% |
+| macos-x86_64 | 8,848,160 | 8,618,588 | −229,572 | −2.59% |
+| macos-arm64 | 8,021,264 | 7,806,416 | −214,848 | −2.68% |
+| **合计** | **73,798,444** | **71,911,264** | **−1,887,180** | **−2.56%** |
+
+功能与稳定性验收（未发现回退）：
+
+- 内存 HTTP 缓存行为逐项确认：第二次请求命中缓存（服务端仍只收到 1 次）、
+  `cache_mode="bypass"` 走网络、`cache_mode="only_if_cached"` 由缓存应答、
+  `Session(cache=False)` 每次都走网络。
+- Core 自带 smoke：`minicronet_smoke` 与 `tools/run-http-smoke.py` 全部通过。
+- `tools/audit-core-linux.sh` 通过（529 个 net 源文件、166 处 FeatureList 读取、
+  清单 SHA 仍是 `37169aa7dfe3`），macOS/Windows 审计同样通过。
+- Python 回归 103 个用例通过、1 个跳过。
+- **TLS 指纹未变**：`tools/inspect-client-hello.py` 对 chrome_152/151/120/99 抓取，
+  cipher 数、稳定扩展集合、profile 之间的集合差异与修改前逐字节一致。逐次抓包的
+  扩展 order 不同是 Chrome 自身的扩展乱序（`tls_permute_extensions`），不是回归。
+
+三个体积上限随之收紧：Linux 9,250,000 → **9,050,000**；Windows 12,000,000 →
+**11,400,000**；macOS 12,000,000 → **8,750,000**。macOS 那一档原来虚高了 3 MB 以上，
+等于没有门禁。
+
+### 已测量但未采纳：HSTS 预载表（−786,432 字节，−8.57%）
+
+`include_transport_security_state_preload_list = false` 是本轮唯一还剩的大头，实测
+linux-x86_64 从 8,955,744 降到 8,169,312，与磁盘缓存那项叠加共 −1,007,616 字节
+（−10.98%）。
+
+**没有采纳，因为它要用保真度换体积。** Chrome 会在发出任何字节之前把预载域名的
+`http://` 升级成 `https://`，还会执行内置的 HPKP 钉扎；去掉这张表之后，对预载域名的
+明文请求会真的以明文发出。这既是使用者的安全回退，也是可被检测方观察到的、与真实
+Chrome 的行为差异——而 `docs/COMPATIBILITY_BOUNDARY.md` 把 HSTS 预载明确列为保留的
+Chromium 固定默认值。
+
+要不要做这个取舍是产品决定，不是构建决定。如果决定接受，只需在 8 个
+`tools/build-core-*.sh` 的 args.gn 里加一行，并同步下调三个上限和兼容边界文档。
+
+### 已测量的其它候选与结论
+
+| 候选 | 结论 |
+| --- | --- |
+| `enable_base_tracing = false` | **这个 gn 参数在本 revision 已不存在**（`base/tracing_buildflags.h` 只剩 `USE_PERFETTO_TRACE_PROCESSOR` 和 `OPTIONAL_TRACE_EVENTS_ENABLED`）。perfetto/track-event 相关符号共 174,514 字节，没有开关可关 |
+| `exclude_unwind_tables = true` | 上限就是 `.eh_frame` 30,600 字节加 `.eh_frame_hdr`，约 0.4%，且会让宿主进程无法回溯 Core 帧。收益与风险都太小，未做；要做的话是一次全量重编译 |
+| simdutf（377,542 字节） | 是 `base` 的 UTF 转换实现，没有 gn 开关，且属正确性路径 |
+| ICU（389,842 字节） | 阶段 2 已压到 IDNA-only 191 KB 数据集；再降就要放弃 IDN 正确性 |
+| ntlm + digest 认证（22,695 字节） | 真实 Chrome 支持这两种认证，去掉是能力回退 |
+| WebTransport 相关符号（39,206 字节） | 属 QUIC 栈内部，没有独立开关 |
+| `net/features.gni` 的其余开关 | 已经全部最优：`disable_file_support=1`、`use_kerberos=0`、`enable_mdns=0`、`enable_reporting=0`、`enable_device_bound_sessions=0`、`enable_disk_cache_sql_backend=0`；`enable_websockets=1` 是 ABI 需要，故意保留 |

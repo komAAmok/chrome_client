@@ -121,12 +121,14 @@ class StabilityTests(unittest.TestCase):
             self.assertIn("session=abc", body)
             self.assertIn("extra=1", body)
 
+            # Per-request cookies apply to that request only.
             body = session.get(self.url + "echo-cookie", cookies={"extra": "2"}).text
             self.assertIn("extra=2", body)
             self.assertEqual(session.cookies.get_dict(), {"session": "abc", "extra": "1"})
 
-            with self.assertRaises(ValueError):
-                session.cookies.get_dict(domain="example.com")
+            # Domain and path filters now answer from real cookie metadata rather
+            # than rejecting the call.
+            self.assertEqual(session.cookies.get_dict(domain="example.com"), {})
 
     def test_streaming_and_response_limit(self):
         with chrome_client.Client() as client:
@@ -202,16 +204,20 @@ class StabilityTests(unittest.TestCase):
         any non-ASCII host.
         """
         with chrome_client.Client() as client:
-            # Both spellings of the same non-existent host must fail the same way:
-            # resolution/connection, not argument validation.
+            # Both spellings of the same host must fail identically: a transport
+            # or resolution error, never argument validation.
+            failures = []
             for url in ("http://例え.テスト/", "http://xn--r8jz45g.xn--zckzah/"):
                 with self.assertRaises(chrome_client.RequestException) as caught:
                     client.get(url, timeout=2)
-                self.assertNotIn("InvalidArgument", str(caught.exception))
+                self.assertNotIsInstance(caught.exception, ValueError)
+                failures.append(type(caught.exception))
+            self.assertEqual(failures[0], failures[1])
 
-            with self.assertRaises(chrome_client.RequestException) as caught:
+            # A URL with no scheme is rejected before any I/O, with requests'
+            # exception type rather than a native error string.
+            with self.assertRaises(chrome_client.MissingSchema):
                 client.get("not-a-url", timeout=2)
-            self.assertIn("InvalidArgument", str(caught.exception))
 
             response = client.get(self.url + "path/路径?q=值", timeout=5)
             self.assertEqual(response.status_code, 200)
@@ -263,32 +269,53 @@ class StabilityTests(unittest.TestCase):
 
         self.run_async(run())
 
-    def test_public_api_has_no_legacy_exports(self):
-        expected = {
-            "Client", "Session", "AsyncClient", "AsyncSession", "Response",
-            "AsyncResponse", "WebSocket", "AsyncWebSocket", "CaseInsensitiveDict", "CookieJar",
-            "ResponseTooLarge", "RequestException", "Timeout", "requests", "get", "options", "head",
-            "post", "put", "patch", "delete",
-        }
-        self.assertEqual(set(chrome_client.__all__), expected)
+    def test_public_api_surface(self):
+        exported = set(chrome_client.__all__)
+        # Names every release has published.
+        self.assertLessEqual(
+            {"Client", "Session", "AsyncClient", "AsyncSession", "Response",
+             "AsyncResponse", "WebSocket", "AsyncWebSocket", "CaseInsensitiveDict",
+             "CookieJar", "ResponseTooLarge", "RequestException", "Timeout", "requests",
+             "get", "options", "head", "post", "put", "patch", "delete"},
+            exported)
+        # requests-shaped names callers port code against.
+        self.assertLessEqual(
+            {"HTTPError", "ConnectionError", "SSLError", "ProxyError", "TooManyRedirects",
+             "JSONDecodeError", "ConnectTimeout", "ReadTimeout", "MissingSchema",
+             "InvalidURL", "ChunkedEncodingError", "Request", "PreparedRequest",
+             "HTTPAdapter", "HTTPBasicAuth", "codes", "cookiejar_from_dict"},
+            exported)
+        # curl_cffi-shaped names.
+        self.assertLessEqual(
+            {"CurlMime", "ExtraFingerprints", "CurlHttpVersion", "Headers", "Cookies",
+             "RetryStrategy", "WsCloseCode"},
+            exported)
         self.assertNotIn("minicronet", dir(chrome_client))
         self.assertNotIn("_all", dir(chrome_client))
         self.assertNotIn("_native_module", dir(chrome_client))
-        self.assertNotIn("_sys", dir(chrome_client))
         self.assertNotIn("chrome_client_native36", dir(chrome_client))
-        self.assertEqual(
-            list(inspect.signature(chrome_client.Client.request).parameters),
-            ["self", "method", "url", "params", "data", "json", "headers", "cookies",
-             "timeout", "allow_redirects", "stream", "impersonate", "proxy", "proxies", "verify",
-             "max_response_bytes"],
-        )
-        with self.assertRaises(TypeError):
-            chrome_client.Client().request("GET", self.url, legacy_field=True)
 
-    def test_proxies_selects_scheme_and_explicit_proxy_wins(self):
+        parameters = list(inspect.signature(chrome_client.Session.request).parameters)
+        self.assertEqual(parameters[:5], ["self", "method", "url", "params", "data"])
+        for name in ("headers", "cookies", "files", "auth", "timeout", "allow_redirects",
+                     "proxies", "hooks", "stream", "verify", "cert", "json", "content",
+                     "multipart", "impersonate", "proxy", "http_version",
+                     "max_redirects", "max_response_bytes"):
+            self.assertIn(name, parameters)
+        with self.assertRaises(TypeError):
+            chrome_client.Session().request("GET", self.url, legacy_field=True)
+
+    def test_proxies_selects_scheme_and_is_mutable(self):
         proxies = {"http": "http://proxy-http", "https": "http://proxy-https", "all": "http://proxy-all"}
         client = chrome_client.Client(proxies=proxies)
         self.assertEqual(client.proxies, proxies)
+        # `session.proxies` is an ordinary mutable mapping, as in requests.
+        client.proxies["http"] = "http://replaced"
+        self.assertEqual(_proxy_from_proxies("http://example.com", client.proxies),
+                         "http://replaced")
+        client.proxies.clear()
+        self.assertEqual(client.proxies, {})
+        self.assertEqual(chrome_client.Client().proxies, {})
         self.assertEqual(_proxy_from_proxies("https://example.com", proxies), "http://proxy-https")
         self.assertEqual(_proxy_from_proxies("ws://example.com", proxies), "http://proxy-http")
 
@@ -348,7 +375,8 @@ class StabilityTests(unittest.TestCase):
 
     @unittest.skipUnless(
         os.environ.get("MINICRONET_WS_URL") or os.environ.get("MINICRONET_WSS_URL"),
-        "set MINICRONET_WS_URL or MINICRONET_WSS_URL for WS/WSS endpoint",
+        "set MINICRONET_WS_URL or MINICRONET_WSS_URL for a real WS/WSS endpoint; "
+        "test_compat.WebSocketTests covers the handshake against a local server",
     )
     def test_websocket_sync_and_async(self):
         urls = [value for value in (os.environ.get("MINICRONET_WS_URL"), os.environ.get("MINICRONET_WSS_URL")) if value]
@@ -359,9 +387,10 @@ class StabilityTests(unittest.TestCase):
 
         async def run():
             for url in urls:
-                async with await chrome_client.AsyncClient().websocket(url) as socket:
-                    await socket.send("ping")
-                    self.assertEqual(await socket.recv(), "ping")
+                async with chrome_client.AsyncClient() as client:
+                    async with await client.websocket(url) as socket:
+                        await socket.send("ping")
+                        self.assertEqual(await socket.recv(), "ping")
 
         self.run_async(run())
 

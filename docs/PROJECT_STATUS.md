@@ -1,6 +1,6 @@
 # chrome_client 项目状态
 
-记录时间：2026-09-03。本文覆盖已完成、进行中、已知缺陷和后续计划。数字都来自本机
+记录时间：2026-09-05。本文覆盖已完成、进行中、已知缺陷和后续计划。数字都来自本机
 实测，可用 `tools/` 下的脚本复现。
 
 ## 项目定位
@@ -12,7 +12,7 @@
 `minicronet-sys`（手写 FFI 声明）→ `minicronet`（Rust 安全层）→ 各语言薄绑定。
 
 - Chromium revision：`010786339149198c8c24d58c30cf5a41fcf60c14`（MAJOR=153，2026-08-04）
-- Python 发布版本 0.2.1.1，crate 版本 0.2.2（Cargo 不接受四段版本号）
+- Python 发布版本 0.3.0，crate 版本 0.3.0
 - Chrome profile：`chrome_99` — `chrome_152`，54 个
 
 ## 已完成
@@ -187,12 +187,118 @@ profile 表重新生成的可信度也先证明过：迁入 `profiles/` 三份�
 头翻转为 `(0)`、产物 SHA-256 逐字节一致。`--gc-sections`、`--icf=all` 和 ThinLTO
 已经把那些宏清干净了。
 
+### 阶段 4：Python 兼容层重写（2026-09-04）
+
+Python 绑定从「能跑通」提升到「requests / curl_cffi 可直接迁移」。四个缺陷用测量
+确认后修掉，完整证据见 `docs/PYTHON_BINDING_AUDIT.md`：
+
+| 缺陷 | 证据 | 修复 |
+| --- | --- | --- |
+| 异步请求泄漏 ≈12 KiB/请求 | 每 500 请求 RSS +5.9 MiB，线性增长 | 终止事件清理 Core 事件回调，打断穿过 Rust 的引用环；修复后 2000 请求 +68 KiB |
+| 每请求重建 Chromium Engine | 5 次带 override 的请求构造 5–6 个 Engine | 按配置缓存 Engine（每 session 有界、带锁、跨 fork 重建）；同样场景降到 1 个 |
+| override 丢会话状态 | `session.get(..., verify=False)` 拿不到已有 cookie | jar 镜像 `Set-Cookie` 并在换 Engine 时重发 |
+| 流式失败死锁 / `allow_redirects=False` 挂住 | 两者都能稳定复现（timeout 124） | 失败路径改为发信号而非 resolve 无人等待的 future；新增 `wait_manual` 同时等 redirect 与 response |
+| WebSocket 整条路径不可用 | `origin` 默认 `""`，Core 拒绝空 origin，所有 `websocket()` 直接失败；旧 WS 测试默认 skip 所以从未覆盖 | origin 默认取 URL 自身；构造函数等握手 open；错误改为具名 net error；`WebSocket(url=...)` 不再泄漏 Session |
+| 证书错误丢失原始错误码 | 所有证书失败都报 `ERR_ABORTED (-3)`，与主动取消无法区分；`error_mapping.h` 里的 cert 分支永远走不到 | 覆盖 `OnSSLCertificateError`，用 `CancelWithSSLError`（Chromium 自己在 `services/network/url_loader.cc` 的做法）；已重建 linux-x86_64 Core，无 ABI 改动 |
+
+新增能力：requests 全异常层次与 `Response` 属性、`RequestsCookieJar`、可变
+`session.proxies`、`Request`/`PreparedRequest`、adapter 挂载点、`codes`、
+`CurlMime`、`http_version`、`RetryStrategy`、分块上传、真实子模块
+`chrome_client.requests`。无法忠实实现的选项（`ja3`、`akamai`、`cert`、
+`curl_options`、`referer` 等）显式抛 `UnsupportedFeature` 而不是静默忽略。
+
+Chromium net error 码现在驱动异常类型与消息（`ERR_CERT_DATE_INVALID (net error
+-201)`）。测试从 16 个增加到 103 个：13 个 WebSocket 用例跑在本地握手服务器上，8 个
+证书用例用本地生成的 CA 与各带一个缺陷的证书，都不需要外部端点。
+
+证书错误码修复是本轮唯一改动 C++ 的地方，根因链见
+`docs/PYTHON_BINDING_AUDIT.md`：Chromium 把真实错误码交给 delegate 后就依赖 delegate
+结束请求，而基类默认实现调 `URLRequest::Cancel()`，即
+`DoCancel(ERR_ABORTED, SSLInfo())`——写死 ERR_ABORTED 并丢掉 SSLInfo。同一个 Core 的
+WebSocket 路径一直做得对，这也印证了它是疏漏而非设计选择。
+
+明确否掉的一个改动：不接受顶层传入的 WebSocket UA。Core 把 `User-Agent` 列为禁止的
+握手额外头，且实测 UA 在握手中的位置由 Chromium 决定、本身属于指纹；正确入口是
+Engine 级 `Session(user_agent=...)` 或换 profile。传 header 会抛 `UnsupportedFeature`
+而不是静默丢弃。
+
+### 阶段 4 续：体积精简（2026-09-05）
+
+先在未 strip 镜像上按符号量清体积去向，再只动可证明不可达的部分。完整测量见
+`docs/BASELINE_LINUX_X86_64.md`。
+
+**已采纳：磁盘缓存后端不进链接产物。** Core 只请求 `HttpCacheParams::IN_MEMORY`，
+ABI v8 也没有缓存目录参数，所以 blockfile 与 simple 两个后端不可达；它们之所以还在
+产物里，是因为 `CreateCacheBackendImpl` 在内存分支之后构造的 `CacheCreator` 引用了
+它们。新补丁在内存分支后加一个 `BUILDFLAG(MINICRONET_BUILD)` 早返回，不删源码清单，
+让 `--gc-sections` 自己丢——将来若真有别处引用，构建仍然通过而不是链接失败。
+
+八个平台合计 **73,798,444 → 71,911,264 字节，−1,887,180（−2.56%）**，单平台
+−1.47% 到 −3.08%。符号层面确认 `disk_cache::Simple*` 从 100,051 降到 1,134 字节、
+两个 blockfile 类归零，而 `MemBackendImpl`/`MemEntryImpl` 一字节未动。
+
+验收：内存缓存的命中 / `bypass` / `only_if_cached` / `cache=False` 四种行为逐项确认；
+Core smoke、三个平台审计、103 个 Python 用例全过；**TLS 指纹未变**——
+`inspect-client-hello.py` 对 chrome_152/151/120/99 的 cipher 数、稳定扩展集合和 profile
+间集合差异与修改前逐字节一致（逐次 order 不同是 Chrome 自身的扩展乱序）。
+
+三个体积上限随之收紧：Linux 9,250,000 → 9,050,000、Windows 12,000,000 → 11,400,000、
+macOS 12,000,000 → 8,750,000。macOS 那一档原来虚高 3 MB 以上，等于没有门禁。
+
+**已测量但未采纳：HSTS 预载表（−786,432 字节，−8.57%）。** 这是剩下唯一的大头，与上面
+那项叠加可再省到 −10.98%。没做，因为它用保真度换体积：Chrome 会在发出任何字节之前把
+预载域名的 `http://` 升级为 `https://`，去掉这张表之后明文请求会真的以明文发出——既是
+安全回退，也是可被检测方观察到的与真实 Chrome 的差异。要不要接受是产品决定：接受的话
+只需在 8 个构建脚本的 args.gn 各加一行，并同步下调上限与兼容边界文档。
+
 ## 进行中
 
 没有正在执行的改动。下一步的候选见「后续计划」，其中阶段 3 剩下的两项（进程级唯一
 网络线程、body 三次拷贝）都需要先量化再动手。
 
 ## 已知缺陷与阻塞
+
+### 证书错误码修复的跨平台验收状态
+
+8 个平台的 Core 全部已重建、安装并刷新 manifest（`tools/audit-core-binaries.sh`
+8/8 通过，ABI 仍是 v8）：
+
+| 目标 | 大小（字节） | SHA-256 前缀 |
+| --- | --- | --- |
+| linux-x86 | 8,555,652 | `462635f0e53cfeac` |
+| linux-x86_64 | 8,955,744 | `e2cb4c7b8956c492` |
+| linux-arm64 | 8,490,832 | `cdd52ff2e640add0` |
+| windows-x86 | 8,971,264 | `cb9bbb7a738cc905` |
+| windows-x86_64 | 11,291,648 | `504868b04c106c21` |
+| windows-arm64 | 9,221,120 | `776ca5d97becf441` |
+| macos-x86_64 | 8,618,588 | `60bf3a174c3d0163` |
+| macos-arm64 | 7,806,416 | `9a9b5f58b4b5e7f8` |
+
+（表中是体积精简后的值；证书修复那一轮的 SHA 已被这一轮覆盖，两处改动都在里面。）
+
+三层证据，因为本机只能执行 x86_64 Linux 二进制（无 qemu、无 wine）：
+
+1. **行为**：linux-x86_64 实测过期 -201、主机名不匹配 -200、CA 不受信 -202，`verify=False`
+   与 `verify=<CA>` 不回退。
+2. **每个架构的编译产物**：8 个 target 的 `obj/minicronet/minicronet/request.o(bj)` 里都能
+   用 `llvm-nm` 看到
+   `minicronet::Request::OnSSLCertificateError(net::URLRequest*, int, net::SSLInfo const&, bool)`
+   的定义（`T`）加 vtable 引用（`U`），Windows 是对应的 MSVC 修饰名。虚函数在已发射的
+   vtable 里不会被链接器丢弃，所以链接产物必然含它。
+3. **可复现**：重建 linux-arm64 两次得到同一 SHA-256（`3e52609d7449b468`），说明安装的
+   二进制就对应当前源码。
+
+未做的是在真实 Windows / macOS / ARM64 机器上跑一次
+`test_compat.CertificateErrorTests`。那 8 个用例只需要本地生成证书，不依赖外网，可以直接在
+目标机上跑；断言里的 `assertNotIn("ERR_ABORTED", message)` 就是为此写的。
+
+Linux x86/ARM64 交叉编译需要 `pkg-config`（gn 为 NSS 调用它）。仓库外的 deb 在
+`new/.tools/pkgconf/`，展开后用 `MINICRONET_PKGCONF_DIR` 指向解包目录：
+
+```sh
+cd new/.tools/pkgconf && mkdir -p root && for deb in *.deb; do dpkg-deb -x "$deb" root/; done
+MINICRONET_PKGCONF_DIR=$PWD/root tools/build-core-linux-arm64.sh
+```
 
 ### NSS 保留（已决策，不再是阻塞）
 
@@ -250,8 +356,9 @@ profile 表重新生成的可信度也先证明过：迁入 `profiles/` 三份�
   上游那几个 audit 生成器（`extract-*`、`build-normalized-profiles.py`）和 4 个
   `profile_verification` 探针；新增 profile 目前靠 `tools/collect-profile-evidence.py`
   加 `tools/verify-wire-capture.py` 走通，全流水线迁移还没做
-- Linux x86/ARM64 交叉编译目前还依赖 `new/.tools/pkgconf`（通过
-  `MINICRONET_PKGCONF_DIR` 指定）
+- Linux x86/ARM64 交叉编译目前还依赖 `new/.tools/pkgconf` 的 deb（通过
+  `MINICRONET_PKGCONF_DIR` 指向解包目录），因为 gn 为 NSS 调用 `pkg-config`；
+  仓库里没有这一层，换机器需要先解包，见上文「证书错误码修复的跨平台验收状态」
 
 ### 阶段 5：profile v2 剩余专题
 
@@ -280,7 +387,7 @@ PyPI 上的 0.2.1.1 同时存在背压挂死和 IDN 崩溃，两者都已在本�
 | `tools/audit-readme.sh` | 通过 | 是 |
 | `cargo fmt` / `clippy -D warnings` | 通过 | 是 |
 | `cargo test --workspace` | 8 个单元测试通过（6 个回调/背压 + 2 个 ABI 布局） | 是 |
-| Python 套件 | 16 个用例通过，1 个 skip（需 WS 端点） | 是 |
+| Python 套件 | 103 个用例通过，1 个 skip（真实 WSS 端点，握手已由本地服务器覆盖） | 是 |
 | `tools/audit-core-linux.sh` | 通过（体积上限 9,250,000） | 否，需 Chromium 树 |
 | 8 个平台构建 | 全部通过 | 否，需 Chromium 树与交叉工具链 |
 | `tools/generate-profile-table.py` | 重新生成与已提交表逐字节一致 | 否，未接入 |
@@ -288,8 +395,9 @@ PyPI 上的 0.2.1.1 同时存在背压挂死和 IDN 崩溃，两者都已在本�
 | `tools/inspect-client-hello.py` | 11 个 profile 改动前后指纹一致 | 否，需已构建扩展 |
 
 Python 套件能进 CI 是因为 linux-x86_64 Core 已提交在仓库里；已用一份浅克隆验证过
-从零检出可以跑通（装 `libnss3`、`cargo build --release -p chrome-client-python`、
-16 个用例 15 通过 1 skip）。
+从零检出可以跑通（装 `libnss3`、`cargo build --release -p chrome-client-python`）。
+套件现在分两个文件：`test_stability.py`（生命周期、并发、背压）和 `test_compat.py`
+（requests / curl-cffi 兼容面、cookie 会话、代理路由、泄漏、并发）。
 
 仍在 CI 之外的是需要 Chromium 源码树的两项：`audit-core-linux.sh` 的源码级审计
 （529 个 net 源文件、166 处 FeatureList 读取、体积上限）和 8 个平台的构建。它们依赖
