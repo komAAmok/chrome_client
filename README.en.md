@@ -1,6 +1,6 @@
 # chrome_client
 
-Current release: `0.3.0`
+Current release: `0.2.2`
 
 An HTTP/WebSocket client built on the Chromium network stack. The native Core
 owns TLS, HTTP/1.1, HTTP/2, HTTP/3/QUIC, proxy handling and WebSocket/WSS.

@@ -12,7 +12,7 @@
 `minicronet-sys`（手写 FFI 声明）→ `minicronet`（Rust 安全层）→ 各语言薄绑定。
 
 - Chromium revision：`010786339149198c8c24d58c30cf5a41fcf60c14`（MAJOR=153，2026-08-04）
-- Python 发布版本 0.3.0，crate 版本 0.3.0
+- Python 发布版本 0.2.2，crate 版本 0.2.2（两者同号，不再有四段版本号映射）
 - Chrome profile：`chrome_99` — `chrome_152`，54 个
 
 ## 已完成

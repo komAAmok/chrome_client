@@ -43,7 +43,7 @@ _native_name = _native_module.__name__.rsplit(".", 1)[-1]
 if _native_name in ("chrome_client_native", "chrome_client_native36"):
     _sys.modules.setdefault(__name__ + "." + _native_name, _native_module)
 
-__version__ = "0.3.0"
+__version__ = "0.2.2"
 __all__ = list(_all) + ["requests", "__version__"]
 
 del _all, _native_module, _native_name, _sys
