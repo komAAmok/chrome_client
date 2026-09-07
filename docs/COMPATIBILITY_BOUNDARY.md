@@ -116,7 +116,7 @@ is visible to a fingerprinter.
 | `interface`, `doh_url` | No ABI v8 field |
 | `curl_options` | No libcurl handle exists |
 | `max_recv_speed` | Chromium owns transfer pacing |
-| `referer=` or a `Referer` header | Chromium owns the referrer and strips the extra header (verified empirically) |
+| `referer=` or a `Referer` header | Routed to `URLRequest::SetReferrer`, so it is sent like a real Chrome's |
 | `impersonate` outside `chrome_99`–`chrome_152`, or a non-Chromium family | The Core registers Chromium desktop profiles only |
 
 ### Certificate errors

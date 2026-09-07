@@ -6,8 +6,8 @@
   "target": "linux-x86",
   "triple": "i686-unknown-linux-gnu",
   "library": "libminicronet.so",
-  "sha256": "462635f0e53cfeacdb6cfcd7aa99c24a03dbda0e4a63a1eb7a620f59c06dc5a0",
-  "size_bytes": 8555652,
+  "sha256": "0962203451d2d4edf4d59de5a860c93b14a6f3ad6d562c9e856322af0ea475e0",
+  "size_bytes": 8556196,
   "runtime_dependencies": [
     "libc.so.6",
     "libdl.so.2",

@@ -205,7 +205,8 @@ Python 绑定从「能跑通」提升到「requests / curl_cffi 可直接迁移�
 `session.proxies`、`Request`/`PreparedRequest`、adapter 挂载点、`codes`、
 `CurlMime`、`http_version`、`RetryStrategy`、分块上传、真实子模块
 `chrome_client.requests`。无法忠实实现的选项（`ja3`、`akamai`、`cert`、
-`curl_options`、`referer` 等）显式抛 `UnsupportedFeature` 而不是静默忽略。
+`curl_options` 等）显式抛 `UnsupportedFeature` 而不是静默忽略。`referer=` 与
+`Referer` 头原也在其列，后改为真实发出，见下文的「Referer 修复」。
 
 Chromium net error 码现在驱动异常类型与消息（`ERR_CERT_DATE_INVALID (net error
 -201)`）。测试从 16 个增加到 103 个：13 个 WebSocket 用例跑在本地握手服务器上，8 个
@@ -221,6 +222,24 @@ WebSocket 路径一直做得对，这也印证了它是疏漏而非设计选择�
 握手额外头，且实测 UA 在握手中的位置由 Chromium 决定、本身属于指纹；正确入口是
 Engine 级 `Session(user_agent=...)` 或换 profile。传 header 会抛 `UnsupportedFeature`
 而不是静默丢弃。
+
+### Referer 修复（2026-09-07）
+
+此前 `referer=` 与 `Referer` 头显式抛 `UnsupportedFeature`，因为实测 Chromium 会剥掉
+extra headers 里的 `Referer`。问题在于那条路径本身就不通：`URLRequestHttpJob` 只认
+`URLRequest::SetReferrer` 设的字段，Core 从不调用它，所以「接受它等于让调用方以为设置
+成功」这个判断在旧 ABI 下成立。
+
+现在的做法是把 `Referer` 路由到 `SetReferrer`（`core/source/request.cc`），让值从
+Chromium 自己那条路径上 wire。途中发现并处理了第二个坑：默认 referrer policy 是
+`CLEAR_ON_TRANSITION_FROM_SECURE_TO_INSECURE`，一个 `https://` referrer 打到
+`http://` 目标会被 `url_request.cc` 在 job 读取前清掉——这正是「忠实于 Chrome」与
+requests/curl 语义冲突的地方。选择后者：显式提供 `Referer` 时把 policy 设为
+`NEVER_CLEAR`，调用方给什么就发什么。不带 `Referer` 的请求走默认 policy，指纹路径不变。
+
+验收：`Session(headers={"Referer": ...})`、`Session(referer=...)`、`request(..., referer=)`
+三种方式都在本地 echo 服务器上看到请求头；`test_referer_reaches_the_wire` 覆盖四种
+组合；103 个 Python 用例全过（2 个跳过）。
 
 ### 阶段 4 续：体积精简（2026-09-05）
 

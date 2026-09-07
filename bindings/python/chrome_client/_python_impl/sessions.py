@@ -49,13 +49,10 @@ ASYNC_POLL_BATCH = 64
 STREAM_BUFFER_LIMIT = 1024 * 1024
 
 
-#: Chromium removes any caller-set ``Referer`` extra header, and ABI v8 has no
-#: referrer field, so the request cannot be honoured either way.
-_REFERER_MESSAGE = (
-    "Referer cannot be set: Chromium owns the referrer and strips a "
-    "caller-supplied Referer header, and ABI v8 exposes no referrer field. "
-    "Nothing this client sends would reach the wire."
-)
+#: Chromium derives the Referer from `URLRequest::SetReferrer`, not from the
+#: extra headers. The Core routes a caller-supplied Referer there
+#: (core/source/request.cc), so the value reaches the wire through the same
+#: path a real Chrome uses.
 
 
 #: Headers `mn_websocket_create` rejects (`IsForbiddenWebSocketHeader` in
@@ -578,8 +575,6 @@ class BaseSession(object):
         self.headers = Headers(_default_headers() if default_headers else None)
         if headers:
             self.headers.update(headers)
-        if "referer" in self.headers:
-            raise UnsupportedFeature(_REFERER_MESSAGE)
         self.cookies = cookiejar_from_dict(cookies) \
             if not isinstance(cookies, RequestsCookieJar) else cookies
         for event, hook in (hooks or {}).items():
@@ -863,13 +858,13 @@ class BaseSession(object):
 
         headers = values.get("headers")
         headers = Headers(headers) if headers is not None else None
+        # Referer is honoured: the Core routes it to URLRequest::SetReferrer
+        # (core/source/request.cc), so it goes out like a real Chrome's. Merge
+        # the keyword first and let an explicit header win, mirroring how
+        # accept_encoding is handled below.
         if values.get("referer") is not None:
-            raise UnsupportedFeature(_REFERER_MESSAGE)
-        if headers is not None and "referer" in headers:
-            # Chromium owns the referrer through `URLRequest::SetReferrer` and
-            # strips a caller-supplied `Referer` extra header. Dropping it
-            # silently would leave a fingerprint gap nobody could debug.
-            raise UnsupportedFeature(_REFERER_MESSAGE)
+            headers = headers if headers is not None else Headers()
+            headers.setdefault("Referer", values["referer"])
         if values.get("accept_encoding") is not None:
             headers = headers if headers is not None else Headers()
             headers["Accept-Encoding"] = values["accept_encoding"]

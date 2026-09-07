@@ -8,6 +8,7 @@ Run with the audited Core available:
 """
 
 import asyncio
+import ast
 import base64
 import datetime
 import gc
@@ -59,6 +60,9 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(b"ok", extra=[("Set-Cookie", "sid=ABC; Path=/"),
                                             ("Set-Cookie", "taste=sweet; Path=/"),
                                             ("Content-Type", "text/plain")])
+        if self.path.startswith("/echo-referer"):
+            return self._send(repr(self.headers.get("Referer")).encode(),
+                              extra=[("Content-Type", "text/plain")])
         if self.path.startswith("/echo-cookie"):
             return self._send(repr(self.headers.get_all("Cookie") or []).encode(),
                               extra=[("Content-Type", "text/plain")])
@@ -454,19 +458,30 @@ class RequestsSurfaceTests(Base):
             payload = session.post(self.url, auth=handler).json()
             self.assertEqual(payload["authorization"], "Basic dXNlcjpwYXNz")
 
-    def test_referer_fails_closed(self):
-        """Chromium strips a caller-set Referer, so the facade refuses it.
-
-        Accepting it would leave the request looking unreferred with no way for
-        the caller to tell.
-        """
+    def test_referer_reaches_the_wire(self):
+        """Referer is routed to URLRequest::SetReferrer, so it is sent."""
         with chrome_client.Session() as session:
-            with self.assertRaises(chrome_client.UnsupportedFeature):
-                session.get(self.url, referer="https://example.invalid/")
-            with self.assertRaises(chrome_client.UnsupportedFeature):
-                session.get(self.url, headers={"Referer": "https://example.invalid/"})
-        with self.assertRaises(chrome_client.UnsupportedFeature):
-            chrome_client.Session(headers={"Referer": "https://example.invalid/"})
+            response = session.get(self.url + "echo-referer",
+                                   referer="https://example.invalid/")
+            self.assertEqual(ast.literal_eval(response.text),
+                             "https://example.invalid/")
+            response = session.get(
+                self.url + "echo-referer",
+                headers={"Referer": "https://other.invalid/path"})
+            self.assertEqual(ast.literal_eval(response.text),
+                             "https://other.invalid/path")
+            # An explicit header wins over the keyword, matching how
+            # accept_encoding merges below.
+            response = session.get(
+                self.url + "echo-referer",
+                referer="https://keyword.invalid/",
+                headers={"Referer": "https://header.invalid/"})
+            self.assertEqual(ast.literal_eval(response.text),
+                             "https://header.invalid/")
+        with chrome_client.Session(headers={"Referer": "https://session.invalid/"}) as session:
+            response = session.get(self.url + "echo-referer")
+            self.assertEqual(ast.literal_eval(response.text),
+                             "https://session.invalid/")
 
     def test_facade_adds_no_headers_of_its_own(self):
         """The profile owns the default header set; the facade must not seed it."""

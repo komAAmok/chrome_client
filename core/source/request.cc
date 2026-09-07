@@ -7,6 +7,7 @@
 #include "base/compiler_specific.h"
 #include "base/functional/bind.h"
 #include "base/location.h"
+#include "base/strings/string_util.h"
 #include "base/time/time.h"
 #include "base/task/thread_pool.h"
 #include "base/strings/utf_string_conversions.h"
@@ -220,8 +221,20 @@ void Request::StartOnNetworkThread() {
       net::SiteForCookies::FromOrigin(url::Origin::Create(url)));
   request_->set_method(method_);
   request_->SetLoadFlags(CacheLoadFlags(cache_mode_));
+  // A caller-supplied Referer never survives SetExtraRequestHeaders:
+  // URLRequestHttpJob strips it and serializes the referrer() field instead.
+  // Route it there so the value the caller asked for is what the wire carries.
+  // The default referrer policy clears an https referrer on an http target
+  // (CLEAR_ON_TRANSITION_FROM_SECURE_TO_INSECURE), which would drop an
+  // explicitly provided header; never clear it. The caller owns the header,
+  // exactly as with requests/curl.
   net::HttpRequestHeaders headers;
   for (const auto &[name, value] : headers_) {
+    if (base::EqualsCaseInsensitiveASCII(name, net::HttpRequestHeaders::kReferer)) {
+      request_->SetReferrer(value);
+      request_->set_referrer_policy(net::ReferrerPolicy::NEVER_CLEAR);
+      continue;
+    }
     headers.SetHeader(name, value);
   }
   request_->SetExtraRequestHeaders(headers);

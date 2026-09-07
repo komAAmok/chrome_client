@@ -211,9 +211,12 @@ Python 包重写为多个模块，公开导入仍只有 `chrome_client`，另加
 
 - **facade 不再注入任何默认请求头。** profile 与 Chromium 拥有默认头集合、取值和
   顺序；注入 `Accept: */*` 会被指纹检测看到。`utils.default_headers()` 返回空。
-- **`referer=` 与 `Referer` 头显式报错。** 实测 Chromium 会剥掉调用方设置的
-  `Referer`（18 个探测头中唯一被丢弃的一个），ABI v8 也没有 referrer 字段，所以
-  接受它等于让调用方以为设置成功了。
+- **`referer=` 与 `Referer` 头会真实发出。** `URLRequestHttpJob` 会剥掉 extra
+  headers 里的 `Referer`，只认 `URLRequest::SetReferrer` 设的字段；`request.cc`
+  把调用方给的 Referer 路由到那里。另有一个政策坑：默认 referrer policy
+  `CLEAR_ON_TRANSITION_FROM_SECURE_TO_INSECURE` 会在 https→http 时清掉 referrer，
+  所以显式提供 `Referer` 时把 policy 设为 `NEVER_CLEAR`——调用方给什么就发什么，
+  与 requests/curl 语义一致；不带 Referer 的请求走默认 policy。
 - **net error 码驱动异常类型和消息。** `ERR_CERT_DATE_INVALID (net error -201)`
   比 `Tls` 有用得多。
 - `session.stream` 同时是 requests 的布尔标志和 curl_cffi 的上下文管理器方法
