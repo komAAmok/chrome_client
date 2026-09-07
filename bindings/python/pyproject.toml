@@ -4,7 +4,6 @@ build-backend = "maturin"
 
 [project]
 name = "chrome-client"
-version = "0.2.2"
 description = "Chromium Core HTTP/WebSocket client"
 readme = "../../README.md"
 # This wheel is cp37-abi3, the python36 wheel is cp36-abi3. Both abi3 wheels

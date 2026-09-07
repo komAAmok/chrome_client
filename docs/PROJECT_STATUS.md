@@ -12,7 +12,7 @@
 `minicronet-sys`（手写 FFI 声明）→ `minicronet`（Rust 安全层）→ 各语言薄绑定。
 
 - Chromium revision：`010786339149198c8c24d58c30cf5a41fcf60c14`（MAJOR=153，2026-08-04）
-- Python 发布版本 0.2.2，crate 版本 0.2.2（两者同号，不再有四段版本号映射）
+- Python 发布版本 0.2.3，crate 版本 0.2.3（两者同号，不再有四段版本号映射）
 - Chrome profile：`chrome_99` — `chrome_152`，54 个
 
 ## 已完成
@@ -395,7 +395,8 @@ MINICRONET_PKGCONF_DIR=$PWD/root tools/build-core-linux-arm64.sh
 ### 发布
 
 PyPI 上的 0.2.1.1 存在背压挂死和 IDN 崩溃，两者都已修复并随 **0.2.2** 发布
-（0.2.2 起 crate 与 Python 版本同号，不再有四段版本号）。发布路径：打 `v0.2.2`
+（0.2.2 起 crate 与 Python 版本同号，不再有四段版本号）；当前版本 **0.2.3**。
+发布路径：打 `v0.2.3`
 tag 触发 `pypa/gh-action-pypi-publish`（OIDC 可信发布，需要 PyPI 侧把
 `komAAmok/chrome_client` 的 `build-wheels.yml` 加进 trusted publishers），属于
 不可撤销操作；重复上传同名文件会被 PyPI 以 400 拒绝。
