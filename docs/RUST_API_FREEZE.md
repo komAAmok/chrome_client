@@ -2,8 +2,9 @@
 
 ## Version and crates
 
-- Workspace API version: `0.2.2`, shipped as the Python release `0.2.1.1`
-  because Cargo accepts only three-component semver.
+- Workspace API version: `0.2.2`, shipped as the Python release `0.2.2`
+  (crate and Python versions are the same number since 0.2.2; the earlier
+  four-component 0.2.1.1 mapping no longer exists).
 - The native boundary consumed by `minicronet-sys` is ABI v8.
 - No compatibility aliases or deprecated entry points are provided.
 

@@ -17,6 +17,7 @@ jobs:
       - uses: actions/checkout@v4
       - run: tools/audit-abi.sh
       - run: tools/audit-readme.sh
+      - run: tools/audit-pypi-metadata.sh
       # Pure static audit of the committed Core artifacts: manifest fields,
       # SHA-256, size, the twenty ABI exports per platform and the reverse
       # assertion that no icudtl.dat travels with a Windows build. Needs no

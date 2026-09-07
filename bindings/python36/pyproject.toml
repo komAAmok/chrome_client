@@ -12,7 +12,10 @@ description = "Chromium Core HTTP/WebSocket client"
 # python36 is its own Cargo workspace, so the root README is mirrored here and
 # `tools/audit-readme.sh` fails the build if the copy drifts.
 readme = "README.md"
-requires-python = ">=3.6,<3.7"
+# cp36-abi3 wheel: installs on any CPython 3.6 through 3.13. The old bound
+# (<3.7) understated this and, intersected with the main wheel's bound on the
+# PyPI page, made the project show "Requires Python <3.7, >=3.6".
+requires-python = ">=3.6,<3.14"
 
 [project.urls]
 Homepage = "https://github.com/komAAmok/chrome_client"

@@ -7,7 +7,11 @@ name = "chrome-client"
 version = "0.2.2"
 description = "Chromium Core HTTP/WebSocket client"
 readme = "../../README.md"
-requires-python = ">=3.7"
+# This wheel is cp37-abi3, the python36 wheel is cp36-abi3. Both abi3 wheels
+# declare the full supported range so the PyPI project page shows 3.6-3.13;
+# pip's tag matching still refuses this cp37 wheel on Python 3.6 and picks the
+# cp36 wheel there.
+requires-python = ">=3.6,<3.14"
 
 [project.urls]
 Homepage = "https://github.com/komAAmok/chrome_client"

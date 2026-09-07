@@ -314,6 +314,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: tools/audit-readme.sh
+      # Requires-Python, version and README consistency are gated before any
+      # wheel is uploaded: PyPI renders the intersection of all files' bounds,
+      # so one wheel with a narrower bound mislabels the whole release.
+      - run: tools/audit-pypi-metadata.sh
 
   publish:
     name: Publish wheels

@@ -394,8 +394,11 @@ MINICRONET_PKGCONF_DIR=$PWD/root tools/build-core-linux-arm64.sh
 
 ### 发布
 
-PyPI 上的 0.2.1.1 同时存在背压挂死和 IDN 崩溃，两者都已在本地修好但**未发布**。
-发布需要打 `v*` tag 触发 `pypa/gh-action-pypi-publish`，属于不可撤销操作。
+PyPI 上的 0.2.1.1 存在背压挂死和 IDN 崩溃，两者都已修复并随 **0.2.2** 发布
+（0.2.2 起 crate 与 Python 版本同号，不再有四段版本号）。发布路径：打 `v0.2.2`
+tag 触发 `pypa/gh-action-pypi-publish`（OIDC 可信发布，需要 PyPI 侧把
+`komAAmok/chrome_client` 的 `build-wheels.yml` 加进 trusted publishers），属于
+不可撤销操作；重复上传同名文件会被 PyPI 以 400 拒绝。
 
 ## 门禁现状
 
