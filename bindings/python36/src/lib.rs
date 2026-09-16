@@ -415,11 +415,7 @@ impl PyRequest {
     /// headers arrive, whichever happens first.  See the modern binding for the
     /// reasoning: waiting only on the response would hang in manual mode.
     #[args(timeout = "None")]
-    fn wait_manual(
-        &self,
-        py: Python,
-        timeout: Option<f64>,
-    ) -> PyResult<PyManualWait> {
+    fn wait_manual(&self, py: Python, timeout: Option<f64>) -> PyResult<PyManualWait> {
         let total = duration(timeout)?.unwrap_or_else(|| Duration::from_secs(86_400));
         py.allow_threads(|| {
             let deadline = Instant::now() + total;

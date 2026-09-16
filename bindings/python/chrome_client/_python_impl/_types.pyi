@@ -1,0 +1,18 @@
+from typing import Any, Callable, Iterable, Mapping, MutableMapping, Sequence, Tuple, Union
+
+StrOrBytes = Union[str, bytes]
+HeaderValue = Union[str, bytes, int, float, None]
+HeadersLike = Union[Mapping[str, HeaderValue], Iterable[Tuple[StrOrBytes, HeaderValue]]]
+ParamValue = Union[StrOrBytes, int, float, None, Sequence[Union[StrOrBytes, int, float, None]]]
+ParamsLike = Union[str, bytes, Mapping[str, ParamValue], Iterable[Tuple[str, ParamValue]]]
+CookiesLike = Union[Mapping[str, str], Any]
+AuthLike = Union[Tuple[str, str], Callable[[Any], Any], Any]
+Timeout = Union[int, float, Tuple[Union[int, float, None], Union[int, float, None]]]
+Verify = Union[bool, str]
+Proxies = Mapping[str, Union[str, None]]
+Hooks = Mapping[str, Union[Callable[[Any], Any], Iterable[Callable[[Any], Any]]]]
+Body = Union[str, bytes, bytearray, memoryview, Mapping[str, Any], Iterable[Tuple[str, Any]], Any]
+Impersonate = Union[str, Any]
+HttpVersion = Union[str, Any]
+Retry = Union[int, Any]
+ContentCallback = Callable[[bytes], Any]

@@ -23,4 +23,9 @@ Repository = "https://github.com/komAAmok/chrome_client"
 [tool.maturin]
 manifest-path = "Cargo.toml"
 python-source = "../python"
+include = [
+    { path = "chrome_client/**/*.py", format = "wheel" },
+    { path = "chrome_client/**/*.pyi", format = "wheel" },
+    { path = "chrome_client/py.typed", format = "wheel" },
+]
 module-name = "chrome_client.chrome_client_native36"
