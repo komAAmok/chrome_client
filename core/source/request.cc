@@ -418,27 +418,30 @@ void Request::OnReadCompleted(net::URLRequest *request, int bytes_read) {
   }
 
   if (callbacks_.on_body) {
-    auto bytes = UNSAFE_BUFFERS(
-        base::span(reinterpret_cast<const uint8_t *>(read_buffer_->data()),
-                   static_cast<size_t>(bytes_read)));
-    std::vector<uint8_t> data(bytes.begin(), bytes.end());
     auto callback = callbacks_.on_body;
     void *user_data = callbacks_.user_data;
+    // Hand the read buffer's ownership to the callback instead of copying the
+    // chunk into a std::vector. read_buffer_ is nulled so the next ReadMore
+    // allocates a fresh buffer; this drops one memcpy per chunk. The Rust
+    // binding still copies once, which the ABI requires.
+    scoped_refptr<net::IOBufferWithSize> buffer = std::move(read_buffer_);
     callback_runner_->PostTask(
         FROM_HERE,
         base::BindOnce(
             [](mn_request_body_fn callback, void *user_data, Request *self,
-               std::vector<uint8_t> data) {
+               scoped_refptr<net::IOBufferWithSize> buffer, int bytes_read) {
               const mn_read_disposition_t disposition = InvokeBodyCallback(
-                  callback, user_data, self->public_handle_, data.data(),
-                  data.size());
+                  callback, user_data, self->public_handle_,
+                  reinterpret_cast<const uint8_t *>(buffer->data()),
+                  static_cast<size_t>(bytes_read));
               if (disposition == MN_READ_PAUSE) {
                 self->PauseRead();
                 return;
               }
               self->PostReadMore();
             },
-            callback, user_data, base::RetainedRef(this), std::move(data)));
+            callback, user_data, base::RetainedRef(this), std::move(buffer),
+            bytes_read));
   } else {
     ReadMore();
   }
