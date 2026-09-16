@@ -534,6 +534,15 @@ class BaseSession(object):
                  user_agent=None, accept_language=None, interface=None, doh_url=None,
                  max_recv_speed=0, curl_options=None, max_engines=DEFAULT_MAX_ENGINES,
                  response_class=None):
+        """Configures defaults shared by requests made through this session.
+
+        ``impersonate`` selects a pinned Chromium profile, ``http_version`` can
+        pin ``v1``, ``v2`` or ``v3``, and ``proxy``/``proxies`` select the route.
+        ``verify`` accepts a boolean or CA bundle path; ``timeout`` accepts one
+        deadline or a ``(connect, read)`` pair. Request methods may override these
+        defaults for one call. Compatibility-only options unsupported by ABI v8
+        raise ``UnsupportedFeature`` instead of being silently ignored.
+        """
         reject_fingerprint_overrides(ja3, akamai, perk)
         for name, value in (("cert", cert), ("interface", interface),
                             ("doh_url", doh_url), ("curl_options", curl_options)):
@@ -1013,6 +1022,14 @@ class Session(BaseSession):
                 ja3=None, akamai=None, perk=None, extra_fp=None, content_callback=None,
                 raise_for_status=None, quote=None, curl_options=None, interface=None,
                 doh_url=None, max_recv_speed=None, thread=None, debug=None):
+        """Sends one request and returns a :class:`Response`.
+
+        Session defaults are used when an option is ``None``. ``params`` appends
+        query fields; ``data``/``json``/``content``/``multipart`` select the body;
+        ``headers`` and ``cookies`` merge with session state. Transport overrides
+        include ``timeout``, redirects, proxy, certificate verification, profile,
+        HTTP version, response-size limit, cache mode and request priority.
+        """
         request, options = self._prepare_call(locals())
         return self.send(self.prepare_request(request), **options)
 
@@ -1241,9 +1258,31 @@ class AsyncSession(BaseSession):
     from opening more sockets than the far end tolerates.
     """
 
-    def __init__(self, *args, **kwargs):
-        max_clients = kwargs.pop("max_clients", None)
-        BaseSession.__init__(self, *args, **kwargs)
+    def __init__(self, impersonate=None, proxy=None, proxies=None, proxy_auth=None,
+                 verify=True, timeout=None, headers=None, cookies=None, params=None,
+                 auth=None, cert=None, stream=False, hooks=None,
+                 max_redirects=DEFAULT_REDIRECT_LIMIT, trust_env=True,
+                 allow_redirects=True, max_response_bytes=None, base_url=None,
+                 http_version=None, ja3=None, akamai=None, perk=None, extra_fp=None,
+                 default_headers=True, default_encoding="utf-8",
+                 discard_cookies=False, raise_for_status=False, retry=0, cache=True,
+                 user_agent=None, accept_language=None, interface=None, doh_url=None,
+                 max_recv_speed=0, curl_options=None, max_engines=DEFAULT_MAX_ENGINES,
+                 response_class=None, max_clients=None):
+        BaseSession.__init__(
+            self, impersonate=impersonate, proxy=proxy, proxies=proxies,
+            proxy_auth=proxy_auth, verify=verify, timeout=timeout, headers=headers,
+            cookies=cookies, params=params, auth=auth, cert=cert, stream=stream,
+            hooks=hooks, max_redirects=max_redirects, trust_env=trust_env,
+            allow_redirects=allow_redirects, max_response_bytes=max_response_bytes,
+            base_url=base_url, http_version=http_version, ja3=ja3,
+            akamai=akamai, perk=perk, extra_fp=extra_fp,
+            default_headers=default_headers, default_encoding=default_encoding,
+            discard_cookies=discard_cookies, raise_for_status=raise_for_status,
+            retry=retry, cache=cache, user_agent=user_agent,
+            accept_language=accept_language, interface=interface, doh_url=doh_url,
+            max_recv_speed=max_recv_speed, curl_options=curl_options,
+            max_engines=max_engines, response_class=response_class)
         self.max_clients = max_clients
         self._gate = None
         self._gate_loop = None

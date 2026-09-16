@@ -276,6 +276,7 @@ class StabilityTests(unittest.TestCase):
             {"Client", "Session", "AsyncClient", "AsyncSession", "Response",
              "AsyncResponse", "WebSocket", "AsyncWebSocket", "CaseInsensitiveDict",
              "CookieJar", "ResponseTooLarge", "RequestException", "Timeout", "requests",
+             "async_session",
              "get", "options", "head", "post", "put", "patch", "delete"},
             exported)
         # requests-shaped names callers port code against.
@@ -296,7 +297,16 @@ class StabilityTests(unittest.TestCase):
         self.assertNotIn("chrome_client_native36", dir(chrome_client))
 
         parameters = list(inspect.signature(chrome_client.Session.request).parameters)
+        async_parameters = list(
+            inspect.signature(chrome_client.AsyncSession.request).parameters)
+        self.assertEqual(parameters, async_parameters)
         self.assertEqual(parameters[:5], ["self", "method", "url", "params", "data"])
+        async_constructor = inspect.signature(chrome_client.AsyncSession).parameters
+        self.assertIn("impersonate", async_constructor)
+        self.assertIn("max_clients", async_constructor)
+        self.assertIs(chrome_client.Client, chrome_client.Session)
+        self.assertIs(chrome_client.AsyncClient, chrome_client.AsyncSession)
+        self.assertTrue(callable(chrome_client.async_session))
         for name in ("headers", "cookies", "files", "auth", "timeout", "allow_redirects",
                      "proxies", "hooks", "stream", "verify", "cert", "json", "content",
                      "multipart", "impersonate", "proxy", "http_version",

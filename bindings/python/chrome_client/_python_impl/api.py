@@ -50,15 +50,21 @@ def close_shared_session():
 
 
 def session(**kwargs):
-    """``requests.session()`` factory."""
+    """Creates a synchronous :class:`Session` with the supplied defaults."""
     return Session(**kwargs)
 
 
 def async_session(**kwargs):
+    """Creates an :class:`AsyncSession`; accepts ``max_clients`` as a limit."""
     return AsyncSession(**kwargs)
 
 
 def request(method, url, **kwargs):
+    """Sends one request; keyword options match :meth:`Session.request`.
+
+    Constructor-only options such as ``base_url`` and ``max_engines`` create a
+    private session for this call. Other calls reuse the process-wide session.
+    """
     # Only a value actually supplied builds a private session; `params=None` from
     # the `get()` shim must not cost a whole Chromium context.
     constructor = {name: kwargs.pop(name) for name in _SESSION_ONLY

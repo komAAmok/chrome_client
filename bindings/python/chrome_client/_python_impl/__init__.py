@@ -16,8 +16,8 @@ from . import adapters, api, auth, cookies, engine, exceptions, impersonate
 from . import models, multipart, sessions, status_codes, structures, utils, websockets
 from ._native import native as _native
 from .adapters import BaseAdapter, HTTPAdapter
-from .api import (close_shared_session, delete, get, head, options, patch, post, put,
-                  query, request, session, shared_session, trace)
+from .api import (async_session, close_shared_session, delete, get, head, options,
+                  patch, post, put, query, request, session, shared_session, trace)
 from .auth import AuthBase, HTTPBasicAuth, HTTPDigestAuth, HTTPProxyAuth
 from .cookies import (Cookie, CookieJar, Cookies, RequestsCookieJar,
                       add_dict_to_cookiejar, cookiejar_from_dict, create_cookie,
@@ -83,7 +83,7 @@ __all__ = [
     "WebSocketTimeout",
     # module-level api
     "request", "get", "options", "head", "post", "put", "patch", "delete", "trace",
-    "query", "session", "shared_session", "close_shared_session",
+    "query", "session", "async_session", "shared_session", "close_shared_session",
     "codes", "available_profiles", "core_version", "abi_version",
     "normalize_impersonate", "normalize_http_version",
     # submodules
