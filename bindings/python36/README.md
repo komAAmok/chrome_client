@@ -48,7 +48,7 @@ Core 体积在 7.8–11.3 MB 之间（macOS ARM64 最小，Windows x86_64 最大
 
 `impersonate` 推荐使用精确的 `chrome_<major>` 名称（同时接受 curl-cffi 风格的
 `chrome<major>` 别名，以及解析到最新 pinned 版本的 `chrome`）。当前支持
-Chrome 99–152，共 54 个 profile；范围外的版本抛 `ImpersonateError`，不会静默降级。
+Chrome 99–153，共 55 个 profile；范围外的版本抛 `ImpersonateError`，不会静默降级。
 `available_profiles()` 返回完整列表。Edge、Safari、Firefox、Tor 等非 Chromium 目标
 同样显式报错，而不是当作 Chrome 处理。
 
@@ -61,7 +61,7 @@ Chrome 99–152，共 54 个 profile；范围外的版本抛 `ImpersonateError`�
 | 127–133 | `chrome_127` … `chrome_133` |
 | 134–140 | `chrome_134` … `chrome_140` |
 | 141–147 | `chrome_141` … `chrome_147` |
-| 148–152 | `chrome_148`、`chrome_149`、`chrome_150`、`chrome_151`、`chrome_152` |
+| 148–153 | `chrome_148`、`chrome_149`、`chrome_150`、`chrome_151`、`chrome_152`、`chrome_153` |
 
 Profile 影响 TLS ClientHello、ALPN、HTTP/2 设置、QUIC/H3 和相关 Chromium 网络
 参数；它不是完整 Chrome 浏览器，也不包含 Blink、扩展、Service Worker 或持久化
@@ -112,7 +112,7 @@ response = requests.get(
     "https://example.com/api",
     params={"page": 1},
     headers={"Accept": "application/json"},
-    impersonate="chrome_152",
+    impersonate="chrome_153",
     timeout=15,
 )
 response.raise_for_status()
@@ -213,7 +213,7 @@ with Session(impersonate="chrome152", http_version="v2") as session:
     session.get("https://example.com")
 ```
 
-`impersonate` 接受 `chrome_152`、`chrome152`，以及解析到最新 pinned 版本的
+`impersonate` 接受 `chrome_153`、`chrome153`，以及解析到最新 pinned 版本的
 `chrome`。TLS ClientHello、ALPN、HTTP/2 设置与优先级、HTTP/3 传输参数和默认请求头
 顺序全部来自该 profile：这也是 `ja3=`、`akamai=`、`perk=` 和大部分 `extra_fp` 字段
 会抛 `UnsupportedFeature` 的原因——接受一个 JA3 字符串却仍然发送 Chromium 自己的
@@ -277,7 +277,7 @@ import asyncio
 from chrome_client import AsyncSession
 
 async def main():
-    async with AsyncSession(impersonate="chrome_152", max_clients=64) as session:
+    async with AsyncSession(impersonate="chrome_153", max_clients=64) as session:
         responses = await asyncio.gather(*[session.get(u) for u in urls])
         async with session.stream("GET", big_url) as response:
             async for chunk in response.aiter_content(65536):
@@ -299,7 +299,7 @@ Chromium 对同一 host 组默认最多 6 条 HTTP/1.1 连接（实测同一 hos
 ```python
 from chrome_client import WebSocket
 
-with WebSocket(url="wss://echo.example.com", impersonate="chrome_152") as socket:
+with WebSocket(url="wss://echo.example.com", impersonate="chrome_153") as socket:
     socket.send_str("ping")
     print(socket.recv_str())
 ```

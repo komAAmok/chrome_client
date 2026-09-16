@@ -8,7 +8,7 @@ Two API shapes are exposed over one Chromium network stack:
   HTTP/3, ``AsyncSession``, ``CurlMime``, ``Headers``, ``Cookies``, ``WebSocket``.
 
     import chrome_client
-    with chrome_client.Session(impersonate="chrome_152") as session:
+    with chrome_client.Session(impersonate="chrome_153") as session:
         session.get("https://example.com")
 
 ``chrome_client.requests`` mirrors the ``requests`` module namespace, including

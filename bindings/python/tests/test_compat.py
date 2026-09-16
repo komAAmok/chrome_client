@@ -491,7 +491,7 @@ class RequestsSurfaceTests(Base):
 
     def test_profile_conflict_is_mapped(self):
         with self.assertRaises(chrome_client.ImpersonateError):
-            chrome_client.Session(impersonate="chrome_152",
+            chrome_client.Session(impersonate="chrome_151",
                                   user_agent="Conflicting/1.0").get(self.url)
 
     def test_timeout_tuple_is_accepted(self):
@@ -635,12 +635,15 @@ class RedirectTests(Base):
 
 class CurlCffiSurfaceTests(Base):
     def test_impersonate_aliases(self):
-        for target in ("chrome", "chrome152", "chrome_152", "chrome151"):
+        for target in ("chrome_153", "chrome153"):
+            self.assertEqual(chrome_client.normalize_impersonate(target), "chrome_153")
+        for target in ("chrome152", "chrome_152", "chrome151"):
             with chrome_client.Session(impersonate=target) as session:
                 self.assertEqual(session.get(self.url).status_code, 200)
+        self.assertEqual(chrome_client.normalize_impersonate("chrome"), "chrome_153")
         self.assertEqual(chrome_client.normalize_impersonate("chrome136"), "chrome_136")
         self.assertEqual(chrome_client.normalize_impersonate("chrome_136"), "chrome_136")
-        self.assertIn("chrome_152", chrome_client.available_profiles())
+        self.assertEqual(chrome_client.available_profiles()[-1], "chrome_153")
 
     def test_unavailable_profiles_fail_closed(self):
         for target in ("safari17", "firefox133", "edge101", "tor145", "chrome_9"):
@@ -1154,7 +1157,7 @@ class WebSocketTests(unittest.TestCase):
         completes, so returning early would hand back an unusable object.
         """
         with chrome_client.WebSocket(url=self.server.url,
-                                    impersonate="chrome_152") as socket_:
+                                    impersonate="chrome_151") as socket_:
             self.assertEqual(socket_.recv_str(), "hello")
             socket_.send_str("ping")
         self.assertEqual(len(self.server.handshakes), 1)
@@ -1180,11 +1183,11 @@ class WebSocketTests(unittest.TestCase):
         Chromium places User-Agent itself, in its own position in the handshake;
         that placement is part of the fingerprint.
         """
-        with chrome_client.Session(impersonate="chrome_152") as session:
+        with chrome_client.Session(impersonate="chrome_151") as session:
             with session.websocket(self.server.url) as socket_:
                 socket_.recv_str()
         headers = self.server.handshakes[-1]["headers"]
-        self.assertIn("Chrome/152.0.0.0", headers["user-agent"])
+        self.assertIn("Chrome/151.0.0.0", headers["user-agent"])
 
         with chrome_client.Session(user_agent="Engine/1.0") as session:
             with session.websocket(self.server.url) as socket_:
@@ -1258,7 +1261,7 @@ class WebSocketTests(unittest.TestCase):
 
     def test_async_handshake_and_iteration(self):
         async def run():
-            async with chrome_client.AsyncSession(impersonate="chrome_152") as session:
+            async with chrome_client.AsyncSession(impersonate="chrome_151") as session:
                 socket_ = await session.websocket(self.server.url)
                 async with socket_:
                     self.assertEqual(await socket_.recv_str(), "hello")

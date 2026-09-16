@@ -1,7 +1,7 @@
 """Impersonation and protocol selection.
 
-The Core registers one profile per pinned Chromium major (``chrome_98`` through
-``chrome_152``).  Everything about the TLS ClientHello, the HTTP/2 SETTINGS and
+The Core registers one profile per pinned Chromium major (``chrome_99`` through
+``chrome_153``).  Everything about the TLS ClientHello, the HTTP/2 SETTINGS and
 priority frames, the HTTP/3 transport parameters, and the default header order
 lives inside that profile; there is no knob to bend one profile into another.
 
@@ -13,7 +13,7 @@ own ClientHello would report a fidelity this build does not have.
 from .exceptions import ImpersonateError, UnsupportedFeature
 
 #: Highest pinned profile.  ``impersonate="chrome"`` resolves here.
-LATEST_CHROME = 152
+LATEST_CHROME = 153
 OLDEST_CHROME = 99
 
 #: curl_cffi accepts bare family names; only the Chrome family exists here.

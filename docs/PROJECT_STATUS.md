@@ -1,6 +1,6 @@
 # chrome_client 项目状态
 
-记录时间：2026-09-05。本文覆盖已完成、进行中、已知缺陷和后续计划。数字都来自本机
+记录时间：2026-09-11。本文覆盖已完成、进行中、已知缺陷和后续计划。数字都来自本机
 实测，可用 `tools/` 下的脚本复现。
 
 ## 项目定位
@@ -11,9 +11,9 @@
 分层：`libminicronet`（Chromium C++，唯一协议实现）→ C ABI v8（20 个导出符号）→
 `minicronet-sys`（手写 FFI 声明）→ `minicronet`（Rust 安全层）→ 各语言薄绑定。
 
-- Chromium revision：`010786339149198c8c24d58c30cf5a41fcf60c14`（MAJOR=153，2026-08-04）
+- Chromium revision：`b75a5a95ea1a1b55bdbfd6d9f42d47be7507fb8b`（Chrome 153.0.8010.37 stable，2026-09-08）
 - Python 发布版本 0.2.3，crate 版本 0.2.3（两者同号，不再有四段版本号映射）
-- Chrome profile：`chrome_99` — `chrome_152`，54 个
+- Chrome profile：`chrome_99` — `chrome_153`，55 个
 
 ## 已完成
 
@@ -120,7 +120,16 @@ Request 与 WebSocket 在 ABI v8 里各自建独立 sequenced runner，`Engine` 
 顺手试过让 asyncio 的 `notify` 每次唤醒排空至多 64 个事件，插桩显示实际每次唤醒
 96% 只有 1 个事件可取，零收益，已丢弃。
 
-### chrome_152 已加入（54 个 profile）
+### chrome_153 已加入（55 个 profile）
+
+官方 stable 分支首尾 tag `153.0.8010.12` 与 `153.0.8010.37` 的 12 份审计源码
+逐字节一致。5 条独立 Chrome 153 连接通过 wire gate：5 个源端口，所有稳定字段一致，
+Client random、session ID、扩展顺序、GREASE、key share 与 ECH 均至少 5 个不同值。
+与 chrome_152 相比，TLS/H2 wire 指纹及 28 个 trust-anchor ID 集合不变，变化是 UA 主版本
+与对应的 Chromium/BoringSSL/QUICHE source pin。证据与复现命令见
+[`profiles/chrome-153/`](../profiles/chrome-153/README.md)。
+
+### chrome_152 已加入（历史记录）
 
 与 chrome_151 相比，wire 上只差三处，全部可从源码证明：
 
