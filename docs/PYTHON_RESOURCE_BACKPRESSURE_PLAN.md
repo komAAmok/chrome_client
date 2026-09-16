@@ -130,9 +130,10 @@ mn_result_t mn_request_resume_read(mn_request_t *request);
 resume_requested）吸收「resume 比 pause 先到」的交错，否则那次 resume 会丢失并
 永久挂住请求。
 
-WebSocket 保持原有的 `pending_data_` 计数加 `ResumeReading()`：它本来就不阻塞
-线程，只是队列超限时按 fail-closed 关闭连接。把它改成消费者驱动的 pause/resume
-需要能端到端验证的 WS/WSS 环境，留到后续版本；本轮不引入无法验证的 ABI 面。
+WebSocket 已有消费者驱动的背压：`pending_data_` 计数配合 `HasPendingDataFrames()`
+让 channel 在还有未消费帧时暂停读取，`ResumeReading()` 在消费完后恢复，同一时刻
+最多一条消息在飞行。它无需新增 ABI 符号（不像 HTTP 需要显式 `mn_request_resume_read`），
+本轮保持现状；端到端验证需 WS/WSS 环境，留待后续补本地测试服务器。
 
 实施要求：
 

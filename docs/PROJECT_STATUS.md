@@ -397,9 +397,11 @@ MINICRONET_PKGCONF_DIR=$PWD/root tools/build-core-linux-arm64.sh
 
 ### WebSocket 背压
 
-现在 `pending_data_` 计数不阻塞线程，但队列超限时 fail-closed 关闭连接。改成消费者
-驱动的 pause/resume 需要能端到端验证的 WS/WSS 环境（`test_websocket_sync_and_async`
-目前因缺少 `MINICRONET_WS_URL` 而 skip）。
+WebSocket 已经是消费者驱动的 pause/resume：`pending_data_` 计数配合
+`HasPendingDataFrames()` 让 channel 在还有未消费帧时暂停读取，`ResumeReading()`
+在消费完后恢复，同一时刻最多一条消息在飞行，不存在「超限断连」。剩余缺口是端到端
+验证——`test_websocket_sync_and_async` 目前因缺少 `MINICRONET_WS_URL`（本地
+WS/WSS 服务器）而 skip。
 
 ### 发布
 
