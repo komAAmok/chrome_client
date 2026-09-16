@@ -88,8 +88,8 @@ for source in sources:
 
 inventory = "".join("\t".join(entry) + "\n" for entry in sorted(entries))
 digest = hashlib.sha256(inventory.encode()).hexdigest()
-expected_digest = "37169aa7dfe3e211c9d817060dfcc16bc500e750b8f4bf4308827aea0e221f3d"
-if len(sources) != 529 or len(entries) != 166 or digest != expected_digest:
+expected_digest = "f3507bd579751ba89c9c6c6dfae713960a476badbf9bb01b8eef5aec7f00712b"
+if len(sources) != 533 or len(entries) != 170 or digest != expected_digest:
     print(inventory, file=sys.stderr, end="")
     raise SystemExit(
         "unknown release-graph FeatureList/FeatureParam/field-trial read: "

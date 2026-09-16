@@ -34,13 +34,13 @@ def main() -> None:
         msvc / "lib" / "x86" / "libcmt.lib",
         msvc / "lib" / "arm64" / "libcmt.lib",
         chromium_src
-        / "third_party/llvm-build/Release+Asserts/lib/clang/23/lib/windows"
+        / "third_party/llvm-build/Release+Asserts/lib/clang/24/lib/windows"
         / "clang_rt.builtins-x86_64.lib",
         chromium_src
-        / "third_party/llvm-build/Release+Asserts/lib/clang/23/lib/windows"
+        / "third_party/llvm-build/Release+Asserts/lib/clang/24/lib/windows"
         / "clang_rt.builtins-i386.lib",
         chromium_src
-        / "third_party/llvm-build/Release+Asserts/lib/clang/23/lib/windows"
+        / "third_party/llvm-build/Release+Asserts/lib/clang/24/lib/windows"
         / "clang_rt.builtins-aarch64.lib",
     )
     missing = [str(path) for path in required if not path.exists()]

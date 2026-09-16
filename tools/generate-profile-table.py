@@ -15,8 +15,8 @@ FEATURES = ROOT / "profiles" / "network_feature_snapshots.json"
 OUTPUT = ROOT / "core" / "source" / "minicronet" / "profile_table_generated.h"
 
 # Highest profile in the table. Bumping it requires a wire-verified capture set
-# and a source-evidence entry for that release; see profiles/chrome-152/.
-LAST_PROFILE_MAJOR = 152
+# and a source-evidence entry for that release; see profiles/chrome-153/.
+LAST_PROFILE_MAJOR = 153
 
 FEATURE_BITS = {
     "alps_for_http2": 1 << 0,

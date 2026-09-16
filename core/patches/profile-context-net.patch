@@ -1,8 +1,87 @@
+diff --git a/net/http/http_network_session.h b/net/http/http_network_session.h
+index 0097a398b6..b2e8b5ea19 100644
+--- a/net/http/http_network_session.h
++++ b/net/http/http_network_session.h
+@@ -72,6 +72,13 @@ const uint32_t kSpdyMaxHeaderTableSize = 64 * 1024;
+ // The maximum size of header list that the server is allowed to send.
+ const uint32_t kSpdyMaxHeaderListSize = 256 * 1024;
+
++enum class HttpProtocolMode {
++  kNative,
++  kHttp11,
++  kHttp2,
++  kHttp3,
++};
++
+ // Self-contained structure with all the simple configuration options
+ // supported by the HttpNetworkSession.
+ struct NET_EXPORT HttpNetworkSessionParams {
+@@ -87,6 +94,7 @@ struct NET_EXPORT HttpNetworkSessionParams {
+   // Use SPDY ping frames to test for connection health after idle.
+   bool enable_spdy_ping_based_connection_checking = true;
+   bool enable_http2 = true;
++  HttpProtocolMode protocol_mode = HttpProtocolMode::kNative;
+   size_t spdy_session_max_recv_window_size;
+   // Maximum number of capped frames that can be queued at any time.
+   int spdy_session_max_queued_capped_frames;
+@@ -109,6 +117,28 @@ struct NET_EXPORT HttpNetworkSessionParams {
+   // The same setting will be sent on every connection to prevent the retry
+   // logic from hiding broken servers.
+   spdy::SettingsMap http2_settings;
++  // Whether SETTINGS_ENABLE_PUSH=0 is present in the initial SETTINGS frame.
++  // MiniCronet profiles older than Chrome 106 predate this setting.
++  bool send_http2_enable_push_setting = true;
++  // Profile-owned replacements for the process FeatureList gates used by the
++  // HTTP/2/TLS setup. These values are frozen when the session is created.
++  bool enable_tls13_early_data = false;
++  bool enable_alps_for_http2 = true;
++  // Whether direct and proxied TCP socket pools may randomly expand beyond
++  // their soft limits. Kept per session so immutable MiniCronet profiles can
++  // coexist in one process without mutating FeatureList.
++  bool randomize_socket_pool_limit = true;
++  bool randomize_proxy_socket_pool_limit = true;
++  // Whether H2/H3 request HEADERS automatically include RFC 9218 priority.
++  bool send_priority_header = true;
++  // Profile-owned network behavior. These must be frozen per session rather
++  // than selected through the process-global FeatureList.
++  bool enable_websocket_over_http3 = false;
++  bool avoid_h2_reprioritization = false;
++  bool split_cache_by_include_credentials = false;
++  bool http_cache_zstd = false;
++  bool h2_connection_keepalive = false;
++  bool maintain_ipv6_temp_addr = false;
+   // If true, a setting parameter with reserved identifier will be sent in every
+   // initial SETTINGS frame, see
+   // https://tools.ietf.org/html/draft-bishop-httpbis-grease-00.
+@@ -277,6 +307,8 @@ class NET_EXPORT HttpNetworkSession : public base::PowerSuspendObserver {
+   // Returns protocols to be used with ALPN.
+   const NextProtoVector& GetAlpnProtos() const { return next_protos_; }
+
++  HttpProtocolMode protocol_mode() const { return params_.protocol_mode; }
++
+   // Returns ALPS data to be sent to server for each NextProto.
+   // Data might be empty.
+   const SSLConfig::ApplicationSettings& GetApplicationSettings() const {
 diff --git a/net/http/http_network_session.cc b/net/http/http_network_session.cc
-index 0ccbec3fcc..794027c1f9 100644
+index 0ccbec3fcc..f18a846806 100644
 --- a/net/http/http_network_session.cc
 +++ b/net/http/http_network_session.cc
-@@ -56,9 +56,12 @@ namespace {
+@@ -11,14 +11,12 @@
+ #include "base/atomic_sequence_num.h"
+ #include "base/check_op.h"
+ #include "base/compiler_specific.h"
+-#include "base/feature_list.h"
+ #include "base/notreached.h"
+ #include "base/power_monitor/power_monitor.h"
+ #include "base/strings/string_number_conversions.h"
+ #include "base/strings/string_util.h"
+ #include "base/values.h"
+ #include "build/build_config.h"
+-#include "net/base/features.h"
+ #include "net/dns/host_resolver.h"
+ #include "net/http/http_auth_handler_factory.h"
+ #include "net/http/http_response_body_drainer.h"
+@@ -56,9 +54,12 @@ namespace {
  // Keep all HTTP2 parameters in |http2_settings|, even the ones that are not
  // implemented, to be sent to the server.
  // Set default values for settings that |http2_settings| does not specify.
@@ -14,10 +93,22 @@ index 0ccbec3fcc..794027c1f9 100644
 +  if (send_enable_push) {
 +    http2_settings[spdy::SETTINGS_ENABLE_PUSH] = kSpdyDisablePush;
 +  }
- 
+
    // For other setting parameters, set default values only if |http2_settings|
    // does not have a value set for given setting.
-@@ -175,7 +178,9 @@ HttpNetworkSession::HttpNetworkSession(const HttpNetworkSessionParams& params,
+@@ -94,8 +95,9 @@ HttpNetworkSessionParams::HttpNetworkSessionParams()
+     : spdy_session_max_recv_window_size(kSpdySessionMaxRecvWindowSize),
+       spdy_session_max_queued_capped_frames(kSpdySessionMaxQueuedCappedFrames),
+       time_func(&base::TimeTicks::Now) {
+-  enable_early_data =
+-      base::FeatureList::IsEnabled(features::kEnableTLS13EarlyData);
++  // ProfileContext supplies the historical value. Keep this constructor
++  // independent from the process FeatureList for standalone sessions.
++  enable_early_data = enable_tls13_early_data;
+ }
+
+ HttpNetworkSessionParams::HttpNetworkSessionParams(
+@@ -175,7 +177,9 @@ HttpNetworkSession::HttpNetworkSession(const HttpNetworkSessionParams& params,
                           params.enable_quic,
                           params.spdy_session_max_recv_window_size,
                           params.spdy_session_max_queued_capped_frames,
@@ -28,7 +119,17 @@ index 0ccbec3fcc..794027c1f9 100644
                           params.enable_http2_settings_grease,
                           params.greased_http2_frame,
                           params.http2_end_stream_with_data_frame,
-@@ -198,14 +203,16 @@ HttpNetworkSession::HttpNetworkSession(const HttpNetworkSessionParams& params,
+@@ -184,7 +188,8 @@ HttpNetworkSession::HttpNetworkSession(const HttpNetworkSessionParams& params,
+                          params.time_func,
+                          context.network_quality_estimator,
+                          // cleanup_sessions_on_ip_address_changed
+-                         !params.ignore_ip_address_changes),
++                         !params.ignore_ip_address_changes,
++                         params.avoid_h2_reprioritization),
+       http_stream_factory_(std::make_unique<HttpStreamFactory>(this)),
+       params_(params),
+       context_(context) {
+@@ -198,24 +203,31 @@ HttpNetworkSession::HttpNetworkSession(const HttpNetworkSessionParams& params,
        CreateCommonConnectJobParams(true /* for_websockets */),
        SocketPoolType::kNormal,
        // cleanup_on_ip_address_change
@@ -44,28 +145,49 @@ index 0ccbec3fcc..794027c1f9 100644
 -          !params.ignore_ip_address_changes);
 +          !params.ignore_ip_address_changes, params.randomize_socket_pool_limit,
 +          params.randomize_proxy_socket_pool_limit);
- 
-   if (params_.enable_http2) {
+
+-  if (params_.enable_http2) {
++  if (params_.protocol_mode != HttpProtocolMode::kHttp11 &&
++      params_.protocol_mode != HttpProtocolMode::kHttp3 &&
++      params_.enable_http2) {
      next_protos_.push_back(NextProto::kProtoHTTP2);
-diff --git a/net/http/http_network_session.h b/net/http/http_network_session.h
-index 0097a398b6..31a6f5c266 100644
---- a/net/http/http_network_session.h
-+++ b/net/http/http_network_session.h
-@@ -109,6 +109,14 @@ struct NET_EXPORT HttpNetworkSessionParams {
-   // The same setting will be sent on every connection to prevent the retry
-   // logic from hiding broken servers.
-   spdy::SettingsMap http2_settings;
-+  // Whether SETTINGS_ENABLE_PUSH=0 is present in the initial SETTINGS frame.
-+  // MiniCronet profiles older than Chrome 106 predate this setting.
-+  bool send_http2_enable_push_setting = true;
-+  // Whether direct and proxied TCP socket pools may randomly expand beyond
-+  // their soft limits. Kept per session so immutable MiniCronet profiles can
-+  // coexist in one process without mutating FeatureList.
-+  bool randomize_socket_pool_limit = true;
-+  bool randomize_proxy_socket_pool_limit = true;
-   // If true, a setting parameter with reserved identifier will be sent in every
-   // initial SETTINGS frame, see
-   // https://tools.ietf.org/html/draft-bishop-httpbis-grease-00.
+-    if (base::FeatureList::IsEnabled(features::kAlpsForHttp2)) {
++    if (params.enable_alps_for_http2) {
+       // Enable ALPS for HTTP/2 with empty data.
+       application_settings_[NextProto::kProtoHTTP2] = {};
+     }
+   }
+
+-  next_protos_.push_back(NextProto::kProtoHTTP11);
++  if (params_.protocol_mode != HttpProtocolMode::kHttp2 &&
++      params_.protocol_mode != HttpProtocolMode::kHttp3) {
++    next_protos_.push_back(NextProto::kProtoHTTP11);
++  }
+
+   http_server_properties_->SetMaxServerConfigsStoredInProperties(
+       context.quic_context->params()->max_server_configs_stored_in_properties);
+@@ -226,7 +238,8 @@ HttpNetworkSession::HttpNetworkSession(const HttpNetworkSessionParams& params,
+
+   http_stream_pool_ = std::make_unique<HttpStreamPool>(
+       this,
+-      /*cleanup_on_ip_address_change=*/!params.ignore_ip_address_changes);
++      /*cleanup_on_ip_address_change=*/!params.ignore_ip_address_changes,
++      params.maintain_ipv6_temp_addr);
+ #if BUILDFLAG(IS_WIN)
+   base::PowerMonitor::GetInstance()->AddPowerSuspendObserver(this);
+ #endif
+@@ -399,8 +412,9 @@ bool HttpNetworkSession::ShouldForceQuic(const url::SchemeHostPort& destination,
+   if (!proxy_info.is_direct() && !proxy_info.proxy_chain().Last().is_quic()) {
+     return false;
+   }
+-  return OriginToForceQuicOnInternal(*context_.quic_context->params(),
+-                                     destination) &&
++  return (params_.protocol_mode == HttpProtocolMode::kHttp3 ||
++          OriginToForceQuicOnInternal(*context_.quic_context->params(),
++                                      destination)) &&
+          GURL::SchemeIsCryptographic(destination.scheme());
+ }
+
 diff --git a/net/http/http_network_transaction_unittest.cc b/net/http/http_network_transaction_unittest.cc
 index 4da7489bfb..3d70ce2a08 100644
 --- a/net/http/http_network_transaction_unittest.cc
@@ -125,7 +247,7 @@ index 5db1b533d3..06c93e7cf6 100644
 -                   std::unique_ptr<ConnectJobFactory> connect_job_factory);
 +                   std::unique_ptr<ConnectJobFactory> connect_job_factory,
 +                   bool randomize_socket_pool_limit = true);
- 
+
    void NetLogTcpClientSocketPoolRequestedSocket(const NetLogWithSource& net_log,
                                                  const GroupId& group_id);
 diff --git a/net/socket/client_socket_pool_manager.cc b/net/socket/client_socket_pool_manager.cc
@@ -135,7 +257,7 @@ index 7c7946b3b9..f7b112e1fc 100644
 @@ -65,8 +65,6 @@ std::array<size_t, kSocketPoolTypesSize> g_max_sockets_per_proxy_chain =
          128   // kWebSocket
      });
- 
+
 -bool g_allow_size_randomization_for_proxy = true;
 -
  // TODO(crbug.com/40609237) In order to resolve longstanding issues
@@ -144,7 +266,7 @@ index 7c7946b3b9..f7b112e1fc 100644
 @@ -180,11 +178,6 @@ size_t ClientSocketPoolManager::max_sockets_per_proxy_chain(
    return g_max_sockets_per_proxy_chain[std::to_underlying(pool_type)];
  }
- 
+
 -// static
 -bool ClientSocketPoolManager::allow_size_randomization_for_proxy() {
 -  return g_allow_size_randomization_for_proxy;
@@ -156,7 +278,7 @@ index 7c7946b3b9..f7b112e1fc 100644
 @@ -198,12 +191,6 @@ void ClientSocketPoolManager::set_max_sockets_per_proxy_chain(
    g_max_sockets_per_proxy_chain[std::to_underlying(pool_type)] = socket_count;
  }
- 
+
 -// static
 -void ClientSocketPoolManager::set_allow_size_randomization_for_proxy(
 -    bool allow) {
@@ -171,7 +293,7 @@ index 9ce5cf8881..9c89a066be 100644
 --- a/net/socket/client_socket_pool_manager.h
 +++ b/net/socket/client_socket_pool_manager.h
 @@ -52,14 +52,12 @@ class NET_EXPORT_PRIVATE ClientSocketPoolManager {
- 
+
    static size_t max_sockets_per_proxy_chain(
        HttpNetworkSession::SocketPoolType pool_type);
 -  static bool allow_size_randomization_for_proxy();
@@ -183,7 +305,7 @@ index 9ce5cf8881..9c89a066be 100644
        HttpNetworkSession::SocketPoolType pool_type,
        size_t socket_count);
 -  static void set_allow_size_randomization_for_proxy(bool allow);
- 
+
    static base::TimeDelta unused_idle_socket_timeout(
        HttpNetworkSession::SocketPoolType pool_type);
 diff --git a/net/socket/client_socket_pool_manager_impl.cc b/net/socket/client_socket_pool_manager_impl.cc
@@ -224,7 +346,7 @@ index 8b402f81ce..8d4916936e 100644
 +        proxy_chain.is_direct() ? randomize_socket_pool_limit_
 +                                : randomize_proxy_socket_pool_limit_);
    }
- 
+
    std::pair<SocketPoolMap::iterator, bool> ret =
 diff --git a/net/socket/client_socket_pool_manager_impl.h b/net/socket/client_socket_pool_manager_impl.h
 index 93235445ec..02f24c15a8 100644
@@ -238,18 +360,18 @@ index 93235445ec..02f24c15a8 100644
 +      bool cleanup_on_ip_address_change = true,
 +      bool randomize_socket_pool_limit = true,
 +      bool randomize_proxy_socket_pool_limit = true);
- 
+
    ClientSocketPoolManagerImpl(const ClientSocketPoolManagerImpl&) = delete;
    ClientSocketPoolManagerImpl& operator=(const ClientSocketPoolManagerImpl&) =
 @@ -60,6 +62,8 @@ class NET_EXPORT_PRIVATE ClientSocketPoolManagerImpl
    const HttpNetworkSession::SocketPoolType pool_type_;
- 
+
    const bool cleanup_on_ip_address_change_;
 +  const bool randomize_socket_pool_limit_;
 +  const bool randomize_proxy_socket_pool_limit_;
- 
+
    SocketPoolMap socket_pools_;
- 
+
 diff --git a/net/socket/transport_client_socket_pool.cc b/net/socket/transport_client_socket_pool.cc
 index ef2c11648a..7498524f8d 100644
 --- a/net/socket/transport_client_socket_pool.cc
@@ -271,7 +393,7 @@ index ef2c11648a..7498524f8d 100644
 -                                /*connect_backup_jobs_enabled=*/true) {}
 +                                /*connect_backup_jobs_enabled=*/true,
 +                                randomize_socket_pool_limit) {}
- 
+
  TransportClientSocketPool::~TransportClientSocketPool() {
    // Clean up any idle sockets and pending connect jobs.  Assert that we have no
 @@ -184,7 +186,8 @@ TransportClientSocketPool::CreateForTesting(
@@ -282,7 +404,7 @@ index ef2c11648a..7498524f8d 100644
 +          ssl_client_context, connect_backup_jobs_enabled,
 +          /*randomize_socket_pool_limit=*/true));
  }
- 
+
  TransportClientSocketPool::CallbackResultPair::CallbackResultPair()
 @@ -834,12 +837,14 @@ TransportClientSocketPool::TransportClientSocketPool(
      bool cleanup_on_ip_address_change,
@@ -312,7 +434,7 @@ index 3ca97feff5..b310693887 100644
 -      bool cleanup_on_ip_address_change = true);
 +      bool cleanup_on_ip_address_change = true,
 +      bool randomize_socket_pool_limit = true);
- 
+
    TransportClientSocketPool(const TransportClientSocketPool&) = delete;
    TransportClientSocketPool& operator=(const TransportClientSocketPool&) =
 @@ -595,7 +596,8 @@ class NET_EXPORT_PRIVATE TransportClientSocketPool
@@ -322,7 +444,7 @@ index 3ca97feff5..b310693887 100644
 -      bool connect_backup_jobs_enabled);
 +      bool connect_backup_jobs_enabled,
 +      bool randomize_socket_pool_limit);
- 
+
    base::TimeDelta ConnectRetryInterval() const {
      // TODO(mbelshe): Make this tuned dynamically based on measured RTT.
 diff --git a/net/socket/websocket_transport_client_socket_pool.cc b/net/socket/websocket_transport_client_socket_pool.cc
@@ -345,7 +467,7 @@ index eadc1444a0..f2b73f2b78 100644
 +                       randomize_socket_pool_limit) {
    DCHECK(common_connect_job_params->websocket_endpoint_lock_manager);
  }
- 
+
 diff --git a/net/socket/websocket_transport_client_socket_pool.h b/net/socket/websocket_transport_client_socket_pool.h
 index e1c7c7a4fa..b6ea50e5ec 100644
 --- a/net/socket/websocket_transport_client_socket_pool.h
@@ -357,30 +479,94 @@ index e1c7c7a4fa..b6ea50e5ec 100644
 -      const CommonConnectJobParams* common_connect_job_params);
 +      const CommonConnectJobParams* common_connect_job_params,
 +      bool randomize_socket_pool_limit = true);
- 
+
    WebSocketTransportClientSocketPool(
        const WebSocketTransportClientSocketPool&) = delete;
-
 diff --git a/net/quic/quic_context.h b/net/quic/quic_context.h
+index fb68e214d6..a38f4f6bed 100644
 --- a/net/quic/quic_context.h
 +++ b/net/quic/quic_context.h
-@@ -138,6 +138,12 @@ struct NET_EXPORT QuicParams {
+@@ -8,8 +8,9 @@
+ #include <algorithm>
+ #include <memory>
+
+-#include "base/feature_list.h"
+ #include "base/time/time.h"
++#include "base/feature_list.h"
++#include "net/base/net_export.h"
+ #include "net/base/features.h"
+ #include "net/third_party/quiche/src/quiche/quic/core/crypto/quic_crypto_client_config.h"
+ #include "net/third_party/quiche/src/quiche/quic/core/quic_connection.h"
+@@ -67,10 +68,6 @@ AllSupportedQuicVersions() {
+ // The idle connection timeout. Defaults to 30 seconds, but can be overridden
+ // by a field trial.
+ inline base::TimeDelta GetIdleConnectionTimeout() {
+-  if (base::FeatureList::IsEnabled(
+-          net::features::kQuicLongerIdleConnectionTimeout)) {
+-    return base::Seconds(300);
+-  }
+   return base::Seconds(30);
+ }
+
+@@ -141,6 +138,15 @@ struct NET_EXPORT QuicParams {
    // Set of QUIC tags to send in the handshake's connection options that only
    // affect the client.
    quic::QuicTagVector client_connection_options;
 +  // Historical MiniCronet profiles can replace the process FeatureList's
 +  // default QUIC option policy without changing global state.
 +  bool use_feature_quic_options = true;
++  // Profile-owned replacement for kTryQuicByDefault.
++  bool try_quic_by_default = false;
++  bool maintain_ipv6_temp_addr = false;
 +  // Chrome 145 also sent Google's legacy version-information transport
 +  // parameter alongside RFC 9368 version_information.
 +  bool send_legacy_version_information = false;
    // Enables experimental optimization for receiving data in UDPSocket.
    bool enable_socket_recv_optimization = false;
 
+@@ -176,8 +182,9 @@ struct NET_EXPORT QuicParams {
+   // Use the value of the flag as the default value. This is needed because unit
+   // tests does not go through network_session_configuration which causes
+   // discrepancy.
+-  bool migrate_sessions_on_network_change_v2 =
+-      base::FeatureList::IsEnabled(features::kMigrateSessionsOnNetworkChangeV2);
++  // ProfileContext supplies this historical value; never read the process
++  // FeatureList while constructing a network session.
++  bool migrate_sessions_on_network_change_v2 = false;
+   // If true, connection migration v2 may be used to migrate active QUIC
+   // sessions to alternative network if current network connectivity is poor.
+   bool migrate_sessions_early_v2 = false;
 diff --git a/net/quic/quic_context.cc b/net/quic/quic_context.cc
+index 69f2699f99..84f61d3c6d 100644
 --- a/net/quic/quic_context.cc
 +++ b/net/quic/quic_context.cc
-@@ -97,5 +97,11 @@ quic::QuicConfig InitializeQuicConfig(const QuicParams& params) {
+@@ -4,7 +4,6 @@
+
+ #include "net/quic/quic_context.h"
+
+-#include "net/base/features.h"
+ #include "net/quic/platform/impl/quic_chromium_clock.h"
+ #include "net/quic/quic_chromium_connection_helper.h"
+ #include "net/ssl/cert_compression.h"
+@@ -25,16 +24,10 @@ const int32_t kQuicStreamMaxRecvWindowSize = 6 * 1024 * 1024;    // 6 MB
+ const int32_t kMaxUndecryptablePackets = 100;
+
+ base::TimeDelta GetQuicHandshakeTimeout(const QuicParams& params) {
+-  if (base::FeatureList::IsEnabled(features::kExtendQuicHandshakeTimeout)) {
+-    return features::kQuicHandshakeTimeout.Get();
+-  }
+   return params.max_time_before_crypto_handshake;
+ }
+
+ base::TimeDelta GetMaxIdleTimeBeforeCryptoHandshake(const QuicParams& params) {
+-  if (base::FeatureList::IsEnabled(features::kExtendQuicHandshakeTimeout)) {
+-    return features::kMaxIdleTimeBeforeCryptoHandshake.Get();
+-  }
+   return params.max_idle_time_before_crypto_handshake;
+ }
+
+@@ -96,6 +89,12 @@ quic::QuicConfig InitializeQuicConfig(const QuicParams& params) {
+       kQuicSessionMaxRecvWindowSize);
    config.SetInitialStreamFlowControlWindowToSend(kQuicStreamMaxRecvWindowSize);
    config.SetBytesForConnectionIdToSend(0);
 +  if (params.send_legacy_version_information) {
@@ -393,15 +579,293 @@ diff --git a/net/quic/quic_context.cc b/net/quic/quic_context.cc
  }
 
 diff --git a/net/quic/quic_session_pool.cc b/net/quic/quic_session_pool.cc
+index 91de752da3..02ea35d8eb 100644
 --- a/net/quic/quic_session_pool.cc
 +++ b/net/quic/quic_session_pool.cc
-@@ -2132,7 +2132,8 @@ int QuicSessionPool::CreateSession(
+@@ -1408,8 +1408,7 @@ void QuicSessionPool::OnIPAddressChanged(
+   }
+
+   // Ignore changes to randomly generated IPv6 temporary addresses.
+-  if (!base::FeatureList::IsEnabled(
+-          net::features::kMaintainConnectionsOnIpv6TempAddrChange) &&
++  if (!params_.maintain_ipv6_temp_addr &&
+       change_type == NetworkChangeNotifier::IP_ADDRESS_CHANGE_IPV6_TEMPADDR) {
+     return;
+   }
+@@ -2132,7 +2131,7 @@ QuicSessionPool::CreateSessionHelper(
      config.AddConnectionOptionsToSend({quic::kDSNI});
    }
 
 -  if (base::FeatureList::IsEnabled(features::kTryQuicByDefault)) {
-+  if (params_.use_feature_quic_options &&
-+      base::FeatureList::IsEnabled(features::kTryQuicByDefault)) {
++  if (params_.use_feature_quic_options && params_.try_quic_by_default) {
      config.AddConnectionOptionsToSend(
          quic::ParseQuicTagVector(features::kQuicOptions.Get()));
    }
+diff --git a/net/http/http_stream_pool.cc b/net/http/http_stream_pool.cc
+index 8b8f09bc39..20747ea607 100644
+--- a/net/http/http_stream_pool.cc
++++ b/net/http/http_stream_pool.cc
+@@ -171,11 +171,13 @@ bool HttpStreamPool::IsQuicErrorBrokenable(int net_error) {
+ }
+
+ HttpStreamPool::HttpStreamPool(HttpNetworkSession* http_network_session,
+-                               bool cleanup_on_ip_address_change)
++                               bool cleanup_on_ip_address_change,
++                               bool maintain_ipv6_temp_addr)
+     : http_network_session_(http_network_session),
+       stream_attempt_params_(
+           StreamAttemptParams::FromHttpNetworkSession(http_network_session_)),
+       cleanup_on_ip_address_change_(cleanup_on_ip_address_change),
++      maintain_ipv6_temp_addr_(maintain_ipv6_temp_addr),
+       net_log_(NetLogWithSource::Make(http_network_session_->net_log(),
+                                       NetLogSourceType::HTTP_STREAM_POOL)),
+       max_stream_sockets_per_pool_(kHttpStreamPoolMaxStreamPerPool.Get()),
+@@ -319,8 +321,7 @@ void HttpStreamPool::OnIPAddressChanged(
+   CHECK(cleanup_on_ip_address_change_);
+
+   // Ignore changes to randomly generated IPv6 temporary addresses.
+-  if (base::FeatureList::IsEnabled(
+-          net::features::kMaintainConnectionsOnIpv6TempAddrChange) &&
++  if (maintain_ipv6_temp_addr_ &&
+       change_type == NetworkChangeNotifier::IP_ADDRESS_CHANGE_IPV6_TEMPADDR) {
+     return;
+   }
+diff --git a/net/http/http_stream_pool.h b/net/http/http_stream_pool.h
+index 2b6749c61e..b7b9596b02 100644
+--- a/net/http/http_stream_pool.h
++++ b/net/http/http_stream_pool.h
+@@ -194,7 +194,8 @@ class NET_EXPORT_PRIVATE HttpStreamPool
+   static bool IsQuicErrorBrokenable(int net_error);
+
+   explicit HttpStreamPool(HttpNetworkSession* http_network_session,
+-                          bool cleanup_on_ip_address_change = true);
++                          bool cleanup_on_ip_address_change = true,
++                          bool maintain_ipv6_temp_addr = false);
+
+   HttpStreamPool(const HttpStreamPool&) = delete;
+   HttpStreamPool& operator=(const HttpStreamPool&) = delete;
+@@ -404,6 +405,7 @@ class NET_EXPORT_PRIVATE HttpStreamPool
+   const StreamAttemptParams stream_attempt_params_;
+
+   const bool cleanup_on_ip_address_change_;
++  const bool maintain_ipv6_temp_addr_;
+
+   const NetLogWithSource net_log_;
+
+diff --git a/net/spdy/spdy_session.h b/net/spdy/spdy_session.h
+index 9c7be0f42f..b5389755db 100644
+--- a/net/spdy/spdy_session.h
++++ b/net/spdy/spdy_session.h
+@@ -360,7 +360,8 @@ class NET_EXPORT SpdySession
+               NetworkQualityEstimator* network_quality_estimator,
+               NetLog* net_log,
+               MultiplexedSessionCreationInitiator session_creation_initiator,
+-              SpdySessionInitiator spdy_session_initiator);
++              SpdySessionInitiator spdy_session_initiator,
++              bool avoid_h2_reprioritization = false);
+
+   ~SpdySession() override;
+
+@@ -1184,6 +1185,7 @@ class NET_EXPORT SpdySession
+   // but continue and also stop sending HTTP/2-style priority information in
+   // HEADERS frames and PRIORITY frames if it has value 1.
+   const bool enable_priority_update_;
++  const bool avoid_h2_reprioritization_;
+
+   // The value of the last received SETTINGS_DEPRECATE_HTTP2_PRIORITIES, with 0
+   // mapping to false and 1 to true.  Initial value is false.
+diff --git a/net/spdy/spdy_session.cc b/net/spdy/spdy_session.cc
+index db8fcac08d..12e0b1d403 100644
+--- a/net/spdy/spdy_session.cc
++++ b/net/spdy/spdy_session.cc
+@@ -823,7 +823,8 @@ SpdySession::SpdySession(
+     NetworkQualityEstimator* network_quality_estimator,
+     NetLog* net_log,
+     MultiplexedSessionCreationInitiator session_creation_initiator,
+-    SpdySessionInitiator spdy_session_initiator)
++    SpdySessionInitiator spdy_session_initiator,
++    bool avoid_h2_reprioritization)
+     : spdy_session_key_(spdy_session_key),
+       http_server_properties_(http_server_properties),
+       transport_security_state_(transport_security_state),
+@@ -834,6 +835,7 @@ SpdySession::SpdySession(
+       greased_http2_frame_(greased_http2_frame),
+       http2_end_stream_with_data_frame_(http2_end_stream_with_data_frame),
+       enable_priority_update_(enable_priority_update),
++      avoid_h2_reprioritization_(avoid_h2_reprioritization),
+       max_concurrent_streams_(kInitialMaxConcurrentStreams),
+       last_read_time_(time_func()),
+       session_max_recv_window_size_(session_max_recv_window_size),
+@@ -1244,7 +1246,7 @@ void SpdySession::UpdateStreamPriority(SpdyStream* stream,
+
+   DCHECK(IsStreamActive(stream_id));
+
+-  if (base::FeatureList::IsEnabled(features::kAvoidH2Reprioritization))
++  if (avoid_h2_reprioritization_)
+     return;
+
+   auto updates = priority_dependency_state_.OnStreamUpdate(
+diff --git a/net/spdy/spdy_session_pool.h b/net/spdy/spdy_session_pool.h
+index 842c8b0633..117d459603 100644
+--- a/net/spdy/spdy_session_pool.h
++++ b/net/spdy/spdy_session_pool.h
+@@ -160,7 +160,8 @@ class NET_EXPORT SpdySessionPool
+                   bool go_away_on_ip_change,
+                   SpdySessionPool::TimeFunc time_func,
+                   NetworkQualityEstimator* network_quality_estimator,
+-                  bool cleanup_sessions_on_ip_address_changed);
++                  bool cleanup_sessions_on_ip_address_changed,
++                  bool avoid_h2_reprioritization = false);
+
+   SpdySessionPool(const SpdySessionPool&) = delete;
+   SpdySessionPool& operator=(const SpdySessionPool&) = delete;
+@@ -572,6 +573,7 @@ class NET_EXPORT SpdySessionPool
+   // but continue and also stop sending HTTP/2-style priority information in
+   // HEADERS frames and PRIORITY frames if it has value 1.
+   const bool enable_priority_update_;
++  const bool avoid_h2_reprioritization_;
+
+   // If set, sessions will be marked as going away upon relevant network changes
+   // (instead of being closed).
+diff --git a/net/spdy/spdy_session_pool.cc b/net/spdy/spdy_session_pool.cc
+index 94189c50ff..4d1a8926a5 100644
+--- a/net/spdy/spdy_session_pool.cc
++++ b/net/spdy/spdy_session_pool.cc
+@@ -95,7 +95,8 @@ SpdySessionPool::SpdySessionPool(
+     bool go_away_on_ip_change,
+     SpdySessionPool::TimeFunc time_func,
+     NetworkQualityEstimator* network_quality_estimator,
+-    bool cleanup_sessions_on_ip_address_changed)
++    bool cleanup_sessions_on_ip_address_changed,
++    bool avoid_h2_reprioritization)
+     : http_server_properties_(http_server_properties),
+       transport_security_state_(transport_security_state),
+       ssl_client_context_(ssl_client_context),
+@@ -112,6 +113,7 @@ SpdySessionPool::SpdySessionPool(
+       greased_http2_frame_(greased_http2_frame),
+       http2_end_stream_with_data_frame_(http2_end_stream_with_data_frame),
+       enable_priority_update_(enable_priority_update),
++      avoid_h2_reprioritization_(avoid_h2_reprioritization),
+       go_away_on_ip_change_(go_away_on_ip_change),
+       time_func_(time_func),
+       network_quality_estimator_(network_quality_estimator),
+@@ -669,7 +671,7 @@ std::unique_ptr<SpdySession> SpdySessionPool::CreateSession(
+       enable_http2_settings_grease_, greased_http2_frame_,
+       http2_end_stream_with_data_frame_, enable_priority_update_, time_func_,
+       network_quality_estimator_, net_log, session_creation_initiator,
+-      spdy_session_initiator);
++      spdy_session_initiator, avoid_h2_reprioritization_);
+ }
+
+ base::expected<base::WeakPtr<SpdySession>, int> SpdySessionPool::InsertSession(
+diff --git a/net/http/http_cache.cc b/net/http/http_cache.cc
+index b5389adafa..fe54619323 100644
+--- a/net/http/http_cache.cc
++++ b/net/http/http_cache.cc
+@@ -687,7 +687,8 @@ void HttpCache::OnExternalCacheHit(
+   request_info.is_subframe_document_resource = false;
+   request_info.is_main_frame_navigation = false;
+   request_info.initiator = std::nullopt;
+-  if (base::FeatureList::IsEnabled(features::kSplitCacheByIncludeCredentials)) {
++  if (GetSession() &&
++      GetSession()->params().split_cache_by_include_credentials) {
+     if (!used_credentials) {
+       request_info.load_flags &= LOAD_DO_NOT_SAVE_COOKIES;
+     } else {
+@@ -843,11 +844,9 @@ std::string HttpCache::GenerateCacheKey(
+   // The first character of the key may vary depending on whether or not sending
+   // credentials is permitted for this request. This only happens if the
+   // SplitCacheByIncludeCredentials feature is enabled.
+-  const char credential_key = (base::FeatureList::IsEnabled(
+-                                   features::kSplitCacheByIncludeCredentials) &&
+-                               (load_flags & LOAD_DO_NOT_SAVE_COOKIES))
+-                                  ? '0'
+-                                  : '1';
++  // MiniCronet profiles currently keep this experimental split disabled. The
++  // cache partition is still isolated by URLRequestContext/NetworkIsolationKey.
++  const char credential_key = '1';
+
+   std::string isolation_key;
+   if (!is_shared_resource && IsSplitCacheEnabled()) {
+diff --git a/net/http/http_cache_writers.cc b/net/http/http_cache_writers.cc
+index 5a8ae42891..d128e440b4 100644
+--- a/net/http/http_cache_writers.cc
++++ b/net/http/http_cache_writers.cc
+@@ -728,10 +728,12 @@ bool HttpCache::Writers::ShouldCompressForCache() const {
+ #if defined(NET_DISABLE_ZSTD_COMPRESS)
+   return false;
+ #else
+-  if (!base::FeatureList::IsEnabled(features::kHttpCacheZstdCompression)) {
++  if (!cache_->GetSession() ||
++      !cache_->GetSession()->params().http_cache_zstd) {
+     return false;
+   }
+-  if (!base::FeatureList::IsEnabled(features::kHttpCacheZstdDecompression)) {
++  if (!cache_->GetSession() ||
++      !cache_->GetSession()->params().http_cache_zstd) {
+     return false;
+   }
+   if (!response_info_truncation_.did_use_shared_dictionary) {
+diff --git a/net/http/http_cache_transaction.cc b/net/http/http_cache_transaction.cc
+index 23ba0401a4..310c9d354c 100644
+--- a/net/http/http_cache_transaction.cc
++++ b/net/http/http_cache_transaction.cc
+@@ -1662,7 +1662,8 @@ int HttpCache::Transaction::DoCacheReadResponseComplete(int result) {
+
+   // Initialize decompression if the cached body is zstd-compressed.
+   if (response_.zstd_uncompressed_body_size.has_value()) {
+-    if (!base::FeatureList::IsEnabled(features::kHttpCacheZstdDecompression)) {
++    if (!cache_->GetSession() ||
++        !cache_->GetSession()->params().http_cache_zstd) {
+       // Feature not enabled — cannot decompress. Respect LOAD_ONLY_FROM_CACHE:
+       // never send a network request when the caller explicitly forbids it.
+       if (effective_load_flags_ & LOAD_ONLY_FROM_CACHE) {
+diff --git a/net/socket/socket_pool_additional_capacity.cc b/net/socket/socket_pool_additional_capacity.cc
+index 546b9321ba..fcbb70a4ff 100644
+--- a/net/socket/socket_pool_additional_capacity.cc
++++ b/net/socket/socket_pool_additional_capacity.cc
+@@ -7,7 +7,9 @@
+ #include "base/feature_list.h"
+ #include "base/metrics/histogram_functions.h"
+ #include "base/rand_util.h"
++#include "build/buildflag.h"
+ #include "net/base/features.h"
++#include "net/net_buildflags.h"
+
+ namespace net {
+
+@@ -31,6 +33,12 @@ enum class SocketPoolAdditionalCapacityError {
+ // static
+ SocketPoolAdditionalCapacity SocketPoolAdditionalCapacity::Create(
+     size_t additional_capacity) {
++#if BUILDFLAG(MINICRONET_BUILD)
++  // These are the audited defaults of the Chrome 147--151 experiment. The
++  // immutable profile decides whether Create() is called at all.
++  return SocketPoolAdditionalCapacity(0.000001, additional_capacity, 0.01,
++                                      0.2);
++#else
+   if (base::FeatureList::IsEnabled(
+           features::kTcpSocketPoolLimitRandomization)) {
+     return SocketPoolAdditionalCapacity(
+@@ -40,6 +48,7 @@ SocketPoolAdditionalCapacity SocketPoolAdditionalCapacity::Create(
+         features::kTcpSocketPoolLimitRandomizationNoise.Get());
+   }
+   return SocketPoolAdditionalCapacity();
++#endif
+ }
+
+ SocketPoolAdditionalCapacity SocketPoolAdditionalCapacity::CreateEmpty() {
+diff --git a/net/http/http_stream_factory_job.cc b/net/http/http_stream_factory_job.cc
+index 73800fe4d6..e57de8c792 100644
+--- a/net/http/http_stream_factory_job.cc
++++ b/net/http/http_stream_factory_job.cc
+@@ -1034,8 +1035,7 @@ int HttpStreamFactory::Job::DoInitConnectionComplete(int result) {
+       // If we do not have a session, then we should notify the
+       // ConnectionChangeObserver that the connection establishment has
+       // failed.
+-      if (base::FeatureList::IsEnabled(
+-              net::features::kConnectionKeepAliveForHttp2) &&
++      if (session_->params().h2_connection_keepalive &&
+           management_config_.has_value() &&
+           management_config_->connection_change_observer) {
+         management_config_->connection_change_observer->OnConnectionFailed();

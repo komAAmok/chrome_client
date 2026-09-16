@@ -62,16 +62,14 @@ apply_patch minicronet-core.patch . \
   'net/BUILD.gn:!is_cronet_build && !is_minicronet_build' \
   'base/BUILD.gn:nix/xdg_util_minicronet.cc'
 apply_patch profile-context-net.patch . \
-  'net/http/http_network_session.h:send_http2_enable_push_setting'
+  'net/http/http_network_session.h:send_http2_enable_push_setting' \
+  'net/socket/ssl_client_socket_impl.cc:const bool has_profile =' \
+  'net/socket/socket_pool_additional_capacity.cc:#if BUILDFLAG(MINICRONET_BUILD)'
 apply_patch profile-priority-header-net.patch . \
   'net/http/http_network_session.h:send_priority_header'
 apply_patch profile-tls-net.patch . \
-  'net/ssl/ssl_config_service.h:profile_grease_signature_algorithms'
-apply_patch profile-clienthello-padding-net.patch . \
+  'net/ssl/ssl_config_service.h:profile_grease_signature_algorithms' \
   'net/socket/ssl_client_socket_impl.cc:profile_client_hello_padding_length'
-apply_patch profile-feature-isolation-net.patch . \
-  'net/socket/ssl_client_socket_impl.cc:const bool has_profile =' \
-  'net/socket/socket_pool_additional_capacity.cc:#if BUILDFLAG(MINICRONET_BUILD)'
 apply_patch protocol-mode-net.patch . \
   'net/http/http_network_session.h:enum class HttpProtocolMode'
 # The Core only ever asks for net::MEMORY_CACHE and its ABI exposes no cache

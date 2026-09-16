@@ -7,7 +7,7 @@ ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 CHROMIUM_ROOT=${CHROMIUM_ROOT:-"$ROOT_DIR/chromium"}
 CHROMIUM_SRC=${CHROMIUM_SRC:-"$CHROMIUM_ROOT/src"}
 CHROMIUM_COMMIT=${CHROMIUM_COMMIT:-$(<"$ROOT_DIR/CHROMIUM_REVISION")}
-PATCH_FILE="$ROOT_DIR/patches/minicronet-core.patch"
+PATCH_FILE="$ROOT_DIR/core/patches/minicronet-core.patch"
 
 if ! command -v fetch >/dev/null 2>&1 || ! command -v gclient >/dev/null 2>&1; then
   printf '%s\n' 'depot_tools is required (fetch and gclient must be on PATH).' >&2

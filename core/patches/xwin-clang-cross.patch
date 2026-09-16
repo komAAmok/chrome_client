@@ -1,14 +1,16 @@
 diff --git a/build/toolchain/win/setup_toolchain.py b/build/toolchain/win/setup_toolchain.py
+index 68ad6c4a00..b41526bc73 100644
 --- a/build/toolchain/win/setup_toolchain.py
 +++ b/build/toolchain/win/setup_toolchain.py
-@@ -277,7 +277,9 @@ def main():
-       env = _LoadToolchainEnv(cpu, toolchain_root, win_sdk_path, target_store)
-       env['PATH'] = runtime_dirs + os.pathsep + env['PATH']
- 
--      vc_bin_dir = FindFileInEnvList(env, 'PATH', os.pathsep, 'cl.exe')
-+      vc_bin_dir = FindFileInEnvList(
-+          env, 'PATH', os.pathsep, 'cl.exe',
-+          optional=sys.platform not in ('win32', 'cygwin'))
- 
-       # The separator for INCLUDE here must match the one used in
-       # _LoadToolchainEnv() above.
+@@ -303,7 +303,10 @@ def main():
+             )
+             env['PATH'] = runtime_dirs + os.pathsep + env['PATH']
+
+-            vc_bin_dir = FindFileInEnvList(env, 'PATH', os.pathsep, 'cl.exe')
++            vc_bin_dir = FindFileInEnvList(
++                env, 'PATH', os.pathsep, 'cl.exe',
++                optional=sys.platform not in ('win32', 'cygwin')
++            )
+
+             # The separator for INCLUDE here must match the one used in
+             # _LoadToolchainEnv() above.

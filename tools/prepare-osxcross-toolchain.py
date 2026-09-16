@@ -42,7 +42,7 @@ def main() -> None:
         / "Release+Asserts"
         / "lib"
         / "clang"
-        / "23"
+        / "24"
         / "lib"
         / "darwin"
         / "libclang_rt.osx.a"

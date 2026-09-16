@@ -1,8 +1,8 @@
 diff --git a/base/BUILD.gn b/base/BUILD.gn
-index c6ae66b00e..36ed406138 100644
+index c6ae66b00e..3081fff8d8 100644
 --- a/base/BUILD.gn
 +++ b/base/BUILD.gn
-@@ -2396,7 +2396,13 @@ component("base") {
+@@ -2396,7 +2399,13 @@ component("base") {
        "process/set_process_title_linux.h",
        "system/sys_info_linux.cc",
      ]
@@ -61,7 +61,7 @@ index ea33019983..a0f9378273 100644
  
  # Allows different projects to specify their own suppression/ignore lists for
 diff --git a/net/BUILD.gn b/net/BUILD.gn
-index be3159b3f9..73f9a0dac0 100644
+index be3159b3f9..5215546ed7 100644
 --- a/net/BUILD.gn
 +++ b/net/BUILD.gn
 @@ -86,6 +86,7 @@ buildflag_header("buildflags") {
@@ -197,7 +197,7 @@ index 29c0520cc3..04588ba12b 100644
  
    # Do not disable brotli filter by default.
    disable_brotli_filter = false
-@@ -29,11 +30,12 @@ declare_args() {
+@@ -29,11 +32,12 @@ declare_args() {
    disable_zstd_filter = false
  
    # Multicast DNS. Enabled on desktop Android for the chrome.mdns extension API.
@@ -213,7 +213,7 @@ index 29c0520cc3..04588ba12b 100644
  
    # Includes the transport security state preload list. This list includes
    # mechanisms (e.g. HSTS, HPKP) to enforce trusted connections to a significant
-@@ -56,7 +59,8 @@ declare_args() {
+@@ -56,7 +60,8 @@ declare_args() {
    chrome_root_store_only = is_win || is_mac || is_linux || is_chromeos
  
    # DBSC is only supported on Windows, Linux and Mac for now.
@@ -223,7 +223,7 @@ index 29c0520cc3..04588ba12b 100644
  
    # Bracketed URIs parsing is only available for debug builds.
    # TODO(crbug.com/365771838): Ensure tests are updated if needed if this
-@@ -72,9 +76,10 @@ declare_args() {
+@@ -72,9 +77,10 @@ declare_args() {
    # It is enabled only in specific build configurations to avoid increasing the
    # build size.
    enable_disk_cache_sql_backend =
@@ -369,7 +369,6 @@ index a6292daadf..9f338efbc6 100644
  
 diff --git a/base/nix/xdg_util_minicronet.cc b/base/nix/xdg_util_minicronet.cc
 new file mode 100644
-index 0000000000..0cde180b2d
 --- /dev/null
 +++ b/base/nix/xdg_util_minicronet.cc
 @@ -0,0 +1,46 @@

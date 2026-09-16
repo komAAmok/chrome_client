@@ -1,8 +1,8 @@
 diff --git a/include/openssl/prefix_symbols.h b/include/openssl/prefix_symbols.h
-index a131c0dc8..6c6609262 100644
+index e60131a6a..574c0a76c 100644
 --- a/include/openssl/prefix_symbols.h
 +++ b/include/openssl/prefix_symbols.h
-@@ -2369,6 +2369,9 @@
+@@ -2371,6 +2371,9 @@
  #pragma redefine_extname SSL_set_chain_and_key BORINGSSL_ADD_USER_LABEL_AND_PREFIX(SSL_set_chain_and_key)
  #pragma redefine_extname SSL_set_cipher_list BORINGSSL_ADD_USER_LABEL_AND_PREFIX(SSL_set_cipher_list)
  #pragma redefine_extname SSL_set_client_CA_list BORINGSSL_ADD_USER_LABEL_AND_PREFIX(SSL_set_client_CA_list)
@@ -12,7 +12,7 @@ index a131c0dc8..6c6609262 100644
  #pragma redefine_extname SSL_set_compliance_policy BORINGSSL_ADD_USER_LABEL_AND_PREFIX(SSL_set_compliance_policy)
  #pragma redefine_extname SSL_set_connect_state BORINGSSL_ADD_USER_LABEL_AND_PREFIX(SSL_set_connect_state)
  #pragma redefine_extname SSL_set_custom_verify BORINGSSL_ADD_USER_LABEL_AND_PREFIX(SSL_set_custom_verify)
-@@ -2391,6 +2394,7 @@
+@@ -2393,6 +2396,7 @@
  #pragma redefine_extname SSL_set_ocsp_response BORINGSSL_ADD_USER_LABEL_AND_PREFIX(SSL_set_ocsp_response)
  #pragma redefine_extname SSL_set_options BORINGSSL_ADD_USER_LABEL_AND_PREFIX(SSL_set_options)
  #pragma redefine_extname SSL_set_permute_extensions BORINGSSL_ADD_USER_LABEL_AND_PREFIX(SSL_set_permute_extensions)
@@ -20,7 +20,7 @@ index a131c0dc8..6c6609262 100644
  #pragma redefine_extname SSL_set_private_key_method BORINGSSL_ADD_USER_LABEL_AND_PREFIX(SSL_set_private_key_method)
  #pragma redefine_extname SSL_set_psk_client_callback BORINGSSL_ADD_USER_LABEL_AND_PREFIX(SSL_set_psk_client_callback)
  #pragma redefine_extname SSL_set_psk_server_callback BORINGSSL_ADD_USER_LABEL_AND_PREFIX(SSL_set_psk_server_callback)
-@@ -5507,6 +5511,9 @@
+@@ -5512,6 +5516,9 @@
  #define SSL_set_compliance_policy BORINGSSL_ADD_PREFIX(SSL_set_compliance_policy)
  #define SSL_set_connect_state BORINGSSL_ADD_PREFIX(SSL_set_connect_state)
  #define SSL_set_custom_verify BORINGSSL_ADD_PREFIX(SSL_set_custom_verify)
@@ -30,7 +30,7 @@ index a131c0dc8..6c6609262 100644
  #define SSL_set_early_data_enabled BORINGSSL_ADD_PREFIX(SSL_set_early_data_enabled)
  #define SSL_set_enable_ech_grease BORINGSSL_ADD_PREFIX(SSL_set_enable_ech_grease)
  #define SSL_set_ex_data BORINGSSL_ADD_PREFIX(SSL_set_ex_data)
-@@ -5526,6 +5533,7 @@
+@@ -5531,6 +5538,7 @@
  #define SSL_set_ocsp_response BORINGSSL_ADD_PREFIX(SSL_set_ocsp_response)
  #define SSL_set_options BORINGSSL_ADD_PREFIX(SSL_set_options)
  #define SSL_set_permute_extensions BORINGSSL_ADD_PREFIX(SSL_set_permute_extensions)
@@ -39,7 +39,7 @@ index a131c0dc8..6c6609262 100644
  #define SSL_set_psk_client_callback BORINGSSL_ADD_PREFIX(SSL_set_psk_client_callback)
  #define SSL_set_psk_server_callback BORINGSSL_ADD_PREFIX(SSL_set_psk_server_callback)
 diff --git a/include/openssl/ssl.h b/include/openssl/ssl.h
-index 572ea3bf0..7354be850 100644
+index 3b48c2a08..5b4295a7c 100644
 --- a/include/openssl/ssl.h
 +++ b/include/openssl/ssl.h
 @@ -2617,6 +2617,7 @@ OPENSSL_EXPORT size_t SSL_CTX_get_num_tickets(const SSL_CTX *ctx);
@@ -49,21 +49,21 @@ index 572ea3bf0..7354be850 100644
 +#define SSL_GROUP_X25519_KYBER768 0x6399
  #define SSL_GROUP_X25519_MLKEM768 0x11ec
  #define SSL_GROUP_MLKEM1024 0x0202
- 
-@@ -5546,6 +5547,9 @@ OPENSSL_EXPORT void SSL_CTX_set_retain_only_sha256_of_client_certs(SSL_CTX *ctx,
+
+@@ -5551,6 +5552,9 @@ OPENSSL_EXPORT void SSL_CTX_set_retain_only_sha256_of_client_certs(SSL_CTX *ctx,
  // GREASE. See RFC 8701.
  OPENSSL_EXPORT void SSL_CTX_set_grease_enabled(SSL_CTX *ctx, int enabled);
- 
+
 +// SSL_set_grease_enabled overrides GREASE for one connection.
 +OPENSSL_EXPORT void SSL_set_grease_enabled(SSL *ssl, int enabled);
 +
  // SSL_CTX_set_grease_sigalgs_enabled configures whether sockets on `ctx` should
  // send a GREASE value in signature_algorithms extensions in ClientHello
  // messages. See RFC 8701.
-@@ -5556,6 +5560,17 @@ OPENSSL_EXPORT void SSL_CTX_set_grease_enabled(SSL_CTX *ctx, int enabled);
+@@ -5561,6 +5565,17 @@ OPENSSL_EXPORT void SSL_CTX_set_grease_enabled(SSL_CTX *ctx, int enabled);
  OPENSSL_EXPORT void SSL_CTX_set_grease_sigalgs_enabled(SSL_CTX *ctx,
                                                         int enabled);
- 
+
 +// SSL_set_grease_sigalgs_enabled configures GREASE signature algorithms for
 +// one connection, overriding the SSL_CTX value copied by SSL_new.
 +OPENSSL_EXPORT void SSL_set_grease_sigalgs_enabled(SSL *ssl, int enabled);
@@ -79,18 +79,18 @@ index 572ea3bf0..7354be850 100644
  // permute extensions. For now, this is only implemented for the ClientHello.
  OPENSSL_EXPORT void SSL_CTX_set_permute_extensions(SSL_CTX *ctx, int enabled);
 diff --git a/ssl/extensions.cc b/ssl/extensions.cc
-index 90238d912..5604a399d 100644
+index 954af185b..547f0e298 100644
 --- a/ssl/extensions.cc
 +++ b/ssl/extensions.cc
 @@ -107,7 +107,8 @@ static bool tls1_check_duplicate_extensions(const CBS *cbs) {
  }
- 
+
  static bool is_post_quantum_group(uint16_t id) {
 -  return id == SSL_GROUP_X25519_MLKEM768 || id == SSL_GROUP_MLKEM1024;
 +  return id == SSL_GROUP_X25519_KYBER768 ||
 +         id == SSL_GROUP_X25519_MLKEM768 || id == SSL_GROUP_MLKEM1024;
  }
- 
+
  bool ssl_parse_client_hello_with_trailing_data(const SSLImpl *ssl, CBS *cbs,
 @@ -1029,7 +1030,7 @@ static bool ext_sigalgs_add_clienthello(const SSL_HANDSHAKE *hs, CBB *out,
      return false;
@@ -101,108 +101,105 @@ index 90238d912..5604a399d 100644
        !CBB_add_u16(&sigalgs_cbb,
                     ssl_get_grease_value(hs, ssl_grease_signature_algorithm))) {
      return false;
-@@ -2487,7 +2488,7 @@ bool ssl_setup_key_shares(SSL_HANDSHAKE *hs, uint16_t override_group_id) {
+@@ -2468,7 +2469,7 @@ bool ssl_setup_key_shares(SSL_HANDSHAKE *hs, uint16_t override_group_id) {
      return false;
    }
- 
+
 -  if (override_group_id == 0 && ssl->ctx->grease_enabled) {
 +  if (override_group_id == 0 && ssl->config->grease_enabled) {
      // Add a fake group. See RFC 8701.
      if (!CBB_add_u16(cbb.get(), ssl_get_grease_value(hs, ssl_grease_group)) ||
          !CBB_add_u16(cbb.get(), 1 /* length */) ||
-@@ -2694,7 +2695,7 @@ static bool ext_supported_versions_add_clienthello(
+@@ -2675,7 +2676,7 @@ static bool ext_supported_versions_add_clienthello(
    }
- 
+
    // Add a fake version. See RFC 8701.
 -  if (ssl->ctx->grease_enabled &&
 +  if (ssl->config->grease_enabled &&
        !CBB_add_u16(&versions, ssl_get_grease_value(hs, ssl_grease_version))) {
      return false;
    }
-@@ -2758,7 +2759,7 @@ static bool ext_supported_groups_add_clienthello(const SSL_HANDSHAKE *hs,
+@@ -2739,7 +2740,7 @@ static bool ext_supported_groups_add_clienthello(const SSL_HANDSHAKE *hs,
    }
- 
+
    // Add a fake group. See RFC 8701.
 -  if (ssl->ctx->grease_enabled &&
 +  if (ssl->config->grease_enabled &&
        !CBB_add_u16(&groups_bytes, ssl_get_grease_value(hs, ssl_grease_group))) {
      return false;
    }
-@@ -4410,7 +4411,7 @@ static bool ssl_add_clienthello_tlsext_inner(SSL_HANDSHAKE *hs, CBB *out,
- 
+@@ -4391,7 +4392,7 @@ static bool ssl_add_clienthello_tlsext_inner(SSL_HANDSHAKE *hs, CBB *out,
+
    hs->inner_extensions_sent = 0;
- 
+
 -  if (ssl->ctx->grease_enabled) {
 +  if (ssl->config->grease_enabled) {
      // Add a fake empty extension. See RFC 8701. This always matches
      // `ssl_add_clienthello_tlsext`, so compress it.
      uint16_t grease_ext = ssl_get_grease_value(hs, ssl_grease_extension1);
-@@ -4448,7 +4449,7 @@ static bool ssl_add_clienthello_tlsext_inner(SSL_HANDSHAKE *hs, CBB *out,
+@@ -4429,7 +4430,7 @@ static bool ssl_add_clienthello_tlsext_inner(SSL_HANDSHAKE *hs, CBB *out,
      }
    }
- 
+
 -  if (ssl->ctx->grease_enabled) {
 +  if (ssl->config->grease_enabled) {
      // Add a fake non-empty extension. See RFC 8701. This always matches
      // `ssl_add_clienthello_tlsext`, so compress it.
      uint16_t grease_ext = ssl_get_grease_value(hs, ssl_grease_extension2);
-@@ -4526,7 +4527,7 @@ bool ssl_add_clienthello_tlsext(SSL_HANDSHAKE *hs, CBB *out, CBB *out_encoded,
+@@ -4504,7 +4505,7 @@ bool ssl_add_clienthello_tlsext(SSL_HANDSHAKE *hs, CBB *out, CBB *out_encoded,
    hs->extensions.sent = 0;
- 
+
    // Add a fake empty extension. See RFC 8701.
 -  if (ssl->ctx->grease_enabled &&
 +  if (ssl->config->grease_enabled &&
        !add_padding_extension(
            &extensions, ssl_get_grease_value(hs, ssl_grease_extension1), 0)) {
      return false;
-@@ -4553,7 +4554,7 @@ bool ssl_add_clienthello_tlsext(SSL_HANDSHAKE *hs, CBB *out, CBB *out_encoded,
+@@ -4531,7 +4532,7 @@ bool ssl_add_clienthello_tlsext(SSL_HANDSHAKE *hs, CBB *out, CBB *out_encoded,
      last_was_empty = (bytes_written == 4);
    }
- 
+
 -  if (ssl->ctx->grease_enabled) {
 +  if (ssl->config->grease_enabled) {
      // Add a fake non-empty extension. See RFC 8701.
      if (!add_padding_extension(
              &extensions, ssl_get_grease_value(hs, ssl_grease_extension2), 1)) {
-@@ -4566,17 +4567,19 @@ bool ssl_add_clienthello_tlsext(SSL_HANDSHAKE *hs, CBB *out, CBB *out_encoded,
-   // bugs. We also apply this padding to ClientHelloOuter, to keep the wire
-   // images aligned.
-   size_t psk_len = ext_pre_shared_key_clienthello_length(hs, type);
--  if (!SSL_is_dtls(ssl) && !SSL_is_quic(ssl) &&
-+  if ((ssl->config->client_hello_padding_enabled ||
-+       ssl->config->client_hello_padding_length != 0) &&
-+      !SSL_is_dtls(ssl) && !SSL_is_quic(ssl) &&
-       !ssl->s3->used_hello_retry_request) {
-     msg_len += 2 /* length prefix */ + CBB_len(&extensions) + psk_len;
-     // The length of the padding extension, excluding the four-byte extension
-     // header.
--    size_t padding_len = 0;
-+    size_t padding_len = ssl->config->client_hello_padding_length;
- 
-     // The final extension must be non-empty. WebSphere Application
-     // Server 7.0 is intolerant to the last extension being zero-length. See
-     // https://crbug.com/363583.
--    if (last_was_empty && psk_len == 0) {
-+    if (padding_len == 0 && last_was_empty && psk_len == 0) {
-       padding_len = 1;
-       // The addition of the padding extension may push us into the F5 bug.
-       msg_len += 4 + padding_len;
-@@ -4586,7 +4589,7 @@ bool ssl_add_clienthello_tlsext(SSL_HANDSHAKE *hs, CBB *out, CBB *out_encoded,
-     //
-     // NB: because this code works out the length of all existing extensions
-     // it MUST always appear last (save for any PSK extension).
--    if (msg_len > 0xff && msg_len < 0x200) {
+@@ -4544,9 +4545,25 @@ bool ssl_add_clienthello_tlsext(SSL_HANDSHAKE *hs, CBB *out, CBB *out_encoded,
+   // intolerant to the last extension being zero-length. See
+   // https://crbug.com/363583.
+   bool offering_psk = should_offer_psk(hs, type);
+-  if (!offering_psk && last_was_empty && !SSL_is_dtls(ssl) &&
+-      !SSL_is_quic(ssl) && !ssl->s3->used_hello_retry_request) {
+-    if (!add_padding_extension(&extensions, TLSEXT_TYPE_padding, 1)) {
++  size_t padding_len = ssl->config->client_hello_padding_length;
++  if (!SSL_is_dtls(ssl) && !SSL_is_quic(ssl) &&
++      !ssl->s3->used_hello_retry_request &&
++      (ssl->config->client_hello_padding_enabled || padding_len != 0)) {
++    if (padding_len == 0 && !offering_psk && last_was_empty) {
++      padding_len = 1;
++    }
++    const size_t msg_len = 2 /* version */ + CBB_len(out) + 2 /* extensions */ +
++                           CBB_len(&extensions);
 +    if (padding_len == 0 && msg_len > 0xff && msg_len < 0x200) {
-       // If our calculations already included a padding extension, remove that
-       // factor because we're about to change its length.
-       if (padding_len != 0) {
++      padding_len = 0x200 - msg_len;
++      if (padding_len >= 5) {
++        padding_len -= 4;
++      } else {
++        padding_len = 1;
++      }
++    }
++    if (padding_len != 0 &&
++        !add_padding_extension(&extensions, TLSEXT_TYPE_padding, padding_len)) {
+       return false;
+     }
+   }
 diff --git a/ssl/handshake_client.cc b/ssl/handshake_client.cc
 index a4a53cda6..dbfb18a23 100644
 --- a/ssl/handshake_client.cc
 +++ b/ssl/handshake_client.cc
 @@ -103,7 +103,7 @@ static bool ssl_write_client_cipher_list(const SSL_HANDSHAKE *hs, CBB *out,
    }
- 
+
    // Add a fake cipher suite. See RFC 8701.
 -  if (ssl->ctx->grease_enabled &&
 +  if (ssl->config->grease_enabled &&
@@ -210,22 +207,22 @@ index a4a53cda6..dbfb18a23 100644
      return false;
    }
 diff --git a/ssl/internal.h b/ssl/internal.h
-index 68d9e853d..222830f3c 100644
+index 96f6d3d3d..dcf77070d 100644
 --- a/ssl/internal.h
 +++ b/ssl/internal.h
 @@ -918,7 +918,7 @@ struct NamedGroup {
  Span<const NamedGroup> NamedGroups();
- 
+
  // kNumNamedGroups is the number of supported groups.
 -constexpr size_t kNumNamedGroups = 6u;
 +constexpr size_t kNumNamedGroups = 7u;
- 
+
  // DefaultSupportedGroupIds returns the list of IDs for the default groups that
  // are supported when the caller hasn't explicitly configured supported groups.
-@@ -3507,6 +3507,17 @@ struct SSL_CONFIG {
+@@ -3546,6 +3546,17 @@ struct SSL_CONFIG {
    // Enable signed certificate time stamps. Currently client only.
    bool signed_cert_timestamps_enabled : 1;
- 
+
 +  // Whether to GREASE the signature_algorithms ClientHello extension.
 +  bool grease_sigalgs_enabled : 1;
 +
@@ -241,26 +238,26 @@ index 68d9e853d..222830f3c 100644
    // whether OCSP stapling will be requested.
    bool ocsp_stapling_enabled : 1;
 diff --git a/ssl/ssl_key_share.cc b/ssl/ssl_key_share.cc
-index fedfc1c09..bd4fea1e2 100644
+index 84394b247..09cc72150 100644
 --- a/ssl/ssl_key_share.cc
 +++ b/ssl/ssl_key_share.cc
 @@ -195,9 +195,11 @@ class X25519KeyShare : public SSLKeyShare {
- // draft-ietf-tls-ecdhe-mlkem-00
+ // RFC 10024
  class X25519MLKEM768KeyShare : public SSLKeyShare {
   public:
 -  X25519MLKEM768KeyShare() {}
 +  explicit X25519MLKEM768KeyShare(
 +      uint16_t group_id = SSL_GROUP_X25519_MLKEM768)
 +      : group_id_(group_id) {}
- 
+
 -  uint16_t GroupID() const override { return SSL_GROUP_X25519_MLKEM768; }
 +  uint16_t GroupID() const override { return group_id_; }
- 
+
    bool Generate(CBB *out) override {
      uint8_t mlkem_public_key[MLKEM768_PUBLIC_KEY_BYTES];
 @@ -281,6 +283,7 @@ class X25519MLKEM768KeyShare : public SSLKeyShare {
    }
- 
+
   private:
 +  uint16_t group_id_;
    uint8_t x25519_private_key_[32];
@@ -284,7 +281,7 @@ index fedfc1c09..bd4fea1e2 100644
        return MakeUnique<MLKEM1024KeyShare>();
      default:
 diff --git a/ssl/ssl_lib.cc b/ssl/ssl_lib.cc
-index e05f91bd9..66a3ae612 100644
+index a0c746b38..fc314bece 100644
 --- a/ssl/ssl_lib.cc
 +++ b/ssl/ssl_lib.cc
 @@ -526,6 +526,7 @@ SSL *SSL_new(SSL_CTX *ctx) {
@@ -296,16 +293,16 @@ index e05f91bd9..66a3ae612 100644
    ssl->config->aes_hw_override = ctx_impl->aes_hw_override;
    ssl->config->aes_hw_override_value = ctx_impl->aes_hw_override_value;
 @@ -568,6 +569,7 @@ SSL *SSL_new(SSL_CTX *ctx) {
- 
+
    ssl->config->signed_cert_timestamps_enabled =
        ctx_impl->signed_cert_timestamps_enabled;
 +  ssl->config->grease_enabled = ctx_impl->grease_enabled;
    ssl->config->ocsp_stapling_enabled = ctx_impl->ocsp_stapling_enabled;
    ssl->config->handoff = ctx_impl->handoff;
    ssl->quic_method = ctx_impl->quic_method;
-@@ -584,6 +586,9 @@ SSL_CONFIG::SSL_CONFIG(SSLImpl *ssl_arg)
-     : ssl(ssl_arg),
+@@ -585,6 +587,9 @@ SSL_CONFIG::SSL_CONFIG(SSLImpl *ssl_arg)
        ech_grease_enabled(false),
+       reject_unusable_ech_config(false),
        signed_cert_timestamps_enabled(false),
 +      grease_sigalgs_enabled(false),
 +      grease_enabled(false),
@@ -313,10 +310,10 @@ index e05f91bd9..66a3ae612 100644
        ocsp_stapling_enabled(false),
        channel_id_enabled(false),
        retain_only_sha256_of_client_certs(false),
-@@ -3273,10 +3278,42 @@ void SSL_CTX_set_grease_enabled(SSL_CTX *ctx, int enabled) {
+@@ -3276,10 +3281,42 @@ void SSL_CTX_set_grease_enabled(SSL_CTX *ctx, int enabled) {
    FromOpaque(ctx)->grease_enabled = !!enabled;
  }
- 
+
 +void SSL_set_grease_enabled(SSL *ssl, int enabled) {
 +  auto *ssl_impl = FromOpaque(ssl);
 +  if (!ssl_impl->config) {
@@ -328,7 +325,7 @@ index e05f91bd9..66a3ae612 100644
  void SSL_CTX_set_grease_sigalgs_enabled(SSL_CTX *ctx, int enabled) {
    FromOpaque(ctx)->grease_sigalgs_enabled = !!enabled;
  }
- 
+
 +void SSL_set_grease_sigalgs_enabled(SSL *ssl, int enabled) {
 +  auto *ssl_impl = FromOpaque(ssl);
 +  if (!ssl_impl->config) {

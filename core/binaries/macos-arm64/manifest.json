@@ -2,11 +2,11 @@
   "project": "chrome_client",
   "core": "minicronet",
   "abi_version": 8,
-  "chromium_revision": "010786339149198c8c24d58c30cf5a41fcf60c14",
+  "chromium_revision": "b75a5a95ea1a1b55bdbfd6d9f42d47be7507fb8b",
   "target": "macos-arm64",
   "triple": "aarch64-apple-darwin",
   "library": "libminicronet.dylib",
-  "sha256": "53d6d2566e803f2102c2a14626f9876adb9177add812cc527267b333ca2886af",
-  "size_bytes": 7806416,
+  "sha256": "73938fe9b4ad28b8ff047b0c45a40f8075086974bcbf306707adb241dd0fd31f",
+  "size_bytes": 7872464,
   "runtime_dependencies": []
 }

@@ -1,8 +1,8 @@
 diff --git a/net/socket/ssl_client_socket_impl.cc b/net/socket/ssl_client_socket_impl.cc
-index daf2491519..701ddd5088 100644
+index daf2491519..538ecedb5e 100644
 --- a/net/socket/ssl_client_socket_impl.cc
 +++ b/net/socket/ssl_client_socket_impl.cc
-@@ -687,6 +687,23 @@ int SSLClientSocketImpl::Init() {
+@@ -687,6 +687,26 @@ int SSLClientSocketImpl::Init() {
    ssl_.reset(SSL_new(context->ssl_ctx()));
    if (!ssl_ || !context->SetClientSocketForSSL(ssl_.get(), this))
      return ERR_UNEXPECTED;
@@ -18,9 +18,10 @@ index daf2491519..701ddd5088 100644
 +  SSL_set_grease_enabled(ssl_.get(),
 +                         context_->config().profile_tls_grease_enabled);
 +  SSL_set_grease_sigalgs_enabled(
-+      ssl_.get(), context_->config().profile_grease_signature_algorithms &&
-+                      base::FeatureList::IsEnabled(
-+                          features::kTlsGreaseSigalgs));
++      ssl_.get(), has_profile
++                      ? context_->config().profile_grease_signature_algorithms
++                      : base::FeatureList::IsEnabled(
++                            features::kTlsGreaseSigalgs));
 +  SSL_set_client_hello_padding_enabled(
 +      ssl_.get(), context_->config().profile_client_hello_padding_enabled);
 +  SSL_set_client_hello_padding_length(
@@ -28,7 +29,7 @@ index daf2491519..701ddd5088 100644
  
    const bool host_is_ip_address =
        HostIsIPAddressNoBrackets(host_and_port_.host());
-@@ -772,7 +789,25 @@ int SSLClientSocketImpl::Init() {
+@@ -772,7 +792,25 @@ int SSLClientSocketImpl::Init() {
  
    // Use BoringSSL defaults, but disable 3DES and HMAC-SHA1 ciphers in ECDSA.
    // These are the remaining CBC-mode ECDSA ciphers.
@@ -55,7 +56,7 @@ index daf2491519..701ddd5088 100644
  
    if (ssl_config_.require_ecdhe)
      command.append(":!kRSA");
-@@ -807,13 +842,21 @@ int SSLClientSocketImpl::Init() {
+@@ -807,14 +845,23 @@ int SSLClientSocketImpl::Init() {
        SSL_SIGN_RSA_PSS_RSAE_SHA512,
        SSL_SIGN_RSA_PKCS1_SHA512,
    };
@@ -75,11 +76,14 @@ index daf2491519..701ddd5088 100644
  
    SSL_set_alps_use_new_codepoint(
        ssl_.get(),
-+      context_->config().profile_use_new_alps_codepoint &&
-       base::FeatureList::IsEnabled(features::kUseNewAlpsCodepointHttp2));
+-      base::FeatureList::IsEnabled(features::kUseNewAlpsCodepointHttp2));
++      has_profile
++          ? context_->config().profile_use_new_alps_codepoint
++          : base::FeatureList::IsEnabled(features::kUseNewAlpsCodepointHttp2));
  
    if (!ssl_config_.alpn_protos.empty()) {
-@@ -861,7 +904,10 @@ int SSLClientSocketImpl::Init() {
+     std::vector<uint8_t> wire_protos =
+@@ -861,7 +908,10 @@ int SSLClientSocketImpl::Init() {
      return rv;
    }
  

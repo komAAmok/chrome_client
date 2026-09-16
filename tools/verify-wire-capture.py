@@ -57,7 +57,7 @@ def is_grease(value):
     text = str(value)
     if "GREASE" in text:
         return True
-    match = re.fullmatch(r"0x([0-9a-fA-F]{4})", text)
+    match = re.fullmatch(r"0x([0-9a-fA-F]{1,4})", text)
     return bool(match) and int(match.group(1), 16) in GREASE_VALUES
 
 

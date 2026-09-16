@@ -123,7 +123,7 @@ require_source "$CHROMIUM_SRC/net/third_party/quiche/src/quiche/quic/core/quic_p
 require_source "$CHROMIUM_SRC/net/third_party/quiche/src/quiche/quic/core/crypto/curve25519_key_exchange.cc" \
   'rand->RandBytes(private_key, sizeof(private_key));'
 require_source "$CHROMIUM_SRC/net/third_party/quiche/src/quiche/quic/core/crypto/quic_crypto_client_config.cc" \
-  'rand->RandBytes(proof_nonce, ABSL_ARRAYSIZE(proof_nonce));'
+  'rand->RandBytes(proof_nonce, std::size(proof_nonce));'
 require_source "$CHROMIUM_SRC/net/third_party/quiche/src/quiche/quic/core/quic_versions.cc" \
   'QuicRandom::GetInstance()->RandBytes(&result, sizeof(result));'
 require_source "$CHROMIUM_SRC/net/third_party/quiche/src/quiche/quic/core/quic_framer.cc" \
