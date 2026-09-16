@@ -1478,6 +1478,33 @@
       "send_quic_orig": true,
       "try_quic_by_default": true
     },
+    "chrome_153": {
+      "alpn_source_order": [],
+      "enable_quic": true,
+      "enable_quic_source": "http_network_session.h",
+      "h2_enable_push": true,
+      "h2_header_table_size": 65536,
+      "h2_initial_window_size": 6291456,
+      "h2_max_concurrent_streams": false,
+      "h2_max_frame_size": 16384,
+      "h2_max_header_list_size": 262144,
+      "h2_session_recv_window_size": 15728640,
+      "h2_settings_order": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "randomize_proxy_socket_pool_limit": true,
+      "randomize_proxy_socket_pool_limit_source": "kTcpSocketPoolLimitRandomizationForProxy was removed in 152 and stays absent at 153.0.8010.37; client_socket_pool_manager.cc still defines g_allow_size_randomization_for_proxy = true unconditionally, so the behaviour is unchanged from 152",
+      "randomize_socket_pool_limit": true,
+      "send_priority_header": true,
+      "send_quic_legacy_version_information": false,
+      "send_quic_orig": true,
+      "try_quic_by_default": true
+    },
     "chrome_99": {
       "alpn_source_order": [
         "kProtoHTTP2",
