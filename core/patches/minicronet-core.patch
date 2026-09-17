@@ -419,10 +419,51 @@ new file mode 100644
 +
 +}  // namespace base::nix
 diff --git a/build/config/compiler/BUILD.gn b/build/config/compiler/BUILD.gn
-index 8153e68ce9..5a1a947c31 100644
+index 8153e68ce9..bfb9a041e6 100644
 --- a/build/config/compiler/BUILD.gn
 +++ b/build/config/compiler/BUILD.gn
-@@ -2620,7 +2620,7 @@ config("optimize") {
+@@ -2604,23 +2604,38 @@ config("default_stack_frames") {
+ # [2]: https://crrev.com/c/5447532
+ config("optimize") {
+   if (is_win) {
+-    # clang-cl's /O2 corresponds to clang's -O3, and really want -O2 for
+-    # consistency with the other platforms.
+-    cflags = [
+-               "/O2",
+-               "/clang:-O2",
+-             ] + common_optimize_on_cflags
++    if (is_minicronet_build) {
++      # This branch is taken before the optimize_for_size check below, so
++      # Windows would otherwise be the only platform compiled for speed while
++      # the others are compiled for size. MiniCronet asks for size everywhere,
++      # so honour that here too: /O1 is clang-cl's size level and /clang:-Oz
++      # pins clang to the same -Oz the other platforms get.
++      cflags = [
++                 "/O1",
++                 "/clang:-Oz",
++               ] + common_optimize_on_cflags
+ 
+-    # The `-O3` for clang turns on extra optimizations compared to the standard
+-    # `-O2`. But for rust, `-Copt-level=3` is the default and is thus reliable
+-    # to use.
+-    rustflags = [ "-Copt-level=3" ]
++      # Mirrors the -Copt-level=s the optimize_for_size branch below uses.
++      rustflags = [ "-Copt-level=s" ]
++    } else {
++      # clang-cl's /O2 corresponds to clang's -O3, and really want -O2 for
++      # consistency with the other platforms.
++      cflags = [
++                 "/O2",
++                 "/clang:-O2",
++               ] + common_optimize_on_cflags
++
++      # The `-O3` for clang turns on extra optimizations compared to the
++      # standard `-O2`. But for rust, `-Copt-level=3` is the default and is thus
++      # reliable to use.
++      rustflags = [ "-Copt-level=3" ]
++    }
+   } else if (optimize_for_size || is_chromeos) {
+     # Favor size over speed.
      # -Os in clang is more of a size-conscious -O2 than "size at any cost"
      # (AKA -Oz).
  
