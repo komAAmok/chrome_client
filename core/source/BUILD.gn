@@ -43,6 +43,18 @@ shared_library("minicronet") {
     inputs = [ "minicronet.lds" ]
     ldflags = [
       "-Wl,--version-script=" + rebase_path(inputs[0], root_build_dir),
+      # lld can lay the read-only and the executable LOAD segments out on
+      # separate page boundaries (`.rodata` ends at 0x2a9c7c and `.text` then
+      # starts at the next page). Asking for the compact layout explicitly
+      # removes that padding. Measured on linux-x86_64 this is a no-op: lld's
+      # default for this command line is already compact (program headers are
+      # byte-identical, 8,787,816 bytes either way), while forcing
+      # -z separate-code costs 4,096 bytes. The flag is kept as a pin so a
+      # future linker default cannot silently reintroduce the padding. Note the
+      # trade-off it encodes: with noseparate-code a code page can also map
+      # read-only data, so W^X granularity drops. For a library of twenty
+      # audited C entry points that never JITs, that is acceptable.
+      "-Wl,-z,noseparate-code",
     ]
   } else if (is_mac) {
     inputs = [ "minicronet.exports" ]
