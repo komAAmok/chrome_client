@@ -10,8 +10,10 @@ CHROMIUM_SRC=${CHROMIUM_SRC:-/home/sj/chromium/src}
 # 147,456 bytes of jump tables, and lowered again after the memory-only disk
 # cache patch dropped the unreachable blockfile and simple backends
 # (-221,184 bytes here, -168,960 to -285,696 across the eight targets).
-# Largest current artifact is linux-x86_64 at 8,955,744 bytes.
-MAX_BYTES=${MAX_BYTES:-9050000}
+# Lowered again for the size pass: -Oz here is -258,048, and the ICU
+# PropNameData trim removes another 28,672 on top of it. Largest artifact is
+# linux-x86_64 at 8,759,144 bytes; the ceiling is that plus 2%.
+MAX_BYTES=${MAX_BYTES:-8940000}
 LIB=$OUT_DIR/libminicronet.so
 READELF=$CHROMIUM_SRC/third_party/llvm-build/Release+Asserts/bin/llvm-readelf
 NM=$CHROMIUM_SRC/third_party/llvm-build/Release+Asserts/bin/llvm-nm

@@ -5,10 +5,13 @@ OUT_DIR=${1:?usage: audit-core-windows.sh OUT_DIR}
 CHROMIUM_SRC=${CHROMIUM_SRC:-/home/sj/chromium/src}
 # Static MSVC/UCRT adds roughly 2 MB compared with the Linux shared libc
 # build; keep a strict platform-specific ceiling instead of hiding it in the
-# build output. Lowered after the memory-only disk cache patch: the largest
-# Windows artifact is x86_64 at 11,291,648 bytes (x86 8,971,264,
-# arm64 9,221,120).
-MAX_BYTES=${MAX_BYTES:-11400000}
+# build output. Lowered for the size pass: this is the only platform where
+# optimize_for_size used to be ignored (config("optimize") checks is_win before
+# it, so Windows was built at -O2 while the other five were at -Os), and
+# honouring it costs more here than -Oz does anywhere else -- x86 is -1,119,232
+# (-12.36%), x86_64 -1,203,200 (-10.56%), arm64 -630,272 (-6.71%). The largest
+# artifact is now x86_64 at 10,188,288 bytes; the ceiling is that plus 2%.
+MAX_BYTES=${MAX_BYTES:-10400000}
 ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 RG=${RG:-$(command -v rg || true)}
 if [[ -z $RG ]]; then

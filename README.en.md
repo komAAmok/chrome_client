@@ -31,7 +31,7 @@ version, Chromium revision, SHA-256 and runtime dependencies. The current ABI is
 v8. Go and Node directories currently contain binding design notes, not released
 installable packages.
 
-Cores range from 7.8 MB to 11.3 MB (macOS ARM64 smallest, Windows x86_64 largest,
+Cores range from 7.7 MB to 10.2 MB (macOS ARM64 smallest, Windows x86_64 largest,
 where static MSVC/UCRT adds about 2 MB). The IDNA-only ICU dataset is linked in,
 so no external `icudtl.dat` travels with the library, and the unused disk cache
 backends are not linked at all. `tools/audit-core-*.sh` enforces a per-platform

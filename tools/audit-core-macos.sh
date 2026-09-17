@@ -4,10 +4,11 @@ set -Eeuo pipefail
 OUT_DIR=${1:?usage: audit-core-macos.sh OUT_DIR ARCH}
 EXPECTED_ARCH=${2:?usage: audit-core-macos.sh OUT_DIR ARCH}
 CHROMIUM_SRC=${CHROMIUM_SRC:-/home/sj/chromium/src}
-# Lowered after the memory-only disk cache patch: x86_64 is 8,618,588 bytes and
-# arm64 7,806,416. The ceiling tracks the larger of the two so a regression on
-# either architecture fails here rather than in a release.
-MAX_BYTES=${MAX_BYTES:-8750000}
+# Lowered for the size pass: -Oz and the ICU PropNameData trim leave x86_64 at
+# 8,442,400 bytes and arm64 at 7,690,768. The ceiling tracks the larger of the
+# two plus 2% so a regression on either architecture fails here rather than in a
+# release.
+MAX_BYTES=${MAX_BYTES:-8620000}
 ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 RG=${RG:-$(command -v rg || true)}
 if [[ -z $RG ]]; then

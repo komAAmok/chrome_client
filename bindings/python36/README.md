@@ -28,7 +28,7 @@ WebSocket。无法用 Chromium 忠实实现的选项会显式报错，而不是�
 SHA-256 和依赖清单。ABI 当前为 v8。Go 和 Node.js 目录目前是绑定设计说明，
 不是已发布的可安装包。
 
-Core 体积在 7.8–11.3 MB 之间（macOS ARM64 最小，Windows x86_64 最大，静态 MSVC/UCRT
+Core 体积在 7.7–10.2 MB 之间（macOS ARM64 最小，Windows x86_64 最大，静态 MSVC/UCRT
 多出约 2 MB）。IDNA-only 的 ICU 数据已编入库中，所以不需要外挂 `icudtl.dat`；用不到的
 磁盘缓存后端不进链接产物。各平台的体积上限由 `tools/audit-core-*.sh` 把关，超了直接
 构建失败。
