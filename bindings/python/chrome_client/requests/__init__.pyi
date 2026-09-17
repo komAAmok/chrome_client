@@ -1,13 +1,16 @@
-"""Type stub for ``chrome_client.requests``.
+"""``requests``-shaped namespace over the Chromium Core.
 
-At runtime this module star-imports ``chrome_client._python_impl`` and aliases
-the implementation submodules into ``sys.modules``; these explicit same-name
-re-exports expose the same public API to type checkers (PEP 561).
+At runtime this module *is* ``chrome_client._python_impl``: the package aliases it
+into ``sys.modules`` on import. The names below are re-exported
+explicitly, so a type checker follows the same path instead of
+seeing ``Any`` (PEP 561).
 """
 
-from .._python_impl import abi_version as abi_version, core_version as core_version
-from .._python_impl.adapters import BaseAdapter as BaseAdapter, HTTPAdapter as HTTPAdapter
-from .._python_impl.api import (
+from typing import List
+
+from .._python_impl import (
+    BaseAdapter as BaseAdapter,
+    HTTPAdapter as HTTPAdapter,
     async_session as async_session,
     close_shared_session as close_shared_session,
     delete as delete,
@@ -22,14 +25,10 @@ from .._python_impl.api import (
     session as session,
     shared_session as shared_session,
     trace as trace,
-)
-from .._python_impl.auth import (
     AuthBase as AuthBase,
     HTTPBasicAuth as HTTPBasicAuth,
     HTTPDigestAuth as HTTPDigestAuth,
     HTTPProxyAuth as HTTPProxyAuth,
-)
-from .._python_impl.cookies import (
     Cookie as Cookie,
     CookieJar as CookieJar,
     Cookies as Cookies,
@@ -40,9 +39,10 @@ from .._python_impl.cookies import (
     dict_from_cookiejar as dict_from_cookiejar,
     merge_cookies as merge_cookies,
     morsel_to_cookie as morsel_to_cookie,
-)
-from .._python_impl.engine import DEFAULT_MAX_ENGINES as DEFAULT_MAX_ENGINES, EngineConfig as EngineConfig
-from .._python_impl.exceptions import (
+    DEFAULT_MAX_ENGINES as DEFAULT_MAX_ENGINES,
+    EngineCache as EngineCache,
+    EngineConfig as EngineConfig,
+    EngineSlot as EngineSlot,
     CertificateVerifyError as CertificateVerifyError,
     ChunkedEncodingError as ChunkedEncodingError,
     ConnectTimeout as ConnectTimeout,
@@ -79,37 +79,67 @@ from .._python_impl.exceptions import (
     WebSocketClosed as WebSocketClosed,
     WebSocketError as WebSocketError,
     WebSocketTimeout as WebSocketTimeout,
-)
-from .._python_impl.impersonate import (
+    describe_net_error as describe_net_error,
+    map_native_error as map_native_error,
+    name_net_error as name_net_error,
+    ALIASES as ALIASES,
+    LATEST_CHROME as LATEST_CHROME,
+    OLDEST_CHROME as OLDEST_CHROME,
+    ChromeFamilyAlias as ChromeFamilyAlias,
+    ChromeProfileAlias as ChromeProfileAlias,
+    ChromeProfileName as ChromeProfileName,
     CurlHttpVersion as CurlHttpVersion,
     ExtraFingerprints as ExtraFingerprints,
+    HttpVersion as HttpVersion,
+    Impersonate as Impersonate,
     available_profiles as available_profiles,
     normalize_http_version as normalize_http_version,
     normalize_impersonate as normalize_impersonate,
-)
-from .._python_impl.models import (
+    reject_fingerprint_overrides as reject_fingerprint_overrides,
+    validate_extra_fp as validate_extra_fp,
     AsyncResponse as AsyncResponse,
     PreparedRequest as PreparedRequest,
+    RawStream as RawStream,
     Request as Request,
     Response as Response,
-)
-from .._python_impl.multipart import CurlMime as CurlMime
-from .._python_impl.sessions import (
+    build_url as build_url,
+    http_version_from_status_line as http_version_from_status_line,
+    parse_raw_headers as parse_raw_headers,
+    reason_from_status_line as reason_from_status_line,
+    CurlMime as CurlMime,
+    Part as Part,
+    body_length as body_length,
+    encode_multipart as encode_multipart,
+    encode_params as encode_params,
+    is_stream_body as is_stream_body,
+    iter_body as iter_body,
+    json_body as json_body,
+    ASYNC_POLL_BATCH as ASYNC_POLL_BATCH,
+    STREAM_BUFFER_LIMIT as STREAM_BUFFER_LIMIT,
     AsyncClient as AsyncClient,
     AsyncSession as AsyncSession,
+    BaseSession as BaseSession,
     Client as Client,
     RetryStrategy as RetryStrategy,
     Session as Session,
-)
-from .._python_impl.status_codes import codes as codes
-from .._python_impl.structures import (
+    merge_hooks as merge_hooks,
+    merge_setting as merge_setting,
+    proxy_from_proxies as proxy_from_proxies,
+    REASONS as REASONS,
+    codes as codes,
     CaseInsensitiveDict as CaseInsensitiveDict,
     Headers as Headers,
     LookupDict as LookupDict,
-)
-from .._python_impl.websockets import (
+    MAX_QUEUED_BYTES as MAX_QUEUED_BYTES,
+    MAX_QUEUED_EVENTS as MAX_QUEUED_EVENTS,
+    OK as OK,
     AsyncWebSocket as AsyncWebSocket,
     CurlWsFrame as CurlWsFrame,
     WebSocket as WebSocket,
     WsCloseCode as WsCloseCode,
+    core_version as core_version,
+    abi_version as abi_version,
 )
+
+#: Same names the implementation package exports.
+__all__: List[str]

@@ -6,7 +6,7 @@ explicitly, so a type checker follows the same path instead of
 seeing ``Any`` (PEP 561).
 """
 
-from ._python_impl.sessions import (
+from .._python_impl.sessions import (
     ASYNC_POLL_BATCH as ASYNC_POLL_BATCH,
     STREAM_BUFFER_LIMIT as STREAM_BUFFER_LIMIT,
     Backoff as Backoff,

@@ -106,6 +106,31 @@ LD_LIBRARY_PATH=$PWD/core/binaries/linux-x86_64 PYTHONPATH=bindings/python pytho
   'import chrome_client; print(chrome_client.get("https://example.com").status_code)'
 ```
 
+### Type hints
+
+The package ships `py.typed` and complete `.pyi` stubs
+(`bindings/python/chrome_client/**/*.pyi`), so no separate stub package is needed:
+an IDE completes every parameter, infers return types and shows the
+Args/Returns/example blocks on hover. Runtime behaviour is unchanged -- stubs are
+never imported, and `typing_extensions` is a type-checking dependency only.
+
+```python
+from chrome_client import Session
+
+with Session(impersonate="chrome_153") as session:
+    session.get(url, timeout=(5, 15))
+    # hovering impersonate= lists chrome_99 ... chrome_153, the curl-cffi
+    # chrome153 aliases and chrome/chromium
+    # session.get(...) completes params/headers/cookies/timeout/stream/...
+```
+
+`impersonate` and `http_version` enumerate every accepted value as a `Literal`, and
+the request methods describe their `**kwargs` with `Unpack[TypedDict]`, so
+`impersonate="chrome_200"` or a misspelled option is flagged while you type rather
+than at run time. Coverage and how the stubs are verified against the runtime are
+documented in
+[the typing notes](https://github.com/komAAmok/chrome_client/blob/main/docs/PYTHON_TYPING.md).
+
 ## Python examples
 
 ### The requests shape

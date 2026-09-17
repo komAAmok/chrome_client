@@ -6,7 +6,7 @@ explicitly, so a type checker follows the same path instead of
 seeing ``Any`` (PEP 561).
 """
 
-from ._python_impl.api import (
+from .._python_impl.api import (
     shared_session as shared_session,
     close_shared_session as close_shared_session,
     session as session,

@@ -101,6 +101,27 @@ LD_LIBRARY_PATH=$PWD/core/binaries/linux-x86_64 PYTHONPATH=bindings/python pytho
   'import chrome_client; print(chrome_client.get("https://example.com").status_code)'
 ```
 
+### 类型提示
+
+包里带 `py.typed` 和完整的 `.pyi` 存根（`bindings/python/chrome_client/**/*.pyi`），
+所以不需要额外的 stub 包：IDE 直接补全每个参数、识别返回值，并在悬停里显示
+Args/Returns/示例。运行时行为不变——存根不参与导入，`typing_extensions` 只是类型检查期依赖。
+
+```python
+from chrome_client import Session
+
+with Session(impersonate="chrome_153") as session:
+    session.get(url, timeout=(5, 15))
+    # 悬停 impersonate= 会列出 chrome_99 … chrome_153，以及 curl-cffi 的
+    # chrome153 别名和 chrome/chromium
+    # session.get(...) 的 kwargs 会补全 params/headers/cookies/timeout/stream/...
+```
+
+`impersonate` 与 `http_version` 用 `Literal` 给出了全部可选值，请求方法的 `**kwargs`
+用 `Unpack[TypedDict]` 描述，因此 `impersonate="chrome_200"` 或拼错的选项在写代码时就会被
+标出，而不是等到运行期。覆盖范围、存根与实现的校验方式见
+[类型提示说明](https://github.com/komAAmok/chrome_client/blob/main/docs/PYTHON_TYPING.md)。
+
 ## Python 使用示例
 
 ### requests 风格
