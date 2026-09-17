@@ -1,5 +1,9 @@
 # chrome_client
 
+[![PyPI version](https://img.shields.io/pypi/v/chrome-client)](https://pypi.org/project/chrome-client/)
+[![Python versions](https://img.shields.io/badge/python-3.6%20%7C%203.7%20%7C%203.8%20%7C%203.9%20%7C%203.10%20%7C%203.11%20%7C%203.12%20%7C%203.13-blue)](https://pypi.org/project/chrome-client/)
+[![License: MIT](https://img.shields.io/pypi/l/chrome-client)](https://pypi.org/project/chrome-client/)
+
 Current release: `0.2.3`
 
 An HTTP/WebSocket client built on the Chromium network stack. The native Core

@@ -11,7 +11,13 @@ set -Eeuo pipefail
 #   bindings/*/pyproject.toml               -- no `version` line: maturin reads
 #                                              it from the crate's Cargo.toml
 #   chrome_client/__init__.py __version__   -- static string, checked equal
-#   README.md / README.en.md / python36     -- static strings, checked equal
+#   README.md / README.en.md / python36     -- release line, checked equal
+#   README badge row                        -- slug checked against [project] name,
+#                                              Python list against requires-python
+#   pyproject `classifiers`                 -- the same Python range as the badge, and
+#                                              what shields.io's pyversions badge reads
+#   docs/RUST_API_FREEZE.md                 -- states the workspace version; nothing
+#                                              checked it through 0.2.2
 #
 # Bumping the release is therefore one edit in Cargo.toml plus a cargo
 # generate-lockfile; this script fails the build if any other carrier drifts.
@@ -79,4 +85,59 @@ for path in (root / "README.md", root / "README.en.md",
         raise SystemExit(
             f"{path.relative_to(root)}: version badge must read {version}")
     print(f"ok {path.relative_to(root)}: badge = {match.group(1)}")
+
+# The API-freeze document names the workspace version as well. It was bumped by
+# hand at each release until 0.2.2 and then drifted, so it is a carrier now.
+freeze = (root / "docs/RUST_API_FREEZE.md").read_text()
+for needle in (f"Workspace API version: `{version}`",
+               f"shipped as the Python release `{version}`"):
+    if needle not in freeze:
+        raise SystemExit(f"docs/RUST_API_FREEZE.md: must state {needle!r}")
+print(f"ok docs/RUST_API_FREEZE.md: workspace version {version}")
+
+# The badge row at the top of each README is the at-a-glance version and
+# Python-support statement. Its slug has to be the published name and its
+# version list has to track requires-python, so a rename or a range bump cannot
+# leave the README advertising something the wheels do not do.
+project_name = re.search(
+    r'^name\s*=\s*"([^"]+)"', (root / "bindings/python/pyproject.toml").read_text(), re.M)
+if not project_name:
+    raise SystemExit("bindings/python/pyproject.toml: no [project] name for the badge slug")
+slug = project_name.group(1)
+
+range_match = re.fullmatch(r">=3\.(\d+),<3\.(\d+)", expected_python)
+if not range_match:
+    raise SystemExit(
+        f"cannot derive the badge's Python list from requires-python {expected_python!r}; "
+        "this audit assumes the 3.x-only range the wheels declare")
+supported = [f"3.{minor}" for minor in range(int(range_match.group(1)), int(range_match.group(2)))]
+expected_badge = "https://img.shields.io/badge/python-" + "%20%7C%20".join(supported) + "-blue"
+
+for path in (root / "README.md", root / "README.en.md",
+             root / "bindings/python36/README.md"):
+    text = path.read_text()
+    for needle in (f"img.shields.io/pypi/v/{slug}", f"img.shields.io/pypi/l/{slug}"):
+        if needle not in text:
+            raise SystemExit(
+                f"{path.relative_to(root)}: badge row must reference {needle}")
+    if expected_badge not in text:
+        raise SystemExit(
+            f"{path.relative_to(root)}: the Python badge must list {supported[0]}-{supported[-1]} "
+            f"(from requires-python {expected_python}); update the badge URL")
+    print(f"ok {path.relative_to(root)}: badges = {slug}, "
+          f"python {supported[0]}-{supported[-1]}")
+
+# The classifiers make the same claim in wheel metadata, and they are what
+# shields.io's pypi/pyversions badge reads -- so the README could switch to the
+# dynamic badge as soon as a release carries them.
+expected_classifiers = ["3"] + [version.split("3.")[1] for version in supported]
+for manifest in ("bindings/python/pyproject.toml", "bindings/python36/pyproject.toml"):
+    declared = re.findall(
+        r'"Programming Language :: Python :: (3(?:\.\d+)?)"',
+        (root / manifest).read_text())
+    if declared != ["3"] + [f"3.{minor}" for minor in expected_classifiers[1:]]:
+        raise SystemExit(
+            f"{manifest}: Python classifiers {declared} must match "
+            f"['3'] + {supported} (the same range as requires-python and the badge)")
+    print(f"ok {manifest}: {len(declared)} Python classifiers")
 PY

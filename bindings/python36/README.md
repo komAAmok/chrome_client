@@ -1,5 +1,9 @@
 # chrome_client
 
+[![PyPI 版本](https://img.shields.io/pypi/v/chrome-client)](https://pypi.org/project/chrome-client/)
+[![Python 版本](https://img.shields.io/badge/python-3.6%20%7C%203.7%20%7C%203.8%20%7C%203.9%20%7C%203.10%20%7C%203.11%20%7C%203.12%20%7C%203.13-blue)](https://pypi.org/project/chrome-client/)
+[![许可证：MIT](https://img.shields.io/pypi/l/chrome-client)](https://pypi.org/project/chrome-client/)
+
 当前版本：`0.2.3`
 
 基于 Chromium 网络栈的 HTTP/WebSocket 客户端。Core 负责 TLS、HTTP、HTTP/2、

@@ -12,6 +12,18 @@ readme = "../../README.md"
 # cp36 wheel there.
 requires-python = ">=3.6,<3.14"
 
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.6",
+  "Programming Language :: Python :: 3.7",
+  "Programming Language :: Python :: 3.8",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+]
+
 [project.urls]
 Homepage = "https://github.com/komAAmok/chrome_client"
 Repository = "https://github.com/komAAmok/chrome_client"
