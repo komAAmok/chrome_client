@@ -58,6 +58,7 @@ apply_patch() {
 apply_patch minicronet-core.patch . \
   'build/config/cronet/config.gni:is_minicronet_build = false' \
   'build_overrides/build.gni:is_cronet_build || is_minicronet_build' \
+  'build/config/compiler/BUILD.gn:is_fuchsia || enable_cast_receiver || is_minicronet_build' \
   'net/features.gni:disable_file_support = is_cronet_build || is_minicronet_build' \
   'net/BUILD.gn:!is_cronet_build && !is_minicronet_build' \
   'base/BUILD.gn:nix/xdg_util_minicronet.cc'

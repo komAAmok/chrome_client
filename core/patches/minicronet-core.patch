@@ -418,3 +418,16 @@ new file mode 100644
 +}
 +
 +}  // namespace base::nix
+diff --git a/build/config/compiler/BUILD.gn b/build/config/compiler/BUILD.gn
+index 8153e68ce9..5a1a947c31 100644
+--- a/build/config/compiler/BUILD.gn
++++ b/build/config/compiler/BUILD.gn
+@@ -2620,7 +2620,7 @@ config("optimize") {
+     # -Os in clang is more of a size-conscious -O2 than "size at any cost"
+     # (AKA -Oz).
+ 
+-    if (is_fuchsia || enable_cast_receiver) {
++    if (is_fuchsia || enable_cast_receiver || is_minicronet_build) {
+       cflags = [ "-Oz" ] + common_optimize_on_cflags
+     } else {
+       cflags = [ "-Os" ] + common_optimize_on_cflags
