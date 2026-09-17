@@ -1,0 +1,66 @@
+diff --git a/BUILD.gn b/BUILD.gn
+index 5f01574..685e20c 100644
+--- a/BUILD.gn
++++ b/BUILD.gn
+@@ -368,6 +369,12 @@ template("generate_icuuc") {
+     public_deps = [ ":icuuc_public" ]
+ 
+     defines = [ "U_COMMON_IMPLEMENTATION" ]
++    if (is_minicronet_build) {
++      # Lets ICU sources drop tables that the Core's IDNA-only dataset can
++      # never reach, for example PropNameData's 47 KB of UCD property-name
++      # tables. Other consumers of this checkout are unaffected.
++      defines += [ "MINICRONET_BUILD" ]
++    }
+     deps = [ ":icudata" ]
+ 
+     if (icu_use_data_file && icu_use_stub_data) {
+diff --git a/source/common/propname.cpp b/source/common/propname.cpp
+index 640578c..e60212f 100644
+--- a/source/common/propname.cpp
++++ b/source/common/propname.cpp
+@@ -145,6 +145,36 @@ U_CDECL_END
+ 
+ U_NAMESPACE_BEGIN
+ 
++#if defined(MINICRONET_BUILD)
++/*
++ * The Core embeds an IDNA-only ICU dataset: UTS #46 hostname processing and
++ * nothing else ICU ships. Nothing on that path asks for a UCD property name,
++ * and nothing resolves a property alias, so the four generated tables in
++ * propname_data.h (indexes, valueMaps, bytesTries and nameGroups -- 47 KB
++ * together, 24,665 of them the nameGroups text) have no reader. Stubbing every
++ * function that indexes them is what makes those tables unreferenced, so the
++ * linker's --gc-sections drops all four. The accessors keep their documented
++ * "unknown property" answers, which is what the public u_getPropertyName() /
++ * u_getPropertyEnum() family already returns for an unrecognised argument.
++ */
++int32_t PropNameData::findProperty(int32_t) { return 0; }
++
++int32_t PropNameData::findPropertyValueNameGroup(int32_t, int32_t) { return 0; }
++
++const char *PropNameData::getName(const char *, int32_t) { return nullptr; }
++
++UBool PropNameData::containsName(BytesTrie &, const char *) { return false; }
++
++int32_t PropNameData::getPropertyOrValueEnum(int32_t, const char *) { return UCHAR_INVALID_CODE; }
++
++const char *PropNameData::getPropertyName(int32_t, int32_t) { return nullptr; }
++
++const char *PropNameData::getPropertyValueName(int32_t, int32_t, int32_t) { return nullptr; }
++
++int32_t PropNameData::getPropertyEnum(const char *) { return UCHAR_INVALID_CODE; }
++
++int32_t PropNameData::getPropertyValueEnum(int32_t, const char *) { return UCHAR_INVALID_CODE; }
++#else
+ int32_t PropNameData::findProperty(int32_t property) {
+     int32_t i=1;  // valueMaps index, initially after numRanges
+     for(int32_t numRanges=valueMaps[0]; numRanges>0; --numRanges) {
+@@ -282,6 +312,7 @@ int32_t PropNameData::getPropertyValueEnum(int32_t property, const char *alias)
+     // where the first word is the BytesTrie offset.
+     return getPropertyOrValueEnum(valueMaps[valueMapIndex], alias);
+ }
++#endif  // defined(MINICRONET_BUILD)
+ U_NAMESPACE_END
+ 
+ //----------------------------------------------------------------------

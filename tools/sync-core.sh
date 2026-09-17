@@ -92,6 +92,12 @@ apply_patch profile-boringssl.patch third_party/boringssl/src \
   'ssl/ssl_key_share.cc:SSL_GROUP_X25519_KYBER768'
 apply_patch icu-minicronet-data.patch third_party/icu \
   'BUILD.gn:data_dir = "minicronet"'
+# The IDNA-only dataset never asks for a UCD property name, so PropNameData's
+# four generated tables are unreachable and --gc-sections drops 47 KB of them
+# (-32,768 bytes on linux-x86_64).
+apply_patch minicronet-icu-propname-trim.patch third_party/icu \
+  'BUILD.gn:defines += [ "MINICRONET_BUILD" ]' \
+  'source/common/propname.cpp:#if defined(MINICRONET_BUILD)'
 
 # The IDNA-only ICU dataset is embedded into the library, so it has to be in the
 # Chromium checkout before gn runs. Without it the build falls back to nothing
