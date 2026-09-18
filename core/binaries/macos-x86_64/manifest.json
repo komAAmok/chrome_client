@@ -6,7 +6,7 @@
   "target": "macos-x86_64",
   "triple": "x86_64-apple-darwin",
   "library": "libminicronet.dylib",
-  "sha256": "243494ab50c2efec04a1536d8e9bcf0758a59b8b059524fcc02f53ec041d00b8",
+  "sha256": "b1ce2db711089f1b7e0982048f4415c747486f5e406559621c5f0f49e7be20db",
   "size_bytes": 8442400,
   "runtime_dependencies": []
 }

@@ -68,6 +68,10 @@ private:
   const mn_tls_verify_mode_t tls_verify_mode_;
   const std::string custom_ca_pem_;
   const ProfileContext profile_;
+  //: Value of the Core's fork generation when this engine was created.  An
+  //: engine whose generation no longer matches was created before a fork(), so
+  //: its network thread is gone and must not be waited on; see engine.cc.
+  const int fork_generation_;
   std::unique_ptr<net::URLRequestContext> context_;
 };
 

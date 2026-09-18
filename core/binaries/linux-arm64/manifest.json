@@ -6,8 +6,8 @@
   "target": "linux-arm64",
   "triple": "aarch64-unknown-linux-gnu",
   "library": "libminicronet.so",
-  "sha256": "c96beb50c093b6eccad5a9e4f696a2bfb263185fd8d92ea1c73da85a7e09d319",
-  "size_bytes": 8503072,
+  "sha256": "75d50ca9245347e3a0f513d375012a427e5ce4e0aa74add869f91b3561b35ffa",
+  "size_bytes": 8503200,
   "runtime_dependencies": [
     "libc.so.6",
     "libdl.so.2",
