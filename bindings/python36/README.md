@@ -4,8 +4,6 @@
 [![Python 版本](https://img.shields.io/badge/python-3.6%20%7C%203.7%20%7C%203.8%20%7C%203.9%20%7C%203.10%20%7C%203.11%20%7C%203.12%20%7C%203.13-blue)](https://pypi.org/project/chrome-client/)
 [![许可证：MIT](https://img.shields.io/pypi/l/chrome-client)](https://pypi.org/project/chrome-client/)
 
-当前版本：`0.2.4`
-
 基于 Chromium 网络栈的 HTTP/WebSocket 客户端。Core 负责 TLS、HTTP、HTTP/2、
 HTTP/3/QUIC、代理和 WebSocket/WSS；Python/Rust 绑定只负责参数、类型、错误和
 生命周期转换，不另实现一套网络协议。
@@ -118,12 +116,13 @@ with Session(impersonate="chrome_153") as session:
     session.get(url, timeout=(5, 15))
     # 悬停 impersonate= 会列出 chrome_99 … chrome_153，以及 curl-cffi 的
     # chrome153 别名和 chrome/chromium
-    # session.get(...) 的 kwargs 会补全 params/headers/cookies/timeout/stream/...
+    # session.get(...) 会补全 headers/cookies/data/json/timeout/proxies/verify/...
 ```
 
-`impersonate` 与 `http_version` 用 `Literal` 给出了全部可选值，请求方法的 `**kwargs`
-用 `Unpack[TypedDict]` 描述，因此 `impersonate="chrome_200"` 或拼错的选项在写代码时就会被
-标出，而不是等到运行期。覆盖范围、存根与实现的校验方式见
+`impersonate` 与 `http_version` 用 `Literal` 给出了全部可选值；请求方法的全部选项
+（`headers`、`cookies`、`data`、`json`、`timeout`、`proxies`、`verify`、`auth` 等）
+都写成具名参数而不是藏在 `**kwargs` 里，PyCharm 等任何 IDE 都能补全，
+`impersonate="chrome_200"` 或拼错的选项在写代码时就会被标出，而不是等到运行期。覆盖范围、存根与实现的校验方式见
 [类型提示说明](https://github.com/komAAmok/chrome_client/blob/main/docs/PYTHON_TYPING.md)。
 
 ## Python 使用示例

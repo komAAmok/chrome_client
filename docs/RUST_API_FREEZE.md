@@ -2,9 +2,11 @@
 
 ## Version and crates
 
-- Workspace API version: `0.2.4`, shipped as the Python release `0.2.4`
-  (crate and Python versions are the same number since 0.2.2; the earlier
-  four-component 0.2.1.1 mapping no longer exists).
+- The workspace release number lives only in the root `Cargo.toml`
+  (`workspace.package.version`) and is propagated by cargo/maturin; this
+  document deliberately does not restate it. Crate and Python versions have
+  been the same number since 0.2.2 (the earlier four-component 0.2.1.1 mapping
+  no longer exists).
 - The native boundary consumed by `minicronet-sys` is ABI v8.
 - No compatibility aliases or deprecated entry points are provided.
 

@@ -4,8 +4,6 @@
 [![Python versions](https://img.shields.io/badge/python-3.6%20%7C%203.7%20%7C%203.8%20%7C%203.9%20%7C%203.10%20%7C%203.11%20%7C%203.12%20%7C%203.13-blue)](https://pypi.org/project/chrome-client/)
 [![License: MIT](https://img.shields.io/pypi/l/chrome-client)](https://pypi.org/project/chrome-client/)
 
-Current release: `0.2.4`
-
 An HTTP/WebSocket client built on the Chromium network stack. The native Core
 owns TLS, HTTP/1.1, HTTP/2, HTTP/3/QUIC, proxy handling and WebSocket/WSS.
 Language bindings only translate arguments, types, errors and lifetimes; they do
@@ -125,11 +123,13 @@ with Session(impersonate="chrome_153") as session:
     session.get(url, timeout=(5, 15))
     # hovering impersonate= lists chrome_99 ... chrome_153, the curl-cffi
     # chrome153 aliases and chrome/chromium
-    # session.get(...) completes params/headers/cookies/timeout/stream/...
+    # session.get(...) completes headers/cookies/data/json/timeout/proxies/verify/...
 ```
 
 `impersonate` and `http_version` enumerate every accepted value as a `Literal`, and
-the request methods describe their `**kwargs` with `Unpack[TypedDict]`, so
+every request-method option (`headers`, `cookies`, `data`, `json`, `timeout`,
+`proxies`, `verify`, `auth`, ...) is a named parameter rather than something hidden
+behind `**kwargs`, so any IDE -- PyCharm included -- completes them, and
 `impersonate="chrome_200"` or a misspelled option is flagged while you type rather
 than at run time. Coverage and how the stubs are verified against the runtime are
 documented in

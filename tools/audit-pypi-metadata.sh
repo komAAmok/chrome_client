@@ -11,13 +11,15 @@ set -Eeuo pipefail
 #   bindings/*/pyproject.toml               -- no `version` line: maturin reads
 #                                              it from the crate's Cargo.toml
 #   chrome_client/__init__.py __version__   -- static string, checked equal
-#   README.md / README.en.md / python36     -- release line, checked equal
 #   README badge row                        -- slug checked against [project] name,
 #                                              Python list against requires-python
 #   pyproject `classifiers`                 -- the same Python range as the badge, and
 #                                              what shields.io's pyversions badge reads
-#   docs/RUST_API_FREEZE.md                 -- states the workspace version; nothing
-#                                              checked it through 0.2.2
+#
+# The READMEs and docs/RUST_API_FREEZE.md used to restate the release number in
+# prose; those copies are gone, and this script fails if one comes back. The
+# shields.io `pypi/v` badge already renders the live version, so a second
+# hand-edited copy could only ever drift.
 #
 # Bumping the release is therefore one edit in Cargo.toml plus a cargo
 # generate-lockfile; this script fails the build if any other carrier drifts.
@@ -77,23 +79,24 @@ if not match or match.group(1) != version:
         f"__init__.py __version__ must be \"{version}\"; update it alongside Cargo.toml")
 print(f"ok __init__.py: __version__ = {match.group(1)}")
 
-for path in (root / "README.md", root / "README.en.md",
-             root / "bindings/python36/README.md"):
-    text = path.read_text()
-    match = re.search(r"(?:当前版本|Current release)[:：]\s*`([^`]+)`", text)
-    if not match or match.group(1) != version:
+# The READMEs and the API-freeze doc must not carry a hand-maintained copy of
+# the release number. The shields.io `pypi/v` badge is the live one; anything
+# else is a second source of truth that drifts.
+version_restatement = re.compile(r"`\d+\.\d+\.\d+(?:\.\d+)?`")
+for name in ("README.md", "README.en.md", "bindings/python36/README.md",
+             "docs/RUST_API_FREEZE.md"):
+    text = (root / name).read_text()
+    for stale in ("当前版本", "Current release", "Workspace API version"):
+        if stale in text:
+            raise SystemExit(
+                f"{name}: remove the '{stale}' line -- the release number lives only in "
+                "Cargo.toml, and the README badge already renders it from PyPI")
+    found = version_restatement.search(text)
+    if found:
         raise SystemExit(
-            f"{path.relative_to(root)}: version badge must read {version}")
-    print(f"ok {path.relative_to(root)}: badge = {match.group(1)}")
-
-# The API-freeze document names the workspace version as well. It was bumped by
-# hand at each release until 0.2.2 and then drifted, so it is a carrier now.
-freeze = (root / "docs/RUST_API_FREEZE.md").read_text()
-for needle in (f"Workspace API version: `{version}`",
-               f"shipped as the Python release `{version}`"):
-    if needle not in freeze:
-        raise SystemExit(f"docs/RUST_API_FREEZE.md: must state {needle!r}")
-print(f"ok docs/RUST_API_FREEZE.md: workspace version {version}")
+            f"{name}: hard-coded version {found.group(0)} -- the release number lives "
+            "only in Cargo.toml; use the shields.io pypi/v badge instead")
+    print(f"ok {name}: no hard-coded release number")
 
 # The badge row at the top of each README is the at-a-glance version and
 # Python-support statement. Its slug has to be the published name and its

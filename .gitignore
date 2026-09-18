@@ -32,3 +32,6 @@ venv/
 
 # Local native staging
 /native/
+
+# WorkBuddy session data (local notes, not part of the source tree)
+/.workbuddy/
