@@ -77,19 +77,29 @@ docstring（Args/Returns/Yields/Raises/Example）。剩下 14 个是**故意**�
 `str`：一旦并入 `str` 类型就退化成"任意字符串"，补全与拼写检查都会失效；docstring 里说明了
 非 Chromium 家族与范围外版本会在运行期显式报错，不会静默降级。
 
-### `Unpack[TypedDict]`：可补全的 `**kwargs`
+### verb 方法的全部选项：显式具名参数（不是 `**kwargs`）
 
-`Session.get("…", imp<tab>` 能补出 `impersonate=`，靠的是 PEP 692：
+`Session.get("…", imp<tab>` 能补出 `impersonate=`，PyCharm 里也一样——靠的是把每个选项
+写成普通参数，而不是 `**kwargs`：
 
-- `_types.RequestOptions`（`total=False`）列出 `request()` 接受的全部关键字，
-  verb 方法写 `**kwargs: Unpack[RequestOptions]`；
-- `_types.SessionOptions` 覆盖构造函数，`session(**kwargs)` / `async_session(**kwargs)` 使用它；
-- `post`/`put`/`patch` 把 `data`、`json` 显式声明（PEP 692 不允许参数名与 TypedDict
-  键重叠，所以这两个键不在 `RequestOptions` 里）；
-- 模块级 `api.request()` 的签名与运行期完全一致地逐个列出 40 余个参数——它同时接受请求
-  选项和构造函数选项，枚举比 `Unpack` 在这个位置上更好用。
+- 参数表从单一真源推导：模块级 verb（`api.get` 等）与 `api.request` 一致，**多出**
+  `base_url` 等 10 个「构造期选项」（运行期会为这一次调用临时建会话）；`Session` /
+  `AsyncSession` 的 verb 与 `Session.request` 一致，**没有**那 10 个；`session()` /
+  `async_session()` 与 `BaseSession.__init__` 一致；`head` 的 `allow_redirects`
+  默认 `False`（运行期强制）；`stream(method, url, …)` 不列 `stream`（被强制打开）。
+- 29 个 verb 方法 + 2 个 `send()` × ~50 个参数由 `tools/expand-verb-signatures.py` 生成，
+  `--check` 已并入 `tools/audit-python-stubs.py`（CI 会跑）。手写 30 多份迟早漂移，工具不会。
+- `send(request, ...)` 的 options 是 `request()` 参数的**子集**（body/header 已含在
+  `PreparedRequest` 里），另加 `native_redirects` / `python_redirects` 两个 send 特有键。
+- 曾经用 PEP 692（`**kwargs: Unpack[RequestOptions]`）：mypy/pyright 能展开，但
+  **PyCharm 等编辑器不认 Unpack**，悬浮只剩 `url`/`params`，故改为显式。
+  `_types.RequestOptions` / `SessionOptions` 两个 TypedDict 保留，作为两个参数集合的
+  权威描述与工具的对照源。
+- `data` / `json` 现在出现在**每个** verb 上（此前 `get(json=…)` 运行期支持但类型上
+  报错——PEP 692 不允许它们出现在 TypedDict 里，这是个副作用，顺带修掉了）。
 
-副作用是 TypedDict 是封闭的：拼错的选项会报 `Unexpected keyword argument`。这正是想要的效果。
+副作用是签名是封闭的：拼错的选项报 `Unexpected keyword argument`（mypy 还带
+"did you mean"）。这正是想要的效果。
 
 ### `@overload`：返回值随参数而变
 
@@ -123,6 +133,9 @@ cd bindings/python && mypy chrome_client --python-version 3.10 --ignore-missing-
 # 3) 消费者视角：逐条断言 IDE 会显示什么（每个 reveal_type 都有期望注释）
 MYPYPATH=$PWD/bindings/python mypy tools/typecheck-consumer.py \
   --python-version 3.10 --ignore-missing-imports --warn-unused-ignores
+
+# 4) verb 方法的参数表与 request() 一致（审计内部也会调它）
+python3 tools/expand-verb-signatures.py --check
 ```
 
 第 3 条需要 `mypy`（`typing_extensions` 由 typeshed 提供）。`tools/typecheck-consumer.py`
@@ -140,7 +153,8 @@ MYPYPATH=$PWD/bindings/python mypy tools/typecheck-consumer.py \
    要么声明为同名字段；基类已声明的成员可以省略（例如 `AsyncResponse` 不重复 `__init__`）。
 2. **参数**：运行时的每个参数名都出现在存根里，且共有参数的相对顺序一致（否则按位置调用
    会绑错参数）；默认值不一致直接报错，存根写 `...` 表示"不声明默认值"。
-   `**kwargs` 只有两种合法写法：`Unpack[TypedDict]`，或把每个选项显式列为命名参数。
+   `**kwargs` 只有两种合法写法：`Unpack[TypedDict]`，或把每个选项显式列为命名参数
+   （verb 方法一律用后者，见上文；原因和工具见 `tools/expand-verb-signatures.py`）。
 3. **文档**：每个声明的可调用对象必须有 docstring；带参数的还要有 `Args:` 段；有非 `None`
    返回值注解的建议带 `Returns:`/`Yields:` 段（缺失记为 warning）。
 4. **再导出**：`_python_impl/<mod>.pyi` 的每个公开名字都能从 `chrome_client/<mod>` 与
@@ -148,6 +162,10 @@ MYPYPATH=$PWD/bindings/python mypy tools/typecheck-consumer.py \
    必须存在（否则类型检查器会直接忽略整套存根）。
 5. **派生部分**：调用 `tools/generate-python-stubs.py --check`。它重算 profile `Literal`
    与全部门面存根，任何一处与运行时常量或 `_python_impl` 的公开名不一致都算失败。
+6. **verb 参数表**：调用 `tools/expand-verb-signatures.py --check`。29 个 verb 方法
+   （含 `session()`/`async_session()`/两个 `stream.__call__`）的参数集合必须与它们转发
+   的 `request()`/`__init__` 一致——显式参数方案下唯一的漂移风险就在这里，实测删掉
+   `Session.get` 的 `impersonate` 会被立刻拦下。
 
 ## 维护约定
 

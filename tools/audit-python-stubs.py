@@ -39,6 +39,7 @@ REPO = pathlib.Path(__file__).resolve().parents[1]
 PY_PKG = REPO / "bindings" / "python" / "chrome_client"
 IMPL = PY_PKG / "_python_impl"
 GENERATOR = REPO / "tools" / "generate-python-stubs.py"
+EXPANDER = REPO / "tools" / "expand-verb-signatures.py"
 
 #: Modules whose facade file is a pure alias of the _python_impl module.
 ALIASED = (
@@ -406,6 +407,33 @@ def check_generated(verbose: bool) -> None:
         print("  generated stubs: facade re-exports and profile Literals are current")
 
 
+def check_verb_signatures(verbose: bool) -> None:
+    """Every verb method must list the same options as the ``request()`` it forwards to.
+
+    ``**kwargs: Unpack[TypedDict]`` (PEP 692) is only expanded by some IDEs --
+    PyCharm shows nothing but the explicit ``url``/``params`` -- so the options are
+    written out as named parameters instead. That duplicates the list across the
+    29 verb methods plus the two ``send()``s, and this is what keeps the copies
+    in step with ``request()``. Run ``tools/expand-verb-signatures.py`` to rewrite
+    them.
+    """
+    result = subprocess.run(
+        [sys.executable, str(EXPANDER), "--check"], capture_output=True, text=True
+    )
+    if result.returncode != 0:
+        for line in result.stdout.strip().splitlines():
+            if line.startswith("stale: "):
+                errors.append(
+                    "verb signature out of date: %s" % line[len("stale: ") :]
+                )
+            elif line.startswith("run:") or not line.strip():
+                continue
+            else:
+                errors.append(line)
+    elif verbose:
+        print("  verb signatures: every parameter list matches its request()")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--verbose", action="store_true", help="print per-module counts")
@@ -416,6 +444,7 @@ def main() -> int:
         check_module(module, args.verbose)
     check_facade(args.verbose)
     check_generated(args.verbose)
+    check_verb_signatures(args.verbose)
 
     total = sum(1 for _ in IMPL.glob("*.pyi"))
     for message in warnings:

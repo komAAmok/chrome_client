@@ -6,11 +6,13 @@ what makes a session a session: the engine holds the connection pool, the TLS
 session cache and the cookie store, so reusing it is what preserves server-side
 state across requests.
 
-The signatures below carry every keyword each entry point accepts, including the
-ones the runtime forwards through ``**kwargs``.  Verb methods unpack a
-:class:`~chrome_client._python_impl._types.RequestOptions` TypedDict, so an IDE
-completes ``session.get(url, imp<tab>`` down to ``impersonate=`` and checks the
-value against the :data:`~chrome_client.impersonate.Impersonate` Literal.
+The signatures below spell out every keyword each entry point accepts.  The
+options the runtime forwards through ``**kwargs`` are written as ordinary named
+parameters rather than hidden behind ``**kwargs``, because a ``Unpack[TypedDict]``
+spelling is only understood by some IDEs -- PyCharm, for one, shows nothing but
+the explicit ``url``/``params``.  Written out, every editor completes
+``session.get(url, imp<tab>`` down to ``impersonate=`` and checks the value
+against the :data:`~chrome_client.impersonate.Impersonate` Literal.
 """
 
 from types import TracebackType
@@ -31,7 +33,7 @@ from typing import (
     Union,
 )
 
-from typing_extensions import Literal, TypeAlias, Unpack, overload
+from typing_extensions import Literal, TypeAlias, overload
 
 from ._types import (
     AuthLike,
@@ -45,10 +47,8 @@ from ._types import (
     Hooks,
     ParamsLike,
     Proxies,
-    RequestOptions,
     ResponseClass,
     Retry,
-    SessionOptions,
     Timeout,
     Verify,
 )
@@ -194,15 +194,108 @@ class _StreamFlag(int):
     """
 
     def __call__(
-        self, method: str, url: str, **kwargs: Unpack[RequestOptions]
+        self,
+        method: str,
+        url: str,
+        params: Optional[ParamsLike] = None,
+        data: Optional[Body] = None,
+        headers: Optional[HeadersLike] = None,
+        cookies: Optional[CookiesLike] = None,
+        files: FilesLike = None,
+        auth: AuthLike = None,
+        timeout: Timeout = None,
+        allow_redirects: bool = True,
+        proxies: Optional[Proxies] = None,
+        hooks: Optional[Hooks] = None,
+        verify: Optional[Verify] = None,
+        cert: Any = None,
+        json: Any = None,
+        content: Optional[Body] = None,
+        multipart: Optional[CurlMime] = None,
+        impersonate: Optional[Impersonate] = None,
+        proxy: Optional[str] = None,
+        http_version: Optional[HttpVersion] = None,
+        max_redirects: Optional[int] = None,
+        max_response_bytes: Optional[int] = None,
+        referer: Optional[str] = None,
+        accept_encoding: Optional[str] = None,
+        default_encoding: Optional[Union[str, Callable[[bytes], str]]] = None,
+        discard_cookies: Optional[bool] = None,
+        retry: Retry = None,
+        cache_mode: CacheMode = None,
+        priority: Optional[int] = None,
+        ja3: Optional[str] = None,
+        akamai: Optional[str] = None,
+        perk: Optional[str] = None,
+        extra_fp: Optional[Union[ExtraFingerprints, Mapping[str, Any]]] = None,
+        content_callback: Optional[ContentCallback] = None,
+        raise_for_status: Optional[bool] = None,
+        quote: Optional[bool] = None,
+        curl_options: Optional[Mapping[Any, Any]] = None,
+        interface: Optional[str] = None,
+        doh_url: Optional[str] = None,
+        max_recv_speed: Optional[int] = None,
+        thread: Any = None,
+        debug: Any = None,
     ) -> "_StreamContext":
         """Opens a streamed request, curl_cffi style.
 
         Args:
-            method: HTTP method, e.g. ``"GET"``.
-            url: The URL to request.
-            **kwargs: Any :meth:`Session.request` option except ``stream``, which
-                is forced on.
+            method: HTTP method, e.g. ``"GET"``. Upper-cased before sending.
+            url: Absolute URL, or a relative one when ``base_url`` is set.
+            params: Query parameters appended to the URL. A mapping, a sequence of
+                key/value pairs, or an already-encoded string.
+            data: Request body. A mapping or sequence of pairs is form-encoded;
+                bytes/str are sent as-is; a file object, generator or async iterator
+                switches to chunked upload; a file-like value in a mapping is sent as
+                multipart.
+            headers: Headers merged with the session's defaults.
+            cookies: Cookies merged with the session jar for this request only.
+            files: Multipart file parts, alone or alongside ``data``.
+            auth: Per-call auth: callable, ``AuthBase``, or a 2-tuple.
+            timeout: One deadline or ``(connect, read)``.
+            allow_redirects: ``False`` returns the first 3xx instead of following it.
+            proxies: Per-call proxy mapping, merged over the session's.
+            hooks: Per-call response hooks.
+            verify: ``True``/``False``/CA bundle path, for this call only.
+            cert: Rejected; ABI v8 has no client-certificate setting.
+            json: JSON body. Implies ``Content-Type: application/json`` unless a header
+                already sets it.
+            content: Raw body bytes; an alternative to ``data=`` for pre-encoded
+                payloads. Passing both raises ``ValueError``.
+            multipart: A :class:`~chrome_client.CurlMime` instance that becomes the
+                whole body.
+            impersonate: Profile override for this call, either an exact
+                ``chrome_<major>`` name or a curl_cffi ``chrome<major>`` alias.
+            proxy: Proxy URL for this call; wins over ``proxies``.
+            http_version: Pin ``"v1"``, ``"v2"`` or ``"v3"`` for this call.
+            max_redirects: Redirect cap. Below Chromium's 20, hops are driven from
+                Python so the caller's limit wins.
+            max_response_bytes: Body ceiling for this call.
+            referer: Sets ``Referer`` through Chromium's own referrer path, so it
+                reaches the wire the way a real Chrome sends it.
+            accept_encoding: Overrides ``Accept-Encoding``. Chromium would otherwise
+                choose it as part of the profile.
+            default_encoding: Fallback encoding for this response only.
+            discard_cookies: Neither send nor record cookies for this call.
+            retry: Attempt count or strategy for this call.
+            cache_mode: Chromium load flags, e.g. ``"bypass"`` to skip the HTTP cache.
+            priority: Request priority hint passed to the Core.
+            ja3: Rejected; the profile owns the ClientHello.
+            akamai: Rejected; the profile owns the HTTP/2 fingerprint.
+            perk: Rejected; the profile owns the TLS fingerprint.
+            extra_fp: Fingerprint overrides; only ``header_order`` and ``form_boundary``
+                are honourable.
+            content_callback: Called with the fully buffered body on non-streaming
+                requests.
+            raise_for_status: Check the response before returning it.
+            quote: ``False`` skips the percent-encoding pass over the URL.
+            curl_options: Rejected; there is no libcurl surface here.
+            interface: Rejected; no interface binding in ABI v8.
+            doh_url: Rejected; DoH is not exposed.
+            max_recv_speed: Rejected; Chromium owns transfer pacing.
+            thread: Rejected; the sync path already runs on the calling thread.
+            debug: Rejected; not a supported option.
 
         Returns:
             A context manager yielding the :class:`~chrome_client.Response`, so
@@ -220,14 +313,108 @@ class _AsyncStreamFlag(int):
     """Asyncio form of :class:`_StreamFlag`."""
 
     def __call__(
-        self, method: str, url: str, **kwargs: Unpack[RequestOptions]
+        self,
+        method: str,
+        url: str,
+        params: Optional[ParamsLike] = None,
+        data: Optional[Body] = None,
+        headers: Optional[HeadersLike] = None,
+        cookies: Optional[CookiesLike] = None,
+        files: FilesLike = None,
+        auth: AuthLike = None,
+        timeout: Timeout = None,
+        allow_redirects: bool = True,
+        proxies: Optional[Proxies] = None,
+        hooks: Optional[Hooks] = None,
+        verify: Optional[Verify] = None,
+        cert: Any = None,
+        json: Any = None,
+        content: Optional[Body] = None,
+        multipart: Optional[CurlMime] = None,
+        impersonate: Optional[Impersonate] = None,
+        proxy: Optional[str] = None,
+        http_version: Optional[HttpVersion] = None,
+        max_redirects: Optional[int] = None,
+        max_response_bytes: Optional[int] = None,
+        referer: Optional[str] = None,
+        accept_encoding: Optional[str] = None,
+        default_encoding: Optional[Union[str, Callable[[bytes], str]]] = None,
+        discard_cookies: Optional[bool] = None,
+        retry: Retry = None,
+        cache_mode: CacheMode = None,
+        priority: Optional[int] = None,
+        ja3: Optional[str] = None,
+        akamai: Optional[str] = None,
+        perk: Optional[str] = None,
+        extra_fp: Optional[Union[ExtraFingerprints, Mapping[str, Any]]] = None,
+        content_callback: Optional[ContentCallback] = None,
+        raise_for_status: Optional[bool] = None,
+        quote: Optional[bool] = None,
+        curl_options: Optional[Mapping[Any, Any]] = None,
+        interface: Optional[str] = None,
+        doh_url: Optional[str] = None,
+        max_recv_speed: Optional[int] = None,
+        thread: Any = None,
+        debug: Any = None,
     ) -> "_AsyncStreamContext":
         """Opens a streamed request on an :class:`AsyncSession`.
 
         Args:
-            method: HTTP method, e.g. ``"GET"``.
-            url: The URL to request.
-            **kwargs: Any :meth:`AsyncSession.request` option except ``stream``.
+            method: HTTP method, e.g. ``"GET"``. Upper-cased before sending.
+            url: Absolute URL, or a relative one when ``base_url`` is set.
+            params: Query parameters appended to the URL. A mapping, a sequence of
+                key/value pairs, or an already-encoded string.
+            data: Request body. A mapping or sequence of pairs is form-encoded;
+                bytes/str are sent as-is; a file object, generator or async iterator
+                switches to chunked upload; a file-like value in a mapping is sent as
+                multipart.
+            headers: Headers merged with the session's defaults.
+            cookies: Cookies merged with the session jar for this request only.
+            files: Multipart file parts, alone or alongside ``data``.
+            auth: Per-call auth: callable, ``AuthBase``, or a 2-tuple.
+            timeout: One deadline or ``(connect, read)``.
+            allow_redirects: ``False`` returns the first 3xx instead of following it.
+            proxies: Per-call proxy mapping, merged over the session's.
+            hooks: Per-call response hooks.
+            verify: ``True``/``False``/CA bundle path, for this call only.
+            cert: Rejected; ABI v8 has no client-certificate setting.
+            json: JSON body. Implies ``Content-Type: application/json`` unless a header
+                already sets it.
+            content: Raw body bytes; an alternative to ``data=`` for pre-encoded
+                payloads. Passing both raises ``ValueError``.
+            multipart: A :class:`~chrome_client.CurlMime` instance that becomes the
+                whole body.
+            impersonate: Profile override for this call, either an exact
+                ``chrome_<major>`` name or a curl_cffi ``chrome<major>`` alias.
+            proxy: Proxy URL for this call; wins over ``proxies``.
+            http_version: Pin ``"v1"``, ``"v2"`` or ``"v3"`` for this call.
+            max_redirects: Redirect cap. Below Chromium's 20, hops are driven from
+                Python so the caller's limit wins.
+            max_response_bytes: Body ceiling for this call.
+            referer: Sets ``Referer`` through Chromium's own referrer path, so it
+                reaches the wire the way a real Chrome sends it.
+            accept_encoding: Overrides ``Accept-Encoding``. Chromium would otherwise
+                choose it as part of the profile.
+            default_encoding: Fallback encoding for this response only.
+            discard_cookies: Neither send nor record cookies for this call.
+            retry: Attempt count or strategy for this call.
+            cache_mode: Chromium load flags, e.g. ``"bypass"`` to skip the HTTP cache.
+            priority: Request priority hint passed to the Core.
+            ja3: Rejected; the profile owns the ClientHello.
+            akamai: Rejected; the profile owns the HTTP/2 fingerprint.
+            perk: Rejected; the profile owns the TLS fingerprint.
+            extra_fp: Fingerprint overrides; only ``header_order`` and ``form_boundary``
+                are honourable.
+            content_callback: Called with the fully buffered body on non-streaming
+                requests.
+            raise_for_status: Check the response before returning it.
+            quote: ``False`` skips the percent-encoding pass over the URL.
+            curl_options: Rejected; there is no libcurl surface here.
+            interface: Rejected; no interface binding in ABI v8.
+            doh_url: Rejected; DoH is not exposed.
+            max_recv_speed: Rejected; Chromium owns transfer pacing.
+            thread: Rejected; the sync path already runs on the calling thread.
+            debug: Rejected; not a supported option.
 
         Returns:
             An async context manager yielding the
@@ -751,17 +938,60 @@ class Session(BaseSession):
         """
         ...
 
-    def send(self, request: PreparedRequest, **options: Any) -> Response:
+    def send(
+        self,
+        request: PreparedRequest,
+        timeout: Timeout = None,
+        proxies: Optional[Proxies] = None,
+        stream: Optional[bool] = None,
+        verify: Optional[Verify] = None,
+        cert: Any = None,
+        impersonate: Optional[Impersonate] = None,
+        proxy: Optional[str] = None,
+        http_version: Optional[HttpVersion] = None,
+        max_redirects: Optional[int] = None,
+        max_response_bytes: Optional[int] = None,
+        default_encoding: Optional[Union[str, Callable[[bytes], str]]] = None,
+        discard_cookies: Optional[bool] = None,
+        retry: Retry = None,
+        cache_mode: CacheMode = None,
+        priority: Optional[int] = None,
+        content_callback: Optional[ContentCallback] = None,
+        raise_for_status: Optional[bool] = None,
+        native_redirects: Optional[bool] = None,
+        python_redirects: Optional[bool] = None,
+    ) -> Response:
         """Sends a prepared request, as ``requests.Session.send`` does.
 
         Args:
-            request: The :class:`~chrome_client.PreparedRequest` to send. A
-                request whose URL matches a non-default adapter is delegated to
-                that adapter.
-            **options: Transport options normally produced by
-                :meth:`request` (``timeout``, ``verify``, ``stream``, ``retry``,
-                ``max_redirects``, ``raise_for_status``, ``content_callback``,
-                ...).
+            request: The :class:`~chrome_client.PreparedRequest` to send. A request
+                whose URL matches a non-default adapter is delegated to that
+                adapter.
+            timeout: One deadline or ``(connect, read)``.
+            proxies: Per-call proxy mapping, merged over the session's.
+            stream: ``True`` leaves the body unread so ``iter_content`` can consume it
+                incrementally.
+            verify: ``True``/``False``/CA bundle path, for this call only.
+            cert: Rejected; ABI v8 has no client-certificate setting.
+            impersonate: Profile override for this call, either an exact
+                ``chrome_<major>`` name or a curl_cffi ``chrome<major>`` alias.
+            proxy: Proxy URL for this call; wins over ``proxies``.
+            http_version: Pin ``"v1"``, ``"v2"`` or ``"v3"`` for this call.
+            max_redirects: Redirect cap. Below Chromium's 20, hops are driven from
+                Python so the caller's limit wins.
+            max_response_bytes: Body ceiling for this call.
+            default_encoding: Fallback encoding for this response only.
+            discard_cookies: Neither send nor record cookies for this call.
+            retry: Attempt count or strategy for this call.
+            cache_mode: Chromium load flags, e.g. ``"bypass"`` to skip the HTTP cache.
+            priority: Request priority hint passed to the Core.
+            content_callback: Called with the fully buffered body on non-streaming
+                requests.
+            raise_for_status: Check the response before returning it.
+            native_redirects: ``True`` lets Chromium follow redirects internally (the
+                default).
+            python_redirects: ``True`` follows redirects from Python instead, honouring
+                ``max_redirects``.
 
         Returns:
             The :class:`~chrome_client.Response`.
@@ -781,16 +1011,109 @@ class Session(BaseSession):
 
     # -- verbs --------------------------------------------------------------
     def get(
-        self, url: str, params: Optional[ParamsLike] = None, **kwargs: Unpack[RequestOptions]
+        self,
+        url: str,
+        params: Optional[ParamsLike] = None,
+        data: Optional[Body] = None,
+        headers: Optional[HeadersLike] = None,
+        cookies: Optional[CookiesLike] = None,
+        files: FilesLike = None,
+        auth: AuthLike = None,
+        timeout: Timeout = None,
+        allow_redirects: bool = True,
+        proxies: Optional[Proxies] = None,
+        hooks: Optional[Hooks] = None,
+        stream: Optional[bool] = None,
+        verify: Optional[Verify] = None,
+        cert: Any = None,
+        json: Any = None,
+        content: Optional[Body] = None,
+        multipart: Optional[CurlMime] = None,
+        impersonate: Optional[Impersonate] = None,
+        proxy: Optional[str] = None,
+        http_version: Optional[HttpVersion] = None,
+        max_redirects: Optional[int] = None,
+        max_response_bytes: Optional[int] = None,
+        referer: Optional[str] = None,
+        accept_encoding: Optional[str] = None,
+        default_encoding: Optional[Union[str, Callable[[bytes], str]]] = None,
+        discard_cookies: Optional[bool] = None,
+        retry: Retry = None,
+        cache_mode: CacheMode = None,
+        priority: Optional[int] = None,
+        ja3: Optional[str] = None,
+        akamai: Optional[str] = None,
+        perk: Optional[str] = None,
+        extra_fp: Optional[Union[ExtraFingerprints, Mapping[str, Any]]] = None,
+        content_callback: Optional[ContentCallback] = None,
+        raise_for_status: Optional[bool] = None,
+        quote: Optional[bool] = None,
+        curl_options: Optional[Mapping[Any, Any]] = None,
+        interface: Optional[str] = None,
+        doh_url: Optional[str] = None,
+        max_recv_speed: Optional[int] = None,
+        thread: Any = None,
+        debug: Any = None,
     ) -> Response:
         """Sends a ``GET``.
 
         Args:
-            url: Target URL.
-            params: Query parameters.
-            **kwargs: Any :meth:`request` option (``headers``, ``cookies``,
-                ``timeout``, ``impersonate``, ``http_version``, ``stream``,
-                ``verify``, ``proxies``, ``max_response_bytes``, ...).
+            url: Absolute URL, or a relative one when ``base_url`` is set.
+            params: Query parameters appended to the URL. A mapping, a sequence of
+                key/value pairs, or an already-encoded string.
+            data: Request body. A mapping or sequence of pairs is form-encoded;
+                bytes/str are sent as-is; a file object, generator or async iterator
+                switches to chunked upload; a file-like value in a mapping is sent as
+                multipart.
+            headers: Headers merged with the session's defaults.
+            cookies: Cookies merged with the session jar for this request only.
+            files: Multipart file parts, alone or alongside ``data``.
+            auth: Per-call auth: callable, ``AuthBase``, or a 2-tuple.
+            timeout: One deadline or ``(connect, read)``.
+            allow_redirects: ``False`` returns the first 3xx instead of following it.
+            proxies: Per-call proxy mapping, merged over the session's.
+            hooks: Per-call response hooks.
+            stream: ``True`` leaves the body unread so ``iter_content`` can consume it
+                incrementally.
+            verify: ``True``/``False``/CA bundle path, for this call only.
+            cert: Rejected; ABI v8 has no client-certificate setting.
+            json: JSON body. Implies ``Content-Type: application/json`` unless a header
+                already sets it.
+            content: Raw body bytes; an alternative to ``data=`` for pre-encoded
+                payloads. Passing both raises ``ValueError``.
+            multipart: A :class:`~chrome_client.CurlMime` instance that becomes the
+                whole body.
+            impersonate: Profile override for this call, either an exact
+                ``chrome_<major>`` name or a curl_cffi ``chrome<major>`` alias.
+            proxy: Proxy URL for this call; wins over ``proxies``.
+            http_version: Pin ``"v1"``, ``"v2"`` or ``"v3"`` for this call.
+            max_redirects: Redirect cap. Below Chromium's 20, hops are driven from
+                Python so the caller's limit wins.
+            max_response_bytes: Body ceiling for this call.
+            referer: Sets ``Referer`` through Chromium's own referrer path, so it
+                reaches the wire the way a real Chrome sends it.
+            accept_encoding: Overrides ``Accept-Encoding``. Chromium would otherwise
+                choose it as part of the profile.
+            default_encoding: Fallback encoding for this response only.
+            discard_cookies: Neither send nor record cookies for this call.
+            retry: Attempt count or strategy for this call.
+            cache_mode: Chromium load flags, e.g. ``"bypass"`` to skip the HTTP cache.
+            priority: Request priority hint passed to the Core.
+            ja3: Rejected; the profile owns the ClientHello.
+            akamai: Rejected; the profile owns the HTTP/2 fingerprint.
+            perk: Rejected; the profile owns the TLS fingerprint.
+            extra_fp: Fingerprint overrides; only ``header_order`` and ``form_boundary``
+                are honourable.
+            content_callback: Called with the fully buffered body on non-streaming
+                requests.
+            raise_for_status: Check the response before returning it.
+            quote: ``False`` skips the percent-encoding pass over the URL.
+            curl_options: Rejected; there is no libcurl surface here.
+            interface: Rejected; no interface binding in ABI v8.
+            doh_url: Rejected; DoH is not exposed.
+            max_recv_speed: Rejected; Chromium owns transfer pacing.
+            thread: Rejected; the sync path already runs on the calling thread.
+            debug: Rejected; not a supported option.
 
         Returns:
             The :class:`~chrome_client.Response`.
@@ -801,12 +1124,110 @@ class Session(BaseSession):
         """
         ...
 
-    def options(self, url: str, **kwargs: Unpack[RequestOptions]) -> Response:
+    def options(
+        self,
+        url: str,
+        params: Optional[ParamsLike] = None,
+        data: Optional[Body] = None,
+        headers: Optional[HeadersLike] = None,
+        cookies: Optional[CookiesLike] = None,
+        files: FilesLike = None,
+        auth: AuthLike = None,
+        timeout: Timeout = None,
+        allow_redirects: bool = True,
+        proxies: Optional[Proxies] = None,
+        hooks: Optional[Hooks] = None,
+        stream: Optional[bool] = None,
+        verify: Optional[Verify] = None,
+        cert: Any = None,
+        json: Any = None,
+        content: Optional[Body] = None,
+        multipart: Optional[CurlMime] = None,
+        impersonate: Optional[Impersonate] = None,
+        proxy: Optional[str] = None,
+        http_version: Optional[HttpVersion] = None,
+        max_redirects: Optional[int] = None,
+        max_response_bytes: Optional[int] = None,
+        referer: Optional[str] = None,
+        accept_encoding: Optional[str] = None,
+        default_encoding: Optional[Union[str, Callable[[bytes], str]]] = None,
+        discard_cookies: Optional[bool] = None,
+        retry: Retry = None,
+        cache_mode: CacheMode = None,
+        priority: Optional[int] = None,
+        ja3: Optional[str] = None,
+        akamai: Optional[str] = None,
+        perk: Optional[str] = None,
+        extra_fp: Optional[Union[ExtraFingerprints, Mapping[str, Any]]] = None,
+        content_callback: Optional[ContentCallback] = None,
+        raise_for_status: Optional[bool] = None,
+        quote: Optional[bool] = None,
+        curl_options: Optional[Mapping[Any, Any]] = None,
+        interface: Optional[str] = None,
+        doh_url: Optional[str] = None,
+        max_recv_speed: Optional[int] = None,
+        thread: Any = None,
+        debug: Any = None,
+    ) -> Response:
         """Sends an ``OPTIONS``.
 
         Args:
-            url: Target URL.
-            **kwargs: Any :meth:`request` option.
+            url: Absolute URL, or a relative one when ``base_url`` is set.
+            params: Query parameters appended to the URL. A mapping, a sequence of
+                key/value pairs, or an already-encoded string.
+            data: Request body. A mapping or sequence of pairs is form-encoded;
+                bytes/str are sent as-is; a file object, generator or async iterator
+                switches to chunked upload; a file-like value in a mapping is sent as
+                multipart.
+            headers: Headers merged with the session's defaults.
+            cookies: Cookies merged with the session jar for this request only.
+            files: Multipart file parts, alone or alongside ``data``.
+            auth: Per-call auth: callable, ``AuthBase``, or a 2-tuple.
+            timeout: One deadline or ``(connect, read)``.
+            allow_redirects: ``False`` returns the first 3xx instead of following it.
+            proxies: Per-call proxy mapping, merged over the session's.
+            hooks: Per-call response hooks.
+            stream: ``True`` leaves the body unread so ``iter_content`` can consume it
+                incrementally.
+            verify: ``True``/``False``/CA bundle path, for this call only.
+            cert: Rejected; ABI v8 has no client-certificate setting.
+            json: JSON body. Implies ``Content-Type: application/json`` unless a header
+                already sets it.
+            content: Raw body bytes; an alternative to ``data=`` for pre-encoded
+                payloads. Passing both raises ``ValueError``.
+            multipart: A :class:`~chrome_client.CurlMime` instance that becomes the
+                whole body.
+            impersonate: Profile override for this call, either an exact
+                ``chrome_<major>`` name or a curl_cffi ``chrome<major>`` alias.
+            proxy: Proxy URL for this call; wins over ``proxies``.
+            http_version: Pin ``"v1"``, ``"v2"`` or ``"v3"`` for this call.
+            max_redirects: Redirect cap. Below Chromium's 20, hops are driven from
+                Python so the caller's limit wins.
+            max_response_bytes: Body ceiling for this call.
+            referer: Sets ``Referer`` through Chromium's own referrer path, so it
+                reaches the wire the way a real Chrome sends it.
+            accept_encoding: Overrides ``Accept-Encoding``. Chromium would otherwise
+                choose it as part of the profile.
+            default_encoding: Fallback encoding for this response only.
+            discard_cookies: Neither send nor record cookies for this call.
+            retry: Attempt count or strategy for this call.
+            cache_mode: Chromium load flags, e.g. ``"bypass"`` to skip the HTTP cache.
+            priority: Request priority hint passed to the Core.
+            ja3: Rejected; the profile owns the ClientHello.
+            akamai: Rejected; the profile owns the HTTP/2 fingerprint.
+            perk: Rejected; the profile owns the TLS fingerprint.
+            extra_fp: Fingerprint overrides; only ``header_order`` and ``form_boundary``
+                are honourable.
+            content_callback: Called with the fully buffered body on non-streaming
+                requests.
+            raise_for_status: Check the response before returning it.
+            quote: ``False`` skips the percent-encoding pass over the URL.
+            curl_options: Rejected; there is no libcurl surface here.
+            interface: Rejected; no interface binding in ABI v8.
+            doh_url: Rejected; DoH is not exposed.
+            max_recv_speed: Rejected; Chromium owns transfer pacing.
+            thread: Rejected; the sync path already runs on the calling thread.
+            debug: Rejected; not a supported option.
 
         Returns:
             The :class:`~chrome_client.Response`, carrying the ``Allow`` header
@@ -814,14 +1235,112 @@ class Session(BaseSession):
         """
         ...
 
-    def head(self, url: str, **kwargs: Unpack[RequestOptions]) -> Response:
+    def head(
+        self,
+        url: str,
+        params: Optional[ParamsLike] = None,
+        data: Optional[Body] = None,
+        headers: Optional[HeadersLike] = None,
+        cookies: Optional[CookiesLike] = None,
+        files: FilesLike = None,
+        auth: AuthLike = None,
+        timeout: Timeout = None,
+        allow_redirects: bool = False,
+        proxies: Optional[Proxies] = None,
+        hooks: Optional[Hooks] = None,
+        stream: Optional[bool] = None,
+        verify: Optional[Verify] = None,
+        cert: Any = None,
+        json: Any = None,
+        content: Optional[Body] = None,
+        multipart: Optional[CurlMime] = None,
+        impersonate: Optional[Impersonate] = None,
+        proxy: Optional[str] = None,
+        http_version: Optional[HttpVersion] = None,
+        max_redirects: Optional[int] = None,
+        max_response_bytes: Optional[int] = None,
+        referer: Optional[str] = None,
+        accept_encoding: Optional[str] = None,
+        default_encoding: Optional[Union[str, Callable[[bytes], str]]] = None,
+        discard_cookies: Optional[bool] = None,
+        retry: Retry = None,
+        cache_mode: CacheMode = None,
+        priority: Optional[int] = None,
+        ja3: Optional[str] = None,
+        akamai: Optional[str] = None,
+        perk: Optional[str] = None,
+        extra_fp: Optional[Union[ExtraFingerprints, Mapping[str, Any]]] = None,
+        content_callback: Optional[ContentCallback] = None,
+        raise_for_status: Optional[bool] = None,
+        quote: Optional[bool] = None,
+        curl_options: Optional[Mapping[Any, Any]] = None,
+        interface: Optional[str] = None,
+        doh_url: Optional[str] = None,
+        max_recv_speed: Optional[int] = None,
+        thread: Any = None,
+        debug: Any = None,
+    ) -> Response:
         """Sends a ``HEAD``.
 
         ``allow_redirects`` defaults to ``False`` here, matching requests.
 
         Args:
-            url: Target URL.
-            **kwargs: Any :meth:`request` option.
+            url: Absolute URL, or a relative one when ``base_url`` is set.
+            params: Query parameters appended to the URL. A mapping, a sequence of
+                key/value pairs, or an already-encoded string.
+            data: Request body. A mapping or sequence of pairs is form-encoded;
+                bytes/str are sent as-is; a file object, generator or async iterator
+                switches to chunked upload; a file-like value in a mapping is sent as
+                multipart.
+            headers: Headers merged with the session's defaults.
+            cookies: Cookies merged with the session jar for this request only.
+            files: Multipart file parts, alone or alongside ``data``.
+            auth: Per-call auth: callable, ``AuthBase``, or a 2-tuple.
+            timeout: One deadline or ``(connect, read)``.
+            allow_redirects: ``False`` returns the first 3xx instead of following it.
+            proxies: Per-call proxy mapping, merged over the session's.
+            hooks: Per-call response hooks.
+            stream: ``True`` leaves the body unread so ``iter_content`` can consume it
+                incrementally.
+            verify: ``True``/``False``/CA bundle path, for this call only.
+            cert: Rejected; ABI v8 has no client-certificate setting.
+            json: JSON body. Implies ``Content-Type: application/json`` unless a header
+                already sets it.
+            content: Raw body bytes; an alternative to ``data=`` for pre-encoded
+                payloads. Passing both raises ``ValueError``.
+            multipart: A :class:`~chrome_client.CurlMime` instance that becomes the
+                whole body.
+            impersonate: Profile override for this call, either an exact
+                ``chrome_<major>`` name or a curl_cffi ``chrome<major>`` alias.
+            proxy: Proxy URL for this call; wins over ``proxies``.
+            http_version: Pin ``"v1"``, ``"v2"`` or ``"v3"`` for this call.
+            max_redirects: Redirect cap. Below Chromium's 20, hops are driven from
+                Python so the caller's limit wins.
+            max_response_bytes: Body ceiling for this call.
+            referer: Sets ``Referer`` through Chromium's own referrer path, so it
+                reaches the wire the way a real Chrome sends it.
+            accept_encoding: Overrides ``Accept-Encoding``. Chromium would otherwise
+                choose it as part of the profile.
+            default_encoding: Fallback encoding for this response only.
+            discard_cookies: Neither send nor record cookies for this call.
+            retry: Attempt count or strategy for this call.
+            cache_mode: Chromium load flags, e.g. ``"bypass"`` to skip the HTTP cache.
+            priority: Request priority hint passed to the Core.
+            ja3: Rejected; the profile owns the ClientHello.
+            akamai: Rejected; the profile owns the HTTP/2 fingerprint.
+            perk: Rejected; the profile owns the TLS fingerprint.
+            extra_fp: Fingerprint overrides; only ``header_order`` and ``form_boundary``
+                are honourable.
+            content_callback: Called with the fully buffered body on non-streaming
+                requests.
+            raise_for_status: Check the response before returning it.
+            quote: ``False`` skips the percent-encoding pass over the URL.
+            curl_options: Rejected; there is no libcurl surface here.
+            interface: Rejected; no interface binding in ABI v8.
+            doh_url: Rejected; DoH is not exposed.
+            max_recv_speed: Rejected; Chromium owns transfer pacing.
+            thread: Rejected; the sync path already runs on the calling thread.
+            debug: Rejected; not a supported option.
 
         Returns:
             The :class:`~chrome_client.Response` with an empty body; read
@@ -834,16 +1353,105 @@ class Session(BaseSession):
         url: str,
         data: Optional[Body] = None,
         json: Any = None,
-        **kwargs: Unpack[RequestOptions],
+        params: Optional[ParamsLike] = None,
+        headers: Optional[HeadersLike] = None,
+        cookies: Optional[CookiesLike] = None,
+        files: FilesLike = None,
+        auth: AuthLike = None,
+        timeout: Timeout = None,
+        allow_redirects: bool = True,
+        proxies: Optional[Proxies] = None,
+        hooks: Optional[Hooks] = None,
+        stream: Optional[bool] = None,
+        verify: Optional[Verify] = None,
+        cert: Any = None,
+        content: Optional[Body] = None,
+        multipart: Optional[CurlMime] = None,
+        impersonate: Optional[Impersonate] = None,
+        proxy: Optional[str] = None,
+        http_version: Optional[HttpVersion] = None,
+        max_redirects: Optional[int] = None,
+        max_response_bytes: Optional[int] = None,
+        referer: Optional[str] = None,
+        accept_encoding: Optional[str] = None,
+        default_encoding: Optional[Union[str, Callable[[bytes], str]]] = None,
+        discard_cookies: Optional[bool] = None,
+        retry: Retry = None,
+        cache_mode: CacheMode = None,
+        priority: Optional[int] = None,
+        ja3: Optional[str] = None,
+        akamai: Optional[str] = None,
+        perk: Optional[str] = None,
+        extra_fp: Optional[Union[ExtraFingerprints, Mapping[str, Any]]] = None,
+        content_callback: Optional[ContentCallback] = None,
+        raise_for_status: Optional[bool] = None,
+        quote: Optional[bool] = None,
+        curl_options: Optional[Mapping[Any, Any]] = None,
+        interface: Optional[str] = None,
+        doh_url: Optional[str] = None,
+        max_recv_speed: Optional[int] = None,
+        thread: Any = None,
+        debug: Any = None,
     ) -> Response:
         """Sends a ``POST``.
 
         Args:
-            url: Target URL.
-            data: Form body, raw bytes, or a file/iterator for chunked upload.
-            json: JSON body; sets ``Content-Type: application/json``.
-            **kwargs: Any :meth:`request` option (``files``, ``multipart``,
-                ``timeout``, ``impersonate``, ...).
+            url: Absolute URL, or a relative one when ``base_url`` is set.
+            data: Request body. A mapping or sequence of pairs is form-encoded;
+                bytes/str are sent as-is; a file object, generator or async iterator
+                switches to chunked upload; a file-like value in a mapping is sent as
+                multipart.
+            json: JSON body. Implies ``Content-Type: application/json`` unless a header
+                already sets it.
+            params: Query parameters appended to the URL. A mapping, a sequence of
+                key/value pairs, or an already-encoded string.
+            headers: Headers merged with the session's defaults.
+            cookies: Cookies merged with the session jar for this request only.
+            files: Multipart file parts, alone or alongside ``data``.
+            auth: Per-call auth: callable, ``AuthBase``, or a 2-tuple.
+            timeout: One deadline or ``(connect, read)``.
+            allow_redirects: ``False`` returns the first 3xx instead of following it.
+            proxies: Per-call proxy mapping, merged over the session's.
+            hooks: Per-call response hooks.
+            stream: ``True`` leaves the body unread so ``iter_content`` can consume it
+                incrementally.
+            verify: ``True``/``False``/CA bundle path, for this call only.
+            cert: Rejected; ABI v8 has no client-certificate setting.
+            content: Raw body bytes; an alternative to ``data=`` for pre-encoded
+                payloads. Passing both raises ``ValueError``.
+            multipart: A :class:`~chrome_client.CurlMime` instance that becomes the
+                whole body.
+            impersonate: Profile override for this call, either an exact
+                ``chrome_<major>`` name or a curl_cffi ``chrome<major>`` alias.
+            proxy: Proxy URL for this call; wins over ``proxies``.
+            http_version: Pin ``"v1"``, ``"v2"`` or ``"v3"`` for this call.
+            max_redirects: Redirect cap. Below Chromium's 20, hops are driven from
+                Python so the caller's limit wins.
+            max_response_bytes: Body ceiling for this call.
+            referer: Sets ``Referer`` through Chromium's own referrer path, so it
+                reaches the wire the way a real Chrome sends it.
+            accept_encoding: Overrides ``Accept-Encoding``. Chromium would otherwise
+                choose it as part of the profile.
+            default_encoding: Fallback encoding for this response only.
+            discard_cookies: Neither send nor record cookies for this call.
+            retry: Attempt count or strategy for this call.
+            cache_mode: Chromium load flags, e.g. ``"bypass"`` to skip the HTTP cache.
+            priority: Request priority hint passed to the Core.
+            ja3: Rejected; the profile owns the ClientHello.
+            akamai: Rejected; the profile owns the HTTP/2 fingerprint.
+            perk: Rejected; the profile owns the TLS fingerprint.
+            extra_fp: Fingerprint overrides; only ``header_order`` and ``form_boundary``
+                are honourable.
+            content_callback: Called with the fully buffered body on non-streaming
+                requests.
+            raise_for_status: Check the response before returning it.
+            quote: ``False`` skips the percent-encoding pass over the URL.
+            curl_options: Rejected; there is no libcurl surface here.
+            interface: Rejected; no interface binding in ABI v8.
+            doh_url: Rejected; DoH is not exposed.
+            max_recv_speed: Rejected; Chromium owns transfer pacing.
+            thread: Rejected; the sync path already runs on the calling thread.
+            debug: Rejected; not a supported option.
 
         Returns:
             The :class:`~chrome_client.Response`.
@@ -859,16 +1467,106 @@ class Session(BaseSession):
         self,
         url: str,
         data: Optional[Body] = None,
+        params: Optional[ParamsLike] = None,
+        headers: Optional[HeadersLike] = None,
+        cookies: Optional[CookiesLike] = None,
+        files: FilesLike = None,
+        auth: AuthLike = None,
+        timeout: Timeout = None,
+        allow_redirects: bool = True,
+        proxies: Optional[Proxies] = None,
+        hooks: Optional[Hooks] = None,
+        stream: Optional[bool] = None,
+        verify: Optional[Verify] = None,
+        cert: Any = None,
         json: Any = None,
-        **kwargs: Unpack[RequestOptions],
+        content: Optional[Body] = None,
+        multipart: Optional[CurlMime] = None,
+        impersonate: Optional[Impersonate] = None,
+        proxy: Optional[str] = None,
+        http_version: Optional[HttpVersion] = None,
+        max_redirects: Optional[int] = None,
+        max_response_bytes: Optional[int] = None,
+        referer: Optional[str] = None,
+        accept_encoding: Optional[str] = None,
+        default_encoding: Optional[Union[str, Callable[[bytes], str]]] = None,
+        discard_cookies: Optional[bool] = None,
+        retry: Retry = None,
+        cache_mode: CacheMode = None,
+        priority: Optional[int] = None,
+        ja3: Optional[str] = None,
+        akamai: Optional[str] = None,
+        perk: Optional[str] = None,
+        extra_fp: Optional[Union[ExtraFingerprints, Mapping[str, Any]]] = None,
+        content_callback: Optional[ContentCallback] = None,
+        raise_for_status: Optional[bool] = None,
+        quote: Optional[bool] = None,
+        curl_options: Optional[Mapping[Any, Any]] = None,
+        interface: Optional[str] = None,
+        doh_url: Optional[str] = None,
+        max_recv_speed: Optional[int] = None,
+        thread: Any = None,
+        debug: Any = None,
     ) -> Response:
         """Sends a ``PUT``.
 
         Args:
-            url: Target URL.
-            data: Request body, as for :meth:`post`.
-            json: JSON body; sets ``Content-Type: application/json``.
-            **kwargs: Any :meth:`request` option.
+            url: Absolute URL, or a relative one when ``base_url`` is set.
+            data: Request body. A mapping or sequence of pairs is form-encoded;
+                bytes/str are sent as-is; a file object, generator or async iterator
+                switches to chunked upload; a file-like value in a mapping is sent as
+                multipart.
+            params: Query parameters appended to the URL. A mapping, a sequence of
+                key/value pairs, or an already-encoded string.
+            headers: Headers merged with the session's defaults.
+            cookies: Cookies merged with the session jar for this request only.
+            files: Multipart file parts, alone or alongside ``data``.
+            auth: Per-call auth: callable, ``AuthBase``, or a 2-tuple.
+            timeout: One deadline or ``(connect, read)``.
+            allow_redirects: ``False`` returns the first 3xx instead of following it.
+            proxies: Per-call proxy mapping, merged over the session's.
+            hooks: Per-call response hooks.
+            stream: ``True`` leaves the body unread so ``iter_content`` can consume it
+                incrementally.
+            verify: ``True``/``False``/CA bundle path, for this call only.
+            cert: Rejected; ABI v8 has no client-certificate setting.
+            json: JSON body. Implies ``Content-Type: application/json`` unless a header
+                already sets it.
+            content: Raw body bytes; an alternative to ``data=`` for pre-encoded
+                payloads. Passing both raises ``ValueError``.
+            multipart: A :class:`~chrome_client.CurlMime` instance that becomes the
+                whole body.
+            impersonate: Profile override for this call, either an exact
+                ``chrome_<major>`` name or a curl_cffi ``chrome<major>`` alias.
+            proxy: Proxy URL for this call; wins over ``proxies``.
+            http_version: Pin ``"v1"``, ``"v2"`` or ``"v3"`` for this call.
+            max_redirects: Redirect cap. Below Chromium's 20, hops are driven from
+                Python so the caller's limit wins.
+            max_response_bytes: Body ceiling for this call.
+            referer: Sets ``Referer`` through Chromium's own referrer path, so it
+                reaches the wire the way a real Chrome sends it.
+            accept_encoding: Overrides ``Accept-Encoding``. Chromium would otherwise
+                choose it as part of the profile.
+            default_encoding: Fallback encoding for this response only.
+            discard_cookies: Neither send nor record cookies for this call.
+            retry: Attempt count or strategy for this call.
+            cache_mode: Chromium load flags, e.g. ``"bypass"`` to skip the HTTP cache.
+            priority: Request priority hint passed to the Core.
+            ja3: Rejected; the profile owns the ClientHello.
+            akamai: Rejected; the profile owns the HTTP/2 fingerprint.
+            perk: Rejected; the profile owns the TLS fingerprint.
+            extra_fp: Fingerprint overrides; only ``header_order`` and ``form_boundary``
+                are honourable.
+            content_callback: Called with the fully buffered body on non-streaming
+                requests.
+            raise_for_status: Check the response before returning it.
+            quote: ``False`` skips the percent-encoding pass over the URL.
+            curl_options: Rejected; there is no libcurl surface here.
+            interface: Rejected; no interface binding in ABI v8.
+            doh_url: Rejected; DoH is not exposed.
+            max_recv_speed: Rejected; Chromium owns transfer pacing.
+            thread: Rejected; the sync path already runs on the calling thread.
+            debug: Rejected; not a supported option.
 
         Returns:
             The :class:`~chrome_client.Response`.
@@ -879,52 +1577,436 @@ class Session(BaseSession):
         self,
         url: str,
         data: Optional[Body] = None,
+        params: Optional[ParamsLike] = None,
+        headers: Optional[HeadersLike] = None,
+        cookies: Optional[CookiesLike] = None,
+        files: FilesLike = None,
+        auth: AuthLike = None,
+        timeout: Timeout = None,
+        allow_redirects: bool = True,
+        proxies: Optional[Proxies] = None,
+        hooks: Optional[Hooks] = None,
+        stream: Optional[bool] = None,
+        verify: Optional[Verify] = None,
+        cert: Any = None,
         json: Any = None,
-        **kwargs: Unpack[RequestOptions],
+        content: Optional[Body] = None,
+        multipart: Optional[CurlMime] = None,
+        impersonate: Optional[Impersonate] = None,
+        proxy: Optional[str] = None,
+        http_version: Optional[HttpVersion] = None,
+        max_redirects: Optional[int] = None,
+        max_response_bytes: Optional[int] = None,
+        referer: Optional[str] = None,
+        accept_encoding: Optional[str] = None,
+        default_encoding: Optional[Union[str, Callable[[bytes], str]]] = None,
+        discard_cookies: Optional[bool] = None,
+        retry: Retry = None,
+        cache_mode: CacheMode = None,
+        priority: Optional[int] = None,
+        ja3: Optional[str] = None,
+        akamai: Optional[str] = None,
+        perk: Optional[str] = None,
+        extra_fp: Optional[Union[ExtraFingerprints, Mapping[str, Any]]] = None,
+        content_callback: Optional[ContentCallback] = None,
+        raise_for_status: Optional[bool] = None,
+        quote: Optional[bool] = None,
+        curl_options: Optional[Mapping[Any, Any]] = None,
+        interface: Optional[str] = None,
+        doh_url: Optional[str] = None,
+        max_recv_speed: Optional[int] = None,
+        thread: Any = None,
+        debug: Any = None,
     ) -> Response:
         """Sends a ``PATCH``.
 
         Args:
-            url: Target URL.
-            data: Request body, as for :meth:`post`.
-            json: JSON body; sets ``Content-Type: application/json``.
-            **kwargs: Any :meth:`request` option.
+            url: Absolute URL, or a relative one when ``base_url`` is set.
+            data: Request body. A mapping or sequence of pairs is form-encoded;
+                bytes/str are sent as-is; a file object, generator or async iterator
+                switches to chunked upload; a file-like value in a mapping is sent as
+                multipart.
+            params: Query parameters appended to the URL. A mapping, a sequence of
+                key/value pairs, or an already-encoded string.
+            headers: Headers merged with the session's defaults.
+            cookies: Cookies merged with the session jar for this request only.
+            files: Multipart file parts, alone or alongside ``data``.
+            auth: Per-call auth: callable, ``AuthBase``, or a 2-tuple.
+            timeout: One deadline or ``(connect, read)``.
+            allow_redirects: ``False`` returns the first 3xx instead of following it.
+            proxies: Per-call proxy mapping, merged over the session's.
+            hooks: Per-call response hooks.
+            stream: ``True`` leaves the body unread so ``iter_content`` can consume it
+                incrementally.
+            verify: ``True``/``False``/CA bundle path, for this call only.
+            cert: Rejected; ABI v8 has no client-certificate setting.
+            json: JSON body. Implies ``Content-Type: application/json`` unless a header
+                already sets it.
+            content: Raw body bytes; an alternative to ``data=`` for pre-encoded
+                payloads. Passing both raises ``ValueError``.
+            multipart: A :class:`~chrome_client.CurlMime` instance that becomes the
+                whole body.
+            impersonate: Profile override for this call, either an exact
+                ``chrome_<major>`` name or a curl_cffi ``chrome<major>`` alias.
+            proxy: Proxy URL for this call; wins over ``proxies``.
+            http_version: Pin ``"v1"``, ``"v2"`` or ``"v3"`` for this call.
+            max_redirects: Redirect cap. Below Chromium's 20, hops are driven from
+                Python so the caller's limit wins.
+            max_response_bytes: Body ceiling for this call.
+            referer: Sets ``Referer`` through Chromium's own referrer path, so it
+                reaches the wire the way a real Chrome sends it.
+            accept_encoding: Overrides ``Accept-Encoding``. Chromium would otherwise
+                choose it as part of the profile.
+            default_encoding: Fallback encoding for this response only.
+            discard_cookies: Neither send nor record cookies for this call.
+            retry: Attempt count or strategy for this call.
+            cache_mode: Chromium load flags, e.g. ``"bypass"`` to skip the HTTP cache.
+            priority: Request priority hint passed to the Core.
+            ja3: Rejected; the profile owns the ClientHello.
+            akamai: Rejected; the profile owns the HTTP/2 fingerprint.
+            perk: Rejected; the profile owns the TLS fingerprint.
+            extra_fp: Fingerprint overrides; only ``header_order`` and ``form_boundary``
+                are honourable.
+            content_callback: Called with the fully buffered body on non-streaming
+                requests.
+            raise_for_status: Check the response before returning it.
+            quote: ``False`` skips the percent-encoding pass over the URL.
+            curl_options: Rejected; there is no libcurl surface here.
+            interface: Rejected; no interface binding in ABI v8.
+            doh_url: Rejected; DoH is not exposed.
+            max_recv_speed: Rejected; Chromium owns transfer pacing.
+            thread: Rejected; the sync path already runs on the calling thread.
+            debug: Rejected; not a supported option.
 
         Returns:
             The :class:`~chrome_client.Response`.
         """
         ...
 
-    def delete(self, url: str, **kwargs: Unpack[RequestOptions]) -> Response:
+    def delete(
+        self,
+        url: str,
+        params: Optional[ParamsLike] = None,
+        data: Optional[Body] = None,
+        headers: Optional[HeadersLike] = None,
+        cookies: Optional[CookiesLike] = None,
+        files: FilesLike = None,
+        auth: AuthLike = None,
+        timeout: Timeout = None,
+        allow_redirects: bool = True,
+        proxies: Optional[Proxies] = None,
+        hooks: Optional[Hooks] = None,
+        stream: Optional[bool] = None,
+        verify: Optional[Verify] = None,
+        cert: Any = None,
+        json: Any = None,
+        content: Optional[Body] = None,
+        multipart: Optional[CurlMime] = None,
+        impersonate: Optional[Impersonate] = None,
+        proxy: Optional[str] = None,
+        http_version: Optional[HttpVersion] = None,
+        max_redirects: Optional[int] = None,
+        max_response_bytes: Optional[int] = None,
+        referer: Optional[str] = None,
+        accept_encoding: Optional[str] = None,
+        default_encoding: Optional[Union[str, Callable[[bytes], str]]] = None,
+        discard_cookies: Optional[bool] = None,
+        retry: Retry = None,
+        cache_mode: CacheMode = None,
+        priority: Optional[int] = None,
+        ja3: Optional[str] = None,
+        akamai: Optional[str] = None,
+        perk: Optional[str] = None,
+        extra_fp: Optional[Union[ExtraFingerprints, Mapping[str, Any]]] = None,
+        content_callback: Optional[ContentCallback] = None,
+        raise_for_status: Optional[bool] = None,
+        quote: Optional[bool] = None,
+        curl_options: Optional[Mapping[Any, Any]] = None,
+        interface: Optional[str] = None,
+        doh_url: Optional[str] = None,
+        max_recv_speed: Optional[int] = None,
+        thread: Any = None,
+        debug: Any = None,
+    ) -> Response:
         """Sends a ``DELETE``.
 
         Args:
-            url: Target URL.
-            **kwargs: Any :meth:`request` option.
+            url: Absolute URL, or a relative one when ``base_url`` is set.
+            params: Query parameters appended to the URL. A mapping, a sequence of
+                key/value pairs, or an already-encoded string.
+            data: Request body. A mapping or sequence of pairs is form-encoded;
+                bytes/str are sent as-is; a file object, generator or async iterator
+                switches to chunked upload; a file-like value in a mapping is sent as
+                multipart.
+            headers: Headers merged with the session's defaults.
+            cookies: Cookies merged with the session jar for this request only.
+            files: Multipart file parts, alone or alongside ``data``.
+            auth: Per-call auth: callable, ``AuthBase``, or a 2-tuple.
+            timeout: One deadline or ``(connect, read)``.
+            allow_redirects: ``False`` returns the first 3xx instead of following it.
+            proxies: Per-call proxy mapping, merged over the session's.
+            hooks: Per-call response hooks.
+            stream: ``True`` leaves the body unread so ``iter_content`` can consume it
+                incrementally.
+            verify: ``True``/``False``/CA bundle path, for this call only.
+            cert: Rejected; ABI v8 has no client-certificate setting.
+            json: JSON body. Implies ``Content-Type: application/json`` unless a header
+                already sets it.
+            content: Raw body bytes; an alternative to ``data=`` for pre-encoded
+                payloads. Passing both raises ``ValueError``.
+            multipart: A :class:`~chrome_client.CurlMime` instance that becomes the
+                whole body.
+            impersonate: Profile override for this call, either an exact
+                ``chrome_<major>`` name or a curl_cffi ``chrome<major>`` alias.
+            proxy: Proxy URL for this call; wins over ``proxies``.
+            http_version: Pin ``"v1"``, ``"v2"`` or ``"v3"`` for this call.
+            max_redirects: Redirect cap. Below Chromium's 20, hops are driven from
+                Python so the caller's limit wins.
+            max_response_bytes: Body ceiling for this call.
+            referer: Sets ``Referer`` through Chromium's own referrer path, so it
+                reaches the wire the way a real Chrome sends it.
+            accept_encoding: Overrides ``Accept-Encoding``. Chromium would otherwise
+                choose it as part of the profile.
+            default_encoding: Fallback encoding for this response only.
+            discard_cookies: Neither send nor record cookies for this call.
+            retry: Attempt count or strategy for this call.
+            cache_mode: Chromium load flags, e.g. ``"bypass"`` to skip the HTTP cache.
+            priority: Request priority hint passed to the Core.
+            ja3: Rejected; the profile owns the ClientHello.
+            akamai: Rejected; the profile owns the HTTP/2 fingerprint.
+            perk: Rejected; the profile owns the TLS fingerprint.
+            extra_fp: Fingerprint overrides; only ``header_order`` and ``form_boundary``
+                are honourable.
+            content_callback: Called with the fully buffered body on non-streaming
+                requests.
+            raise_for_status: Check the response before returning it.
+            quote: ``False`` skips the percent-encoding pass over the URL.
+            curl_options: Rejected; there is no libcurl surface here.
+            interface: Rejected; no interface binding in ABI v8.
+            doh_url: Rejected; DoH is not exposed.
+            max_recv_speed: Rejected; Chromium owns transfer pacing.
+            thread: Rejected; the sync path already runs on the calling thread.
+            debug: Rejected; not a supported option.
 
         Returns:
             The :class:`~chrome_client.Response`.
         """
         ...
 
-    def trace(self, url: str, **kwargs: Unpack[RequestOptions]) -> Response:
+    def trace(
+        self,
+        url: str,
+        params: Optional[ParamsLike] = None,
+        data: Optional[Body] = None,
+        headers: Optional[HeadersLike] = None,
+        cookies: Optional[CookiesLike] = None,
+        files: FilesLike = None,
+        auth: AuthLike = None,
+        timeout: Timeout = None,
+        allow_redirects: bool = True,
+        proxies: Optional[Proxies] = None,
+        hooks: Optional[Hooks] = None,
+        stream: Optional[bool] = None,
+        verify: Optional[Verify] = None,
+        cert: Any = None,
+        json: Any = None,
+        content: Optional[Body] = None,
+        multipart: Optional[CurlMime] = None,
+        impersonate: Optional[Impersonate] = None,
+        proxy: Optional[str] = None,
+        http_version: Optional[HttpVersion] = None,
+        max_redirects: Optional[int] = None,
+        max_response_bytes: Optional[int] = None,
+        referer: Optional[str] = None,
+        accept_encoding: Optional[str] = None,
+        default_encoding: Optional[Union[str, Callable[[bytes], str]]] = None,
+        discard_cookies: Optional[bool] = None,
+        retry: Retry = None,
+        cache_mode: CacheMode = None,
+        priority: Optional[int] = None,
+        ja3: Optional[str] = None,
+        akamai: Optional[str] = None,
+        perk: Optional[str] = None,
+        extra_fp: Optional[Union[ExtraFingerprints, Mapping[str, Any]]] = None,
+        content_callback: Optional[ContentCallback] = None,
+        raise_for_status: Optional[bool] = None,
+        quote: Optional[bool] = None,
+        curl_options: Optional[Mapping[Any, Any]] = None,
+        interface: Optional[str] = None,
+        doh_url: Optional[str] = None,
+        max_recv_speed: Optional[int] = None,
+        thread: Any = None,
+        debug: Any = None,
+    ) -> Response:
         """Sends a ``TRACE``.
 
         Args:
-            url: Target URL.
-            **kwargs: Any :meth:`request` option.
+            url: Absolute URL, or a relative one when ``base_url`` is set.
+            params: Query parameters appended to the URL. A mapping, a sequence of
+                key/value pairs, or an already-encoded string.
+            data: Request body. A mapping or sequence of pairs is form-encoded;
+                bytes/str are sent as-is; a file object, generator or async iterator
+                switches to chunked upload; a file-like value in a mapping is sent as
+                multipart.
+            headers: Headers merged with the session's defaults.
+            cookies: Cookies merged with the session jar for this request only.
+            files: Multipart file parts, alone or alongside ``data``.
+            auth: Per-call auth: callable, ``AuthBase``, or a 2-tuple.
+            timeout: One deadline or ``(connect, read)``.
+            allow_redirects: ``False`` returns the first 3xx instead of following it.
+            proxies: Per-call proxy mapping, merged over the session's.
+            hooks: Per-call response hooks.
+            stream: ``True`` leaves the body unread so ``iter_content`` can consume it
+                incrementally.
+            verify: ``True``/``False``/CA bundle path, for this call only.
+            cert: Rejected; ABI v8 has no client-certificate setting.
+            json: JSON body. Implies ``Content-Type: application/json`` unless a header
+                already sets it.
+            content: Raw body bytes; an alternative to ``data=`` for pre-encoded
+                payloads. Passing both raises ``ValueError``.
+            multipart: A :class:`~chrome_client.CurlMime` instance that becomes the
+                whole body.
+            impersonate: Profile override for this call, either an exact
+                ``chrome_<major>`` name or a curl_cffi ``chrome<major>`` alias.
+            proxy: Proxy URL for this call; wins over ``proxies``.
+            http_version: Pin ``"v1"``, ``"v2"`` or ``"v3"`` for this call.
+            max_redirects: Redirect cap. Below Chromium's 20, hops are driven from
+                Python so the caller's limit wins.
+            max_response_bytes: Body ceiling for this call.
+            referer: Sets ``Referer`` through Chromium's own referrer path, so it
+                reaches the wire the way a real Chrome sends it.
+            accept_encoding: Overrides ``Accept-Encoding``. Chromium would otherwise
+                choose it as part of the profile.
+            default_encoding: Fallback encoding for this response only.
+            discard_cookies: Neither send nor record cookies for this call.
+            retry: Attempt count or strategy for this call.
+            cache_mode: Chromium load flags, e.g. ``"bypass"`` to skip the HTTP cache.
+            priority: Request priority hint passed to the Core.
+            ja3: Rejected; the profile owns the ClientHello.
+            akamai: Rejected; the profile owns the HTTP/2 fingerprint.
+            perk: Rejected; the profile owns the TLS fingerprint.
+            extra_fp: Fingerprint overrides; only ``header_order`` and ``form_boundary``
+                are honourable.
+            content_callback: Called with the fully buffered body on non-streaming
+                requests.
+            raise_for_status: Check the response before returning it.
+            quote: ``False`` skips the percent-encoding pass over the URL.
+            curl_options: Rejected; there is no libcurl surface here.
+            interface: Rejected; no interface binding in ABI v8.
+            doh_url: Rejected; DoH is not exposed.
+            max_recv_speed: Rejected; Chromium owns transfer pacing.
+            thread: Rejected; the sync path already runs on the calling thread.
+            debug: Rejected; not a supported option.
 
         Returns:
             The :class:`~chrome_client.Response`.
         """
         ...
 
-    def query(self, url: str, **kwargs: Unpack[RequestOptions]) -> Response:
+    def query(
+        self,
+        url: str,
+        params: Optional[ParamsLike] = None,
+        data: Optional[Body] = None,
+        headers: Optional[HeadersLike] = None,
+        cookies: Optional[CookiesLike] = None,
+        files: FilesLike = None,
+        auth: AuthLike = None,
+        timeout: Timeout = None,
+        allow_redirects: bool = True,
+        proxies: Optional[Proxies] = None,
+        hooks: Optional[Hooks] = None,
+        stream: Optional[bool] = None,
+        verify: Optional[Verify] = None,
+        cert: Any = None,
+        json: Any = None,
+        content: Optional[Body] = None,
+        multipart: Optional[CurlMime] = None,
+        impersonate: Optional[Impersonate] = None,
+        proxy: Optional[str] = None,
+        http_version: Optional[HttpVersion] = None,
+        max_redirects: Optional[int] = None,
+        max_response_bytes: Optional[int] = None,
+        referer: Optional[str] = None,
+        accept_encoding: Optional[str] = None,
+        default_encoding: Optional[Union[str, Callable[[bytes], str]]] = None,
+        discard_cookies: Optional[bool] = None,
+        retry: Retry = None,
+        cache_mode: CacheMode = None,
+        priority: Optional[int] = None,
+        ja3: Optional[str] = None,
+        akamai: Optional[str] = None,
+        perk: Optional[str] = None,
+        extra_fp: Optional[Union[ExtraFingerprints, Mapping[str, Any]]] = None,
+        content_callback: Optional[ContentCallback] = None,
+        raise_for_status: Optional[bool] = None,
+        quote: Optional[bool] = None,
+        curl_options: Optional[Mapping[Any, Any]] = None,
+        interface: Optional[str] = None,
+        doh_url: Optional[str] = None,
+        max_recv_speed: Optional[int] = None,
+        thread: Any = None,
+        debug: Any = None,
+    ) -> Response:
         """Sends a ``QUERY`` (draft-ietf-httpbis-safe-method-w-body).
 
         Args:
-            url: Target URL.
-            **kwargs: Any :meth:`request` option.
+            url: Absolute URL, or a relative one when ``base_url`` is set.
+            params: Query parameters appended to the URL. A mapping, a sequence of
+                key/value pairs, or an already-encoded string.
+            data: Request body. A mapping or sequence of pairs is form-encoded;
+                bytes/str are sent as-is; a file object, generator or async iterator
+                switches to chunked upload; a file-like value in a mapping is sent as
+                multipart.
+            headers: Headers merged with the session's defaults.
+            cookies: Cookies merged with the session jar for this request only.
+            files: Multipart file parts, alone or alongside ``data``.
+            auth: Per-call auth: callable, ``AuthBase``, or a 2-tuple.
+            timeout: One deadline or ``(connect, read)``.
+            allow_redirects: ``False`` returns the first 3xx instead of following it.
+            proxies: Per-call proxy mapping, merged over the session's.
+            hooks: Per-call response hooks.
+            stream: ``True`` leaves the body unread so ``iter_content`` can consume it
+                incrementally.
+            verify: ``True``/``False``/CA bundle path, for this call only.
+            cert: Rejected; ABI v8 has no client-certificate setting.
+            json: JSON body. Implies ``Content-Type: application/json`` unless a header
+                already sets it.
+            content: Raw body bytes; an alternative to ``data=`` for pre-encoded
+                payloads. Passing both raises ``ValueError``.
+            multipart: A :class:`~chrome_client.CurlMime` instance that becomes the
+                whole body.
+            impersonate: Profile override for this call, either an exact
+                ``chrome_<major>`` name or a curl_cffi ``chrome<major>`` alias.
+            proxy: Proxy URL for this call; wins over ``proxies``.
+            http_version: Pin ``"v1"``, ``"v2"`` or ``"v3"`` for this call.
+            max_redirects: Redirect cap. Below Chromium's 20, hops are driven from
+                Python so the caller's limit wins.
+            max_response_bytes: Body ceiling for this call.
+            referer: Sets ``Referer`` through Chromium's own referrer path, so it
+                reaches the wire the way a real Chrome sends it.
+            accept_encoding: Overrides ``Accept-Encoding``. Chromium would otherwise
+                choose it as part of the profile.
+            default_encoding: Fallback encoding for this response only.
+            discard_cookies: Neither send nor record cookies for this call.
+            retry: Attempt count or strategy for this call.
+            cache_mode: Chromium load flags, e.g. ``"bypass"`` to skip the HTTP cache.
+            priority: Request priority hint passed to the Core.
+            ja3: Rejected; the profile owns the ClientHello.
+            akamai: Rejected; the profile owns the HTTP/2 fingerprint.
+            perk: Rejected; the profile owns the TLS fingerprint.
+            extra_fp: Fingerprint overrides; only ``header_order`` and ``form_boundary``
+                are honourable.
+            content_callback: Called with the fully buffered body on non-streaming
+                requests.
+            raise_for_status: Check the response before returning it.
+            quote: ``False`` skips the percent-encoding pass over the URL.
+            curl_options: Rejected; there is no libcurl surface here.
+            interface: Rejected; no interface binding in ABI v8.
+            doh_url: Rejected; DoH is not exposed.
+            max_recv_speed: Rejected; Chromium owns transfer pacing.
+            thread: Rejected; the sync path already runs on the calling thread.
+            debug: Rejected; not a supported option.
 
         Returns:
             The :class:`~chrome_client.Response`.
@@ -1348,12 +2430,60 @@ class AsyncSession(BaseSession):
         """
         ...
 
-    async def send(self, request: PreparedRequest, **options: Any) -> AsyncResponse:
+    async def send(
+        self,
+        request: PreparedRequest,
+        timeout: Timeout = None,
+        proxies: Optional[Proxies] = None,
+        stream: Optional[bool] = None,
+        verify: Optional[Verify] = None,
+        cert: Any = None,
+        impersonate: Optional[Impersonate] = None,
+        proxy: Optional[str] = None,
+        http_version: Optional[HttpVersion] = None,
+        max_redirects: Optional[int] = None,
+        max_response_bytes: Optional[int] = None,
+        default_encoding: Optional[Union[str, Callable[[bytes], str]]] = None,
+        discard_cookies: Optional[bool] = None,
+        retry: Retry = None,
+        cache_mode: CacheMode = None,
+        priority: Optional[int] = None,
+        content_callback: Optional[ContentCallback] = None,
+        raise_for_status: Optional[bool] = None,
+        native_redirects: Optional[bool] = None,
+        python_redirects: Optional[bool] = None,
+    ) -> AsyncResponse:
         """Sends a prepared request.
 
         Args:
-            request: The :class:`~chrome_client.PreparedRequest` to send.
-            **options: Transport options, as produced by :meth:`request`.
+            request: The :class:`~chrome_client.PreparedRequest` to send. A request
+                whose URL matches a non-default adapter is delegated to that
+                adapter.
+            timeout: One deadline or ``(connect, read)``.
+            proxies: Per-call proxy mapping, merged over the session's.
+            stream: ``True`` leaves the body unread so ``iter_content`` can consume it
+                incrementally.
+            verify: ``True``/``False``/CA bundle path, for this call only.
+            cert: Rejected; ABI v8 has no client-certificate setting.
+            impersonate: Profile override for this call, either an exact
+                ``chrome_<major>`` name or a curl_cffi ``chrome<major>`` alias.
+            proxy: Proxy URL for this call; wins over ``proxies``.
+            http_version: Pin ``"v1"``, ``"v2"`` or ``"v3"`` for this call.
+            max_redirects: Redirect cap. Below Chromium's 20, hops are driven from
+                Python so the caller's limit wins.
+            max_response_bytes: Body ceiling for this call.
+            default_encoding: Fallback encoding for this response only.
+            discard_cookies: Neither send nor record cookies for this call.
+            retry: Attempt count or strategy for this call.
+            cache_mode: Chromium load flags, e.g. ``"bypass"`` to skip the HTTP cache.
+            priority: Request priority hint passed to the Core.
+            content_callback: Called with the fully buffered body on non-streaming
+                requests.
+            raise_for_status: Check the response before returning it.
+            native_redirects: ``True`` lets Chromium follow redirects internally (the
+                default).
+            python_redirects: ``True`` follows redirects from Python instead, honouring
+                ``max_redirects``.
 
         Returns:
             The :class:`~chrome_client.AsyncResponse`.
@@ -1365,14 +2495,109 @@ class AsyncSession(BaseSession):
         ...
 
     async def get(
-        self, url: str, params: Optional[ParamsLike] = None, **kwargs: Unpack[RequestOptions]
+        self,
+        url: str,
+        params: Optional[ParamsLike] = None,
+        data: Optional[Body] = None,
+        headers: Optional[HeadersLike] = None,
+        cookies: Optional[CookiesLike] = None,
+        files: FilesLike = None,
+        auth: AuthLike = None,
+        timeout: Timeout = None,
+        allow_redirects: bool = True,
+        proxies: Optional[Proxies] = None,
+        hooks: Optional[Hooks] = None,
+        stream: Optional[bool] = None,
+        verify: Optional[Verify] = None,
+        cert: Any = None,
+        json: Any = None,
+        content: Optional[Body] = None,
+        multipart: Optional[CurlMime] = None,
+        impersonate: Optional[Impersonate] = None,
+        proxy: Optional[str] = None,
+        http_version: Optional[HttpVersion] = None,
+        max_redirects: Optional[int] = None,
+        max_response_bytes: Optional[int] = None,
+        referer: Optional[str] = None,
+        accept_encoding: Optional[str] = None,
+        default_encoding: Optional[Union[str, Callable[[bytes], str]]] = None,
+        discard_cookies: Optional[bool] = None,
+        retry: Retry = None,
+        cache_mode: CacheMode = None,
+        priority: Optional[int] = None,
+        ja3: Optional[str] = None,
+        akamai: Optional[str] = None,
+        perk: Optional[str] = None,
+        extra_fp: Optional[Union[ExtraFingerprints, Mapping[str, Any]]] = None,
+        content_callback: Optional[ContentCallback] = None,
+        raise_for_status: Optional[bool] = None,
+        quote: Optional[bool] = None,
+        curl_options: Optional[Mapping[Any, Any]] = None,
+        interface: Optional[str] = None,
+        doh_url: Optional[str] = None,
+        max_recv_speed: Optional[int] = None,
+        thread: Any = None,
+        debug: Any = None,
     ) -> AsyncResponse:
         """Sends a ``GET``.
 
         Args:
-            url: Target URL.
-            params: Query parameters.
-            **kwargs: Any :meth:`request` option.
+            url: Absolute URL, or a relative one when ``base_url`` is set.
+            params: Query parameters appended to the URL. A mapping, a sequence of
+                key/value pairs, or an already-encoded string.
+            data: Request body. A mapping or sequence of pairs is form-encoded;
+                bytes/str are sent as-is; a file object, generator or async iterator
+                switches to chunked upload; a file-like value in a mapping is sent as
+                multipart.
+            headers: Headers merged with the session's defaults.
+            cookies: Cookies merged with the session jar for this request only.
+            files: Multipart file parts, alone or alongside ``data``.
+            auth: Per-call auth: callable, ``AuthBase``, or a 2-tuple.
+            timeout: One deadline or ``(connect, read)``.
+            allow_redirects: ``False`` returns the first 3xx instead of following it.
+            proxies: Per-call proxy mapping, merged over the session's.
+            hooks: Per-call response hooks.
+            stream: ``True`` leaves the body unread so ``iter_content`` can consume it
+                incrementally.
+            verify: ``True``/``False``/CA bundle path, for this call only.
+            cert: Rejected; ABI v8 has no client-certificate setting.
+            json: JSON body. Implies ``Content-Type: application/json`` unless a header
+                already sets it.
+            content: Raw body bytes; an alternative to ``data=`` for pre-encoded
+                payloads. Passing both raises ``ValueError``.
+            multipart: A :class:`~chrome_client.CurlMime` instance that becomes the
+                whole body.
+            impersonate: Profile override for this call, either an exact
+                ``chrome_<major>`` name or a curl_cffi ``chrome<major>`` alias.
+            proxy: Proxy URL for this call; wins over ``proxies``.
+            http_version: Pin ``"v1"``, ``"v2"`` or ``"v3"`` for this call.
+            max_redirects: Redirect cap. Below Chromium's 20, hops are driven from
+                Python so the caller's limit wins.
+            max_response_bytes: Body ceiling for this call.
+            referer: Sets ``Referer`` through Chromium's own referrer path, so it
+                reaches the wire the way a real Chrome sends it.
+            accept_encoding: Overrides ``Accept-Encoding``. Chromium would otherwise
+                choose it as part of the profile.
+            default_encoding: Fallback encoding for this response only.
+            discard_cookies: Neither send nor record cookies for this call.
+            retry: Attempt count or strategy for this call.
+            cache_mode: Chromium load flags, e.g. ``"bypass"`` to skip the HTTP cache.
+            priority: Request priority hint passed to the Core.
+            ja3: Rejected; the profile owns the ClientHello.
+            akamai: Rejected; the profile owns the HTTP/2 fingerprint.
+            perk: Rejected; the profile owns the TLS fingerprint.
+            extra_fp: Fingerprint overrides; only ``header_order`` and ``form_boundary``
+                are honourable.
+            content_callback: Called with the fully buffered body on non-streaming
+                requests.
+            raise_for_status: Check the response before returning it.
+            quote: ``False`` skips the percent-encoding pass over the URL.
+            curl_options: Rejected; there is no libcurl surface here.
+            interface: Rejected; no interface binding in ABI v8.
+            doh_url: Rejected; DoH is not exposed.
+            max_recv_speed: Rejected; Chromium owns transfer pacing.
+            thread: Rejected; the sync path already runs on the calling thread.
+            debug: Rejected; not a supported option.
 
         Returns:
             The :class:`~chrome_client.AsyncResponse`.
@@ -1383,24 +2608,220 @@ class AsyncSession(BaseSession):
         """
         ...
 
-    async def options(self, url: str, **kwargs: Unpack[RequestOptions]) -> AsyncResponse:
+    async def options(
+        self,
+        url: str,
+        params: Optional[ParamsLike] = None,
+        data: Optional[Body] = None,
+        headers: Optional[HeadersLike] = None,
+        cookies: Optional[CookiesLike] = None,
+        files: FilesLike = None,
+        auth: AuthLike = None,
+        timeout: Timeout = None,
+        allow_redirects: bool = True,
+        proxies: Optional[Proxies] = None,
+        hooks: Optional[Hooks] = None,
+        stream: Optional[bool] = None,
+        verify: Optional[Verify] = None,
+        cert: Any = None,
+        json: Any = None,
+        content: Optional[Body] = None,
+        multipart: Optional[CurlMime] = None,
+        impersonate: Optional[Impersonate] = None,
+        proxy: Optional[str] = None,
+        http_version: Optional[HttpVersion] = None,
+        max_redirects: Optional[int] = None,
+        max_response_bytes: Optional[int] = None,
+        referer: Optional[str] = None,
+        accept_encoding: Optional[str] = None,
+        default_encoding: Optional[Union[str, Callable[[bytes], str]]] = None,
+        discard_cookies: Optional[bool] = None,
+        retry: Retry = None,
+        cache_mode: CacheMode = None,
+        priority: Optional[int] = None,
+        ja3: Optional[str] = None,
+        akamai: Optional[str] = None,
+        perk: Optional[str] = None,
+        extra_fp: Optional[Union[ExtraFingerprints, Mapping[str, Any]]] = None,
+        content_callback: Optional[ContentCallback] = None,
+        raise_for_status: Optional[bool] = None,
+        quote: Optional[bool] = None,
+        curl_options: Optional[Mapping[Any, Any]] = None,
+        interface: Optional[str] = None,
+        doh_url: Optional[str] = None,
+        max_recv_speed: Optional[int] = None,
+        thread: Any = None,
+        debug: Any = None,
+    ) -> AsyncResponse:
         """Sends an ``OPTIONS``.
 
         Args:
-            url: Target URL.
-            **kwargs: Any :meth:`request` option.
+            url: Absolute URL, or a relative one when ``base_url`` is set.
+            params: Query parameters appended to the URL. A mapping, a sequence of
+                key/value pairs, or an already-encoded string.
+            data: Request body. A mapping or sequence of pairs is form-encoded;
+                bytes/str are sent as-is; a file object, generator or async iterator
+                switches to chunked upload; a file-like value in a mapping is sent as
+                multipart.
+            headers: Headers merged with the session's defaults.
+            cookies: Cookies merged with the session jar for this request only.
+            files: Multipart file parts, alone or alongside ``data``.
+            auth: Per-call auth: callable, ``AuthBase``, or a 2-tuple.
+            timeout: One deadline or ``(connect, read)``.
+            allow_redirects: ``False`` returns the first 3xx instead of following it.
+            proxies: Per-call proxy mapping, merged over the session's.
+            hooks: Per-call response hooks.
+            stream: ``True`` leaves the body unread so ``iter_content`` can consume it
+                incrementally.
+            verify: ``True``/``False``/CA bundle path, for this call only.
+            cert: Rejected; ABI v8 has no client-certificate setting.
+            json: JSON body. Implies ``Content-Type: application/json`` unless a header
+                already sets it.
+            content: Raw body bytes; an alternative to ``data=`` for pre-encoded
+                payloads. Passing both raises ``ValueError``.
+            multipart: A :class:`~chrome_client.CurlMime` instance that becomes the
+                whole body.
+            impersonate: Profile override for this call, either an exact
+                ``chrome_<major>`` name or a curl_cffi ``chrome<major>`` alias.
+            proxy: Proxy URL for this call; wins over ``proxies``.
+            http_version: Pin ``"v1"``, ``"v2"`` or ``"v3"`` for this call.
+            max_redirects: Redirect cap. Below Chromium's 20, hops are driven from
+                Python so the caller's limit wins.
+            max_response_bytes: Body ceiling for this call.
+            referer: Sets ``Referer`` through Chromium's own referrer path, so it
+                reaches the wire the way a real Chrome sends it.
+            accept_encoding: Overrides ``Accept-Encoding``. Chromium would otherwise
+                choose it as part of the profile.
+            default_encoding: Fallback encoding for this response only.
+            discard_cookies: Neither send nor record cookies for this call.
+            retry: Attempt count or strategy for this call.
+            cache_mode: Chromium load flags, e.g. ``"bypass"`` to skip the HTTP cache.
+            priority: Request priority hint passed to the Core.
+            ja3: Rejected; the profile owns the ClientHello.
+            akamai: Rejected; the profile owns the HTTP/2 fingerprint.
+            perk: Rejected; the profile owns the TLS fingerprint.
+            extra_fp: Fingerprint overrides; only ``header_order`` and ``form_boundary``
+                are honourable.
+            content_callback: Called with the fully buffered body on non-streaming
+                requests.
+            raise_for_status: Check the response before returning it.
+            quote: ``False`` skips the percent-encoding pass over the URL.
+            curl_options: Rejected; there is no libcurl surface here.
+            interface: Rejected; no interface binding in ABI v8.
+            doh_url: Rejected; DoH is not exposed.
+            max_recv_speed: Rejected; Chromium owns transfer pacing.
+            thread: Rejected; the sync path already runs on the calling thread.
+            debug: Rejected; not a supported option.
 
         Returns:
             The :class:`~chrome_client.AsyncResponse`.
         """
         ...
 
-    async def head(self, url: str, **kwargs: Unpack[RequestOptions]) -> AsyncResponse:
+    async def head(
+        self,
+        url: str,
+        params: Optional[ParamsLike] = None,
+        data: Optional[Body] = None,
+        headers: Optional[HeadersLike] = None,
+        cookies: Optional[CookiesLike] = None,
+        files: FilesLike = None,
+        auth: AuthLike = None,
+        timeout: Timeout = None,
+        allow_redirects: bool = False,
+        proxies: Optional[Proxies] = None,
+        hooks: Optional[Hooks] = None,
+        stream: Optional[bool] = None,
+        verify: Optional[Verify] = None,
+        cert: Any = None,
+        json: Any = None,
+        content: Optional[Body] = None,
+        multipart: Optional[CurlMime] = None,
+        impersonate: Optional[Impersonate] = None,
+        proxy: Optional[str] = None,
+        http_version: Optional[HttpVersion] = None,
+        max_redirects: Optional[int] = None,
+        max_response_bytes: Optional[int] = None,
+        referer: Optional[str] = None,
+        accept_encoding: Optional[str] = None,
+        default_encoding: Optional[Union[str, Callable[[bytes], str]]] = None,
+        discard_cookies: Optional[bool] = None,
+        retry: Retry = None,
+        cache_mode: CacheMode = None,
+        priority: Optional[int] = None,
+        ja3: Optional[str] = None,
+        akamai: Optional[str] = None,
+        perk: Optional[str] = None,
+        extra_fp: Optional[Union[ExtraFingerprints, Mapping[str, Any]]] = None,
+        content_callback: Optional[ContentCallback] = None,
+        raise_for_status: Optional[bool] = None,
+        quote: Optional[bool] = None,
+        curl_options: Optional[Mapping[Any, Any]] = None,
+        interface: Optional[str] = None,
+        doh_url: Optional[str] = None,
+        max_recv_speed: Optional[int] = None,
+        thread: Any = None,
+        debug: Any = None,
+    ) -> AsyncResponse:
         """Sends a ``HEAD`` (``allow_redirects`` defaults to ``False``).
 
         Args:
-            url: Target URL.
-            **kwargs: Any :meth:`request` option.
+            url: Absolute URL, or a relative one when ``base_url`` is set.
+            params: Query parameters appended to the URL. A mapping, a sequence of
+                key/value pairs, or an already-encoded string.
+            data: Request body. A mapping or sequence of pairs is form-encoded;
+                bytes/str are sent as-is; a file object, generator or async iterator
+                switches to chunked upload; a file-like value in a mapping is sent as
+                multipart.
+            headers: Headers merged with the session's defaults.
+            cookies: Cookies merged with the session jar for this request only.
+            files: Multipart file parts, alone or alongside ``data``.
+            auth: Per-call auth: callable, ``AuthBase``, or a 2-tuple.
+            timeout: One deadline or ``(connect, read)``.
+            allow_redirects: ``False`` returns the first 3xx instead of following it.
+            proxies: Per-call proxy mapping, merged over the session's.
+            hooks: Per-call response hooks.
+            stream: ``True`` leaves the body unread so ``iter_content`` can consume it
+                incrementally.
+            verify: ``True``/``False``/CA bundle path, for this call only.
+            cert: Rejected; ABI v8 has no client-certificate setting.
+            json: JSON body. Implies ``Content-Type: application/json`` unless a header
+                already sets it.
+            content: Raw body bytes; an alternative to ``data=`` for pre-encoded
+                payloads. Passing both raises ``ValueError``.
+            multipart: A :class:`~chrome_client.CurlMime` instance that becomes the
+                whole body.
+            impersonate: Profile override for this call, either an exact
+                ``chrome_<major>`` name or a curl_cffi ``chrome<major>`` alias.
+            proxy: Proxy URL for this call; wins over ``proxies``.
+            http_version: Pin ``"v1"``, ``"v2"`` or ``"v3"`` for this call.
+            max_redirects: Redirect cap. Below Chromium's 20, hops are driven from
+                Python so the caller's limit wins.
+            max_response_bytes: Body ceiling for this call.
+            referer: Sets ``Referer`` through Chromium's own referrer path, so it
+                reaches the wire the way a real Chrome sends it.
+            accept_encoding: Overrides ``Accept-Encoding``. Chromium would otherwise
+                choose it as part of the profile.
+            default_encoding: Fallback encoding for this response only.
+            discard_cookies: Neither send nor record cookies for this call.
+            retry: Attempt count or strategy for this call.
+            cache_mode: Chromium load flags, e.g. ``"bypass"`` to skip the HTTP cache.
+            priority: Request priority hint passed to the Core.
+            ja3: Rejected; the profile owns the ClientHello.
+            akamai: Rejected; the profile owns the HTTP/2 fingerprint.
+            perk: Rejected; the profile owns the TLS fingerprint.
+            extra_fp: Fingerprint overrides; only ``header_order`` and ``form_boundary``
+                are honourable.
+            content_callback: Called with the fully buffered body on non-streaming
+                requests.
+            raise_for_status: Check the response before returning it.
+            quote: ``False`` skips the percent-encoding pass over the URL.
+            curl_options: Rejected; there is no libcurl surface here.
+            interface: Rejected; no interface binding in ABI v8.
+            doh_url: Rejected; DoH is not exposed.
+            max_recv_speed: Rejected; Chromium owns transfer pacing.
+            thread: Rejected; the sync path already runs on the calling thread.
+            debug: Rejected; not a supported option.
 
         Returns:
             The :class:`~chrome_client.AsyncResponse` with an empty body.
@@ -1412,15 +2833,105 @@ class AsyncSession(BaseSession):
         url: str,
         data: Optional[Body] = None,
         json: Any = None,
-        **kwargs: Unpack[RequestOptions],
+        params: Optional[ParamsLike] = None,
+        headers: Optional[HeadersLike] = None,
+        cookies: Optional[CookiesLike] = None,
+        files: FilesLike = None,
+        auth: AuthLike = None,
+        timeout: Timeout = None,
+        allow_redirects: bool = True,
+        proxies: Optional[Proxies] = None,
+        hooks: Optional[Hooks] = None,
+        stream: Optional[bool] = None,
+        verify: Optional[Verify] = None,
+        cert: Any = None,
+        content: Optional[Body] = None,
+        multipart: Optional[CurlMime] = None,
+        impersonate: Optional[Impersonate] = None,
+        proxy: Optional[str] = None,
+        http_version: Optional[HttpVersion] = None,
+        max_redirects: Optional[int] = None,
+        max_response_bytes: Optional[int] = None,
+        referer: Optional[str] = None,
+        accept_encoding: Optional[str] = None,
+        default_encoding: Optional[Union[str, Callable[[bytes], str]]] = None,
+        discard_cookies: Optional[bool] = None,
+        retry: Retry = None,
+        cache_mode: CacheMode = None,
+        priority: Optional[int] = None,
+        ja3: Optional[str] = None,
+        akamai: Optional[str] = None,
+        perk: Optional[str] = None,
+        extra_fp: Optional[Union[ExtraFingerprints, Mapping[str, Any]]] = None,
+        content_callback: Optional[ContentCallback] = None,
+        raise_for_status: Optional[bool] = None,
+        quote: Optional[bool] = None,
+        curl_options: Optional[Mapping[Any, Any]] = None,
+        interface: Optional[str] = None,
+        doh_url: Optional[str] = None,
+        max_recv_speed: Optional[int] = None,
+        thread: Any = None,
+        debug: Any = None,
     ) -> AsyncResponse:
         """Sends a ``POST``.
 
         Args:
-            url: Target URL.
-            data: Form body, raw bytes, or an (async) iterator to upload chunked.
-            json: JSON body.
-            **kwargs: Any :meth:`request` option.
+            url: Absolute URL, or a relative one when ``base_url`` is set.
+            data: Request body. A mapping or sequence of pairs is form-encoded;
+                bytes/str are sent as-is; a file object, generator or async iterator
+                switches to chunked upload; a file-like value in a mapping is sent as
+                multipart.
+            json: JSON body. Implies ``Content-Type: application/json`` unless a header
+                already sets it.
+            params: Query parameters appended to the URL. A mapping, a sequence of
+                key/value pairs, or an already-encoded string.
+            headers: Headers merged with the session's defaults.
+            cookies: Cookies merged with the session jar for this request only.
+            files: Multipart file parts, alone or alongside ``data``.
+            auth: Per-call auth: callable, ``AuthBase``, or a 2-tuple.
+            timeout: One deadline or ``(connect, read)``.
+            allow_redirects: ``False`` returns the first 3xx instead of following it.
+            proxies: Per-call proxy mapping, merged over the session's.
+            hooks: Per-call response hooks.
+            stream: ``True`` leaves the body unread so ``iter_content`` can consume it
+                incrementally.
+            verify: ``True``/``False``/CA bundle path, for this call only.
+            cert: Rejected; ABI v8 has no client-certificate setting.
+            content: Raw body bytes; an alternative to ``data=`` for pre-encoded
+                payloads. Passing both raises ``ValueError``.
+            multipart: A :class:`~chrome_client.CurlMime` instance that becomes the
+                whole body.
+            impersonate: Profile override for this call, either an exact
+                ``chrome_<major>`` name or a curl_cffi ``chrome<major>`` alias.
+            proxy: Proxy URL for this call; wins over ``proxies``.
+            http_version: Pin ``"v1"``, ``"v2"`` or ``"v3"`` for this call.
+            max_redirects: Redirect cap. Below Chromium's 20, hops are driven from
+                Python so the caller's limit wins.
+            max_response_bytes: Body ceiling for this call.
+            referer: Sets ``Referer`` through Chromium's own referrer path, so it
+                reaches the wire the way a real Chrome sends it.
+            accept_encoding: Overrides ``Accept-Encoding``. Chromium would otherwise
+                choose it as part of the profile.
+            default_encoding: Fallback encoding for this response only.
+            discard_cookies: Neither send nor record cookies for this call.
+            retry: Attempt count or strategy for this call.
+            cache_mode: Chromium load flags, e.g. ``"bypass"`` to skip the HTTP cache.
+            priority: Request priority hint passed to the Core.
+            ja3: Rejected; the profile owns the ClientHello.
+            akamai: Rejected; the profile owns the HTTP/2 fingerprint.
+            perk: Rejected; the profile owns the TLS fingerprint.
+            extra_fp: Fingerprint overrides; only ``header_order`` and ``form_boundary``
+                are honourable.
+            content_callback: Called with the fully buffered body on non-streaming
+                requests.
+            raise_for_status: Check the response before returning it.
+            quote: ``False`` skips the percent-encoding pass over the URL.
+            curl_options: Rejected; there is no libcurl surface here.
+            interface: Rejected; no interface binding in ABI v8.
+            doh_url: Rejected; DoH is not exposed.
+            max_recv_speed: Rejected; Chromium owns transfer pacing.
+            thread: Rejected; the sync path already runs on the calling thread.
+            debug: Rejected; not a supported option.
 
         Returns:
             The :class:`~chrome_client.AsyncResponse`.
@@ -1431,16 +2942,106 @@ class AsyncSession(BaseSession):
         self,
         url: str,
         data: Optional[Body] = None,
+        params: Optional[ParamsLike] = None,
+        headers: Optional[HeadersLike] = None,
+        cookies: Optional[CookiesLike] = None,
+        files: FilesLike = None,
+        auth: AuthLike = None,
+        timeout: Timeout = None,
+        allow_redirects: bool = True,
+        proxies: Optional[Proxies] = None,
+        hooks: Optional[Hooks] = None,
+        stream: Optional[bool] = None,
+        verify: Optional[Verify] = None,
+        cert: Any = None,
         json: Any = None,
-        **kwargs: Unpack[RequestOptions],
+        content: Optional[Body] = None,
+        multipart: Optional[CurlMime] = None,
+        impersonate: Optional[Impersonate] = None,
+        proxy: Optional[str] = None,
+        http_version: Optional[HttpVersion] = None,
+        max_redirects: Optional[int] = None,
+        max_response_bytes: Optional[int] = None,
+        referer: Optional[str] = None,
+        accept_encoding: Optional[str] = None,
+        default_encoding: Optional[Union[str, Callable[[bytes], str]]] = None,
+        discard_cookies: Optional[bool] = None,
+        retry: Retry = None,
+        cache_mode: CacheMode = None,
+        priority: Optional[int] = None,
+        ja3: Optional[str] = None,
+        akamai: Optional[str] = None,
+        perk: Optional[str] = None,
+        extra_fp: Optional[Union[ExtraFingerprints, Mapping[str, Any]]] = None,
+        content_callback: Optional[ContentCallback] = None,
+        raise_for_status: Optional[bool] = None,
+        quote: Optional[bool] = None,
+        curl_options: Optional[Mapping[Any, Any]] = None,
+        interface: Optional[str] = None,
+        doh_url: Optional[str] = None,
+        max_recv_speed: Optional[int] = None,
+        thread: Any = None,
+        debug: Any = None,
     ) -> AsyncResponse:
         """Sends a ``PUT``.
 
         Args:
-            url: Target URL.
-            data: Request body.
-            json: JSON body; sets ``Content-Type: application/json``.
-            **kwargs: Any :meth:`request` option.
+            url: Absolute URL, or a relative one when ``base_url`` is set.
+            data: Request body. A mapping or sequence of pairs is form-encoded;
+                bytes/str are sent as-is; a file object, generator or async iterator
+                switches to chunked upload; a file-like value in a mapping is sent as
+                multipart.
+            params: Query parameters appended to the URL. A mapping, a sequence of
+                key/value pairs, or an already-encoded string.
+            headers: Headers merged with the session's defaults.
+            cookies: Cookies merged with the session jar for this request only.
+            files: Multipart file parts, alone or alongside ``data``.
+            auth: Per-call auth: callable, ``AuthBase``, or a 2-tuple.
+            timeout: One deadline or ``(connect, read)``.
+            allow_redirects: ``False`` returns the first 3xx instead of following it.
+            proxies: Per-call proxy mapping, merged over the session's.
+            hooks: Per-call response hooks.
+            stream: ``True`` leaves the body unread so ``iter_content`` can consume it
+                incrementally.
+            verify: ``True``/``False``/CA bundle path, for this call only.
+            cert: Rejected; ABI v8 has no client-certificate setting.
+            json: JSON body. Implies ``Content-Type: application/json`` unless a header
+                already sets it.
+            content: Raw body bytes; an alternative to ``data=`` for pre-encoded
+                payloads. Passing both raises ``ValueError``.
+            multipart: A :class:`~chrome_client.CurlMime` instance that becomes the
+                whole body.
+            impersonate: Profile override for this call, either an exact
+                ``chrome_<major>`` name or a curl_cffi ``chrome<major>`` alias.
+            proxy: Proxy URL for this call; wins over ``proxies``.
+            http_version: Pin ``"v1"``, ``"v2"`` or ``"v3"`` for this call.
+            max_redirects: Redirect cap. Below Chromium's 20, hops are driven from
+                Python so the caller's limit wins.
+            max_response_bytes: Body ceiling for this call.
+            referer: Sets ``Referer`` through Chromium's own referrer path, so it
+                reaches the wire the way a real Chrome sends it.
+            accept_encoding: Overrides ``Accept-Encoding``. Chromium would otherwise
+                choose it as part of the profile.
+            default_encoding: Fallback encoding for this response only.
+            discard_cookies: Neither send nor record cookies for this call.
+            retry: Attempt count or strategy for this call.
+            cache_mode: Chromium load flags, e.g. ``"bypass"`` to skip the HTTP cache.
+            priority: Request priority hint passed to the Core.
+            ja3: Rejected; the profile owns the ClientHello.
+            akamai: Rejected; the profile owns the HTTP/2 fingerprint.
+            perk: Rejected; the profile owns the TLS fingerprint.
+            extra_fp: Fingerprint overrides; only ``header_order`` and ``form_boundary``
+                are honourable.
+            content_callback: Called with the fully buffered body on non-streaming
+                requests.
+            raise_for_status: Check the response before returning it.
+            quote: ``False`` skips the percent-encoding pass over the URL.
+            curl_options: Rejected; there is no libcurl surface here.
+            interface: Rejected; no interface binding in ABI v8.
+            doh_url: Rejected; DoH is not exposed.
+            max_recv_speed: Rejected; Chromium owns transfer pacing.
+            thread: Rejected; the sync path already runs on the calling thread.
+            debug: Rejected; not a supported option.
 
         Returns:
             The :class:`~chrome_client.AsyncResponse`.
@@ -1451,52 +3052,436 @@ class AsyncSession(BaseSession):
         self,
         url: str,
         data: Optional[Body] = None,
+        params: Optional[ParamsLike] = None,
+        headers: Optional[HeadersLike] = None,
+        cookies: Optional[CookiesLike] = None,
+        files: FilesLike = None,
+        auth: AuthLike = None,
+        timeout: Timeout = None,
+        allow_redirects: bool = True,
+        proxies: Optional[Proxies] = None,
+        hooks: Optional[Hooks] = None,
+        stream: Optional[bool] = None,
+        verify: Optional[Verify] = None,
+        cert: Any = None,
         json: Any = None,
-        **kwargs: Unpack[RequestOptions],
+        content: Optional[Body] = None,
+        multipart: Optional[CurlMime] = None,
+        impersonate: Optional[Impersonate] = None,
+        proxy: Optional[str] = None,
+        http_version: Optional[HttpVersion] = None,
+        max_redirects: Optional[int] = None,
+        max_response_bytes: Optional[int] = None,
+        referer: Optional[str] = None,
+        accept_encoding: Optional[str] = None,
+        default_encoding: Optional[Union[str, Callable[[bytes], str]]] = None,
+        discard_cookies: Optional[bool] = None,
+        retry: Retry = None,
+        cache_mode: CacheMode = None,
+        priority: Optional[int] = None,
+        ja3: Optional[str] = None,
+        akamai: Optional[str] = None,
+        perk: Optional[str] = None,
+        extra_fp: Optional[Union[ExtraFingerprints, Mapping[str, Any]]] = None,
+        content_callback: Optional[ContentCallback] = None,
+        raise_for_status: Optional[bool] = None,
+        quote: Optional[bool] = None,
+        curl_options: Optional[Mapping[Any, Any]] = None,
+        interface: Optional[str] = None,
+        doh_url: Optional[str] = None,
+        max_recv_speed: Optional[int] = None,
+        thread: Any = None,
+        debug: Any = None,
     ) -> AsyncResponse:
         """Sends a ``PATCH``.
 
         Args:
-            url: Target URL.
-            data: Request body.
-            json: JSON body; sets ``Content-Type: application/json``.
-            **kwargs: Any :meth:`request` option.
+            url: Absolute URL, or a relative one when ``base_url`` is set.
+            data: Request body. A mapping or sequence of pairs is form-encoded;
+                bytes/str are sent as-is; a file object, generator or async iterator
+                switches to chunked upload; a file-like value in a mapping is sent as
+                multipart.
+            params: Query parameters appended to the URL. A mapping, a sequence of
+                key/value pairs, or an already-encoded string.
+            headers: Headers merged with the session's defaults.
+            cookies: Cookies merged with the session jar for this request only.
+            files: Multipart file parts, alone or alongside ``data``.
+            auth: Per-call auth: callable, ``AuthBase``, or a 2-tuple.
+            timeout: One deadline or ``(connect, read)``.
+            allow_redirects: ``False`` returns the first 3xx instead of following it.
+            proxies: Per-call proxy mapping, merged over the session's.
+            hooks: Per-call response hooks.
+            stream: ``True`` leaves the body unread so ``iter_content`` can consume it
+                incrementally.
+            verify: ``True``/``False``/CA bundle path, for this call only.
+            cert: Rejected; ABI v8 has no client-certificate setting.
+            json: JSON body. Implies ``Content-Type: application/json`` unless a header
+                already sets it.
+            content: Raw body bytes; an alternative to ``data=`` for pre-encoded
+                payloads. Passing both raises ``ValueError``.
+            multipart: A :class:`~chrome_client.CurlMime` instance that becomes the
+                whole body.
+            impersonate: Profile override for this call, either an exact
+                ``chrome_<major>`` name or a curl_cffi ``chrome<major>`` alias.
+            proxy: Proxy URL for this call; wins over ``proxies``.
+            http_version: Pin ``"v1"``, ``"v2"`` or ``"v3"`` for this call.
+            max_redirects: Redirect cap. Below Chromium's 20, hops are driven from
+                Python so the caller's limit wins.
+            max_response_bytes: Body ceiling for this call.
+            referer: Sets ``Referer`` through Chromium's own referrer path, so it
+                reaches the wire the way a real Chrome sends it.
+            accept_encoding: Overrides ``Accept-Encoding``. Chromium would otherwise
+                choose it as part of the profile.
+            default_encoding: Fallback encoding for this response only.
+            discard_cookies: Neither send nor record cookies for this call.
+            retry: Attempt count or strategy for this call.
+            cache_mode: Chromium load flags, e.g. ``"bypass"`` to skip the HTTP cache.
+            priority: Request priority hint passed to the Core.
+            ja3: Rejected; the profile owns the ClientHello.
+            akamai: Rejected; the profile owns the HTTP/2 fingerprint.
+            perk: Rejected; the profile owns the TLS fingerprint.
+            extra_fp: Fingerprint overrides; only ``header_order`` and ``form_boundary``
+                are honourable.
+            content_callback: Called with the fully buffered body on non-streaming
+                requests.
+            raise_for_status: Check the response before returning it.
+            quote: ``False`` skips the percent-encoding pass over the URL.
+            curl_options: Rejected; there is no libcurl surface here.
+            interface: Rejected; no interface binding in ABI v8.
+            doh_url: Rejected; DoH is not exposed.
+            max_recv_speed: Rejected; Chromium owns transfer pacing.
+            thread: Rejected; the sync path already runs on the calling thread.
+            debug: Rejected; not a supported option.
 
         Returns:
             The :class:`~chrome_client.AsyncResponse`.
         """
         ...
 
-    async def delete(self, url: str, **kwargs: Unpack[RequestOptions]) -> AsyncResponse:
+    async def delete(
+        self,
+        url: str,
+        params: Optional[ParamsLike] = None,
+        data: Optional[Body] = None,
+        headers: Optional[HeadersLike] = None,
+        cookies: Optional[CookiesLike] = None,
+        files: FilesLike = None,
+        auth: AuthLike = None,
+        timeout: Timeout = None,
+        allow_redirects: bool = True,
+        proxies: Optional[Proxies] = None,
+        hooks: Optional[Hooks] = None,
+        stream: Optional[bool] = None,
+        verify: Optional[Verify] = None,
+        cert: Any = None,
+        json: Any = None,
+        content: Optional[Body] = None,
+        multipart: Optional[CurlMime] = None,
+        impersonate: Optional[Impersonate] = None,
+        proxy: Optional[str] = None,
+        http_version: Optional[HttpVersion] = None,
+        max_redirects: Optional[int] = None,
+        max_response_bytes: Optional[int] = None,
+        referer: Optional[str] = None,
+        accept_encoding: Optional[str] = None,
+        default_encoding: Optional[Union[str, Callable[[bytes], str]]] = None,
+        discard_cookies: Optional[bool] = None,
+        retry: Retry = None,
+        cache_mode: CacheMode = None,
+        priority: Optional[int] = None,
+        ja3: Optional[str] = None,
+        akamai: Optional[str] = None,
+        perk: Optional[str] = None,
+        extra_fp: Optional[Union[ExtraFingerprints, Mapping[str, Any]]] = None,
+        content_callback: Optional[ContentCallback] = None,
+        raise_for_status: Optional[bool] = None,
+        quote: Optional[bool] = None,
+        curl_options: Optional[Mapping[Any, Any]] = None,
+        interface: Optional[str] = None,
+        doh_url: Optional[str] = None,
+        max_recv_speed: Optional[int] = None,
+        thread: Any = None,
+        debug: Any = None,
+    ) -> AsyncResponse:
         """Sends a ``DELETE``.
 
         Args:
-            url: Target URL.
-            **kwargs: Any :meth:`request` option.
+            url: Absolute URL, or a relative one when ``base_url`` is set.
+            params: Query parameters appended to the URL. A mapping, a sequence of
+                key/value pairs, or an already-encoded string.
+            data: Request body. A mapping or sequence of pairs is form-encoded;
+                bytes/str are sent as-is; a file object, generator or async iterator
+                switches to chunked upload; a file-like value in a mapping is sent as
+                multipart.
+            headers: Headers merged with the session's defaults.
+            cookies: Cookies merged with the session jar for this request only.
+            files: Multipart file parts, alone or alongside ``data``.
+            auth: Per-call auth: callable, ``AuthBase``, or a 2-tuple.
+            timeout: One deadline or ``(connect, read)``.
+            allow_redirects: ``False`` returns the first 3xx instead of following it.
+            proxies: Per-call proxy mapping, merged over the session's.
+            hooks: Per-call response hooks.
+            stream: ``True`` leaves the body unread so ``iter_content`` can consume it
+                incrementally.
+            verify: ``True``/``False``/CA bundle path, for this call only.
+            cert: Rejected; ABI v8 has no client-certificate setting.
+            json: JSON body. Implies ``Content-Type: application/json`` unless a header
+                already sets it.
+            content: Raw body bytes; an alternative to ``data=`` for pre-encoded
+                payloads. Passing both raises ``ValueError``.
+            multipart: A :class:`~chrome_client.CurlMime` instance that becomes the
+                whole body.
+            impersonate: Profile override for this call, either an exact
+                ``chrome_<major>`` name or a curl_cffi ``chrome<major>`` alias.
+            proxy: Proxy URL for this call; wins over ``proxies``.
+            http_version: Pin ``"v1"``, ``"v2"`` or ``"v3"`` for this call.
+            max_redirects: Redirect cap. Below Chromium's 20, hops are driven from
+                Python so the caller's limit wins.
+            max_response_bytes: Body ceiling for this call.
+            referer: Sets ``Referer`` through Chromium's own referrer path, so it
+                reaches the wire the way a real Chrome sends it.
+            accept_encoding: Overrides ``Accept-Encoding``. Chromium would otherwise
+                choose it as part of the profile.
+            default_encoding: Fallback encoding for this response only.
+            discard_cookies: Neither send nor record cookies for this call.
+            retry: Attempt count or strategy for this call.
+            cache_mode: Chromium load flags, e.g. ``"bypass"`` to skip the HTTP cache.
+            priority: Request priority hint passed to the Core.
+            ja3: Rejected; the profile owns the ClientHello.
+            akamai: Rejected; the profile owns the HTTP/2 fingerprint.
+            perk: Rejected; the profile owns the TLS fingerprint.
+            extra_fp: Fingerprint overrides; only ``header_order`` and ``form_boundary``
+                are honourable.
+            content_callback: Called with the fully buffered body on non-streaming
+                requests.
+            raise_for_status: Check the response before returning it.
+            quote: ``False`` skips the percent-encoding pass over the URL.
+            curl_options: Rejected; there is no libcurl surface here.
+            interface: Rejected; no interface binding in ABI v8.
+            doh_url: Rejected; DoH is not exposed.
+            max_recv_speed: Rejected; Chromium owns transfer pacing.
+            thread: Rejected; the sync path already runs on the calling thread.
+            debug: Rejected; not a supported option.
 
         Returns:
             The :class:`~chrome_client.AsyncResponse`.
         """
         ...
 
-    async def trace(self, url: str, **kwargs: Unpack[RequestOptions]) -> AsyncResponse:
+    async def trace(
+        self,
+        url: str,
+        params: Optional[ParamsLike] = None,
+        data: Optional[Body] = None,
+        headers: Optional[HeadersLike] = None,
+        cookies: Optional[CookiesLike] = None,
+        files: FilesLike = None,
+        auth: AuthLike = None,
+        timeout: Timeout = None,
+        allow_redirects: bool = True,
+        proxies: Optional[Proxies] = None,
+        hooks: Optional[Hooks] = None,
+        stream: Optional[bool] = None,
+        verify: Optional[Verify] = None,
+        cert: Any = None,
+        json: Any = None,
+        content: Optional[Body] = None,
+        multipart: Optional[CurlMime] = None,
+        impersonate: Optional[Impersonate] = None,
+        proxy: Optional[str] = None,
+        http_version: Optional[HttpVersion] = None,
+        max_redirects: Optional[int] = None,
+        max_response_bytes: Optional[int] = None,
+        referer: Optional[str] = None,
+        accept_encoding: Optional[str] = None,
+        default_encoding: Optional[Union[str, Callable[[bytes], str]]] = None,
+        discard_cookies: Optional[bool] = None,
+        retry: Retry = None,
+        cache_mode: CacheMode = None,
+        priority: Optional[int] = None,
+        ja3: Optional[str] = None,
+        akamai: Optional[str] = None,
+        perk: Optional[str] = None,
+        extra_fp: Optional[Union[ExtraFingerprints, Mapping[str, Any]]] = None,
+        content_callback: Optional[ContentCallback] = None,
+        raise_for_status: Optional[bool] = None,
+        quote: Optional[bool] = None,
+        curl_options: Optional[Mapping[Any, Any]] = None,
+        interface: Optional[str] = None,
+        doh_url: Optional[str] = None,
+        max_recv_speed: Optional[int] = None,
+        thread: Any = None,
+        debug: Any = None,
+    ) -> AsyncResponse:
         """Sends a ``TRACE``.
 
         Args:
-            url: Target URL.
-            **kwargs: Any :meth:`request` option.
+            url: Absolute URL, or a relative one when ``base_url`` is set.
+            params: Query parameters appended to the URL. A mapping, a sequence of
+                key/value pairs, or an already-encoded string.
+            data: Request body. A mapping or sequence of pairs is form-encoded;
+                bytes/str are sent as-is; a file object, generator or async iterator
+                switches to chunked upload; a file-like value in a mapping is sent as
+                multipart.
+            headers: Headers merged with the session's defaults.
+            cookies: Cookies merged with the session jar for this request only.
+            files: Multipart file parts, alone or alongside ``data``.
+            auth: Per-call auth: callable, ``AuthBase``, or a 2-tuple.
+            timeout: One deadline or ``(connect, read)``.
+            allow_redirects: ``False`` returns the first 3xx instead of following it.
+            proxies: Per-call proxy mapping, merged over the session's.
+            hooks: Per-call response hooks.
+            stream: ``True`` leaves the body unread so ``iter_content`` can consume it
+                incrementally.
+            verify: ``True``/``False``/CA bundle path, for this call only.
+            cert: Rejected; ABI v8 has no client-certificate setting.
+            json: JSON body. Implies ``Content-Type: application/json`` unless a header
+                already sets it.
+            content: Raw body bytes; an alternative to ``data=`` for pre-encoded
+                payloads. Passing both raises ``ValueError``.
+            multipart: A :class:`~chrome_client.CurlMime` instance that becomes the
+                whole body.
+            impersonate: Profile override for this call, either an exact
+                ``chrome_<major>`` name or a curl_cffi ``chrome<major>`` alias.
+            proxy: Proxy URL for this call; wins over ``proxies``.
+            http_version: Pin ``"v1"``, ``"v2"`` or ``"v3"`` for this call.
+            max_redirects: Redirect cap. Below Chromium's 20, hops are driven from
+                Python so the caller's limit wins.
+            max_response_bytes: Body ceiling for this call.
+            referer: Sets ``Referer`` through Chromium's own referrer path, so it
+                reaches the wire the way a real Chrome sends it.
+            accept_encoding: Overrides ``Accept-Encoding``. Chromium would otherwise
+                choose it as part of the profile.
+            default_encoding: Fallback encoding for this response only.
+            discard_cookies: Neither send nor record cookies for this call.
+            retry: Attempt count or strategy for this call.
+            cache_mode: Chromium load flags, e.g. ``"bypass"`` to skip the HTTP cache.
+            priority: Request priority hint passed to the Core.
+            ja3: Rejected; the profile owns the ClientHello.
+            akamai: Rejected; the profile owns the HTTP/2 fingerprint.
+            perk: Rejected; the profile owns the TLS fingerprint.
+            extra_fp: Fingerprint overrides; only ``header_order`` and ``form_boundary``
+                are honourable.
+            content_callback: Called with the fully buffered body on non-streaming
+                requests.
+            raise_for_status: Check the response before returning it.
+            quote: ``False`` skips the percent-encoding pass over the URL.
+            curl_options: Rejected; there is no libcurl surface here.
+            interface: Rejected; no interface binding in ABI v8.
+            doh_url: Rejected; DoH is not exposed.
+            max_recv_speed: Rejected; Chromium owns transfer pacing.
+            thread: Rejected; the sync path already runs on the calling thread.
+            debug: Rejected; not a supported option.
 
         Returns:
             The :class:`~chrome_client.AsyncResponse`.
         """
         ...
 
-    async def query(self, url: str, **kwargs: Unpack[RequestOptions]) -> AsyncResponse:
+    async def query(
+        self,
+        url: str,
+        params: Optional[ParamsLike] = None,
+        data: Optional[Body] = None,
+        headers: Optional[HeadersLike] = None,
+        cookies: Optional[CookiesLike] = None,
+        files: FilesLike = None,
+        auth: AuthLike = None,
+        timeout: Timeout = None,
+        allow_redirects: bool = True,
+        proxies: Optional[Proxies] = None,
+        hooks: Optional[Hooks] = None,
+        stream: Optional[bool] = None,
+        verify: Optional[Verify] = None,
+        cert: Any = None,
+        json: Any = None,
+        content: Optional[Body] = None,
+        multipart: Optional[CurlMime] = None,
+        impersonate: Optional[Impersonate] = None,
+        proxy: Optional[str] = None,
+        http_version: Optional[HttpVersion] = None,
+        max_redirects: Optional[int] = None,
+        max_response_bytes: Optional[int] = None,
+        referer: Optional[str] = None,
+        accept_encoding: Optional[str] = None,
+        default_encoding: Optional[Union[str, Callable[[bytes], str]]] = None,
+        discard_cookies: Optional[bool] = None,
+        retry: Retry = None,
+        cache_mode: CacheMode = None,
+        priority: Optional[int] = None,
+        ja3: Optional[str] = None,
+        akamai: Optional[str] = None,
+        perk: Optional[str] = None,
+        extra_fp: Optional[Union[ExtraFingerprints, Mapping[str, Any]]] = None,
+        content_callback: Optional[ContentCallback] = None,
+        raise_for_status: Optional[bool] = None,
+        quote: Optional[bool] = None,
+        curl_options: Optional[Mapping[Any, Any]] = None,
+        interface: Optional[str] = None,
+        doh_url: Optional[str] = None,
+        max_recv_speed: Optional[int] = None,
+        thread: Any = None,
+        debug: Any = None,
+    ) -> AsyncResponse:
         """Sends a ``QUERY``.
 
         Args:
-            url: Target URL.
-            **kwargs: Any :meth:`request` option.
+            url: Absolute URL, or a relative one when ``base_url`` is set.
+            params: Query parameters appended to the URL. A mapping, a sequence of
+                key/value pairs, or an already-encoded string.
+            data: Request body. A mapping or sequence of pairs is form-encoded;
+                bytes/str are sent as-is; a file object, generator or async iterator
+                switches to chunked upload; a file-like value in a mapping is sent as
+                multipart.
+            headers: Headers merged with the session's defaults.
+            cookies: Cookies merged with the session jar for this request only.
+            files: Multipart file parts, alone or alongside ``data``.
+            auth: Per-call auth: callable, ``AuthBase``, or a 2-tuple.
+            timeout: One deadline or ``(connect, read)``.
+            allow_redirects: ``False`` returns the first 3xx instead of following it.
+            proxies: Per-call proxy mapping, merged over the session's.
+            hooks: Per-call response hooks.
+            stream: ``True`` leaves the body unread so ``iter_content`` can consume it
+                incrementally.
+            verify: ``True``/``False``/CA bundle path, for this call only.
+            cert: Rejected; ABI v8 has no client-certificate setting.
+            json: JSON body. Implies ``Content-Type: application/json`` unless a header
+                already sets it.
+            content: Raw body bytes; an alternative to ``data=`` for pre-encoded
+                payloads. Passing both raises ``ValueError``.
+            multipart: A :class:`~chrome_client.CurlMime` instance that becomes the
+                whole body.
+            impersonate: Profile override for this call, either an exact
+                ``chrome_<major>`` name or a curl_cffi ``chrome<major>`` alias.
+            proxy: Proxy URL for this call; wins over ``proxies``.
+            http_version: Pin ``"v1"``, ``"v2"`` or ``"v3"`` for this call.
+            max_redirects: Redirect cap. Below Chromium's 20, hops are driven from
+                Python so the caller's limit wins.
+            max_response_bytes: Body ceiling for this call.
+            referer: Sets ``Referer`` through Chromium's own referrer path, so it
+                reaches the wire the way a real Chrome sends it.
+            accept_encoding: Overrides ``Accept-Encoding``. Chromium would otherwise
+                choose it as part of the profile.
+            default_encoding: Fallback encoding for this response only.
+            discard_cookies: Neither send nor record cookies for this call.
+            retry: Attempt count or strategy for this call.
+            cache_mode: Chromium load flags, e.g. ``"bypass"`` to skip the HTTP cache.
+            priority: Request priority hint passed to the Core.
+            ja3: Rejected; the profile owns the ClientHello.
+            akamai: Rejected; the profile owns the HTTP/2 fingerprint.
+            perk: Rejected; the profile owns the TLS fingerprint.
+            extra_fp: Fingerprint overrides; only ``header_order`` and ``form_boundary``
+                are honourable.
+            content_callback: Called with the fully buffered body on non-streaming
+                requests.
+            raise_for_status: Check the response before returning it.
+            quote: ``False`` skips the percent-encoding pass over the URL.
+            curl_options: Rejected; there is no libcurl surface here.
+            interface: Rejected; no interface binding in ABI v8.
+            doh_url: Rejected; DoH is not exposed.
+            max_recv_speed: Rejected; Chromium owns transfer pacing.
+            thread: Rejected; the sync path already runs on the calling thread.
+            debug: Rejected; not a supported option.
 
         Returns:
             The :class:`~chrome_client.AsyncResponse`.

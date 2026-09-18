@@ -2,7 +2,7 @@
 
 This file is read by type checkers and never executed, so it is free to use
 syntax the supported runtimes do not have (``Literal``, ``Protocol``,
-``TypedDict``, ``Unpack``): those come from ``typing_extensions``, which is a
+``TypedDict``): those come from ``typing_extensions``, which is a
 *type-checking* dependency only and adds nothing to the wheel.
 
 Every public signature in the package names one of the aliases below, so an IDE
@@ -33,7 +33,7 @@ from typing import (
     Union,
 )
 
-from typing_extensions import TypeAlias, TypedDict, Unpack
+from typing_extensions import TypeAlias, TypedDict
 
 from .impersonate import ChromeProfileName, ChromeProfileAlias, Impersonate, HttpVersion
 
@@ -198,20 +198,26 @@ WsMessage: TypeAlias = Union[str, bytes, bytearray, memoryview]
 AsyncAwaitable: TypeAlias = Awaitable[Any]
 
 # ---------------------------------------------------------------------------
-# TypedDicts backing ``**kwargs``
+# Parameter sets, as TypedDicts
 # ---------------------------------------------------------------------------
 #
 # The verb methods (``Session.get``, ``AsyncSession.post``, ...) forward
-# ``**kwargs`` to ``request()``.  Declaring the accepted keys as TypedDicts and
-# unpacking them with PEP 692 ``Unpack`` is what lets an IDE complete and check
-# those keyword arguments instead of accepting anything.
+# ``**kwargs`` to ``request()``.  These two TypedDicts name the accepted keys.
+#
+# They are **no longer used in any signature**: spelling the options as
+# ``**kwargs: Unpack[RequestOptions]`` (PEP 692) leaves an IDE with nothing to
+# show but the explicit ``url``/``params`` unless it implements Unpack -- PyCharm
+# does not.  Every entry point therefore lists its parameters explicitly, and
+# these two classes remain as the canonical description of the two sets (and as
+# the source the expansion is checked against).
 
 
 class RequestOptions(TypedDict, total=False):
     """Every keyword :meth:`Session.request` accepts beyond ``params``/``data``.
 
-    Used as ``**kwargs: Unpack[RequestOptions]`` on the verb methods, so
-    ``session.get(url, impersonate=...)`` completes and is checked.
+    The verb methods take these keys as ordinary named parameters, not as
+    ``**kwargs`` -- see the note above -- so this class is the canonical list
+    rather than something an IDE reads off a signature.
     """
 
     headers: Optional[HeadersLike]
