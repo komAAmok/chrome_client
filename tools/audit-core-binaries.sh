@@ -130,19 +130,31 @@ PY
       || die "$target: stale core/dependencies/$target/icudtl.dat; ICU data is embedded"
   fi
 
-  # Linux nm is available on the build host. For foreign formats use llvm-nm
-  # when installed; otherwise strings still catches an accidentally wrong ABI
-  # export set without pretending to validate a foreign linker table.
-  symbol_dump=""
-  if [[ "$target" == linux-* ]] && command -v nm >/dev/null; then
-    symbol_dump="$(nm -D --defined-only "$path" 2>/dev/null || true)"
-  elif command -v llvm-nm >/dev/null; then
-    symbol_dump="$(llvm-nm --defined-only "$path" 2>/dev/null || true)"
-  else
-    symbol_dump="$(strings "$path")"
-  fi
+  # Read the artifact's real export table. The obvious alternatives are each
+  # wrong for at least one shipped format, which is why this is a parser rather
+  # than a call to nm / llvm-nm / strings:
+  #
+  #   * llvm-nm answers "no symbols" for a PE image and still exits 0, so with
+  #     LLVM on PATH every Windows target looked like it exported nothing and
+  #     the audit failed on a good artifact. A PE export table lives in the
+  #     image data directory, not in a COFF symbol table.
+  #   * strings finds the export names as plain literals and keeps finding them
+  #     after the export table is gone, so it cannot tell an export from a
+  #     string. Zeroing the x86_64 DLL's export directory left all twenty names
+  #     in .rdata and strings still reported 20/20.
+  #   * binutils objdump reads x86/x86_64 PE but not the ARM64 image, and no
+  #     Mach-O at all.
+  #
+  # tools/core-exports.py parses all three containers with the standard library,
+  # so the check is identical in CI and locally and cannot silently degrade to a
+  # weaker tool. An empty dump is a hard failure, never a pass.
+  symbol_dump="$(python3 "$ROOT/tools/core-exports.py" "$path")" \
+    || die "$target: cannot read the export table of $library"
+  [[ -n "$symbol_dump" ]] \
+    || die "$target: $library exports no symbols at all"
+
   for symbol in "${symbols[@]}"; do
-    grep -Eq "(^|[^[:alnum:]_])_?${symbol}(@|$|[^[:alnum:]_])" <<<"$symbol_dump" \
+    grep -Eq "^_?${symbol}$" <<<"$symbol_dump" \
       || die "$target: missing public symbol $symbol"
   done
 

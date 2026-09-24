@@ -432,10 +432,6 @@ FeatureList 审计和 profile 表生成器。
 
 仍然只存在于外部 Chromium 检出（`CHROMIUM_SRC`，见 `tools/core-paths.sh`）的部分：
 
-- 仅在 `minicronet_profile_verification=true` 下编译的 4 个校验探针
-  （`profile_isolation_probe.c`、`profile_feature_probe.cc`、
-  `profile_state_isolation_probe.cc`、`websocket_extended_connect_probe.c`），
-  它们依赖 profile 证据流水线。`tools/sync-core.sh` 只校验它们存在。
 - profile 证据与 `profiles/normalized_profiles.json` 等三个输入，因此
   `profile_table_generated.h` 目前作为已提交的生成产物使用，重新生成需要显式
   设置 `REGENERATE_PROFILE_TABLE=1` 和 `PROFILE_EVIDENCE_DIR`。
@@ -446,6 +442,22 @@ FeatureList 审计和 profile 表生成器。
 发布路径（默认 args.gn，不含校验探针）已经完全由本仓库自有源码驱动：ABI v8 那轮
 把 `BUILD.gn` 和 4 个 smoke/probe 源码迁入 `core/source/` 后重建，产物哈希与迁入前
 一致，说明 chromium 树里不再残留手改。
+
+4 个仅在 `minicronet_profile_verification=true` 下编译的校验探针
+（`profile_isolation_probe.c`、`profile_feature_probe.cc`、
+`profile_state_isolation_probe.cc`、`websocket_extended_connect_probe.c`）当时没有
+跟着迁入：它们只存在于开发机的 Chromium 检出里，而 `tools/sync-core.sh` 只校验它们
+存在，于是「同步源码」这台机器上通过、干净克隆上必然失败。现已迁入 `core/source/`，
+两半各有门禁：
+
+- `tools/audit-core-inputs.sh`（无需 Chromium 树，在 CI 的 check job 里）：BUILD.gn
+  点名的每个源必须在本仓库里唯一解析到且被 git 跟踪；`sync-core.sh` 会安装或应用的
+  每个文件同理，补丁集合由 `sync-core.sh` 自己的 `apply_patch` 行导出而不是由目录
+  通配导出，所以删掉一个补丁会被发现，而不是让集合悄悄变小。
+- `tools/sync-core.sh` 安装完成后的反向校验：BUILD.gn 声明的名字必须在
+  `$CHROMIUM_SRC/minicronet/` 里真实存在。这一半覆盖安装 glob 到不了的位置——
+  例如新增一个顶层 `core/source/*.h` 并在 BUILD.gn 里引用它，门禁会通过而
+  sync-core 会在 ninja 之前失败并指名该文件。
 
 所以 `docs/MIGRATION_FROM_NEW.md` 里「目标仓库不再依赖 new/ 才能构建」这条门槛
 对发布路径已成立，对 profile 证据与校验探针仍未成立，收尾放在阶段 4。

@@ -28,12 +28,23 @@ jobs:
       # the reverse assertion that no icudtl.dat travels with a Windows build.
       # Needs no Chromium checkout, so it belongs in the structure job.
       - run: tools/audit-core-binaries.sh
+      # Every Core build input must be owned by this repository rather than by
+      # whichever Chromium checkout happens to sit next to it. Four
+      # profile-verification probes once lived only in the developer's tree, so
+      # tools/sync-core.sh passed there and died on every fresh clone. Pure
+      # static: resolves core/source/BUILD.gn's names and asks Git whether the
+      # files sync-core.sh installs or applies are tracked, so it needs no
+      # Chromium checkout and belongs in the structure job.
+      - run: tools/audit-core-inputs.sh
       # The ERR_* names in exceptions.py tell a caller what a proxy or TLS
       # failure actually was. They had drifted badly (eight codes carried a
       # different error's name and the codes a proxy failure produces were
       # missing), so this needs a Chromium checkout and therefore cannot run
-      # in this job; it is invoked by the Chromium-tree job instead. The
-      # checkout-free half lives in test_compat.NetErrorTableShapeTests.
+      # here. There is no Chromium-tree job in this workflow, so today it only
+      # runs on a developer machine that has CHROMIUM_SRC -- see
+      # docs/NEXT_STEPS.md, "待办：net error 名称审计没有 CI 入口". The
+      # checkout-free half lives in test_compat.NetErrorTableShapeTests, which
+      # the python-regression job does run.
       # The manifests are the provenance record the loader reads, so a manifest
       # that pins a different Chromium revision than CHROMIUM_REVISION would
       # describe a Core this repository never built.

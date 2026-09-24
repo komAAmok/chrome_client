@@ -413,5 +413,98 @@ base/i18n/icu_string_conversions.cc:167  ucnv_open("ISO-8859-1", &status)   // �
 `name-defined` 并继续，不会中止，所以如果 CI 步骤是「报告但不失败」，它们会一直
 躺在日志里。门禁的退出码必须被真正检查，不能只看日志有没有内容。
 
+---
+
+## 24. 只存在于开发机的构建输入，在干净克隆上必然失败
+
+**现象**：4 个 profile 校验探针（`profile_isolation_probe.c`、
+`profile_feature_probe.cc`、`profile_state_isolation_probe.cc`、
+`websocket_extended_connect_probe.c`）在仓库里根本不存在——`git ls-files | grep -i probe`
+只返回 `core/source/profile_probe.c`，`core/patches/` 里也没有任何补丁创建它们。它们
+只躺在开发机的 `$CHROMIUM_SRC/minicronet/` 里。
+
+**根因**：`tools/sync-core.sh` 先按 glob 安装 `core/source/*.{c,cc}`，然后用一个
+**硬编码的四个名字**校验「它们存在」，注释还写着「fail loudly rather than silently
+dropping targets BUILD.gn still declares」。这个校验在开发机上是**永远为真**的：文件本来
+就躺在目标目录里，glob 不覆盖它、校验也照样通过。于是「同步源码」这台机器上全绿，任何
+干净克隆都会在 `die "$DEST/$probe missing"` 处失败。`core/source/BUILD.gn` 一直声明着
+这四个 target，仓库却拿不出对应源码——构建输入的所有权从未被检查过。
+
+**规则**：构建输入的所有权是**可验证事实**，不是记忆。「这个文件在我机器上存在」与
+「这个仓库拥有这个文件」是两件事；只要脚本从开发机的目录里读东西，就必须有一条门禁问
+「干净克隆拿得到吗」。检查的方向也要对称：既要「BUILD.gn 点名的都有文件」，也要
+「安装的文件都被跟踪」，因为前者看不见孤儿文件，后者看不见被删掉的引用。
+
+**门禁**：`tools/audit-core-inputs.sh`（无需 Chromium 树，进 CI 的 check job）。
+BUILD.gn 点名的每个源必须在本仓库里**唯一**解析到且被 `git ls-files --error-unmatch`
+命中；`sync-core.sh` 会安装或应用的每个文件同理。补丁集合由 `sync-core.sh` 自己的
+`apply_patch` 行导出，**不是**由 `core/patches/*.patch` 通配导出——后者在删掉一个补丁时
+只会安静地少列一个文件。`sync-core.sh` 另外在安装后做反向校验：BUILD.gn 声明的名字必须
+在 `$CHROMIUM_SRC/minicronet/` 里真实存在，这一半覆盖安装 glob 到不了的位置。
+
+**扫描范围要按「像什么」而不是按「今天是哪些」来写**。第一版用
+`"[A-Za-z0-9_./-]+\.(c|cc|h|def|exports|lds)"` 抽名字，变异测试把 BUILD.gn 里的 `.cc`
+全改成 `.c_` 后，抽取结果**静默缩到 3 个名字**（只剩 `.def/.exports/.lds`）而脚本照旧
+通过——一个引用只要不再「像文件名」，就从扫描里消失了。现在的写法是两半对称的：
+
+- 抽取用任意扩展名 `"[A-Za-z0-9_./-]+\.[A-Za-z0-9]+"`，排除 GN 的 `//` 导入；
+- 扩展名不在安装清单里（例如有人加 `.cpp`）是**硬失败**，要求同时教会门禁和
+  `sync-core.sh`，而不是安静跳过；
+- 反向不变式兜底：`core/source/` 下的每个 `.c`/`.cc` 都必须被 BUILD.gn 里某个 target
+  引用，孤儿文件同样失败。上面那次改名正是被这条抓到的。
+
+变异测试（10 项，全部确认非零退出后恢复）：删 probe 文件、probe 未跟踪、删补丁、
+新增未跟踪的 `.cc`、BUILD.gn 引用不存在的源、不是 git 检出、`sync-core.sh` 引用不存在
+的补丁、存在未被应用的孤儿补丁、BUILD.gn 引用 `.cpp`、BUILD.gn 里的引用不再像文件名。
+前两项漏洞（通配扫补丁目录漏掉「删掉一个补丁」、扩展名白名单漏掉「改名」）**都是变异
+测试发现的，不是评审发现的**——门禁自己的盲区只能靠故意破坏来暴露。
+
+**另一层**：后置校验**不是**冗余的。新增一个顶层 `core/source/mutation_top.h` 并在
+BUILD.gn 里引用它时，`audit-core-inputs.sh` 通过（名字在仓库里解析得到、也已被跟踪），
+而 `sync-core.sh` 在 ninja 之前失败并指名该文件——因为安装 glob 只复制
+`core/source/*.{c,cc}` 与 `core/source/minicronet/*.h`。两半各自覆盖对方的盲区，
+所以两半都要留。
+
+---
+
+## 25. 兜底工具比没有工具更糟
+
+**现象**：`tools/audit-core-binaries.sh` 校验 8 个平台产物都导出那 20 个 ABI 符号，但它
+按格式挑工具的顺序是「Linux 用 `nm`，否则有 `llvm-nm` 就用它，否则退回 `strings`」。
+两个方向都错了：
+
+- 把 Chromium 的 `llvm-nm` 放进 `PATH` 后 Windows 目标全部失败：`llvm-nm` 对 PE 镜像
+  回答 `no symbols` 并**仍然退出 0**（导出表在 image data directory 里，不在 COFF 符号
+  表里），于是每个 DLL 都被判成「没有导出符号」。
+- 在没有 `llvm-nm` 的机器上退回 `strings`，而 `strings` 找到的是**字符串字面量**：
+  把 x86_64 DLL 的导出目录 RVA/Size 清零（一个符号都不导出）之后，二十个名字仍在
+  `.rdata` 里，`strings` 照样报 20/20。**这个检查当时可以整个被绕过而全绿。**
+
+**根因**：把一条「找不到就用弱一点的工具」的降级链写进了**断言**。降级对日志合理，对
+门禁不合理：门禁的强度等于它最弱那条路径，而弱路径平时不报错、只在真出问题时给出错误
+结论。`strings` 那行注释甚至写着「without pretending to validate a foreign linker
+table」——作者知道它不验证，但它仍然让脚本以 0 退出。
+
+**规则**：门禁要么用能给出**权威答案**的方法，要么**失败**。不得存在「主工具缺失时用一
+个无法区分真假的方法顶上」的分支。要跨格式就必须真的解析格式，而不是找一个恰好对当前
+样本有效的近似。
+
+**门禁**：新增 `tools/core-exports.py`，用标准库直接解析 ELF `.dynsym`、PE 导出目录、
+Mach-O 的 dyld export trie（`LC_DYLD_EXPORTS_TRIE` / `LC_DYLD_INFO_ONLY`）。Python 本
+就是该审计的硬依赖（它解析 manifest），所以 CI 与开发机跑同一份实现，没有可缺失的外部
+工具。解析失败或结果为空都是**硬失败**。选择它而非 `llvm-readobj`，是因为后者不在
+Ubuntu runner 上，会让审计在 CI 里直接失败——把「本地能跑」换成「哪里都跑不了」不算修好。
+
+变异测试（3 项，各自刷新 manifest 以越过 SHA-256 那一步）：x86_64 DLL 导出目录清零、
+ARM64 DLL 导出目录清零（binutils `objdump` 读不了该架构）、ELF `.dynsym` 段类型改成
+`SHT_NULL`。三项都非零退出并指名 `cannot read the export table`。修改前后都用
+`nm -D` 与 `llvm-nm` 交叉核对：8 个产物各 20 个 `mn_*`，集合逐元素相同。
+
+**自己写的解析器同样要过变异测试**：第一版 `core-exports.py` 有两个 bug——ELF32 的
+`st_info`/`st_shndx` 下标沿用了 ELF64 的布局（32 位 ELF 因此报「没有导出符号」），
+Mach-O trie 的子节点偏移按当前节点而非 trie 起点计算（直接读崩）。两者都是**看输出**发现
+的：32 位产物返回 0 个符号、Mach-O 抛 `IndexError`。所以解析器的验收标准是「8 个产物各
+20 个符号，且与成熟工具逐元素相同」，而不是「脚本没报错」。
+
 
 

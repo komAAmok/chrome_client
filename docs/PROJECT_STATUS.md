@@ -386,9 +386,15 @@ MINICRONET_PKGCONF_DIR=$PWD/root tools/build-core-linux-arm64.sh
 - profile 表的三份输入（`normalized_profiles.json`、`effective_protocol_params.json`、
   `network_feature_snapshots.json`）已随 chrome_152 迁入 `profiles/`，
   `tools/generate-profile-table.py` 现在能在本仓库直接重新生成。**仍在 `new/` 的**是
-  上游那几个 audit 生成器（`extract-*`、`build-normalized-profiles.py`）和 4 个
-  `profile_verification` 探针；新增 profile 目前靠 `tools/collect-profile-evidence.py`
-  加 `tools/verify-wire-capture.py` 走通，全流水线迁移还没做
+  上游那几个 audit 生成器（`extract-*`、`build-normalized-profiles.py`）；新增 profile
+  目前靠 `tools/collect-profile-evidence.py` 加 `tools/verify-wire-capture.py` 走通，
+  全流水线迁移还没做。
+  4 个 `profile_verification` 探针（`profile_isolation_probe.c`、
+  `profile_feature_probe.cc`、`profile_state_isolation_probe.cc`、
+  `websocket_extended_connect_probe.c`）曾只存在于本机 Chromium 检出里，
+  `tools/sync-core.sh` 因此只在这台机器上通过、在任何干净克隆上都会 `die`；现已迁入
+  `core/source/`，并由 `tools/audit-core-inputs.sh` 与 `sync-core.sh` 的安装后置校验
+  双向守住（见下）
 - Linux x86/ARM64 交叉编译目前还依赖 `new/.tools/pkgconf` 的 deb（通过
   `MINICRONET_PKGCONF_DIR` 指向解包目录），因为 gn 为 NSS 调用 `pkg-config`；
   仓库里没有这一层，换机器需要先解包，见上文「证书错误码修复的跨平台验收状态」
@@ -481,7 +487,7 @@ Core 的 `Request::OnAuthRequired` 一次都不执行。逐层证据与调用点
 | `tools/audit-readme.sh` | 通过 | 是 |
 | `cargo fmt` / `clippy -D warnings` | 通过 | 是 |
 | `cargo test --workspace` | 8 个单元测试通过（6 个回调/背压 + 2 个 ABI 布局） | 是 |
-| Python 套件 | 121 个用例通过，2 个 skip（真实 WSS 端点、.invalid 解析器环境） | 是 |
+| Python 套件 | 125 个用例通过，1 个 skip（未设 `MINICRONET_WS_URL`/`MINICRONET_WSS_URL`，无真实 WS/WSS 端点） | 是 |
 | `tools/audit-python-stubs.py` | 17 个 stub 模块，0 错 | 是 |
 | `tools/audit-python-typing.py` | mypy 检查存根与消费者，两者都干净（缺 mypy 时跳过） | 是 |
 | Core manifest 与 `CHROMIUM_REVISION` 一致 | 8 个平台通过 | 是 |

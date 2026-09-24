@@ -70,6 +70,7 @@ tools/audit-pypi-metadata.sh
 python3 tools/audit-python-stubs.py
 python3 tools/audit-python-typing.py
 tools/audit-core-binaries.sh
+tools/audit-core-inputs.sh
 cargo fmt --all -- --check
 cargo check --workspace --all-targets
 cargo clippy --workspace --all-targets -- -D warnings

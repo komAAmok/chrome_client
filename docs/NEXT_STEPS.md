@@ -150,6 +150,22 @@ QUIC 标记 / ALPN）填写。这需要 ABI v8 → v9：头文件、`crates/mini
 发布平台没有执行证明。需要在 CI 加一次
 `cargo test -p minicronet-sys --target i686-unknown-linux-gnu`（或等价目标机运行）。
 
+## 待办：net error 名称审计没有 CI 入口
+
+`tools/audit-net-error-names.py` 逐行核对 `exceptions.py` 的 `_NET_ERRORS` 与 Chromium
+的 `net/base/net_error_list.h`，但它需要一份 Chromium 检出，而两个 workflow 里都没有
+带检出或缓存的 job。`ci.yml` 曾经写着「它由 Chromium-tree job 调用」，但那个 job 从来
+不存在（`jobs:` 只有 `check` 和 `python-regression`，两者都不设 `CHROMIUM_SRC`）——
+这正是 LESSONS 第 23 条「本地跑不到的门禁等于没有门禁」的同一形态：一条注释声称有远程
+入口，实际只有开发机能跑。
+
+现状：`NetErrorTableShapeTests` 在没有检出时校验表的**结构**（约 60 行、名字以 `ERR_`
+开头、叶子类型正确、传输错误不得报成 TLS 或 chunked），这能在 CI 跑；但**名字与码的
+对应关系**只能在有检出的机器上核对。
+
+要么给 CI 加一个只拉 `net/base/net_error_list.h`（而非整棵 Chromium）的 job，要么把这份
+头文件按 revision 缓存进仓库并加一条「缓存与 CHROMIUM_REVISION 一致」的门禁。
+
 ## 待办：产物来源证明
 
 `core/binaries/*/manifest.json` 的 SHA-256 由写它的同一个工具生成，所以同时替换

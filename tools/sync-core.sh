@@ -10,12 +10,9 @@ set -Eeuo pipefail
 # from its own source root, so every file is flattened into
 # `$CHROMIUM_SRC/minicronet/`.
 #
-# Not yet owned by this repository: the profile-verification probes
-# (profile_isolation_probe.c, profile_feature_probe.cc,
-# profile_state_isolation_probe.cc, websocket_extended_connect_probe.c). They
-# only build with minicronet_profile_verification=true and depend on the profile
-# evidence pipeline, so they stay in the Chromium checkout for now. Migrating
-# them is tracked in docs/MIGRATION_FROM_NEW.md.
+# The profile-verification probes are owned here like every other Core source;
+# only the profile evidence they read stays outside. tools/audit-core-inputs.sh
+# asserts that every input this script installs or applies is tracked by Git.
 
 ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 # The Chromium checkout defaults to a sibling of this repository, so this
@@ -34,6 +31,12 @@ EXPECTED_REVISION=$(tr -d '[:space:]' <"$ROOT_DIR/CHROMIUM_REVISION")
 ACTUAL_REVISION=$(git -C "$CHROMIUM_SRC" rev-parse HEAD)
 [[ "$ACTUAL_REVISION" == "$EXPECTED_REVISION" ]] \
   || die "Chromium revision mismatch: expected $EXPECTED_REVISION, got $ACTUAL_REVISION"
+
+# Nothing this script needs may live only in this machine's Chromium checkout:
+# four profile-verification probes once did, so a sync here succeeded and the same
+# sync died on a fresh clone. The check is cheap and runs before anything is
+# written, so the failure names the missing input instead of a half-synced tree.
+"$ROOT_DIR/tools/audit-core-inputs.sh"
 
 # apply_patch <patch> <repo-subdir> [marker-file:marker-text ...]
 # A patch that no longer applies must already be present; every marker is
@@ -149,12 +152,20 @@ for table in "$ROOT_DIR"/core/exports/minicronet.{def,exports,lds}; do
   install -m 644 "$table" "$DEST/$(basename "$table")"
 done
 
-# The verification-only probes are not in this repository; fail loudly rather
-# than silently dropping targets BUILD.gn still declares.
-for probe in profile_isolation_probe.c profile_feature_probe.cc \
-             profile_state_isolation_probe.cc websocket_extended_connect_probe.c; do
-  test -f "$DEST/$probe" || die "$DEST/$probe missing; it is not owned by this repository yet"
-done
+# BUILD.gn is the authority on what the build reads, so every name it declares
+# must exist in the destination. The loop above installs by glob and can only
+# prove that whatever exists here was copied; this is the direction that catches
+# a BUILD.gn reference with no file behind it, without a second hardcoded list to
+# drift from the first.
+while IFS= read -r name; do
+  [[ -n $name ]] || continue
+  # A GN import is the one dotted name here that is not a file in this
+  # repository; every other name must have arrived.
+  [[ $name == //* ]] && continue
+  test -f "$DEST/$name" \
+    || die "$DEST/$name missing; core/source/BUILD.gn declares it but nothing installed it"
+done < <(grep -oE '"[A-Za-z0-9_./-]+\.[A-Za-z0-9]+"' \
+           "$ROOT_DIR/core/source/BUILD.gn" | tr -d '"' | sort -u)
 
 printf 'Synced %d Core sources to %s\n' \
   "$(ls "$ROOT_DIR"/core/source/*.cc "$ROOT_DIR"/core/source/*.c \
