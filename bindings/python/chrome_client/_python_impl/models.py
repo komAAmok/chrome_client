@@ -8,6 +8,7 @@ numeric status with no reason phrase, so ``reason`` comes from the standard
 table.
 """
 
+import asyncio
 import codecs
 import datetime
 import json as _json
@@ -65,12 +66,57 @@ def reason_from_status_line(status_line, status_code):
 
 
 def http_version_from_status_line(status_line):
+    """Maps a status line onto the protocol token it literally carries.
+
+    This is only trustworthy when the caller knows the response was not
+    normalized by an intermediary. Chromium rewrites an HTTP/2 status line as
+    ``HTTP/1.1 200``, so on its own this function cannot tell h1 from h2.
+    Prefer :func:`_negotiated_http_version`.
+
+    Args:
+        status_line: e.g. ``"HTTP/2 200"``.
+
+    Returns:
+        The mapped name, or ``None`` when the line is empty.
+
+    Example:
+        >>> http_version_from_status_line("HTTP/2 200")
+        'HTTP/2'
+    """
     if not status_line:
         return None
     token = status_line.split(None, 1)[0].upper()
     return {"HTTP/1.0": "HTTP/1.0", "HTTP/1.1": "HTTP/1.1",
             "HTTP/2": "HTTP/2", "HTTP/2.0": "HTTP/2",
             "HTTP/3": "HTTP/3", "HTTP/3.0": "HTTP/3"}.get(token, token or None)
+
+
+def _negotiated_http_version(status_line):
+    """The protocol the response actually arrived over, or ``None``.
+
+    ABI v8 reports only a numeric status plus the header block, and Chromium
+    normalizes every HTTP/2 and HTTP/3 response onto an ``HTTP/1.1`` status
+    line (``net/spdy/spdy_http_utils.cc`` builds ``"HTTP/1.1 " + status``).
+
+    That makes the status line almost useless as a protocol witness:
+
+    * ``HTTP/1.1`` is ambiguous -- it is what a real HTTP/1.1 response says
+      *and* what a normalized HTTP/2 or HTTP/3 response says, so it proves
+      nothing.
+    * ``HTTP/1.0`` is unambiguous: nothing normalizes down to 1.0.
+    * ``HTTP/2``/``HTTP/3`` can only appear if the peer wrote them verbatim,
+      which Chromium does not do, so they are reported when seen.
+
+    ``None`` therefore means "not knowable from this ABI", which is the honest
+    answer and the same treatment ``reason`` gets. Callers that need the real
+    value need the ABI field tracked in docs/NEXT_STEPS.md; until then this
+    must not be guessed, because a wrong fingerprint claim is worse than an
+    absent one.
+    """
+    token = http_version_from_status_line(status_line)
+    if token in ("HTTP/1.0", "HTTP/2", "HTTP/3"):
+        return token
+    return None
 
 
 def build_url(url, params, encoding="utf-8", quote=None):
@@ -647,6 +693,13 @@ class Response(object):
             self._body_reader = None
         self._content_consumed = True
 
+    def _release_async_body(self):
+        """Cancels an abandoned asynchronous stream, if this is one.
+
+        Overridden by :class:`AsyncResponse`. The base response has no async
+        reader, so this is a no-op for the synchronous class.
+        """
+
 
 class AsyncResponse(Response):
     """Response whose streaming body is consumed with ``async for``."""
@@ -720,3 +773,33 @@ class AsyncResponse(Response):
             await self._async_body_reader.aclose(cancel=True)
             self._async_body_reader = None
         self._content_consumed = True
+
+    def _release_async_body(self):
+        reader, self._async_body_reader = self._async_body_reader, None
+        self._content_consumed = True
+        if reader is None:
+            return
+        # The request has to be cancelled from the loop that owns it. Without
+        # this an abandoned stream stays reachable from the Core callback (the
+        # callback holds notify -> _AsyncState -> the native request) and can
+        # never be collected, so the socket, the loop timer and up to
+        # STREAM_BUFFER_LIMIT of buffered body leak for the process lifetime.
+        try:
+            loop = reader.state.loop
+        except AttributeError:
+            return
+        if loop.is_closed():
+            return
+        coroutine = reader.aclose(cancel=True)
+        try:
+            running = asyncio.get_running_loop()
+        except RuntimeError:
+            running = None
+        if running is loop:
+            loop.create_task(coroutine)
+        else:
+            asyncio.run_coroutine_threadsafe(coroutine, loop)
+
+    def close(self):
+        Response.close(self)
+        self._release_async_body()

@@ -20,13 +20,11 @@ venv/
 /dist/
 *.whl
 
-# Local Core binaries and platform dependencies are release artifacts. Keep
-# target manifests tracked so a loader can verify provenance before loading.
-/core/binaries/*/*.so
-/core/binaries/*/*.dylib
-/core/binaries/*/*.dll
-/core/binaries/*/*.lib
-/core/binaries/*/*.pdb
+# Local Core binaries and platform dependencies are release artifacts. The
+# manifests AND the binaries under core/binaries are tracked intentionally: the
+# loader needs them and tools/audit-core-binaries.sh verifies their SHA-256 and
+# size against the manifests, so they are committed rather than ignored. Only
+# the platform dependency staging area stays untracked.
 /core/dependencies/*/*
 !/core/dependencies/README.md
 

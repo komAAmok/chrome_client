@@ -13,7 +13,7 @@ Python API 同时对齐两套习惯：`requests` 的 `Session`/`Response`/异常
 WebSocket。无法用 Chromium 忠实实现的选项会显式报错，而不是静默忽略——详见
 [兼容边界](https://github.com/komAAmok/chrome_client/blob/main/docs/COMPATIBILITY_BOUNDARY.md)。
 
-[English README](https://github.com/komAAmok/chrome_client/blob/main/README.en.md) · [构建说明](https://github.com/komAAmok/chrome_client/blob/main/docs/BUILD.md) · [兼容边界](https://github.com/komAAmok/chrome_client/blob/main/docs/COMPATIBILITY_BOUNDARY.md)
+[English README](https://github.com/komAAmok/chrome_client/blob/main/README.en.md) · [构建说明](https://github.com/komAAmok/chrome_client/blob/main/docs/BUILD.md) · [兼容边界](https://github.com/komAAmok/chrome_client/blob/main/docs/COMPATIBILITY_BOUNDARY.md) · [第三方许可](https://github.com/komAAmok/chrome_client/blob/main/THIRD_PARTY_NOTICES.md)
 
 ## 支持范围
 

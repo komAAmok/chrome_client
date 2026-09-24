@@ -189,7 +189,7 @@ _NET_ERRORS = {
     -110: ("ERR_SSL_CLIENT_AUTH_CERT_NEEDED", SSLError),
     -113: ("ERR_SSL_VERSION_OR_CIPHER_MISMATCH", SSLError),
     -118: ("ERR_CONNECTION_TIMED_OUT", ConnectTimeout),
-    -121: ("ERR_SOCKS_CONNECTION_FAILED", ProxyError),
+    -121: ("ERR_SOCKS_CONNECTION_HOST_UNREACHABLE", ProxyError),
     -130: ("ERR_PROXY_CONNECTION_FAILED", ProxyError),
     -137: ("ERR_NAME_RESOLUTION_FAILED", DNSError),
     -200: ("ERR_CERT_COMMON_NAME_INVALID", CertificateVerifyError),
@@ -205,7 +205,9 @@ _NET_ERRORS = {
     -212: ("ERR_CERT_NAME_CONSTRAINT_VIOLATION", CertificateVerifyError),
     -213: ("ERR_CERT_VALIDITY_TOO_LONG", CertificateVerifyError),
     -214: ("ERR_CERTIFICATE_TRANSPARENCY_REQUIRED", CertificateVerifyError),
-    -215: ("ERR_CERT_SYMANTEC_LEGACY", CertificateVerifyError),
+    # -215 ERR_CERT_SYMANTEC_LEGACY was removed upstream; net_error_list.h now
+    # says "Error -215 was removed". Keeping a row for it would name an error
+    # Chromium can no longer report, so tools/audit-net-error-names.py rejects it.
     -217: ("ERR_CERT_KNOWN_INTERCEPTION_BLOCKED", CertificateVerifyError),
     -300: ("ERR_INVALID_URL", InvalidURL),
     -301: ("ERR_DISALLOWED_URL_SCHEME", InvalidSchema),
@@ -220,14 +222,31 @@ _NET_ERRORS = {
     -321: ("ERR_INVALID_CHUNKED_ENCODING", ChunkedEncodingError),
     -324: ("ERR_EMPTY_RESPONSE", ConnectionError),
     -325: ("ERR_RESPONSE_HEADERS_TOO_BIG", InvalidHeader),
-    -336: ("ERR_TUNNEL_CONNECTION_FAILED", ProxyError),
-    -337: ("ERR_SSL_HANDSHAKE_NOT_COMPLETED", SSLError),
-    -348: ("ERR_PROXY_AUTH_REQUESTED", ProxyError),
-    -350: ("ERR_CONTENT_DECODING_FAILED", ContentDecodingError),
-    -354: ("ERR_INCOMPLETE_CHUNKED_ENCODING", IncompleteRead),
-    -358: ("ERR_QUIC_PROTOCOL_ERROR", ChunkedEncodingError),
-    -371: ("ERR_QUIC_HANDSHAKE_FAILED", SSLError),
+    -336: ("ERR_NO_SUPPORTED_PROXIES", ProxyError),
+    # An HTTP/2 protocol error is a transport failure, not a TLS one: the
+    # handshake already succeeded. It was mapped to SSLError, which sent callers
+    # looking at certificates for a stream-level problem.
+    -337: ("ERR_HTTP2_PROTOCOL_ERROR", ConnectionError),
+    -348: ("ERR_PAC_NOT_IN_DHCP", ProxyError),
+    -350: ("ERR_RESPONSE_HEADERS_MULTIPLE_LOCATION", ContentDecodingError),
+    -354: ("ERR_CONTENT_LENGTH_MISMATCH", IncompleteRead),
+    # QUIC is a transport: a failed handshake or a broken QUIC session is a
+    # connection error. ChunkedEncodingError (what these used to raise) names a
+    # framing fault in HTTP/1.1, which is a different protocol entirely.
+    -358: ("ERR_QUIC_HANDSHAKE_FAILED", ConnectionError),
+    -371: ("ERR_CONTENT_DECODING_INIT_FAILED", ContentDecodingError),
     -400: ("ERR_CACHE_MISS", None),
+    -111: ("ERR_TUNNEL_CONNECTION_FAILED", ProxyError),
+    -115: ("ERR_PROXY_AUTH_UNSUPPORTED", ProxyError),
+    -120: ("ERR_SOCKS_CONNECTION_FAILED", ProxyError),
+    -127: ("ERR_PROXY_AUTH_REQUESTED", ProxyError),
+    -131: ("ERR_MANDATORY_PROXY_CONFIGURATION_FAILED", ProxyError),
+    -136: ("ERR_PROXY_CERTIFICATE_INVALID", ProxyError),
+    # A proxy that keeps answering 407 raises this rather than the 407 itself:
+    # Chromium retries an auth challenge up to kMaxRestarts (32) inside one
+    # URLRequest and then fails the request. Rejected credentials therefore
+    # surface as a proxy error, which is what the caller has to fix.
+    -375: ("ERR_TOO_MANY_RETRIES", ProxyError),
 }
 
 _NET_ERROR_PATTERN = re.compile(r"net error (-?\d+)")
@@ -295,7 +314,11 @@ _NATIVE_ERRORS = (
     ("Canceled", RequestException),
     ("Tls", SSLError),
     ("Proxy", ProxyError),
-    ("Protocol", ChunkedEncodingError),
+    # The Core maps every HTTP/2 and QUIC protocol error onto this one category
+    # (core/source/minicronet/error_mapping.h), so the class must cover "the
+    # transport broke mid-response" rather than HTTP/1.1 chunked framing. The
+    # specific code above still wins when the table knows it.
+    ("Protocol", ConnectionError),
     ("Redirect", TooManyRedirects),
     ("CacheMiss", RequestException),
     ("CallbackPanic", RequestException),

@@ -562,7 +562,11 @@ class Response:
         apparent_encoding: Encoding guessed from a meta tag or by trial.
         charset: curl_cffi alias for the resolved encoding.
         charset_encoding: Encoding taken from ``Content-Type``.
-        http_version: ``"HTTP/1.1"``, ``"HTTP/2"`` or ``"HTTP/3"``.
+        http_version: ``"HTTP/1.0"``, ``"HTTP/2"`` or ``"HTTP/3"`` when the ABI can
+            prove it, else ``None``. ABI v8 carries no negotiated protocol and
+            Chromium normalizes HTTP/2 and HTTP/3 responses onto an ``HTTP/1.1``
+            status line, so ``HTTP/1.1`` is reported as ``None`` rather than
+            guessed -- the same rule ``reason`` follows.
         redirect_count: Number of hops followed.
         redirect_url: The final URL when redirects were followed, else ``None``.
         next: The next-hop :class:`PreparedRequest` for an unfollowed redirect.

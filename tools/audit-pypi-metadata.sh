@@ -98,6 +98,46 @@ for name in ("README.md", "README.en.md", "bindings/python36/README.md",
             "only in Cargo.toml; use the shields.io pypi/v badge instead")
     print(f"ok {name}: no hard-coded release number")
 
+# docs/PROJECT_STATUS.md is the gap that let the drift happen: the gate scanned
+# the READMEs but not the status document, so it sat two releases behind while
+# every check stayed green. It cannot use the generic rule above because it
+# legitimately quotes Chromium versions (153.0.8010.12) and the historical
+# release numbers (0.2.1, 0.2.2). The precise rule is that the *current*
+# workspace version must not be restated anywhere in it.
+status_path = root / "docs/PROJECT_STATUS.md"
+status_text = status_path.read_text()
+if version in status_text:
+    raise SystemExit(
+        f"docs/PROJECT_STATUS.md restates the current release {version} -- the "
+        "release number lives only in Cargo.toml; point at it instead of "
+        "copying it, because this file drifted two releases when it did not")
+print(f"ok docs/PROJECT_STATUS.md: does not restate the current release")
+
+# Same gap, different carrier: docs/BASELINE_LINUX_X86_64.md quoted a Chromium
+# commit that had already been superseded, so the document named a tree this
+# repository does not build against while every gate stayed green. The revision
+# has one source of truth (CHROMIUM_REVISION); a document may quote it, but only
+# correctly, and the comparison is against that file rather than a second copy.
+revision = (root / "CHROMIUM_REVISION").read_text().strip()
+if not re.fullmatch(r"[0-9a-f]{40}", revision):
+    raise SystemExit("CHROMIUM_REVISION is not a 40-character commit hash")
+hex40 = re.compile(r"\b[0-9a-f]{40}\b")
+for name in ("docs/PROJECT_STATUS.md", "docs/BASELINE_LINUX_X86_64.md",
+             "docs/NEXT_STEPS.md", "docs/COMPATIBILITY_BOUNDARY.md",
+             "docs/CORE_BINARY_SIZE_PLAN.md", "docs/ARCHITECTURE.md",
+             "docs/MIGRATION_FROM_NEW.md", "README.md", "README.en.md"):
+    path = root / name
+    if not path.exists():
+        continue
+    for line_number, line in enumerate(path.read_text().splitlines(), 1):
+        for found in hex40.findall(line):
+            if found != revision:
+                raise SystemExit(
+                    f"{name}:{line_number}: commit {found} is not the pinned "
+                    f"CHROMIUM_REVISION ({revision}) -- a document that quotes a "
+                    "superseded tree describes a build this repository cannot make")
+print("ok docs: every quoted commit is the pinned CHROMIUM_REVISION")
+
 # The badge row at the top of each README is the at-a-glance version and
 # Python-support statement. Its slug has to be the published name and its
 # version list has to track requires-python, so a rename or a range bump cannot

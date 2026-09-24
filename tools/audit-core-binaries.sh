@@ -27,6 +27,11 @@ die() { printf 'audit: %s\n' "$*" >&2; exit 1; }
 command -v sha256sum >/dev/null || die "sha256sum is required"
 command -v file >/dev/null || die "file is required"
 
+# The one source of truth for the release version (root Cargo.toml).
+workspace_version="$(python3 "$ROOT/tools/version.py")" \
+  || die "cannot read the workspace version from tools/version.py"
+[[ -n "$workspace_version" ]] || die "empty workspace version"
+
 grep -Eq '^#define MN_ABI_VERSION 8u$' "$HEADER" \
   || die "header ABI version is not 8"
 
@@ -95,6 +100,18 @@ PY
       || die "$target: missing libminicronet.so SONAME"
   fi
 
+  # HTTP Basic and Digest decode a challenge's realm with
+  # base::ConvertToUtf8AndNormalize(..., kCharsetLatin1, ...), which resolves
+  # "ISO-8859-1" to the windows-1252-html converter table. When the ICU dataset
+  # left conversion_mappings out, ucnv_open failed, no auth handler was created,
+  # and every realm-carrying 407/401 was silently dropped -- the credentials
+  # were never sent and nothing was logged. The resource name is the one string
+  # that only the packaged table contributes (cnvalias.icu alone yields the
+  # bare alias, not the .cnv entry), so it is a direct check that the table
+  # actually travelled into the artifact.
+  grep -aq 'windows-1252-html\.cnv' "$path" \
+    || die "$target: ICU ISO-8859-1 converter table is missing; HTTP Basic/Digest realms cannot be decoded"
+
   if [[ "$target" == windows-* ]]; then
     import_library="$dir/minicronet.lib"
     [[ -f "$import_library" ]] || die "$target: missing minicronet.lib"
@@ -128,7 +145,26 @@ PY
     grep -Eq "(^|[^[:alnum:]_])_?${symbol}(@|$|[^[:alnum:]_])" <<<"$symbol_dump" \
       || die "$target: missing public symbol $symbol"
   done
-  printf 'OK %-16s %s (%s bytes)\n' "$target" "$library" "$actual_size"
+
+  # The version string is injected at build time from the workspace version
+  # (tools/version.py -> tools/sync-core.sh -> MINICRONET_VERSION), so an
+  # artifact built before a bump keeps reporting the old number forever:
+  # chrome_client.core_version() said 0.4.0 for three releases because the
+  # string was hand-written, and nothing checked it afterwards either. Every
+  # artifact must carry the version this repository currently claims.
+  #
+  # The marker is the default User-Agent ("minicronet/<version>"), a literal in
+  # minicronet.cc rather than a run-time concatenation, so it is present
+  # verbatim in the image. Only the artifact's own bytes are searched, never
+  # the manifest, so a stale manifest cannot satisfy the check.
+  artifact_version="$(strings -a "$path" \
+    | grep -oE 'minicronet/[0-9]+\.[0-9]+\.[0-9]+' \
+    | head -1 | cut -d/ -f2)"
+  [[ -n "$artifact_version" ]] \
+    || die "$target: no minicronet/<version> marker in the artifact"
+  [[ "$artifact_version" == "$workspace_version" ]] \
+    || die "$target: artifact reports $artifact_version but the workspace version is $workspace_version; rebuild the Core after a version bump"
+  printf 'OK %-16s %s (%s bytes, version %s)\n' "$target" "$library" "$actual_size" "$artifact_version"
 done
 
 printf 'Core binary audit passed for %d targets.\n' "${#targets[@]}"

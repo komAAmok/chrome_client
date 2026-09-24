@@ -143,6 +143,43 @@ starts -- `verify=False` (an always-OK verifier plus
 `ignore_certificate_errors`, which bypasses the delegate entirely) or
 `verify="/path/ca.pem"` (an additional trust anchor).
 
+### Proxies
+
+Precedence, highest first: the per-call `proxy=`, the per-call `proxies=`, the
+session's `proxy=`, the session's `proxies`, then the environment
+(`HTTP_PROXY`/`HTTPS_PROXY`/`ALL_PROXY`, minus `NO_PROXY`) when `trust_env` is on.
+
+**Chromium implicitly bypasses localhost and link-local addresses for every proxy
+configuration.** This is upstream Chrome behaviour, not a binding choice:
+`net/proxy_resolution/proxy_host_matching_rules.cc` unconditionally appends
+`SubtractImplicitBypassesRule`, so a request to `127.0.0.1`, `::1` or a `.local`
+name goes **direct** even when a proxy is configured, and nothing is logged. ABI v8
+exposes only `proxy_rules` and has no `bypass_rules` field, so the `<‑loopback>`
+escape hatch cannot be passed through either. To force loopback traffic through a
+proxy you currently need a non-loopback alias for the target (a hosts entry, or the
+`all://`/scheme mapping plus a name that resolves off-host); adding a bypass field
+is tracked in `NEXT_STEPS.md`.
+
+Proxy failures report the Chromium error name, because the code alone does not say
+what to fix. The names are checked against `net_error_list.h` by
+`tools/audit-net-error-names.py`; the ones that matter here are
+`ERR_TUNNEL_CONNECTION_FAILED` (-111, the proxy refused or could not reach the
+origin), `ERR_PROXY_CONNECTION_FAILED` (-130, the proxy itself is unreachable),
+`ERR_PROXY_AUTH_UNSUPPORTED` (-115) and `ERR_PROXY_AUTH_REQUESTED` (-127) for a
+proxy demanding credentials, `ERR_NO_SUPPORTED_PROXIES` (-336), and
+`ERR_MANDATORY_PROXY_CONFIGURATION_FAILED` (-131).
+
+**Rejected proxy credentials do not surface as the 407 the proxy sent.** Chromium
+re-tries an auth challenge inside the same `URLRequest` and gives up after
+`kMaxRestarts` (32), so a proxy that keeps answering 407 fails the request with
+`ERR_TOO_MANY_RETRIES` (-375). The 407 body is drained as part of that retry
+loop, which is why a rejected request reports a proxy error rather than a
+response the caller can inspect.
+
+`NO_PROXY` is applied by the facade *and* Chromium applies its own rules; the facade
+decides which Engine (and therefore which proxy) to use, so a `NO_PROXY` match makes
+it select a direct Engine rather than relying on Chromium to bypass.
+
 ### Redirects
 
 `allow_redirects=True` lets Chromium follow inside one `URLRequest`, which
@@ -157,8 +194,30 @@ manual redirect mode: the Core defers the hop and the facade returns the 3xx.
 
 - `reason` comes from the standard status table, because ABI v8 carries only the
   numeric status. A non-standard reason phrase is not visible.
+- `http_version` is `None` unless the status line proves the protocol. ABI v8
+  reports a numeric status plus the header block, and Chromium normalizes every
+  HTTP/2 and HTTP/3 response onto an `HTTP/1.1` status line
+  (`net/spdy/spdy_http_utils.cc` builds `"HTTP/1.1 " + status`), so the status
+  line cannot witness the protocol. Only `HTTP/1.0` is unambiguous (nothing
+  normalizes down to 1.0). Reporting `HTTP/1.1` for an h2 connection -- which is
+  what parsing the status line did -- claimed a fidelity this build cannot
+  observe, so the field reports "not knowable" instead. Exposing the real value
+  needs a new ABI field; it is tracked in `NEXT_STEPS.md`.
 - `Response.raw` is a small file-like view over the Core body stream, not a
   urllib3 `HTTPResponse`.
+
+### User-Agent platform token
+
+The pinned profile owns the Chrome **version** in the User-Agent, because that is
+the part the version-level wire evidence actually differs on. It does not own the
+**platform** token: that follows the host the Core is built for, the way a real
+Chrome build does, so `HistoricalUserAgent()` emits `X11; Linux x86_64` on Linux,
+`Windows NT 10.0; Win64; x64` on Windows and `Macintosh; Intel Mac OS X 10_15_7`
+on macOS (with `X11; Linux i686` / `X11; Linux aarch64` for the other Linux
+architectures). The committed captures were taken from a Windows client, so a
+Linux build does not reproduce their platform token -- a profile cannot claim a
+platform the socket is not on. A caller that needs the captured token verbatim
+passes `user_agent=` explicitly, which overrides the derived value.
 
 ### Concurrency
 

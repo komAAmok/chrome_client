@@ -6,4 +6,10 @@ license.workspace = true
 links = "minicronet"
 build = "build.rs"
 
+[lints]
+# Opt in to [workspace.lints] in the root Cargo.toml. Without this line the
+# workspace deny for unsafe_op_in_unsafe_fn is silently inert, because cargo
+# only applies workspace lints to members that ask for them.
+workspace = true
+
 [build-dependencies]

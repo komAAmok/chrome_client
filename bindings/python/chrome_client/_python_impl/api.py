@@ -66,9 +66,12 @@ def request(method, url, **kwargs):
     private session for this call. Other calls reuse the process-wide session.
     """
     # Only a value actually supplied builds a private session; `params=None` from
-    # the `get()` shim must not cost a whole Chromium context.
+    # the `get()` shim must not cost a whole Chromium context. The test is
+    # presence, not truthiness: `trust_env=False` and `cache=False` are
+    # meaningful values, and dropping them silently fell back to the shared
+    # session's defaults -- the one thing this facade promises never to do.
     constructor = {name: kwargs.pop(name) for name in _SESSION_ONLY
-                   if kwargs.get(name) is not None}
+                   if name in kwargs and kwargs[name] is not None}
     if constructor:
         with Session(**constructor) as private:
             return private.request(method, url, **kwargs)

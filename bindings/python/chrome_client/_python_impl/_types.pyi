@@ -181,6 +181,13 @@ Retry: TypeAlias = Union[int, "RetryStrategy", None]
 #: Chromium's ``URLRequest`` load flags, exposed as a string.
 CacheMode: TypeAlias = Optional[str]
 
+#: ``priority=``: the Core's request priority hint. The Rust layer parses these
+#: names and rejects anything else, so the stub lists the accepted strings
+#: rather than the ``int`` it used to advertise (which raised TypeError).
+RequestPriority: TypeAlias = Optional[Literal[
+    "default", "highest", "medium", "low", "lowest", "idle",
+]]
+
 #: ``hooks=``: event name to one callable or a list of them.
 Hook: TypeAlias = Callable[["Response"], Any]
 Hooks: TypeAlias = Mapping[str, Union[Hook, Iterable[Hook]]]

@@ -1,10 +1,15 @@
 # `new` 目录迁移说明
 
+> **历史记录（迁移已完成）**：本文记录从历史工作目录 `new/` 到本仓库的一次性迁移，
+> 该迁移已经完成。文中所有 `new/...` 路径只描述当时的源目录，本仓库既不依赖也不
+> 引用它们（仓库内不存在 `new/` 目录）；当前事实以 `docs/PROJECT_STATUS.md`、
+> `docs/NEXT_STEPS.md` 和 `core/abi/minicronet.h` 为准。
+
 ## 目的
 
-`/home/sj/桌面/new` 是历史工作目录，包含 Core 胶水代码、Chromium 补丁、
-profile 资料、抓包证据、旧 Rust workspace 和交叉编译脚本。目标仓库是
-`/home/sj/桌面/chrome_client`，以后以目标仓库的目录和 ABI 为准。
+`new/` 是迁移前的历史工作目录（在本仓库之外），包含 Core 胶水代码、Chromium
+补丁、profile 资料、抓包证据、旧 Rust workspace 和交叉编译脚本。目标仓库是本
+仓库，以后以本仓库的目录和 ABI 为准。
 
 本文件只定义迁移；未完成审计前不执行覆盖、删除或批量复制。
 
@@ -15,7 +20,7 @@ profile 资料、抓包证据、旧 Rust workspace 和交叉编译脚本。目�
    manifest 必须逐字段/逐符号比较。
 3. Chromium 源码仍在 `CHROMIUM_SRC` 外部维护；不把 Chromium 源码、GN/Ninja
    输出或中间文件放进 `chrome_client`。
-4. 迁移后的脚本必须使用仓库相对路径和环境变量，不能依赖 `/home/sj/桌面/new`
+4. 迁移后的脚本必须使用仓库相对路径和环境变量，不能依赖 `new/`
    或单台机器的绝对路径。
 5. 抓包、测试 CA、私钥、Cookie、代理凭据和临时日志不进入发布仓库。
 
@@ -58,7 +63,7 @@ profile 资料、抓包证据、旧 Rust workspace 和交叉编译脚本。目�
 ### 1. 建立清单和校验
 
 ```sh
-cd /home/sj/桌面/new
+cd "$NEW_SOURCE_DIR"   # 迁移前指向历史工作目录 new/
 find core include patches profiles rust tools -type f -print0 \
   | sort -z | xargs -0 sha256sum > /tmp/chrome-client-new.sha256
 ```
@@ -68,9 +73,9 @@ find core include patches profiles rust tools -type f -print0 \
 
 ### 2. 迁移 ABI 和 Core 胶水
 
-先比较 `new/include/minicronet.h` 与 `chrome_client/core/abi/minicronet.h`，再迁移
-缺失的 C++ 胶水/patch。构建只允许使用 `//minicronet` 根 target，并执行 Android、
-Java、JNI、UI 和无关 target 泄漏检查。
+先比较 `new/include/minicronet.h`（历史源路径，已不存在）与本仓库的
+`core/abi/minicronet.h`，再迁移缺失的 C++ 胶水/patch。构建只允许使用 `//minicronet`
+根 target，并执行 Android、Java、JNI、UI 和无关 target 泄漏检查。
 
 ### 3. 迁移 profile 和验证工具
 
@@ -98,13 +103,13 @@ chrome_client/
 
 ## 验收门槛
 
-- [ ] 目标仓库不再依赖 `/home/sj/桌面/new` 才能构建或运行。
+- [ ] 目标仓库不再依赖 `new/` 才能构建或运行。
 - [ ] ABI v7 字段、尺寸、符号和 manifest 全部一致。
 - [ ] 8 个 target 均完成 Rust 编译；无法运行的架构有明确的目标机/runner 记录。
 - [ ] Linux x86_64 完成真实 H1/H2/H3、WS/WSS、代理、缓存/Cookie、取消/超时和
   并发回归。
 - [ ] 其他平台至少完成对应格式、导出、依赖和加载验证；运行时报告单独记录。
-- [ ] profile 99--151 的可证明差异已生成精简只读表，多 Engine 隔离测试通过。
+- [ ] profile 99--153 的可证明差异已生成精简只读表，多 Engine 隔离测试通过。
 - [ ] 发布包不含证据、私钥、缓存、构建中间物和 Android/Java/JNI。
 
 迁移完成后，`new` 只能作为历史工作目录或只读证据源；后续修改必须提交到

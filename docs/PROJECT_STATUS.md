@@ -1,6 +1,6 @@
 # chrome_client 项目状态
 
-记录时间：2026-09-11。本文覆盖已完成、进行中、已知缺陷和后续计划。数字都来自本机
+记录时间：2026-09-23。本文覆盖已完成、进行中、已知缺陷和后续计划。数字都来自本机
 实测，可用 `tools/` 下的脚本复现。
 
 ## 项目定位
@@ -12,7 +12,8 @@
 `minicronet-sys`（手写 FFI 声明）→ `minicronet`（Rust 安全层）→ 各语言薄绑定。
 
 - Chromium revision：`b75a5a95ea1a1b55bdbfd6d9f42d47be7507fb8b`（Chrome 153.0.8010.37 stable，2026-09-08）
-- Python 发布版本 0.2.3，crate 版本 0.2.3（两者同号，不再有四段版本号映射）
+- Python 发布版本与 crate 版本同号（不再有四段版本号映射）；具体版本号只在根
+  `Cargo.toml` 的 `workspace.package.version` 里，本文件不再复述，以免再次漂移
 - Chrome profile：`chrome_99` — `chrome_153`，55 个
 
 ## 已完成
@@ -55,6 +56,8 @@ v7：同步顺序 738.8 → 804.6 req/s，流式 148.5 → 150.9 MiB/s。
 `chrome_client.get("http://例え.テスト/")` 触发 SIGTRAP 打掉宿主进程。
 
 三种数据集实测：完整 10,876,560 / IDNA+全部转换器 6,276,640 / **仅 IDNA 191,056**。
+（后续发现「仅 IDNA」会切断 Basic/Digest 的 realm 解码，当前数据集为 194,064 —— 见
+本文「代理认证修复」一节。）
 字符集转换器占 97%，而 Core 从不调用它们，所以只保留 IDNA 并用
 `icu_use_data_file = false` 编入库中。
 
@@ -271,7 +274,9 @@ Core smoke、三个平台审计、103 个 Python 用例全过；**TLS 指纹未�
 间集合差异与修改前逐字节一致（逐次 order 不同是 Chrome 自身的扩展乱序）。
 
 三个体积上限随之收紧：Linux 9,250,000 → 9,050,000、Windows 12,000,000 → 11,400,000、
-macOS 12,000,000 → 8,750,000。macOS 那一档原来虚高 3 MB 以上，等于没有门禁。
+macOS 12,000,000 → 8,750,000。macOS 那一档原来虚高 3 MB 以上，等于没有门禁。`-Oz`
+那轮之后三档又收到 Linux **8,940,000**、Windows **10,400,000**、macOS **8,620,000**，
+即当前 `tools/audit-core-*.sh` 的默认上限。
 
 **已测量但未采纳：HSTS 预载表（−786,432 字节，−8.57%）。** 这是剩下唯一的大头，与上面
 那项叠加可再省到 −10.98%。没做，因为它用保真度换体积：Chrome 会在发出任何字节之前把
@@ -406,11 +411,66 @@ WS/WSS 服务器）而 skip。
 ### 发布
 
 PyPI 上的 0.2.1.1 存在背压挂死和 IDN 崩溃，两者都已修复并随 **0.2.2** 发布
-（0.2.2 起 crate 与 Python 版本同号，不再有四段版本号）；当前版本 **0.2.3**。
-发布路径：打 `v0.2.3`
+（0.2.2 起 crate 与 Python 版本同号，不再有四段版本号）。版本号见根 `Cargo.toml`。
+发布路径：打与 `Cargo.toml` 一致的 `v<版本>`
 tag 触发 `pypa/gh-action-pypi-publish`（OIDC 可信发布，需要 PyPI 侧把
 `komAAmok/chrome_client` 的 `build-wheels.yml` 加进 trusted publishers），属于
 不可撤销操作；重复上传同名文件会被 PyPI 以 400 拒绝。
+
+## 本轮审计修复（2026-09-23）
+
+对全仓库做了一次审计与复核，修掉的问题、每条的经验和新增的门禁都记在
+`docs/LESSONS.md`；面向后续改动的强制规则记在 `AGENTS.md`。摘要：
+
+- `core_version()` 返回了一个早已过期的 `0.4.0`：Core 的版本串改为构建期从根
+  `Cargo.toml` 注入（`tools/version.py` + `tools/sync-core.sh`），并把
+  `docs/PROJECT_STATUS.md` 纳入版本门禁的扫描范围。
+- `http_version` 对 h2/h3 谎报 `HTTP/1.1`：改为只在能证明时返回协议，否则
+  `None`；真正的修法（ABI v9 暴露协商协议）记入 `NEXT_STEPS.md`。
+- 异步流式响应在 `allow_redirects=False` 或较紧的 `max_redirects` 下静默丢 body：
+  流式响应现在始终挂载 reader，与同步路径一致。
+- `discard_cookies=True` 仍会发出 Core 存储里的 cookie：改为切换到空 cookie store 的
+  同配置 Engine，并在请求后丢弃被取代的 slot（同时修掉 engine 缓存抖动）。
+- `send()` 忽略 session 默认值（含 `max_response_bytes`）：现在补齐会话级默认。
+- `priority=` 的 stub 写 `int` 而运行时只接受字符串：stub 改为 Literal 枚举值。
+- `AsyncResponse.close()` 对异步响应是空操作并泄漏原生请求：现在会取消并摘除。
+- 32 位 ABI 布局测试的三个结构体尺寸写错（88/28/76 → 84/32/80）：按头文件实测值修正。
+- `[workspace.lints]` 因为成员没有 `[lints] workspace = true` 而从未生效：四个
+  manifest 都已加入，并用一次故意违规确认 `E0133` 会失败。
+- 历史 User-Agent 的平台令牌硬编码为 Linux：改为按 `BUILDFLAG(IS_WIN/IS_MAC)` 与架构分支。
+- 仓库无 `LICENSE`、无第三方归属：新增 `LICENSE` 与 `THIRD_PARTY_NOTICES.md`（10 个
+  组件的许可全文取自固定 Chromium 检出）。
+- 工具脚本里的开发者绝对路径：改为 `tools/core-paths.sh` 统一解析（兄弟目录 → `$HOME/chromium`）。
+- 8 个平台 Core 已按上述 Core 源码改动全部重建并刷新 manifest。
+
+仍未闭合、已记入 `NEXT_STEPS.md` 的：ABI v9 协商协议、32 位布局的 CI 执行路径、
+产物来源证明（重建比对/签名）、Linux 交叉构建的 pkgconf 迁移、git 历史瘦身。
+
+## 代理认证修复（2026-09-24）
+
+**带 realm 的 407/401 挑战永远不会认证**——这是本轮唯一一个「静默失效」级别的缺陷：
+凭据从未发出，调用者拿到一个裸的 407，没有异常也没有日志。
+
+根因在 ICU 数据集而不在代理代码：`core/icu/filter.json` 排除了 `conversion_mappings`，
+而 HTTP Basic/Digest 的 realm 解码要经
+`ConvertToUtf8AndNormalize(..., kCharsetLatin1, ...)` → `ucnv_open("ISO-8859-1")`，该名字是
+`windows-1252-html` 转换器的别名。转换器打不开 → `ParseRealm` 失败 →
+`CreateAuthHandler` 返回 `ERR_INVALID_RESPONSE` → `ChooseBestChallenge` 静默丢弃挑战 →
+`GetAuthChallengeInfo()` 返回 nullptr → `NotifyAuthRequired()` 从不发生 →
+Core 的 `Request::OnAuthRequired` 一次都不执行。逐层证据与调用点行号见
+`docs/LESSONS.md` 第 22 条与 `core/icu/README.md`。
+
+- `filter.json` 改为 `includelist: ["windows-1252-html"]`，数据集 191,056 → **194,064**
+  字节（+3,008），每个平台的库相应 +4,096 字节
+- `_NET_ERRORS` 补上 `-375 ERR_TOO_MANY_RETRIES`：凭据被拒时 Chromium 在同一个
+  `URLRequest` 内重试到 `kMaxRestarts`(32)，最终报的是这个码，此前调用者只看到裸的
+  `net error -375`
+- 新增 `test_compat.ProxyAuthenticationTests`：夹具**真的**回 407 并断言响应体，覆盖
+  带 realm 的挑战、URL 内嵌凭据、以及错密码必须失败三种情况
+- 8 个平台 Core 全部重建并刷新 manifest
+
+原先「没有任何现有功能依赖 ICU 转换器」的断言已被删除：判断数据可否裁剪时只看了本仓库的
+调用点，漏掉了 **Chromium net 层自己**的消费者。
 
 ## 门禁现状
 
@@ -421,8 +481,11 @@ tag 触发 `pypa/gh-action-pypi-publish`（OIDC 可信发布，需要 PyPI 侧�
 | `tools/audit-readme.sh` | 通过 | 是 |
 | `cargo fmt` / `clippy -D warnings` | 通过 | 是 |
 | `cargo test --workspace` | 8 个单元测试通过（6 个回调/背压 + 2 个 ABI 布局） | 是 |
-| Python 套件 | 103 个用例通过，1 个 skip（真实 WSS 端点，握手已由本地服务器覆盖） | 是 |
-| `tools/audit-core-linux.sh` | 通过（体积上限 9,250,000） | 否，需 Chromium 树 |
+| Python 套件 | 121 个用例通过，2 个 skip（真实 WSS 端点、.invalid 解析器环境） | 是 |
+| `tools/audit-python-stubs.py` | 17 个 stub 模块，0 错 | 是 |
+| Core manifest 与 `CHROMIUM_REVISION` 一致 | 8 个平台通过 | 是 |
+| 扩展可 import 且能发一次真实请求 | 通过 | 是 |
+| `tools/audit-core-linux.sh` | 通过（体积上限 8,940,000） | 否，需 Chromium 树 |
 | 8 个平台构建 | 全部通过 | 否，需 Chromium 树与交叉工具链 |
 | `tools/generate-profile-table.py` | 重新生成与已提交表逐字节一致 | 否，未接入 |
 | `tools/verify-wire-capture.py` | chrome_152 `wire_verified: true` | 否，需抓包 |

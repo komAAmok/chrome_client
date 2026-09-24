@@ -16,6 +16,7 @@ from .._python_impl.sessions import (
     AsyncSession as AsyncSession,
     Client as Client,
     AsyncClient as AsyncClient,
+    split_proxy_credentials as split_proxy_credentials,
     proxy_from_proxies as proxy_from_proxies,
     merge_setting as merge_setting,
     merge_hooks as merge_hooks,

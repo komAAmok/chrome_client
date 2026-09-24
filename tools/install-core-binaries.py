@@ -13,13 +13,17 @@ repository holding a mix of ABI versions.
 import argparse
 import hashlib
 import json
+import os
 import pathlib
 import shutil
 import subprocess
 import sys
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-DEFAULT_CHROMIUM = pathlib.Path("/home/sj/chromium/src")
+# The Chromium checkout defaults to a sibling of this repository, so the script
+# works from any directory on any machine. Pass --chromium-src or set
+# CHROMIUM_SRC when the checkout lives elsewhere.
+DEFAULT_CHROMIUM = ROOT.parent / "chromium" / "src"
 
 # target -> (build dir suffix, primary library, extra files)
 TARGETS = {
@@ -65,10 +69,16 @@ def elf_needed(path):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--abi-version", type=int, required=True)
-    parser.add_argument("--chromium-src", type=pathlib.Path, default=DEFAULT_CHROMIUM)
+    parser.add_argument("--chromium-src", type=pathlib.Path,
+                        default=pathlib.Path(os.environ.get("CHROMIUM_SRC", DEFAULT_CHROMIUM)))
     parser.add_argument("--targets", nargs="*", default=sorted(TARGETS))
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
+
+    if not (args.chromium_src / "net").is_dir():
+        print("no Chromium checkout at %s; pass --chromium-src or set CHROMIUM_SRC"
+              % args.chromium_src, file=sys.stderr)
+        return 1
 
     revision = (ROOT / "CHROMIUM_REVISION").read_text().strip()
     unknown = [name for name in args.targets if name not in TARGETS]

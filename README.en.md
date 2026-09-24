@@ -15,7 +15,7 @@ The Python API matches two conventions at once: the `requests` shapes of
 Chromium cannot honour faithfully raise instead of being silently ignored -- see
 the [compatibility boundary](https://github.com/komAAmok/chrome_client/blob/main/docs/COMPATIBILITY_BOUNDARY.md).
 
-[中文 README](https://github.com/komAAmok/chrome_client/blob/main/README.md) · [Build guide](https://github.com/komAAmok/chrome_client/blob/main/docs/BUILD.md) · [Compatibility boundary](https://github.com/komAAmok/chrome_client/blob/main/docs/COMPATIBILITY_BOUNDARY.md)
+[中文 README](https://github.com/komAAmok/chrome_client/blob/main/README.md) · [Build guide](https://github.com/komAAmok/chrome_client/blob/main/docs/BUILD.md) · [Compatibility boundary](https://github.com/komAAmok/chrome_client/blob/main/docs/COMPATIBILITY_BOUNDARY.md) · [Third-party notices](https://github.com/komAAmok/chrome_client/blob/main/THIRD_PARTY_NOTICES.md)
 
 ## Support matrix
 

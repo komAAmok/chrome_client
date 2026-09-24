@@ -3,9 +3,13 @@ set -Eeuo pipefail
 
 OUT_DIR=${1:?usage: audit-core-macos.sh OUT_DIR ARCH}
 EXPECTED_ARCH=${2:?usage: audit-core-macos.sh OUT_DIR ARCH}
-CHROMIUM_SRC=${CHROMIUM_SRC:-/home/sj/chromium/src}
+# The Chromium checkout defaults to a sibling of this repository, so this
+# script works from any directory on any machine. Point CHROMIUM_SRC at your
+# checkout if it lives elsewhere.
+source "$(dirname "${BASH_SOURCE[0]}")/core-paths.sh"
+CHROMIUM_SRC=$(resolve_chromium_src)
 # Lowered for the size pass: -Oz and the ICU PropNameData trim leave x86_64 at
-# 8,442,400 bytes and arm64 at 7,690,768. The ceiling tracks the larger of the
+# 8,446,496 bytes and arm64 at 7,690,768. The ceiling tracks the larger of the
 # two plus 2% so a regression on either architecture fails here rather than in a
 # release.
 MAX_BYTES=${MAX_BYTES:-8620000}
@@ -16,6 +20,8 @@ if [[ -z $RG ]]; then
   exit 1
 fi
 rg() { "$RG" "$@"; }
+
+test -d "$CHROMIUM_SRC/net" || { printf 'audit-core-macos: no Chromium checkout at %s; set CHROMIUM_SRC to your Chromium checkout\n' "$CHROMIUM_SRC" >&2; exit 1; }
 READOBJ=$CHROMIUM_SRC/third_party/llvm-build/Release+Asserts/bin/llvm-readobj
 NM=$CHROMIUM_SRC/third_party/llvm-build/Release+Asserts/bin/llvm-nm
 OTOOL=$CHROMIUM_SRC/third_party/llvm-build/Release+Asserts/bin/llvm-otool

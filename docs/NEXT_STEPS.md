@@ -14,7 +14,7 @@
   target 不进入发布物。
 - 随机值、会话 ID、GREASE、ClientHello/QUIC padding、WebSocket key 等必须
   继续由 Chromium/BoringSSL/QUICHE 的 CSPRNG 生成，发布配置不得注入固定种子。
-- 版本 profile 只覆盖已审计的 Chrome 99--151 差异；无法证明的行为必须
+- 版本 profile 只覆盖已审计的 Chrome 99--153 差异；无法证明的行为必须
   `fail-closed`，不能用当前 Chromium 行为冒充历史版本。
 
 ## 阶段 1：多平台 Rust target 与 linker（当前首项）
@@ -47,7 +47,9 @@
 ## 阶段 2：Core 与 ABI 发布闭合
 
 - [ ] 以 `core/abi/minicronet.h` 和 `core/abi/ABI_VERSION` 为唯一 ABI 来源，
-  对照 `new/include/minicronet.h` 做逐字段、尺寸、对齐、导出符号审计。
+  对照 `crates/minicronet-sys/src/lib.rs` 的 FFI 声明和 `core/exports/` 下的
+  `minicronet.def`/`minicronet.exports`/`minicronet.lds` 三份导出表，做逐字段、
+  尺寸、对齐、导出符号审计。
 - [ ] 对 8 个 `core/binaries/<target>/manifest.json` 重新计算 SHA-256、大小、
   Chromium revision、ABI 和运行时依赖。
 - [ ] Linux 保持架构匹配的 NSS/NSPR 与 glibc 动态依赖；不静态链接 glibc/NSS，
@@ -59,7 +61,7 @@
 
 ## 阶段 3：Rust 安全层审计与冻结
 
-- [ ] 核对 `minicronet-sys` 与 ABI v7：结构体、枚举、回调签名、`size/version`
+- [ ] 核对 `minicronet-sys` 与 ABI v8：结构体、枚举、回调签名、`size/version`
   前置字段和所有导出函数一一对应。
 - [ ] 验证 Engine、Request、ResponseStream、WebSocket 的创建、重复 release、
   异步回调、Engine 关闭、跨线程 `Send/Sync` 和 panic 边界。
@@ -73,9 +75,11 @@
 
 ## 阶段 4：Chrome profile 与隔离
 
-- [ ] 把 `new/profiles` 中的历史证据和规范化参数迁入版本化 profile 目录；运行时
-  只编译精简只读表，不把源码证据文本编入二进制。
-- [ ] 验证 `chrome_99`--`chrome_151` 的 TLS/ALPN、H2 SETTINGS、QUIC/H3、WS
+- 历史证据和规范化参数已迁入 `profiles/`（`normalized_profiles.json`、
+  `effective_protocol_params.json`、`network_feature_snapshots.json`，以及每个发布
+  版本一个证据目录 `profiles/chrome-152/`、`profiles/chrome-153/`）；运行时只编译
+  精简只读表，不把源码证据文本编入二进制。
+- [ ] 验证 `chrome_99`--`chrome_153` 的 TLS/ALPN、H2 SETTINGS、QUIC/H3、WS
   和关键 FeatureList 差异；未验证版本保持拒绝或明确降级状态。
 - [ ] 确认 ProfileContext 在 Engine 创建时冻结，profile namespace 进入连接池、
   TLS/QUIC session、Alt-Svc、HTTP cache、Cookie 和代理复用键。
@@ -124,5 +128,48 @@ runner 已随 8 个平台 Core 重建上线；阶段 5 的 HTTP pause/resume 已
 
 Linux x86_64 的可复现构建、体积构成和吞吐/并发基线见
 [`BASELINE_LINUX_X86_64.md`](BASELINE_LINUX_X86_64.md)。
+
+## 待办：把协商协议暴露到 ABI（v9）
+
+`http_version` 目前只在状态行能证明时返回协议，其余返回 `None`。原因是 ABI v8 的
+response 回调只有 `(status_code, headers)`，而 Chromium 会把 HTTP/2、HTTP/3 的响应
+规范化成 `HTTP/1.1 200` 的状态行（`net/spdy/spdy_http_utils.cc`），绑定层无法从
+现有数据推出真实协议。
+
+真正的修法是加 ABI 字段而不是继续猜：在 `mn_request_callbacks` 增加
+`on_response_info`，或新增 `mn_request_negotiated_protocol(mn_request_t*,`
+`mn_http_version_t*)`，由 Core 从 `net::HttpResponseInfo`（`WasFetchedViaSpdy()` /
+QUIC 标记 / ALPN）填写。这需要 ABI v8 → v9：头文件、`crates/minicronet-sys` 的布局
+测试、三份导出表、8 个平台产物与 manifest 全部同步，并走一次完整发布验收。
+在此之前绑定层必须继续返回 `None`——错报的指纹比缺失的指纹更糟。
+
+## 待办：32 位 ABI 布局没有执行路径
+
+`crates/minicronet-sys` 的布局测试已有 32 位分支（数值已按头文件修正为
+84/28/92/32/80/16/8），但 CI 只跑 x86_64，所以 `linux-x86`、`windows-x86` 两个已
+发布平台没有执行证明。需要在 CI 加一次
+`cargo test -p minicronet-sys --target i686-unknown-linux-gnu`（或等价目标机运行）。
+
+## 待办：产物来源证明
+
+`core/binaries/*/manifest.json` 的 SHA-256 由写它的同一个工具生成，所以同时替换
+二进制与 manifest 可以通过所有门禁。已加的检查只能保证 manifest 的
+`chromium_revision` 与 `CHROMIUM_REVISION` 一致。要真正证明二进制来自这份源码，
+需要一条能跑 Chromium 构建的 CI 路径：重建 → 比对 → 记录，或对产物签名/attestation。
+
+## 待办：Linux 交叉构建的 pkgconf 未迁移
+
+`linux-x86` / `linux-arm64` 的交叉构建需要 `pkg-config`（gn 为 NSS 调用它），而这份
+工具目前在仓库之外的历史目录里。可用命令：
+
+```bash
+MINICRONET_PKGCONF_DIR=<unpacked pkgconf root> \
+PKG_CONFIG_LIBDIR=$CHROMIUM_SRC/build/linux/debian_bullseye_<arch>-sysroot/usr/lib/pkgconfig \
+tools/build-core-linux-arm64.sh
+```
+
+注意不要设置 `PKG_CONFIG_SYSROOT_DIR`：gn 自己会传 `--sysroot`，再设一次会拼出双前缀
+（表现为 .../sysroot/home/.../sysroot/usr/include/nss 下找不到 pk11pub.h）。
+把这份 pkgconf 迁进仓库或文档化获取方式，是阶段 1 的剩余项。
 
 完成条件是每项都有命令输出或目标机报告；“文件存在”不等于“平台支持完成”。

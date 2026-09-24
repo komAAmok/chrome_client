@@ -472,7 +472,27 @@ mn_result_t Request::ResumeRead() {
   // The pause has not landed yet. Record the resume so PauseRead consumes it;
   // one extra read is harmless, a lost resume is not. ReadMore is a no-op once
   // the request has completed, so a late resume is safe.
-  read_state_.store(kReadResumeRequested);
+  //
+  // This has to be a compare-exchange, not a plain store. A store can overwrite
+  // the kReadPaused that PauseRead just published, and PauseRead's own CAS
+  // (from kReadReading) then fails, takes its fallback branch and consumes a
+  // resume that was meant for a read which never happened.
+  int observed = kReadReading;
+  while (!read_state_.compare_exchange_weak(observed, kReadResumeRequested)) {
+    if (observed == kReadResumeRequested) {
+      break;  // Already recorded; the pause will consume it.
+    }
+    if (observed == kReadPaused) {
+      // The pause landed between the CAS above and this load, so retry the
+      // primary transition rather than recording a resume for it.
+      int retry = kReadPaused;
+      if (read_state_.compare_exchange_weak(retry, kReadReading)) {
+        PostReadMore();
+        return MN_OK;
+      }
+    }
+    observed = kReadReading;
+  }
   return MN_OK;
 }
 

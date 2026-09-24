@@ -16,7 +16,14 @@
     "curr_tree": { "filterType": "exclude" },
     "lang_tree": { "filterType": "exclude" },
     "locales_tree": { "filterType": "exclude" },
-    "conversion_mappings": { "filterType": "exclude" },
+// HTTP Basic and Digest decode the challenge's realm with
+// base::ConvertToUtf8AndNormalize(..., kCharsetLatin1, ...), and ICU resolves
+// "ISO-8859-1" to this one single-byte table (source/data/mappings/convrtrs.txt:
+// windows-1252-html owns the alias). Excluding conversion_mappings made that
+// open fail, ParseRealm returned false, no auth handler was ever created, and
+// neither proxy_auth nor an origin 401 reached the Core's OnAuthRequired: the
+// 407 was handed back to the caller with the credentials unspent.
+    "conversion_mappings": { "includelist": [ "windows-1252-html" ] },
     "misc": { "includelist": [ "icustd", "icuver", "likelySubtags" ] },
     "normalization": { "includelist": [ "nfc", "nfkc", "uts46" ] },
     "rbnf_tree": { "filterType": "exclude" },

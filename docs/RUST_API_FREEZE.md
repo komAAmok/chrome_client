@@ -11,7 +11,7 @@
 - No compatibility aliases or deprecated entry points are provided.
 
 `minicronet-sys` contains only the ABI constants, opaque handles, C enums,
-`#[repr(C)]` structures, callback types, and the 19 exported C functions. It
+`#[repr(C)]` structures, callback types, and the 20 exported C functions. It
 contains no networking implementation or async runtime.
 
 `minicronet` owns `Engine`, `Request`, response streams, WebSocket streams,

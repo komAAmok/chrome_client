@@ -10,8 +10,10 @@
 #include "base/compiler_specific.h"
 #include "base/containers/span.h"
 #include "base/i18n/streaming_utf8_validator.h"
+#include "build/build_config.h"
 #include "base/strings/string_util.h"
 #include "minicronet/engine.h"
+#include "minicronet/minicronet_version_generated.h"
 #include "minicronet/profile_context.h"
 #include "minicronet/request.h"
 #include "minicronet/websocket.h"
@@ -37,24 +39,61 @@ struct mn_websocket {
 
 namespace {
 
-constexpr char kVersion[] = "0.4.0";
-constexpr char kDefaultUserAgent[] = "minicronet/0.4.0";
+// The version is injected by the build, never written here. tools/version.py
+// reads it from the root Cargo.toml and tools/sync-core.sh passes it in, so a
+// release bump cannot leave a stale copy behind: the hand-written "0.4.0" this
+// replaced was still being reported by chrome_client.core_version() long after
+// the workspace had moved on.
+constexpr char kVersion[] = MINICRONET_VERSION;
+constexpr char kDefaultUserAgent[] = "minicronet/" MINICRONET_VERSION;
 
 std::string HistoricalUserAgent(const minicronet::ProfileContext& profile) {
   static constexpr const char* kFullVersions[] = {
       "99.0.4844.84", "100.0.4896.127", "101.0.4951.64",
       "102.0.5005.115", "103.0.5060.134", "104.0.5112.101",
   };
+  // profile.id() is "chrome_<major>", already checked against the generated
+  // table by ProfileContext::Create. This stays defence in depth so an
+  // unparsable id cannot index kFullVersions out of bounds.
+  const std::string id = profile.id();
+  if (id.size() <= 7 || id.compare(0, 7, "chrome_") != 0) {
+    return std::string();
+  }
   int major = 0;
-  for (char digit : profile.id().substr(7)) {
-    major = major * 10 + digit - '0';
+  for (char digit : id.substr(7)) {
+    if (digit < '0' || digit > '9') {
+      return std::string();
+    }
+    major = major * 10 + (digit - '0');
+    if (major > 999) {
+      return std::string();
+    }
+  }
+  if (major < 99) {
+    return std::string();
   }
   const std::string version =
       major <= 104 ? base::span(kFullVersions)[major - 99]
                    : std::to_string(major) + ".0.0.0";
-  return "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-         "(KHTML, like Gecko) Chrome/" +
-         version + " Safari/537.36";
+  // The wire evidence in profiles/chrome-<major>/captures.json was captured
+  // from a Windows desktop client, but a profile cannot claim a platform the
+  // socket is not on: the token follows the host this Core is running on, the
+  // way a real Chrome build does. The version number is the part the profile
+  // actually owns.
+#if BUILDFLAG(IS_WIN)
+  static constexpr char kPlatform[] = "Windows NT 10.0; Win64; x64";
+#elif BUILDFLAG(IS_MAC)
+  static constexpr char kPlatform[] = "Macintosh; Intel Mac OS X 10_15_7";
+#elif defined(ARCH_CPU_ARM64)
+  static constexpr char kPlatform[] = "X11; Linux aarch64";
+#elif defined(ARCH_CPU_X86)
+  static constexpr char kPlatform[] = "X11; Linux i686";
+#else
+  static constexpr char kPlatform[] = "X11; Linux x86_64";
+#endif
+  return std::string("Mozilla/5.0 (") + kPlatform +
+         ") AppleWebKit/537.36 (KHTML, like Gecko) Chrome/" + version +
+         " Safari/537.36";
 }
 
 bool IsForbiddenWebSocketHeader(std::string_view name) {
@@ -245,7 +284,9 @@ mn_result_t MN_CALL mn_engine_create(const mn_engine_config_t *config,
     if (config->user_agent && user_agent != profile_user_agent) {
       return MN_ERROR_PROFILE_CONFLICT;
     }
-    user_agent = std::move(profile_user_agent);
+    if (!profile_user_agent.empty()) {
+      user_agent = std::move(profile_user_agent);
+    }
   }
 
   scoped_refptr<minicronet::Engine> impl = minicronet::Engine::Create(
@@ -343,28 +384,31 @@ mn_result_t MN_CALL mn_request_create(mn_engine_t *engine,
     return MN_ERROR_INVALID_ARGUMENT;
   }
 
-  auto *request = new (std::nothrow) mn_request;
-  if (!request) {
-    return MN_ERROR_OUT_OF_MEMORY;
-  }
-
+  // Headers are validated before anything is allocated. They used to be parsed
+  // after the mn_request wrapper was created, which forced two hand-written
+  // "delete request" early returns: the only place in this file where the
+  // out-param invariant was maintained by hand rather than by falling through
+  // to a single exit.
   std::vector<std::pair<std::string, std::string>> headers;
   headers.reserve(config->header_count);
   auto input_headers =
       UNSAFE_BUFFERS(base::span(config->headers, config->header_count));
   for (const mn_header_t &header : input_headers) {
     if (!header.name || !header.value || header.name_length == 0) {
-      delete request;
       return MN_ERROR_INVALID_ARGUMENT;
     }
     std::string name(header.name, header.name_length);
     std::string value(header.value, header.value_length);
     if (!net::HttpUtil::IsValidHeaderName(name) ||
         !net::HttpUtil::IsValidHeaderValue(value)) {
-      delete request;
       return MN_ERROR_INVALID_ARGUMENT;
     }
     headers.emplace_back(std::move(name), std::move(value));
+  }
+
+  auto *request = new (std::nothrow) mn_request;
+  if (!request) {
+    return MN_ERROR_OUT_OF_MEMORY;
   }
 
   request->impl = base::MakeRefCounted<minicronet::Request>(

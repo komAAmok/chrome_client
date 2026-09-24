@@ -23,10 +23,29 @@ jobs:
       # them. Pure stdlib, no Core needed.
       - run: python3 tools/audit-python-stubs.py
       # Pure static audit of the committed Core artifacts: manifest fields,
-      # SHA-256, size, the twenty ABI exports per platform and the reverse
-      # assertion that no icudtl.dat travels with a Windows build. Needs no
-      # Chromium checkout, so it belongs in the structure job.
+      # SHA-256, size, the twenty ABI exports per platform, the presence of the
+      # ICU ISO-8859-1 converter table that HTTP Basic/Digest realms need, and
+      # the reverse assertion that no icudtl.dat travels with a Windows build.
+      # Needs no Chromium checkout, so it belongs in the structure job.
       - run: tools/audit-core-binaries.sh
+      # The ERR_* names in exceptions.py tell a caller what a proxy or TLS
+      # failure actually was. They had drifted badly (eight codes carried a
+      # different error's name and the codes a proxy failure produces were
+      # missing), so this needs a Chromium checkout and therefore cannot run
+      # in this job; it is invoked by the Chromium-tree job instead. The
+      # checkout-free half lives in test_compat.NetErrorTableShapeTests.
+      # The manifests are the provenance record the loader reads, so a manifest
+      # that pins a different Chromium revision than CHROMIUM_REVISION would
+      # describe a Core this repository never built.
+      - name: Core manifest revision matches CHROMIUM_REVISION
+        run: |
+          set -Eeuo pipefail
+          want=$(tr -d '[:space:]' < CHROMIUM_REVISION)
+          for m in core/binaries/*/manifest.json; do
+            got=$(python3 -c "import json,sys;print(json.load(open(sys.argv[1]))['chromium_revision'])" "$m")
+            [ "$got" = "$want" ] || { echo "$m: $got != $want"; exit 1; }
+          done
+          echo "all manifests pin $want"
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
@@ -71,6 +90,15 @@ jobs:
         run: cargo build --release -p chrome-client-python
         env:
           MINICRONET_CORE_DIR: ${{ github.workspace }}/core/binaries/linux-x86_64
+      # The suites exercise the extension, but only after it has loaded; this
+      # step fails first and with a readable message when the Core, the
+      # extension or the loader path is broken.
+      - name: Import the extension and issue one request
+        run: python -c "import chrome_client; r = chrome_client.get('https://example.com', timeout=30); assert r.status_code == 200, r.status_code; print('ok', chrome_client.core_version(), r.status_code)"
+        env:
+          PYTHONPATH: ${{ github.workspace }}/bindings/python:${{ github.workspace }}/target/release
+          MINICRONET_CORE_DIR: ${{ github.workspace }}/core/binaries/linux-x86_64
+          LD_LIBRARY_PATH: ${{ github.workspace }}/core/binaries/linux-x86_64
       - name: Run the Python regression suites
         run: python -m unittest discover -s bindings/python/tests -p "test_*.py" -v
         env:

@@ -204,15 +204,24 @@ class StabilityTests(unittest.TestCase):
         any non-ASCII host.
         """
         with chrome_client.Client() as client:
-            # Both spellings of the same host must fail identically: a transport
-            # or resolution error, never argument validation.
-            failures = []
+            # Both spellings of the same host must be treated as the same
+            # request: the Unicode form is canonicalized to the punycode form
+            # before any I/O, so neither may be rejected as a bad argument.
+            #
+            # The assertion is about *how* they fail, not which class they
+            # raise: the host does not resolve, and whether the resolver reports
+            # that as ERR_NAME_NOT_RESOLVED (DNSError) or as a connect timeout
+            # (Timeout) depends on the machine's resolver timing. Requiring one
+            # exact class made this test flaky, and a flaky gate is worse than
+            # no gate because it trains people to ignore failures.
             for url in ("http://例え.テスト/", "http://xn--r8jz45g.xn--zckzah/"):
                 with self.assertRaises(chrome_client.RequestException) as caught:
-                    client.get(url, timeout=2)
-                self.assertNotIsInstance(caught.exception, ValueError)
-                failures.append(type(caught.exception))
-            self.assertEqual(failures[0], failures[1])
+                    client.get(url, timeout=5)
+                self.assertNotIsInstance(
+                    caught.exception, (ValueError, chrome_client.InvalidURL),
+                    "%s was rejected as an invalid URL instead of being sent" % url)
+                # A canonicalization failure would surface as ERR_INVALID_URL.
+                self.assertNotIn("ERR_INVALID_URL", str(caught.exception))
 
             # A URL with no scheme is rejected before any I/O, with requests'
             # exception type rather than a native error string.

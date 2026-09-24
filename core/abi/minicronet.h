@@ -35,6 +35,27 @@ typedef struct mn_websocket mn_websocket_t;
  * callback returns.
  *
  * Callbacks for one object are serialized.
+ *
+ * Engine lifetime: an engine must outlive every request and WebSocket created
+ * from it. Releasing the last engine reference tears down its
+ * URLRequestContext, and Chromium asserts that no URLRequest is still
+ * registered against it, so releasing an engine with work in flight can abort
+ * the host process. Finish or cancel the work first. The request and WebSocket
+ * objects keep the engine alive, but that only protects the handle, not the
+ * context.
+ *
+ * Callback ordering: for one request, on_response and on_body precede the
+ * single terminal on_complete. on_redirect is posted on the object's callback
+ * runner while a redirect that fails closed (MN_REDIRECT_ERROR) completes on
+ * the network runner, so no ordering is promised between on_redirect and
+ * on_complete. Do not treat the redirect callback as a guarantee that the
+ * request has not already finished.
+ *
+ * Struct compatibility: every config struct starts with size and version.
+ * version must equal MN_ABI_VERSION; size must equal the size the caller
+ * compiled against. A caller built against a newer header (larger struct, same
+ * version) is rejected with MN_ERROR_INVALID_ARGUMENT, and a version mismatch
+ * with MN_ERROR_UNSUPPORTED_ABI, so the two are distinguishable.
  */
 
 typedef enum mn_result {
@@ -111,7 +132,10 @@ typedef struct mn_engine_config {
   size_t custom_ca_pem_length;
 } mn_engine_config_t;
 
+/* Returns MN_ABI_VERSION compiled into the library. */
 MN_EXPORT uint32_t MN_CALL mn_abi_version(void);
+/* Returns the library version string, injected at build time from the
+ * workspace version (tools/version.py + tools/sync-core.sh). */
 MN_EXPORT const char *MN_CALL mn_version_string(void);
 
 MN_EXPORT mn_result_t MN_CALL mn_engine_create(const mn_engine_config_t *config,
@@ -189,7 +213,10 @@ typedef void(MN_CALL *mn_request_redirect_fn)(
     const char *headers, size_t headers_length, const char *new_url,
     size_t new_url_length, const char *new_method, size_t new_method_length);
 
-/* Header and body pointers are borrowed only for the callback duration. */
+/* Header and body pointers are borrowed only for the callback duration. The
+ * body pointer stays valid for the whole call but must not be retained: the
+ * buffer is owned by the callback runner and released when the callback
+ * returns. */
 
 typedef struct mn_request_callbacks {
   uint32_t size;
@@ -226,6 +253,10 @@ mn_request_create(mn_engine_t *engine, const mn_request_config_t *config,
 MN_EXPORT void MN_CALL mn_request_retain(mn_request_t *request);
 MN_EXPORT void MN_CALL mn_request_release(mn_request_t *request);
 MN_EXPORT mn_result_t MN_CALL mn_request_start(mn_request_t *request);
+/* Requests cancellation. Returns MN_ERROR_INVALID_STATE when the request has
+ * not started or has already finished. A request can finish between that check
+ * and the cancellation itself, in which case MN_OK is returned for a cancel
+ * that had no effect: the terminal callback is still delivered exactly once. */
 MN_EXPORT mn_result_t MN_CALL mn_request_cancel(mn_request_t *request);
 MN_EXPORT mn_result_t MN_CALL mn_request_upload_write(mn_request_t *request,
                                                       const uint8_t *data,
@@ -234,7 +265,11 @@ MN_EXPORT mn_result_t MN_CALL mn_request_upload_write(mn_request_t *request,
 MN_EXPORT mn_result_t MN_CALL mn_request_follow_redirect(mn_request_t *request);
 /* Resumes body reads after on_body returned MN_READ_PAUSE. Safe to call from
  * any thread, more than once, and after completion; a resume that arrives
- * before the pause takes effect is not lost. */
+ * before the pause takes effect is not lost.
+ *
+ * Called from inside on_body it is a no-op beyond clearing the pause: the read
+ * that is already in flight owns the buffer the callback was handed, so the
+ * Core only schedules the next read once that callback has returned. */
 MN_EXPORT mn_result_t MN_CALL mn_request_resume_read(mn_request_t *request);
 
 typedef enum mn_websocket_message_type {

@@ -791,11 +791,19 @@ mod abi_layout_tests {
             assert_eq!(size_of::<mn_header_t>(), 32);
             assert_eq!(size_of::<mn_string_t>(), 16);
         } else {
-            assert_eq!(size_of::<mn_engine_config_t>(), 88);
+            // Verified against the header itself: compiling core/abi/minicronet.h
+            // for a 32-bit target (gcc -m32, size_t = unsigned int) yields
+            // engine_config 84, request_callbacks 28, request_config 92,
+            // websocket_callbacks 32, websocket_config 80, header 16, string 8.
+            // The previous table said 88/28/92/28/76/16/8, so three of the five
+            // struct assertions disagreed with the header on the very platforms
+            // this branch covers (linux-x86, windows-x86). Nothing caught it
+            // because CI only runs the 64-bit branch.
+            assert_eq!(size_of::<mn_engine_config_t>(), 84);
             assert_eq!(size_of::<mn_request_callbacks_t>(), 28);
             assert_eq!(size_of::<mn_request_config_t>(), 92);
-            assert_eq!(size_of::<mn_websocket_callbacks_t>(), 28);
-            assert_eq!(size_of::<mn_websocket_config_t>(), 76);
+            assert_eq!(size_of::<mn_websocket_callbacks_t>(), 32);
+            assert_eq!(size_of::<mn_websocket_config_t>(), 80);
             assert_eq!(size_of::<mn_header_t>(), 16);
             assert_eq!(size_of::<mn_string_t>(), 8);
         }

@@ -2,8 +2,14 @@
 set -Eeuo pipefail
 
 OUT_DIR=${1:?usage: audit-network-featurelist.sh OUT_DIR}
-CHROMIUM_SRC=${CHROMIUM_SRC:-/home/sj/chromium/src}
+# The Chromium checkout defaults to a sibling of this repository, so this
+# script works from any directory on any machine. Point CHROMIUM_SRC at your
+# checkout if it lives elsewhere.
+source "$(dirname "${BASH_SOURCE[0]}")/core-paths.sh"
+CHROMIUM_SRC=$(resolve_chromium_src)
 ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+
+test -d "$CHROMIUM_SRC/net" || { printf 'audit-network-featurelist: no Chromium checkout at %s; set CHROMIUM_SRC to your Chromium checkout\n' "$CHROMIUM_SRC" >&2; exit 1; }
 
 python3 - "$CHROMIUM_SRC" "$OUT_DIR" "$ROOT_DIR" <<'PY'
 import hashlib

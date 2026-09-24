@@ -22,6 +22,7 @@ shared_library("minicronet") {
     "profile_ssl_config_service.h",
     "profile_table_generated.h",
     "minicronet.cc",
+    "minicronet_version_generated.h",
     "request.cc",
     "request.h",
     "websocket.cc",

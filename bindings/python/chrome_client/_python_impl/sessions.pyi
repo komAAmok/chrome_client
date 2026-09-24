@@ -3606,6 +3606,33 @@ Client: TypeAlias = Session
 AsyncClient: TypeAlias = AsyncSession
 
 
+def split_proxy_credentials(
+    proxy: Optional[str],
+) -> Tuple[Optional[str], Optional[str], Optional[str]]:
+    """Splits ``user:pass@host:port`` out of a proxy URL.
+
+    Chromium's proxy rules cannot carry userinfo: ``ParseFromString`` does not
+    accept an ``@`` in the rule, so ``proxy="http://user:pass@host:port"`` parses
+    to an empty rule list and every request fails with
+    ``ERR_NO_SUPPORTED_PROXIES`` (-336) before a socket is opened. The
+    credentials have to travel in the Engine's separate ``proxy_username`` /
+    ``proxy_password`` fields.
+
+    Args:
+        proxy: The proxy URL as the caller wrote it, with or without userinfo.
+
+    Returns:
+        ``(proxy_without_userinfo, username, password)``. The username and
+        password are ``None`` when the URL carried no userinfo, which leaves the
+        session-level ``proxy_auth`` in charge.
+
+    Example:
+        >>> split_proxy_credentials("http://user:pa%40ss@127.0.0.1:8080")
+        ('http://127.0.0.1:8080', 'user', 'pa@ss')
+    """
+    ...
+
+
 def proxy_from_proxies(url: str, proxies: Optional[Proxies]) -> Optional[str]:
     """Selects a requests-style proxy mapping entry for ``url``.
 

@@ -1,0 +1,8 @@
+# Release artifacts under core/binaries are committed binaries, never text.
+# Mark them binary so git never attempts a line-ending conversion or a diff.
+core/binaries/** binary
+*.so binary
+*.dll binary
+*.dylib binary
+*.lib binary
+*.dat binary

@@ -2,7 +2,11 @@
 set -Eeuo pipefail
 
 OUT_DIR=${1:?usage: audit-core-linux.sh OUT_DIR}
-CHROMIUM_SRC=${CHROMIUM_SRC:-/home/sj/chromium/src}
+# The Chromium checkout defaults to a sibling of this repository, so this
+# script works from any directory on any machine. Point CHROMIUM_SRC at your
+# checkout if it lives elsewhere.
+source "$(dirname "${BASH_SOURCE[0]}")/core-paths.sh"
+CHROMIUM_SRC=$(resolve_chromium_src)
 # Runtime profile table is required for the single-library 99--151 selector.
 # Keep the allowance narrow; v7's Engine-level CA verifier is intentional.
 # Raised for ABI v8, which embeds the 191 KB IDNA-only ICU dataset so no external
@@ -12,7 +16,10 @@ CHROMIUM_SRC=${CHROMIUM_SRC:-/home/sj/chromium/src}
 # (-221,184 bytes here, -168,960 to -285,696 across the eight targets).
 # Lowered again for the size pass: -Oz here is -258,048, and the ICU
 # PropNameData trim removes another 28,672 on top of it. Largest artifact is
-# linux-x86_64 at 8,759,144 bytes; the ceiling is that plus 2%.
+# linux-x86_64 at 8,763,240 bytes; the ceiling is that plus 2%. The dataset
+# also carries ICU's ISO-8859-1 conversion table (+4,096 here), which HTTP Basic
+# and Digest need to decode a realm -- without it every realm-carrying challenge
+# silently skipped authentication.
 MAX_BYTES=${MAX_BYTES:-8940000}
 LIB=$OUT_DIR/libminicronet.so
 READELF=$CHROMIUM_SRC/third_party/llvm-build/Release+Asserts/bin/llvm-readelf
@@ -27,6 +34,8 @@ if [[ -z $RG ]]; then
   exit 1
 fi
 rg() { "$RG" "$@"; }
+
+test -d "$CHROMIUM_SRC/net" || { printf 'audit-core-linux: no Chromium checkout at %s; set CHROMIUM_SRC to your Chromium checkout\n' "$CHROMIUM_SRC" >&2; exit 1; }
 
 require_source() {
   local file=$1

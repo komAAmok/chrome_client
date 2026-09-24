@@ -9,7 +9,11 @@ set -Eeuo pipefail
 # swap. Override deliberately, not casually.
 
 ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-CHROMIUM_SRC=${CHROMIUM_SRC:-/home/sj/chromium/src}
+# The Chromium checkout defaults to a sibling of this repository, so this
+# script works from any directory on any machine. Point CHROMIUM_SRC at your
+# checkout if it lives elsewhere.
+source "$(dirname "${BASH_SOURCE[0]}")/core-paths.sh"
+export CHROMIUM_SRC=$(resolve_chromium_src)
 OUT_DIR=${OUT_DIR:-$CHROMIUM_SRC/out/MiniCronet-linux-x86_64}
 JOBS=${JOBS:-2}
 NINJA=$CHROMIUM_SRC/third_party/ninja/ninja
@@ -27,6 +31,8 @@ fi
 for tool in "$NINJA" "$GN" "$OBJCOPY"; do
   test -x "$tool" || die "missing build tool $tool"
 done
+
+test -d "$CHROMIUM_SRC/net" || { printf 'build-core: no Chromium checkout at %s; set CHROMIUM_SRC to your Chromium checkout\n' "$CHROMIUM_SRC" >&2; exit 1; }
 
 # The profile table is a committed generated header. Regeneration needs the
 # profile evidence, which this repository does not own yet, so it is opt-in.

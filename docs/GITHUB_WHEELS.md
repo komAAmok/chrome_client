@@ -6,7 +6,7 @@
 core/binaries/<target>/
 ```
 
-这些大文件当前被 `.gitignore` 排除，发布时应使用 Git LFS 或在 workflow 中增加从 GitHub Release 下载并校验 SHA-256 的步骤。工作流中的 `tools/audit-core-binaries.sh` 会在编译前阻止缺失或错误架构的 Core 继续构建。
+这些 Core 二进制已直接提交进仓库（`git ls-files core/binaries/` 可见，`.gitattributes` 把它们标记为 binary），不是 Git LFS 指针；`.gitignore` 里针对 `core/binaries/*/*.so` 之类的规则只作用于未跟踪的本地产物，不影响已提交的发布产物。工作流用 `actions/checkout@v4` 的 `lfs: true` 检出；Linux 与 macOS 的 job 在编译前跑 `Verify Core artifact` 步骤、Windows 的 job 跑 `tools/stage-windows-wheel.ps1`，两者都按 `manifest.json` 校验 SHA-256 和字节数，缺文件或对不上就中止。`tools/audit-core-binaries.sh` 只在 `ci.yml` 里运行，wheel 工作流不调用它。
 
 Linux 使用 `manylinux2014` 容器。该容器以 glibc 2.17 为基线，因此生成的 wheel 兼容 glibc 2.18 及以上版本。`auditwheel` 会收集 `libminicronet.so` 及 NSS/NSPR 私有依赖；不能从 Ubuntu runner 直接收集依赖。
 

@@ -17,7 +17,7 @@ import os
 import random
 import time
 from collections import deque
-from urllib.parse import urljoin, urlsplit
+from urllib.parse import unquote, urljoin, urlsplit
 
 try:
     from collections.abc import Mapping
@@ -34,7 +34,7 @@ from .exceptions import (InvalidURL, RequestException, ResponseTooLarge,
 from .impersonate import (normalize_http_version, normalize_impersonate,
                           reject_fingerprint_overrides, validate_extra_fp)
 from .models import (DEFAULT_REDIRECT_LIMIT, PreparedRequest, Request, Response,
-                     AsyncResponse, build_url, http_version_from_status_line,
+                     AsyncResponse, build_url, _negotiated_http_version,
                      parse_raw_headers, reason_from_status_line)
 from .structures import CaseInsensitiveDict, Headers
 from .utils import (default_headers as _default_headers, get_netrc_auth,
@@ -121,6 +121,32 @@ def _validate_max_response_bytes(value):
     if isinstance(value, bool) or not isinstance(value, int) or value < 0:
         raise ValueError("max_response_bytes must be a non-negative integer or None")
     return value
+
+
+def split_proxy_credentials(proxy):
+    """Splits ``user:pass@host:port`` out of a proxy URL.
+
+    Chromium's proxy rules cannot carry userinfo: ``ParseFromString`` does not
+    accept an ``@`` in the rule, so ``proxy="http://user:pass@host:port"`` used
+    to parse to an empty rule list and every request failed with
+    ``ERR_NO_SUPPORTED_PROXIES`` (-336) before a socket was even opened. The
+    credentials have to travel in the Engine's separate proxy_username /
+    proxy_password fields, which is also how requests does it.
+
+    Returns ``(proxy_without_userinfo, username, password)``. ``None`` values
+    mean the caller supplied nothing and the session-level ``proxy_auth`` (if
+    any) still applies.
+    """
+    if not proxy or not isinstance(proxy, str):
+        return proxy, None, None
+    parts = urlsplit(proxy)
+    if not parts.username and not parts.password:
+        return proxy, None, None
+    host = parts.hostname or ""
+    if parts.port:
+        host = "%s:%d" % (host, parts.port)
+    clean = "%s://%s" % (parts.scheme, host) if parts.scheme else host
+    return clean, unquote(parts.username or ""), unquote(parts.password or "")
 
 
 def proxy_from_proxies(url, proxies):
@@ -277,6 +303,15 @@ class _AsyncBodyReader(object):
         self._total = 0
         self._closed = False
 
+    @property
+    def state(self):
+        """The :class:`_AsyncState` this reader drains.
+
+        Public so ``AsyncResponse._release_async_body`` can find the owning
+        event loop to cancel from.
+        """
+        return self._state
+
     def __aiter__(self):
         return self
 
@@ -352,6 +387,15 @@ class _AsyncState(object):
         self.timer = loop.call_later(timeout, self._expire) if timeout else None
 
     # -- loop-thread callbacks ---------------------------------------------
+    def drain_chunks(self):
+        """Removes and returns every buffered chunk, in arrival order."""
+        chunks = []
+        while self.chunks:
+            chunks.append(self.chunks.popleft())
+        self.buffered = 0
+        self.throttled = False
+        return chunks
+
     def notify(self):
         if self.closed:
             return
@@ -383,6 +427,22 @@ class _AsyncState(object):
             # The batch limit, not an empty queue, ended the drain, so nothing
             # else will wake us: re-arm explicitly.
             self.loop.call_soon(self.notify)
+
+    def error_is_lazy(self):
+        """True when the pending error belongs to the body consumer.
+
+        Two failures can be recorded while the head is still being awaited,
+        and they belong to different owners:
+
+        * A deadline (``Timeout``) is a property of the request, so it must
+          surface from ``get()`` -- a streaming caller waiting on headers
+          should not be left asleep.
+        * ``max_response_bytes`` is a property of the body, so it must surface
+          while the caller is consuming, the same place the synchronous path
+          reports it. Raising it from ``get()`` would deny the caller the
+          streaming response it asked for.
+        """
+        return self.stream and isinstance(self.error, ResponseTooLarge)
 
     def _on_body(self, chunk):
         self.total += len(chunk)
@@ -683,6 +743,12 @@ class BaseSession(object):
 
     # -- engine selection ---------------------------------------------------
     def _engine_config(self, impersonate, proxy, verify, http_version):
+        # Credentials embedded in the proxy URL have to be moved into the
+        # Engine's separate fields: Chromium's proxy rule parser rejects
+        # userinfo, so leaving them inline made the rule list empty and every
+        # request failed with ERR_NO_SUPPORTED_PROXIES before opening a socket.
+        # The URL's own credentials win over the session-level proxy_auth.
+        proxy, url_user, url_password = split_proxy_credentials(proxy)
         ca_pem = None
         if isinstance(verify, str):
             with open(verify, "rb") as handle:
@@ -695,8 +761,8 @@ class BaseSession(object):
                     ca_pem = handle.read()
         else:
             verify_flag = bool(verify)
-        username = password = None
-        if self.proxy_auth:
+        username, password = url_user, url_password
+        if username is None and self.proxy_auth:
             username, password = self.proxy_auth
         return EngineConfig(
             impersonate=impersonate if impersonate is not None else self.impersonate,
@@ -714,12 +780,22 @@ class BaseSession(object):
         )
 
     def _effective_proxy(self, url, proxy, proxies):
+        """Picks the proxy for one request.
+
+        Precedence, highest first: the per-call ``proxy=``, the per-call
+        ``proxies=``, the session's ``proxy=``, the session's ``proxies``, then
+        the environment. The session-level ``proxy=`` used to be stored and
+        never read, so ``Session(proxy=...)`` -- the documented way to send a
+        whole session through one proxy -- silently sent every request direct.
+        """
         if proxy is not None:
             return proxy
         mapping = dict(self.proxies)
         if proxies:
             mapping.update(proxies)
         selected = proxy_from_proxies(url, mapping) if mapping else None
+        if selected is None and self.proxy is not None:
+            selected = self.proxy
         if selected is None and self.trust_env and not should_bypass_proxies(url):
             environment = resolve_proxies(url, {}, trust_env=True)
             selected = proxy_from_proxies(url, environment) if environment else None
@@ -739,8 +815,25 @@ class BaseSession(object):
         Core's cookie store has to be discarded for a caller edit to be visible.
         """
         if discard:
+            # Dropping the header is not enough: the Core's CookieMonster owns
+            # the store and re-attaches every cookie it already holds, so the
+            # documented "neither send nor record" only holds if the store is
+            # discarded too. A fresh generation is a structurally identical
+            # engine with an empty jar, and the mirror stays empty so the
+            # response cookies are not absorbed into it either.
             prepared.headers.pop("Cookie", None)
-            return slot
+            self._generation += 1
+            replacement = self._engines.get(
+                slot.config.replace(generation=self._generation))
+            # The superseded slot is now unreachable: its mirror no longer
+            # matches the jar, so nothing will ever select it again. Leaving it
+            # in the bounded cache made it evict the plain generation-0 engine
+            # that the next ordinary request needs, so a session that alternates
+            # "caller edits the jar / server sets a cookie" rebuilt a whole
+            # Chromium context per request instead of reusing one.
+            if replacement is not slot:
+                self._engines.discard(slot.config)
+            return replacement
         jar = prepared._cookies if prepared._cookies is not None else self.cookies
         desired = jar.cookie_header(prepared.url)
         store = slot.mirror.cookie_header(prepared.url)
@@ -792,7 +885,12 @@ class BaseSession(object):
         response.headers = headers
         response.status_line = status_line
         response.reason = reason_from_status_line(status_line, status_code)
-        response.http_version = http_version_from_status_line(status_line)
+        # ABI v8 carries no negotiated protocol, and the status line cannot
+        # stand in for one: Chromium normalizes an HTTP/2 response onto
+        # "HTTP/1.1 200" (net/spdy/spdy_http_utils.cc), so parsing it reported
+        # HTTP/1.1 for every h2 and h3 connection. Reporting the truth is the
+        # same rule the reason phrase follows -- derive only what can be derived.
+        response.http_version = _negotiated_http_version(status_line)
         response.request = prepared
         response.elapsed = _elapsed(started)
         response.default_encoding = self.default_encoding
@@ -807,7 +905,7 @@ class BaseSession(object):
             hop.headers = hop_headers
             hop.status_line = hop_line
             hop.reason = reason_from_status_line(hop_line, hop_status)
-            hop.http_version = http_version_from_status_line(hop_line)
+            hop.http_version = _negotiated_http_version(hop_line)
             hop.url = url
             hop.request = prepared
             hop.content = b""
@@ -1033,11 +1131,40 @@ class Session(BaseSession):
         request, options = self._prepare_call(locals())
         return self.send(self.prepare_request(request), **options)
 
+    def _with_session_defaults(self, options):
+        """Fills in the session-level defaults a direct ``send()`` bypasses.
+
+        ``request()`` resolves these in :meth:`_prepare_call`, but the requests
+        contract also lets a caller build a ``PreparedRequest`` and call
+        ``send()`` directly, where ``options`` is whatever they passed. Without
+        this the session's ``max_response_bytes``, ``timeout``, redirect policy
+        and stream flag were all silently ignored on that path.
+        """
+        resolved = dict(options)
+        limit = resolved.get("max_response_bytes")
+        if limit is None:
+            resolved["max_response_bytes"] = self.max_response_bytes
+        else:
+            resolved["max_response_bytes"] = _validate_max_response_bytes(limit)
+        if resolved.get("timeout") is None:
+            resolved["timeout"] = self.timeout
+        if resolved.get("stream") is None:
+            resolved["stream"] = self.stream
+        if resolved.get("native_redirects") is None \
+                and resolved.get("python_redirects") is None:
+            python_redirects = self._drive_redirects_in_python(
+                resolved.get("max_redirects"), self.allow_redirects)
+            resolved["python_redirects"] = python_redirects
+            resolved["native_redirects"] = not python_redirects
+            resolved.setdefault("max_redirects", self.max_redirects)
+        return resolved
+
     def send(self, request, **options):
         """Sends a ``PreparedRequest``, as ``requests.Session.send`` does."""
         self._ensure_open()
         if not isinstance(request, PreparedRequest):
             raise ValueError("You can only send PreparedRequests")
+        options = self._with_session_defaults(options)
         adapter = self.get_adapter(request.url)
         from .adapters import HTTPAdapter
         if not isinstance(adapter, HTTPAdapter):
@@ -1411,7 +1538,14 @@ class AsyncSession(BaseSession):
         response = self._new_response(async_mode=True)
         if options.get("default_encoding") is not None:
             response.default_encoding = options["default_encoding"]
-        if stream and follow:
+        if stream:
+            # Always hand a streaming response its reader, exactly as the
+            # synchronous path does. The condition used to be `stream and
+            # follow`, so with allow_redirects=False (or a max_redirects
+            # tighter than Chromium's own limit) the body was read eagerly
+            # from ``state.body`` -- which is None in streaming mode -- and the
+            # response silently came back empty. The reader waits on the same
+            # state, so it is correct for both redirect modes.
             response._async_body_reader = _AsyncBodyReader(state, limit)
         else:
             response.content = bytes(state.body) if state.body is not None else b""
@@ -1424,13 +1558,25 @@ class AsyncSession(BaseSession):
 
     @staticmethod
     async def _await_headers(state):
+        """Waits for the response head, for a streaming request.
+
+        A body-size violation must not be raised here. The caller asked for a
+        stream, so the contract is that ``max_response_bytes`` fails while the
+        body is being consumed -- the same place the synchronous path fails.
+        The limit is detected in :meth:`_AsyncState._on_body`, which runs on
+        the event loop between wakeups, so a small response can trip it before
+        the response event is even seen. Re-raising it here turned a lazy
+        stream into an eager failure at ``get()``, which is what made
+        ``test_streaming_and_response_limit`` fail: the test then never got a
+        response to iterate.
+        """
         while not state.status:
-            if state.error is not None:
+            if state.error is not None and not state.error_is_lazy():
                 raise state.error
             if state.done:
                 break
             await state.wait()
-        if state.error is not None:
+        if state.error is not None and not state.error_is_lazy():
             raise state.error
 
     @staticmethod

@@ -5,8 +5,12 @@
 
 ## 可复现性
 
-Chromium 源码树 HEAD 与 `CHROMIUM_REVISION` 逐字符一致
-（`010786339149198c8c24d58c30cf5a41fcf60c14`），11 个补丁均已应用。
+Chromium 源码树 HEAD 与 `CHROMIUM_REVISION` 逐字符一致，`core/patches/` 下的 12 个
+补丁均已应用（`tools/sync-core.sh` 逐个校验，半应用状态直接失败）。
+（本节表格记录的是 0.2.2 那一轮的实测值，是**历史基线**，不是当前产物：
+当前 linux-x86_64 为 8,763,240 字节，以 `core/binaries/*/manifest.json` 为准。
+此前这里写的 revision `01078633…` 与 `CHROMIUM_REVISION` 不符，已删除该字面量，
+避免第二份版本副本继续漂移。）
 
 | 构建输入 | SHA-256 | 大小 | 说明 |
 | --- | --- | --- | --- |
@@ -47,8 +51,9 @@ strip 前 14,866,992 字节，strip 后 9,033,552 字节，即 `--strip-unneeded
 manifest 另外声明了 `libplc4.so` 和 `libplds4.so`，但它们不在 `DT_NEEDED` 里 ——
 是 `libnss3` 的传递依赖，属于过度声明。
 
-`tools/audit-core-linux.sh` 的体积上限是 9,050,000 字节，当前只剩约 16 KB 余量。
-阶段 1 的 ABI v8 若增加代码会触发这个上限，需要同步调整并说明理由。
+`tools/audit-core-linux.sh` 的体积上限是 8,940,000 字节；当前已提交的 linux-x86_64
+Core 为 8,763,240 字节，余量约 173 KB。继续增加代码会重新逼近这个上限，需要同步
+调整并说明理由。
 
 ## 基准数字
 
@@ -205,12 +210,19 @@ chrome_client.get("http://例え.テスト/")   # 曾经 SIGTRAP，整个宿主�
 | --- | --- | --- |
 | Chromium `common/icudtl.dat` | 10,876,560 | 完整数据 |
 | IDNA + 全部字符集转换器 | 6,276,640 | `core/icu/filter-idna-plus-uconv.json` |
-| **仅 IDNA（采用）** | **191,056** | `core/icu/filter.json` |
+| 仅 IDNA（已废弃） | 191,056 | 排除了 `conversion_mappings`，见下 |
+| **IDNA + ISO-8859-1（采用）** | **194,064** | `core/icu/filter.json` |
 
 字符集转换器占了第二种方案的 **97%**（6.09 MB）。内嵌它会让每个平台的库从 9.0 MB
-涨到 15.3 MB，与轻量化目标相反；而 Core 把响应头以原始字节交给绑定层解码，从不调用
-ICU 转换器。所以只保留 IDNA。这不是功能回退 —— 此前 ICU 完全没有初始化，没有任何
-现有功能依赖过 ICU 转换器。
+涨到 15.3 MB，与轻量化目标相反；Core 把响应头以原始字节交给绑定层解码，所以那 6 MB
+里没有消费者。
+
+**但「没有任何功能依赖 ICU 转换器」曾经是错的**：HTTP Basic/Digest 的 realm 解码走
+`ConvertToUtf8AndNormalize(..., kCharsetLatin1, ...)` → `ucnv_open("ISO-8859-1")`，而
+`ISO-8859-1` 是 `windows-1252-html` 转换器的别名。排除 `conversion_mappings` 后
+`ucnv_open` 失败，认证 handler 建不出来，带 realm 的 407/401 挑战被静默丢弃、凭据
+从不发出。所以现在用 `includelist` 保留这一张表，代价 3,008 字节（数据集）/
+4,096 字节（库）。完整因果链见 `core/icu/README.md` 与 `docs/LESSONS.md` 第 22 条。
 
 最终数据集 9 个条目：`uts46.nrm`、`nfkc.nrm`、`cnvalias.icu`、`uemoji.icu`、
 `ulayout.icu`、`icustd.res`、`icuver.res`、`curr/supplementalData.res`、
@@ -271,7 +283,7 @@ MINICRONET_CORE_DIR=$PWD/core/binaries/linux-x86_64 \
 export PYTHONPATH=$PWD/bindings/python:$PWD/target/release
 LD_LIBRARY_PATH=$PWD/core/binaries/linux-x86_64 \
   tools/bench-core-baseline.py --skip-isolation   # 已发布 Core，隔离用例会挂死
-LD_LIBRARY_PATH=/home/sj/chromium/src/out/MiniCronet-linux-x86_64 \
+LD_LIBRARY_PATH="$CHROMIUM_SRC/out/MiniCronet-linux-x86_64" \
   tools/bench-core-baseline.py                    # 重建 Core，含隔离用例
 ```
 
@@ -402,7 +414,7 @@ Chromium 自己在 `base/trace_event/tracing.gni:18` 的注释说这个开关在
 
 ## 本仓库尚未拥有的构建输入
 
-阶段 0 迁入了 11 个补丁（`core/patches/`）、8 个平台构建脚本、3 个平台审计脚本、
+阶段 0 迁入了 11 个补丁（`core/patches/`，后增至 12 个）、8 个平台构建脚本、3 个平台审计脚本、
 FeatureList 审计和 profile 表生成器。
 
 脚本的验证程度不同，不要混为一谈：
@@ -418,7 +430,7 @@ FeatureList 审计和 profile 表生成器。
 改为 `REGENERATE_PROFILE_TABLE=1` 显式开启，本地 pkgconf 改为 `MINICRONET_PKGCONF_DIR`
 环境变量提供。它们在阶段 1 重建全部 8 个平台时才会被真正跑通。
 
-仍然只存在于 `/home/sj/桌面/new` 或 `/home/sj/chromium/src` 的部分：
+仍然只存在于外部 Chromium 检出（`CHROMIUM_SRC`，见 `tools/core-paths.sh`）的部分：
 
 - 仅在 `minicronet_profile_verification=true` 下编译的 4 个校验探针
   （`profile_isolation_probe.c`、`profile_feature_probe.cc`、
@@ -521,14 +533,16 @@ Core 的 `Engine::InitializeOnNetworkThread` 只请求
 - Core 自带 smoke：`minicronet_smoke` 与 `tools/run-http-smoke.py` 全部通过。
 - `tools/audit-core-linux.sh` 通过（529 个 net 源文件、166 处 FeatureList 读取、
   清单 SHA 仍是 `37169aa7dfe3`），macOS/Windows 审计同样通过。
-- Python 回归 103 个用例通过、1 个跳过。
+- Python 回归 103 个用例通过、1 个跳过。（该轮的数字；当前为 121 个通过、2 个跳过。）
 - **TLS 指纹未变**：`tools/inspect-client-hello.py` 对 chrome_152/151/120/99 抓取，
   cipher 数、稳定扩展集合、profile 之间的集合差异与修改前逐字节一致。逐次抓包的
   扩展 order 不同是 Chrome 自身的扩展乱序（`tls_permute_extensions`），不是回归。
 
 三个体积上限随之收紧：Linux 9,250,000 → **9,050,000**；Windows 12,000,000 →
 **11,400,000**；macOS 12,000,000 → **8,750,000**。macOS 那一档原来虚高了 3 MB 以上，
-等于没有门禁。
+等于没有门禁。`-Oz` 那轮之后三档又收到 Linux **8,940,000**、Windows **10,400,000**、
+macOS **8,620,000**（见 `docs/CORE_BINARY_SIZE_PLAN.md` 6.6 节），也就是当前
+`tools/audit-core-*.sh` 的默认上限。
 
 ### 已测量但未采纳：HSTS 预载表（−786,432 字节，−8.57%）
 
@@ -552,7 +566,7 @@ Chromium 固定默认值。
 | `enable_base_tracing = false` | **这个 gn 参数在本 revision 已不存在**（`base/tracing_buildflags.h` 只剩 `USE_PERFETTO_TRACE_PROCESSOR` 和 `OPTIONAL_TRACE_EVENTS_ENABLED`）。perfetto/track-event 相关符号共 174,514 字节，没有开关可关 |
 | `exclude_unwind_tables = true` | 上限就是 `.eh_frame` 30,600 字节加 `.eh_frame_hdr`，约 0.4%，且会让宿主进程无法回溯 Core 帧。收益与风险都太小，未做；要做的话是一次全量重编译 |
 | simdutf（377,542 字节） | 是 `base` 的 UTF 转换实现，没有 gn 开关，且属正确性路径 |
-| ICU（389,842 字节） | 阶段 2 已压到 IDNA-only 191 KB 数据集；再降就要放弃 IDN 正确性 |
+| ICU（389,842 字节） | 阶段 2 已压到 194 KB 数据集（IDNA + ISO-8859-1 转换表）；再降就要放弃 IDN 正确性或 Basic 认证 |
 | ntlm + digest 认证（22,695 字节） | 真实 Chrome 支持这两种认证，去掉是能力回退 |
 | WebTransport 相关符号（39,206 字节） | 属 QUIC 栈内部，没有独立开关 |
 | `net/features.gni` 的其余开关 | 已经全部最优：`disable_file_support=1`、`use_kerberos=0`、`enable_mdns=0`、`enable_reporting=0`、`enable_device_bound_sessions=0`、`enable_disk_cache_sql_backend=0`；`enable_websockets=1` 是 ABI 需要，故意保留 |

@@ -151,6 +151,41 @@ class ProxyHandler(BaseHTTPRequestHandler):
         pass
 
 
+class AuthProxyHandler(BaseHTTPRequestHandler):
+    """A proxy that requires Basic credentials before it forwards anything.
+
+    ``ProxyHandler`` above never challenges, so it cannot exercise
+    authentication; this one answers 407 with a ``realm`` -- the spelling
+    Chromium has to decode through ICU -- until it sees the right
+    ``Proxy-Authorization`` header.
+    """
+
+    protocol_version = "HTTP/1.1"
+    username = "user"
+    password = "pass"
+
+    def do_GET(self):
+        expected = "Basic " + base64.b64encode(
+            ("%s:%s" % (type(self).username, type(self).password)).encode()
+        ).decode()
+        if self.headers.get("Proxy-Authorization") != expected:
+            self.send_response(407)
+            self.send_header("Proxy-Authenticate",
+                             'Basic realm="%s"' % ProxyAuthenticationTests.REALM)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
+        body = ("authed:" + self.path).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "text/plain")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, *_args):
+        pass
+
+
 class Base(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -390,7 +425,13 @@ class RequestsSurfaceTests(Base):
             response = session.get(self.url + "link")
             self.assertEqual(response.status_code, 200)
             self.assertEqual(response.reason, "OK")
-            self.assertEqual(response.http_version, "HTTP/1.1")
+            # ABI v8 carries no negotiated protocol, and Chromium normalizes an
+            # HTTP/2 response onto an "HTTP/1.1" status line, so a local HTTP/1.1
+            # server cannot be distinguished from a normalized h2 one. This used
+            # to assert "HTTP/1.1" and thereby froze a lie: the client reported
+            # HTTP/1.1 for every real h2 and h3 connection. None is the honest
+            # answer until the ABI exposes the negotiated protocol.
+            self.assertIsNone(response.http_version)
             self.assertEqual(response.url, self.url + "link")
             self.assertEqual(response.history, [])
             self.assertEqual(list(response.links), ["next"])
@@ -1539,6 +1580,466 @@ def _fetch_in_subprocess(url):
     import chrome_client as client
     return client.get(url, timeout=20).status_code
 
+
+
+class SilentLossRegressionTests(unittest.TestCase):
+    """Regressions for defects that returned a wrong result without raising.
+
+    Every case below was reproduced against the shipped build before it was
+    fixed. None of them produced an exception, which is exactly why they needed
+    a test rather than a crash report.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        cls.server.daemon_threads = True
+        cls.port = cls.server.server_address[1]
+        threading.Thread(target=cls.server.serve_forever, daemon=True).start()
+        cls.base = "http://127.0.0.1:%d" % cls.port
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.server.shutdown()
+        cls.server.server_close()
+
+    def test_async_streaming_keeps_the_body_without_native_redirects(self):
+        """A streaming state buffers into chunks, so reading body gave b"".
+
+        Two triggers are covered: allow_redirects=False, and a max_redirects
+        tighter than Chromium's own limit (which also drives the hops from
+        Python). Only the second is easy to miss.
+        """
+        url = self.base + "/bytes/10918"
+
+        async def run():
+            async with chrome_client.AsyncSession() as session:
+                for kwargs in ({"allow_redirects": False}, {"max_redirects": 5}):
+                    response = await session.get(url, stream=True, **kwargs)
+                    body = await response.acontent()
+                    self.assertEqual(len(body), 10918, kwargs)
+                    await response.aclose()
+        asyncio.run(run())
+
+    def test_sync_and_async_streaming_agree(self):
+        """The synchronous path was always correct; they must not diverge."""
+        url = self.base + "/bytes/10918"
+        with chrome_client.Session() as session:
+            sync = session.get(url, stream=True, allow_redirects=False)
+            self.assertEqual(len(sync.content), 10918)
+
+        async def run():
+            async with chrome_client.AsyncSession() as session:
+                response = await session.get(url, stream=True,
+                                            allow_redirects=False)
+                self.assertEqual(len(await response.acontent()), 10918)
+                await response.aclose()
+        asyncio.run(run())
+
+    def test_discard_cookies_does_not_send_stored_cookies(self):
+        """Dropping the header was not enough: the Core store re-attached them."""
+        with chrome_client.Session() as session:
+            session.get(self.base + "/set-cookie")
+            self.assertTrue(session.cookies.get_dict())
+            echoed = session.get(self.base + "/echo-cookie").text
+            self.assertIn("sid=ABC", echoed)
+            discarded = session.get(self.base + "/echo-cookie",
+                                    discard_cookies=True).text
+            self.assertNotIn("sid=ABC", discarded)
+            self.assertNotIn("taste=sweet", discarded)
+
+    def test_send_honours_session_defaults(self):
+        """send() bypassed session defaults, including max_response_bytes."""
+        with chrome_client.Session(max_response_bytes=1000) as session:
+            prepared = session.prepare_request(
+                chrome_client.Request("GET", self.base + "/bytes/20000"))
+            with self.assertRaises(chrome_client.ResponseTooLarge):
+                session.send(prepared)
+
+    def test_send_rejects_a_non_prepared_request_with_valueerror(self):
+        """requests.Session.send raises ValueError for a non-PreparedRequest.
+
+        Verified against requests 2.31.0 rather than assumed: its message is
+        "You can only send PreparedRequests." and the exception is ValueError.
+        """
+        with chrome_client.Session() as session:
+            with self.assertRaises(ValueError):
+                session.send(self.base + "/")
+
+    def test_http_version_is_not_guessed(self):
+        """The status line cannot witness the protocol; None beats a lie.
+
+        A local HTTP/1.1 server and a normalized HTTP/2 response both produce
+        "HTTP/1.1 200", so the facade must not claim either one.
+        """
+        with chrome_client.Session() as session:
+            response = session.get(self.base + "/")
+            self.assertIsNone(response.http_version)
+
+    def test_priority_rejects_an_int_with_a_clear_error(self):
+        """The stub advertised Optional[int]; the Core parses strings."""
+        with chrome_client.Session() as session:
+            with self.assertRaises(TypeError):
+                session.get(self.base + "/", priority=5)
+
+
+class RefererEchoHandler(BaseHTTPRequestHandler):
+    """Echoes the Referer the request actually carried.
+
+    The assertion has to be about what the server received, not about what the
+    facade stored: the defect this covers was a caller-supplied Referer that
+    never reached the wire, which no amount of inspecting session state reveals.
+    """
+
+    protocol_version = "HTTP/1.1"
+    seen = []
+
+    def _reply(self):
+        type(self).seen.append((self.command, self.path,
+                                self.headers.get("Referer")))
+        body = json.dumps({"referer": self.headers.get("Referer")}).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    do_GET = _reply
+    do_POST = _reply
+
+    def log_message(self, *_args):
+        pass
+
+
+class RefererTests(unittest.TestCase):
+    """A caller-supplied Referer must travel, and nothing else may change.
+
+    Both halves matter. The defect was that ``headers={"Referer": ...}`` was
+    silently dropped: Chromium's ``URLRequestHttpJob`` strips Referer out of
+    the extra headers and serializes ``referrer()`` instead, so the value
+    vanished with no error. The Core now routes it to
+    ``URLRequest::SetReferrer`` (core/source/request.cc). The other half is
+    that a request which asks for no Referer must still send none -- fixing the
+    first half must not make the binding invent one.
+    """
+
+    REFERER = "https://referrer.example/page"
+
+    @classmethod
+    def setUpClass(cls):
+        cls.server = ThreadingHTTPServer(("127.0.0.1", 0), RefererEchoHandler)
+        cls.server.daemon_threads = True
+        cls.port = cls.server.server_address[1]
+        threading.Thread(target=cls.server.serve_forever, daemon=True).start()
+        cls.base = "http://127.0.0.1:%d" % cls.port
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.server.shutdown()
+        cls.server.server_close()
+
+    def test_every_entry_point_puts_the_referer_on_the_wire(self):
+        """Session-level and per-call, keyword and header, sync and async."""
+        cases = {}
+
+        with chrome_client.Session(headers={"Referer": self.REFERER}) as session:
+            cases["session headers="] = session.get(
+                self.base + "/1", timeout=10).json()["referer"]
+        with chrome_client.Session() as session:
+            cases["per-call referer="] = session.get(
+                self.base + "/2", referer=self.REFERER,
+                timeout=10).json()["referer"]
+        with chrome_client.Session() as session:
+            cases["per-call headers="] = session.get(
+                self.base + "/3", headers={"Referer": self.REFERER},
+                timeout=10).json()["referer"]
+        with chrome_client.Session() as session:
+            session.headers.update({"Referer": self.REFERER})
+            cases["session.headers.update"] = session.get(
+                self.base + "/4", timeout=10).json()["referer"]
+        with chrome_client.Session() as session:
+            cases["prepare/send"] = session.send(
+                session.prepare_request(
+                    chrome_client.Request("GET", self.base + "/5",
+                                          headers={"Referer": self.REFERER})),
+                timeout=10).json()["referer"]
+        with chrome_client.Session(headers={"Referer": self.REFERER}) as session:
+            cases["POST"] = session.post(
+                self.base + "/6", data={"a": "1"}, timeout=10).json()["referer"]
+
+        async def run():
+            async with chrome_client.AsyncSession(
+                    headers={"Referer": self.REFERER}) as session:
+                cases["async session headers="] = (
+                    await session.get(self.base + "/7", timeout=10)
+                ).json()["referer"]
+            async with chrome_client.AsyncSession() as session:
+                cases["async referer="] = (
+                    await session.get(self.base + "/8", referer=self.REFERER,
+                                      timeout=10)
+                ).json()["referer"]
+        asyncio.run(run())
+
+        for label, received in cases.items():
+            self.assertEqual(received, self.REFERER, label)
+
+    def test_no_referer_is_invented_when_none_was_asked_for(self):
+        """The native behaviour: Chromium sends no Referer on a plain request."""
+        with chrome_client.Session() as session:
+            response = session.get(self.base + "/plain", timeout=10)
+        self.assertIsNone(response.json()["referer"])
+
+    def test_a_caller_referer_survives_a_redirect(self):
+        """The caller owns the header, so the default policy must not clear it.
+
+        ``URLRequest::SetReferrer`` with Chromium's default policy clears an
+        https referrer on an http target
+        (CLEAR_ON_TRANSITION_FROM_SECURE_TO_INSECURE), which would drop the very
+        value the caller supplied; the Core sets NEVER_CLEAR for exactly this
+        reason.
+        """
+        with chrome_client.Session(headers={"Referer": self.REFERER}) as session:
+            response = session.get(self.base + "/redirect/1", timeout=10)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["referer"], self.REFERER)
+
+    def test_an_explicit_header_beats_the_session_default(self):
+        per_call = "https://per-call.example/"
+        with chrome_client.Session(headers={"Referer": self.REFERER}) as session:
+            received = session.get(self.base + "/override",
+                                   headers={"Referer": per_call},
+                                   timeout=10).json()["referer"]
+        self.assertEqual(received, per_call)
+
+
+class ProxyAuthenticationTests(unittest.TestCase):
+    """The 407 path, which no fixture exercised before.
+
+    ``ProxyHandler`` answers every request with 200 and never sends a
+    ``Proxy-Authenticate`` challenge, so the entire authentication path --
+    Core delegate, challenge parsing, credential injection -- had no test. A
+    defect lived there: ``Basic realm="x"`` never authenticated at all.
+
+    The proxy here demands credentials and answers 407 until it gets them, and
+    the assertion is on the response body, so "the request went direct" and
+    "the credentials were never sent" cannot pass.
+    """
+
+    REALM = "micronet-proxy"
+
+    @classmethod
+    def setUpClass(cls):
+        cls.proxy = ThreadingHTTPServer(("127.0.0.1", 0), AuthProxyHandler)
+        cls.proxy.daemon_threads = True
+        cls.proxy_thread = threading.Thread(target=cls.proxy.serve_forever)
+        cls.proxy_thread.daemon = True
+        cls.proxy_thread.start()
+        cls.proxy_url = "http://127.0.0.1:%d" % cls.proxy.server_address[1]
+        cls.target = "http://proxy-auth-target.test/hello"
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.proxy.shutdown()
+        cls.proxy_thread.join(timeout=5)
+
+    def test_challenge_with_a_realm_authenticates(self):
+        """A realm is the normal spelling; it must not disable the handler.
+
+        Chromium decodes the realm with
+        ``base::ConvertToUtf8AndNormalize(..., kCharsetLatin1, ...)``, which
+        opens ICU's ISO-8859-1 converter. When the Core's ICU dataset left
+        ``conversion_mappings`` out, that open failed, no auth handler was
+        created, ``GetAuthChallengeInfo`` returned null, and
+        ``OnAuthRequired`` was never called -- the 407 was simply returned to
+        the caller with the credentials unspent.
+        """
+        with chrome_client.Session(proxy=self.proxy_url,
+                                   proxy_auth=("user", "pass")) as session:
+            response = session.get(self.target, timeout=20)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.text, "authed:" + self.target)
+
+    def test_credentials_embedded_in_the_proxy_url_are_used(self):
+        """``http://user:pass@host`` must authenticate too.
+
+        Chromium's proxy rule parser rejects userinfo outright, so the facade
+        has to move it into the Engine's proxy_username/proxy_password fields.
+        """
+        authenticated = self.proxy_url.replace("http://", "http://user:pass@")
+        with chrome_client.Session(proxy=authenticated) as session:
+            response = session.get(self.target, timeout=20)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.text, "authed:" + self.target)
+
+    def test_wrong_credentials_do_not_succeed(self):
+        """The positive cases above must not pass on a bypassed proxy.
+
+        Chromium re-tries the challenge inside the same URLRequest and gives up
+        after kMaxRestarts (32), so rejected credentials arrive as
+        ERR_TOO_MANY_RETRIES (-375) rather than as a 407 the caller could
+        inspect. Asserting "not 200" rather than the exact spelling keeps the
+        test about the outcome: the credentials were rejected.
+        """
+        with chrome_client.Session(proxy=self.proxy_url,
+                                   proxy_auth=("user", "wrong")) as session:
+            try:
+                response = session.get(self.target, timeout=20)
+            except chrome_client.ProxyError as error:
+                self.assertIn("ERR_TOO_MANY_RETRIES", str(error))
+            else:
+                self.assertNotEqual(response.status_code, 200)
+                self.assertNotIn("authed:", response.text)
+
+
+class ProxyRegressionTests(unittest.TestCase):
+    """Regressions for the proxy path.
+
+    Both defects here produced a *successful-looking* response, which is why
+    they survived: nothing raised, the request simply did not go where the
+    caller asked.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.proxy = ThreadingHTTPServer(("127.0.0.1", 0), ProxyHandler)
+        cls.proxy_thread = threading.Thread(target=cls.proxy.serve_forever)
+        cls.proxy_thread.daemon = True
+        cls.proxy_thread.start()
+        cls.proxy_url = "http://127.0.0.1:%d" % cls.proxy.server_address[1]
+        # A name that only resolves inside the proxy, so a direct connection
+        # cannot succeed and a bypass cannot be mistaken for success.
+        cls.target = "http://proxy-target.test/hello"
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.proxy.shutdown()
+        cls.proxy_thread.join(timeout=5)
+
+    def test_session_proxy_constructor_is_used(self):
+        """Session(proxy=...) stored the value and never read it.
+
+        Every request went direct. The target below only exists behind the
+        proxy, so a direct connection fails and the assertion is about the
+        response body rather than about a counter.
+        """
+        with chrome_client.Session(proxy=self.proxy_url) as session:
+            self.assertEqual(
+                session._effective_proxy(self.target, None, None), self.proxy_url)
+            response = session.get(self.target, timeout=10)
+            self.assertEqual(response.status_code, 200)
+            # An HTTP proxy receives the absolute URI, as requests-style proxying
+            # requires; the fixture echoes it back.
+            self.assertEqual(response.text, "proxied:http://proxy-target.test/hello")
+
+    def test_per_request_proxy_still_wins(self):
+        with chrome_client.Session() as session:
+            response = session.get(self.target, proxy=self.proxy_url, timeout=10)
+            # An HTTP proxy receives the absolute URI, as requests-style proxying
+            # requires; the fixture echoes it back.
+            self.assertEqual(response.text, "proxied:http://proxy-target.test/hello")
+
+    def test_session_proxies_mapping_still_works(self):
+        with chrome_client.Session() as session:
+            session.proxies.update({"http": self.proxy_url})
+            response = session.get(self.target, timeout=10)
+            # An HTTP proxy receives the absolute URI, as requests-style proxying
+            # requires; the fixture echoes it back.
+            self.assertEqual(response.text, "proxied:http://proxy-target.test/hello")
+
+    def test_proxy_error_names_come_from_chromium(self):
+        """A proxy failure must name the Chromium error, not a bare code.
+
+        The table had drifted: -111 is ERR_TUNNEL_CONNECTION_FAILED (not
+        ERR_TUNNEL_CONNECTION_FAILED at -336, which is ERR_NO_SUPPORTED_PROXIES)
+        and -111/-115 were missing entirely, so callers saw "Proxy (net error
+        -111)" with nothing to act on.
+        """
+        from chrome_client._python_impl.exceptions import _NET_ERRORS
+        self.assertEqual(_NET_ERRORS[-111][0], "ERR_TUNNEL_CONNECTION_FAILED")
+        self.assertEqual(_NET_ERRORS[-115][0], "ERR_PROXY_AUTH_UNSUPPORTED")
+        self.assertEqual(_NET_ERRORS[-120][0], "ERR_SOCKS_CONNECTION_FAILED")
+        self.assertEqual(_NET_ERRORS[-127][0], "ERR_PROXY_AUTH_REQUESTED")
+        self.assertEqual(_NET_ERRORS[-336][0], "ERR_NO_SUPPORTED_PROXIES")
+        self.assertEqual(_NET_ERRORS[-324][0], "ERR_EMPTY_RESPONSE")
+        for code, (name, kind) in _NET_ERRORS.items():
+            self.assertTrue(name.startswith("ERR_"), (code, name))
+
+
+class StreamingErrorOwnershipTests(unittest.TestCase):
+    """A deadline belongs to the request; a size limit belongs to the consumer.
+
+    These two live in different test modules and disagreed once: suppressing
+    every streaming error at the head broke the deadline contract, and raising
+    every one broke the size contract.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        cls.server.daemon_threads = True
+        cls.port = cls.server.server_address[1]
+        threading.Thread(target=cls.server.serve_forever, daemon=True).start()
+        cls.base = "http://127.0.0.1:%d" % cls.port
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.server.shutdown()
+        cls.server.server_close()
+
+    def test_size_limit_surfaces_while_iterating_not_at_get(self):
+        async def run():
+            async with chrome_client.AsyncSession() as session:
+                response = await session.get(self.base + "/bytes/40000",
+                                            stream=True, max_response_bytes=1024)
+                with self.assertRaises(chrome_client.ResponseTooLarge):
+                    async for _chunk in response.aiter_content():
+                        pass
+        asyncio.run(run())
+
+    def test_deadline_surfaces_at_get_even_when_streaming(self):
+        async def run():
+            async with chrome_client.AsyncSession() as session:
+                with self.assertRaises(chrome_client.Timeout):
+                    await session.get(self.base + "/slow", stream=True, timeout=0.05)
+        asyncio.run(run())
+
+
+class NetErrorTableShapeTests(unittest.TestCase):
+    """The table is generated data; keep it shaped like it.
+
+    tools/audit-net-error-names.py checks the names against Chromium's
+    net_error_list.h, which needs a checkout. These assertions hold without
+    one, so a plain `python -m unittest` still catches a malformed row.
+    """
+
+    def test_every_row_is_a_known_chromium_code(self):
+        from chrome_client._python_impl.exceptions import _NET_ERRORS
+        self.assertGreater(len(_NET_ERRORS), 55)
+        for code, row in _NET_ERRORS.items():
+            self.assertIsInstance(code, int)
+            self.assertEqual(len(row), 2, code)
+            name, kind = row
+            self.assertTrue(name.startswith("ERR_"), (code, name))
+            self.assertIsNone(kind) if kind is None else self.assertTrue(
+                isinstance(kind, type) and issubclass(kind, Exception), (code, kind))
+
+    def test_transport_errors_are_not_reported_as_tls_or_chunked(self):
+        """HTTP/2 and QUIC failures used to raise SSLError / ChunkedEncodingError.
+
+        An h2 stream error is neither a certificate problem (the handshake
+        succeeded) nor an HTTP/1.1 chunked-framing fault, so both classes sent
+        callers to the wrong place. The Core folds every HTTP/2 and QUIC protocol
+        error onto one "Protocol" category, so that category has to mean
+        "transport broke", not "chunked framing".
+        """
+        from chrome_client._python_impl import exceptions as exc
+        table = exc._NET_ERRORS
+        self.assertIs(table[-337][1], exc.ConnectionError)   # ERR_HTTP2_PROTOCOL_ERROR
+        self.assertIs(table[-358][1], exc.ConnectionError)   # ERR_QUIC_HANDSHAKE_FAILED
+        self.assertIs(table[-321][1], exc.ChunkedEncodingError)
+        category = dict((name, kind) for name, kind in exc._NATIVE_ERRORS)
+        self.assertIs(category["Protocol"], exc.ConnectionError)
+        self.assertIsNot(category["Protocol"], exc.SSLError)
 
 if __name__ == "__main__":
     unittest.main()
