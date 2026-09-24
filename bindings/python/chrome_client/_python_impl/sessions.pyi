@@ -28,6 +28,7 @@ from typing import (
     Mapping,
     Optional,
     Sequence,
+    Tuple,
     Type,
     TYPE_CHECKING,
     Union,

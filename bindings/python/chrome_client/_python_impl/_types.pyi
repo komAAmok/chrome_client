@@ -33,7 +33,7 @@ from typing import (
     Union,
 )
 
-from typing_extensions import TypeAlias, TypedDict
+from typing_extensions import Literal, TypeAlias, TypedDict
 
 from .impersonate import ChromeProfileName, ChromeProfileAlias, Impersonate, HttpVersion
 

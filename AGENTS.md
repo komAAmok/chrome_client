@@ -68,6 +68,7 @@ tools/audit-abi.sh
 tools/audit-readme.sh
 tools/audit-pypi-metadata.sh
 python3 tools/audit-python-stubs.py
+python3 tools/audit-python-typing.py
 tools/audit-core-binaries.sh
 cargo fmt --all -- --check
 cargo check --workspace --all-targets

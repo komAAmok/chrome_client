@@ -483,6 +483,7 @@ Core 的 `Request::OnAuthRequired` 一次都不执行。逐层证据与调用点
 | `cargo test --workspace` | 8 个单元测试通过（6 个回调/背压 + 2 个 ABI 布局） | 是 |
 | Python 套件 | 121 个用例通过，2 个 skip（真实 WSS 端点、.invalid 解析器环境） | 是 |
 | `tools/audit-python-stubs.py` | 17 个 stub 模块，0 错 | 是 |
+| `tools/audit-python-typing.py` | mypy 检查存根与消费者，两者都干净（缺 mypy 时跳过） | 是 |
 | Core manifest 与 `CHROMIUM_REVISION` 一致 | 8 个平台通过 | 是 |
 | 扩展可 import 且能发一次真实请求 | 通过 | 是 |
 | `tools/audit-core-linux.sh` | 通过（体积上限 8,940,000） | 否，需 Chromium 树 |

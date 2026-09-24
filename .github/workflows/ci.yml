@@ -110,12 +110,11 @@ jobs:
       # deliberate mistakes in the fixture an assertion: if impersonate="chrome_200"
       # or an unknown keyword ever stops being an error, the ignore goes unused
       # and this step fails.
+      #
+      # Both checks live in tools/audit-python-typing.py so the local gate list
+      # and CI run the same command. They did not, and a missing import in a
+      # stub reached main: mypy only ran in CI, so it was the remote that found
+      # it rather than the person who wrote it.
       - run: python -m pip install --disable-pip-version-check 'mypy>=1.11,<2' typing_extensions
-      - name: Type-check the stubs
-        run: python -m mypy bindings/python/chrome_client --python-version 3.10 --ignore-missing-imports
-      - name: Type-check a consumer against the stubs
-        run: >
-          python -m mypy tools/typecheck-consumer.py --python-version 3.10
-          --ignore-missing-imports --warn-unused-ignores
-        env:
-          MYPYPATH: ${{ github.workspace }}/bindings/python
+      - name: Type-check the stubs and a consumer
+        run: python3 tools/audit-python-typing.py
