@@ -24,6 +24,11 @@ symbols=(
 )
 
 die() { printf 'audit: %s\n' "$*" >&2; exit 1; }
+
+tmpdir="$(mktemp -d)"
+trap 'rm -rf "$tmpdir"' EXIT
+tmp_expected_exports="$tmpdir/expected_exports"
+tmp_actual_exports="$tmpdir/actual_exports"
 command -v sha256sum >/dev/null || die "sha256sum is required"
 command -v file >/dev/null || die "file is required"
 
@@ -157,6 +162,15 @@ PY
     grep -Eq "^_?${symbol}$" <<<"$symbol_dump" \
       || die "$target: missing public symbol $symbol"
   done
+
+  # The loop above is a superset check: it proves each v8 symbol is exported but
+  # not that nothing else is. An artifact carrying a 21st mn_* export would load
+  # a symbol this ABI does not define, and every check would still pass. Compare
+  # the exported mn_* names as a set instead.
+  printf '%s\n' "${symbols[@]}" | sort -u >"$tmp_expected_exports"
+  grep -E '^_?mn_' <<<"$symbol_dump" | sed 's/^_//' | sort -u >"$tmp_actual_exports"
+  cmp -s "$tmp_expected_exports" "$tmp_actual_exports" \
+    || die "$target: exported mn_* set differs from ABI v8 ($(tr '\n' ' ' <"$tmp_actual_exports"))"
 
   # The version string is injected at build time from the workspace version
   # (tools/version.py -> tools/sync-core.sh -> MINICRONET_VERSION), so an

@@ -15,12 +15,18 @@ CHROMIUM_SRC=$(resolve_chromium_src)
 # cache patch dropped the unreachable blockfile and simple backends
 # (-221,184 bytes here, -168,960 to -285,696 across the eight targets).
 # Lowered again for the size pass: -Oz here is -258,048, and the ICU
-# PropNameData trim removes another 28,672 on top of it. Largest artifact is
-# linux-x86_64 at 8,763,240 bytes; the ceiling is that plus 2%. The dataset
+# PropNameData trim removes another 28,672 on top of it. The dataset
 # also carries ICU's ISO-8859-1 conversion table (+4,096 here), which HTTP Basic
 # and Digest need to decode a realm -- without it every realm-carrying challenge
 # silently skipped authentication.
-MAX_BYTES=${MAX_BYTES:-8940000}
+#
+# Re-baselined twice for the 153 -> 156.0.8078.31 upgrade. Upstream growth alone
+# moved the largest artifact (linux-x86_64) from 8,763,240 to 8,965,792; then
+# making //third_party/simdutf honour optimize_for_size under MINICRONET_BUILD
+# (it forced optimize_speed, overriding the Core's -Oz) took the three targets to
+# 8,863,392 / 8,776,524 / 8,692,184. The ceiling keeps the established rule: the
+# largest artifact plus 2%, rounded up to 10,000.
+MAX_BYTES=${MAX_BYTES:-9050000}
 LIB=$OUT_DIR/libminicronet.so
 READELF=$CHROMIUM_SRC/third_party/llvm-build/Release+Asserts/bin/llvm-readelf
 NM=$CHROMIUM_SRC/third_party/llvm-build/Release+Asserts/bin/llvm-nm

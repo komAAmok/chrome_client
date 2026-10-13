@@ -8,11 +8,16 @@ EXPECTED_ARCH=${2:?usage: audit-core-macos.sh OUT_DIR ARCH}
 # checkout if it lives elsewhere.
 source "$(dirname "${BASH_SOURCE[0]}")/core-paths.sh"
 CHROMIUM_SRC=$(resolve_chromium_src)
-# Lowered for the size pass: -Oz and the ICU PropNameData trim leave x86_64 at
+# Lowered for the size pass: -Oz and the ICU PropNameData trim left x86_64 at
 # 8,446,496 bytes and arm64 at 7,690,768. The ceiling tracks the larger of the
 # two plus 2% so a regression on either architecture fails here rather than in a
 # release.
-MAX_BYTES=${MAX_BYTES:-8620000}
+#
+# Re-baselined twice for the 153 -> 156.0.8078.31 upgrade. Upstream growth alone
+# took x86_64 to 8,643,272 and arm64 to 7,889,072; then making
+# //third_party/simdutf honour optimize_for_size under MINICRONET_BUILD took them
+# to 8,536,776 and 7,872,560. The ceiling is the larger plus 2% again.
+MAX_BYTES=${MAX_BYTES:-8710000}
 ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 RG=${RG:-$(command -v rg || true)}
 if [[ -z $RG ]]; then

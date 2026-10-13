@@ -36,6 +36,7 @@ WORKSPACE_VERSION=$(grep -m1 '^version = ' "$ROOT_DIR/Cargo.toml" | sed 's/.*= *
 python3 - "$WORKSPACE_VERSION" "$ROOT_DIR" <<'PY'
 import pathlib
 import re
+import subprocess
 import sys
 
 version = sys.argv[1]
@@ -122,13 +123,27 @@ revision = (root / "CHROMIUM_REVISION").read_text().strip()
 if not re.fullmatch(r"[0-9a-f]{40}", revision):
     raise SystemExit("CHROMIUM_REVISION is not a 40-character commit hash")
 hex40 = re.compile(r"\b[0-9a-f]{40}\b")
-for name in ("docs/PROJECT_STATUS.md", "docs/BASELINE_LINUX_X86_64.md",
-             "docs/NEXT_STEPS.md", "docs/COMPATIBILITY_BOUNDARY.md",
-             "docs/CORE_BINARY_SIZE_PLAN.md", "docs/ARCHITECTURE.md",
-             "docs/MIGRATION_FROM_NEW.md", "README.md", "README.en.md"):
-    path = root / name
-    if not path.exists():
-        continue
+# The list used to be nine hand-picked documents. That is the same shape as the
+# bug this check was written for: the gate scanned the READMEs and
+# docs/PROJECT_STATUS.md while fourteen other documents went unchecked, so a
+# stale commit could sit in any of them with every check green. Scan every
+# tracked Markdown document instead, so a new one is covered the day it lands.
+candidates = sorted(
+    path for pattern in ("*.md", "docs/**/*.md")
+    for path in root.glob(pattern) if path.is_file())
+tracked = subprocess.run(
+    ["git", "-C", str(root), "ls-files", "--error-unmatch", "--"] +
+    [str(path.relative_to(root)) for path in candidates],
+    capture_output=True, text=True)
+if tracked.returncode != 0:
+    missing = [line for line in tracked.stderr.splitlines() if line.strip()]
+    raise SystemExit(
+        "a Markdown document is not tracked by Git, so a fresh clone cannot "
+        "check it: " + "; ".join(missing[:5]))
+scanned = 0
+for path in candidates:
+    name = str(path.relative_to(root))
+    scanned += 1
     for line_number, line in enumerate(path.read_text().splitlines(), 1):
         for found in hex40.findall(line):
             if found != revision:
@@ -136,7 +151,7 @@ for name in ("docs/PROJECT_STATUS.md", "docs/BASELINE_LINUX_X86_64.md",
                     f"{name}:{line_number}: commit {found} is not the pinned "
                     f"CHROMIUM_REVISION ({revision}) -- a document that quotes a "
                     "superseded tree describes a build this repository cannot make")
-print("ok docs: every quoted commit is the pinned CHROMIUM_REVISION")
+print(f"ok docs: every quoted commit is the pinned CHROMIUM_REVISION ({scanned} documents)")
 
 # The badge row at the top of each README is the at-a-glance version and
 # Python-support statement. Its slug has to be the published name and its

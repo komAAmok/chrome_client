@@ -44,5 +44,12 @@ for format in lds def exports; do
     || die "$format export list differs from ABI v8"
 done
 
+# The loop above proves every listed symbol is present in all four places.
+# It cannot see the opposite direction: an export added to the header, the
+# FFI and the Core while the tables kept 20 entries passed every check and
+# still printed "20 symbols". ABI v8 is frozen, so the header must declare
+# exactly this set.
+python3 "$ROOT/tools/abi-exports.py" "$HEADER" "$tmp/expected"
+
 printf 'ABI v8 audit passed: %d symbols, header/FFI/Core/export tables agree.\n' \
   "${#symbols[@]}"

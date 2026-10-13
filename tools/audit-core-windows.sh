@@ -15,7 +15,13 @@ CHROMIUM_SRC=$(resolve_chromium_src)
 # honouring it costs more here than -Oz does anywhere else -- x86 is -1,119,232
 # (-12.36%), x86_64 -1,203,200 (-10.56%), arm64 -630,272 (-6.71%). The largest
 # artifact is now x86_64 at 10,191,360 bytes; the ceiling is that plus 2%.
-MAX_BYTES=${MAX_BYTES:-10400000}
+#
+# Re-baselined twice for the 153 -> 156.0.8078.31 upgrade. Upstream growth alone
+# took x86_64 to 10,396,672 (only 3,328 bytes under the old ceiling); then making
+# //third_party/simdutf honour optimize_for_size under MINICRONET_BUILD took the
+# three targets to 10,299,392 / 8,134,144 / 8,960,000. The ceiling moves with the
+# largest one plus 2% again.
+MAX_BYTES=${MAX_BYTES:-10510000}
 ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 RG=${RG:-$(command -v rg || true)}
 if [[ -z $RG ]]; then
