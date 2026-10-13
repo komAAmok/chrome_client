@@ -1,0 +1,84 @@
+{
+  "profile_id": "chrome_149",
+  "sessions": [
+    {
+      "capture": "captures/chrome-149-h3-local/run-1.pcap",
+      "key_log": "captures/chrome-149-h3-local/run-1.keys"
+    },
+    {
+      "capture": "captures/chrome-149-h3-local/run-2.pcap",
+      "key_log": "captures/chrome-149-h3-local/run-2.keys"
+    },
+    {
+      "capture": "captures/chrome-149-h3-local/run-3.pcap",
+      "key_log": "captures/chrome-149-h3-local/run-3.keys"
+    }
+  ],
+  "full_h3_session_match": true,
+  "matches": {
+    "initial_present": true,
+    "handshake_present": true,
+    "one_rtt_present": true,
+    "handshake_done_present": true,
+    "quic_version": true,
+    "tls_version": true,
+    "cipher_suite": true,
+    "alpn": true,
+    "client_h3_settings": true,
+    "reserved_setting_count": true,
+    "reserved_setting_modulo": true,
+    "reserved_frame_count": true,
+    "reserved_frame_modulo": true,
+    "priority_update": true,
+    "request_header_names": true,
+    "response_status": true,
+    "response_content_length": true,
+    "response_body_length": true,
+    "response_body_sha256": true,
+    "connection_close_error": true,
+    "connection_close_reason": true
+  },
+  "mismatches": {},
+  "stochastic": {
+    "fixed_seed_allowed": false,
+    "session_count": 3,
+    "unique_counts": {
+      "reserved_setting_id": 3,
+      "reserved_setting_value": 3,
+      "reserved_frame_type": 3
+    },
+    "multi_session_randomness_verified": true
+  },
+  "randomized_samples": [
+    {
+      "reserved_setting": [
+        106312629555,
+        3814775791
+      ],
+      "reserved_frame": [
+        131660346328,
+        null
+      ]
+    },
+    {
+      "reserved_setting": [
+        38936057352,
+        1256845791
+      ],
+      "reserved_frame": [
+        66315678177,
+        null
+      ]
+    },
+    {
+      "reserved_setting": [
+        24353666993,
+        610392797
+      ],
+      "reserved_frame": [
+        117691888742,
+        null
+      ]
+    }
+  ]
+}
