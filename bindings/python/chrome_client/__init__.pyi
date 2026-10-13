@@ -9,7 +9,7 @@ Two API shapes over one Chromium network stack:
   ``WebSocket``.
 
     import chrome_client
-    with chrome_client.Session(impersonate="chrome_153") as session:
+    with chrome_client.Session(impersonate="chrome_155") as session:
         session.get("https://example.com")
 
 ``chrome_client.requests`` mirrors the ``requests`` module namespace, including
@@ -171,13 +171,13 @@ def core_version() -> Optional[str]:
     """Version string reported by the loaded Core, or ``None``.
 
     Returns:
-        The Core's build version, e.g. ``"153.0.8010.37"``. ``None`` when the
+        The Core's build version, e.g. ``"155.0.8059.40"``. ``None`` when the
         Core reports none.
 
     Example:
         >>> import chrome_client
         >>> chrome_client.core_version()      # doctest: +SKIP
-        '153.0.8010.37'
+        '155.0.8059.40'
     """
     ...
 

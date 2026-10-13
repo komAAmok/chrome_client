@@ -508,3 +508,65 @@ Mach-O trie 的子节点偏移按当前节点而非 trie 起点计算（直接�
 
 
 
+
+## 26. 上游删掉一个 API 时，「适配」必须是行为等价而不是删代码
+
+**现象**：153 → 156.0.8078.31 升级时，`net::SSLContextConfig::ech_enabled`（155 删除）
+与 `kAvoidH2Reprioritization`（155 删除）都消失了。第一反应是删掉 Core 里对应的两行。
+
+**根因**：删掉 `config.ech_enabled = profile_.ech_enabled;` 是**安全的**，因为 ECH 策略
+由 `GetEchMode()` 每 profile 返回，那一行本来就是冗余副本。但删掉
+`spdy_session.cc` 里 `if (avoid_h2_reprioritization_) return;` **不是**等价的：成员变成
+「只写不读」，`-Werror -Wunused-private-field` 会直接编译失败（这一步救了命），而如果
+关掉那个警告，profile 提供的开关就静默失效了。
+
+**规则**：上游删除某个 feature 时，先查它在**最后一个存在的版本**里的默认值——156 里删掉
+的行为，154 里是 `FEATURE_DISABLED_BY_DEFAULT`。若默认关闭，则「保留成员 + 恢复同一个
+early return」与「删掉」在**所有 pinned profile** 上等价，且不会把开关静默吃掉。判定依据
+必须落到具体行号（`features.cc:37`），不能只说「删了应该没关系」。
+
+## 27. 门禁的「方向」也是覆盖面：只查超集的门禁看不见多余的成员
+
+**现象**：同一类盲区在这次审计里出现三次，都是「只验证一个方向」：
+
+1. `tools/generate-profile-table.py` 的边界断言用手写字典逐 profile 列举，表从 151 涨到
+   155 时字典没跟着涨——**57 个 profile 里有 27 个从未被任何断言检查过**，其中包含刚加
+   的 152–155。断言「通过」和「覆盖到」是两件事。
+2. `tools/audit-abi.sh` 用 `for symbol in $symbols; grep` 检查 ABI：header/FFI/Core 各
+   多出一个导出时全部通过，还照样打印「20 symbols」。ABI v8 是冻结契约，header 多一个
+   就是破坏。
+3. `tools/audit-core-binaries.sh` 同样只查超集：8 个产物各多导出一个 `mn_*` 也能全绿。
+
+**规则**：写「集合一致」的检查时，必须同时问两个方向——**少的**（缺了谁）和**多的**（多
+了谁）。只查一个方向的门禁会在对象增长时静默失效，而它打印的成功信息还会主动误导。
+
+**门禁**：
+- 边界断言改为**区间**+完整性守卫：区间必须恰好铺满 `chrome_99..LAST_PROFILE_MAJOR`，
+  留洞直接失败（变异测试：把 `(99,123)/(124,155)` 改成 `(125,155)` → 报
+  `uncovered majors: [124]`）。
+- 新增 `tools/abi-exports.py`，从 header 反解实际声明的导出集与 v8 清单逐元素比对
+  （变异测试：注入第 21 个导出 → 报 `header declares exports that are not part of ABI v8`）。
+- `audit-core-binaries.sh` 增加导出名集合的 `cmp` 比对（变异测试：让解析器多报一个名字 →
+  报 `exported mn_* set differs from ABI v8`）。
+
+**另一个同源教训**：文档提交号的扫描原先手写列举 9 个文档，仓库里有 22 个 `.md`。改成
+`glob("*.md") + glob("docs/**/*.md")` 全量扫描并断言每个文件都被 Git 跟踪（未跟踪即失败，
+因为干净克隆检查不了它），覆盖数从 9 涨到 26。**任何「手写文件清单」的门禁都是下一个
+漂移点**。
+
+## 28. `git checkout -- <file>` 会静默丢掉未提交的改动
+
+**现象**：为清理一次变异测试的现场，对 `docs/LESSONS.md` 执行了
+`git checkout -- docs/LESSONS.md`。该文件里有本次会话刚写、**尚未提交**的两条教训，
+连同一起没了。`git status` 显示该文件干净，看不出任何异常。
+
+**根因**：这是「禁止提交」与「用 git 清理现场」两条规则叠加出的陷阱：改动只在工作区时，
+`checkout`/`restore` 是**破坏性**操作，而它的输出是沉默的。禁用提交的会话里，工作区就是
+唯一的副本。
+
+**规则**：在工作区持有未提交成果时，清理任何文件前先
+`cp <file> /tmp/<name>.bak`；`git checkout --`、`git restore`、`git stash` 一律视为删除
+操作。需要「只回退某次实验」时，用备份还原而不是用 git 还原。
+
+**教训**：这一条是被自己踩出来的——同一份文件里既记录着「变异测试后要恢复原状」，也
+因为恢复手段选错而丢了内容。

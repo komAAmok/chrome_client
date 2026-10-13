@@ -8,7 +8,8 @@
 Chromium 源码树 HEAD 与 `CHROMIUM_REVISION` 逐字符一致，`core/patches/` 下的 12 个
 补丁均已应用（`tools/sync-core.sh` 逐个校验，半应用状态直接失败）。
 （本节表格记录的是 0.2.2 那一轮的实测值，是**历史基线**，不是当前产物：
-当前 linux-x86_64 为 8,763,240 字节，以 `core/binaries/*/manifest.json` 为准。
+当前 linux-x86_64 为 8,863,392 字节（156.0.8078.31 重建 + simdutf 尺寸档修复），以
+`core/binaries/*/manifest.json` 为准。
 此前这里写的 revision `01078633…` 与 `CHROMIUM_REVISION` 不符，已删除该字面量，
 避免第二份版本副本继续漂移。）
 
@@ -51,9 +52,12 @@ strip 前 14,866,992 字节，strip 后 9,033,552 字节，即 `--strip-unneeded
 manifest 另外声明了 `libplc4.so` 和 `libplds4.so`，但它们不在 `DT_NEEDED` 里 ——
 是 `libnss3` 的传递依赖，属于过度声明。
 
-`tools/audit-core-linux.sh` 的体积上限是 8,940,000 字节；当前已提交的 linux-x86_64
-Core 为 8,763,240 字节，余量约 173 KB。继续增加代码会重新逼近这个上限，需要同步
-调整并说明理由。
+`tools/audit-core-linux.sh` 的体积上限是 9,050,000 字节；当前已提交的 linux-x86_64
+Core 为 8,863,392 字节，余量约 187 KB（2.1%）。上限规则是「最大的那个 Linux 产物
++ 2%，向上取整到 1 万」：156 升级时上游增长先把它推到 8,965,792（上限 9,150,000），
+随后 `//third_party/simdutf` 的尺寸档修复（见 `docs/CORE_BINARY_SIZE_PLAN.md` 第七节）
+把它降回 8,863,392，上限随之收敛到 9,050,000。三个 Linux 目标的最小余量都在 2% 以上；
+继续增加代码会重新逼近上限，需要同步调整并说明理由。
 
 ## 基准数字
 
@@ -553,8 +557,12 @@ Core 的 `Engine::InitializeOnNetworkThread` 只请求
 三个体积上限随之收紧：Linux 9,250,000 → **9,050,000**；Windows 12,000,000 →
 **11,400,000**；macOS 12,000,000 → **8,750,000**。macOS 那一档原来虚高了 3 MB 以上，
 等于没有门禁。`-Oz` 那轮之后三档又收到 Linux **8,940,000**、Windows **10,400,000**、
-macOS **8,620,000**（见 `docs/CORE_BINARY_SIZE_PLAN.md` 6.6 节），也就是当前
-`tools/audit-core-*.sh` 的默认上限。
+macOS **8,620,000**（见 `docs/CORE_BINARY_SIZE_PLAN.md` 6.6 节）。156.0.8078.31
+重建后三档都按同一条规则重算：「最大的那个产物 + 2%，向上取整到 1 万」——Linux
+**9,050,000**、macOS **8,710,000**、Windows **10,510,000**。Windows 三个目标在 156
+升级后都变大（x86_64 10,191,360 → 10,396,672），一度只剩 3,328 字节余量，正是 6.6 节
+要消除的「贴线」状态；simdutf 尺寸档修复后降到 **10,299,392**，余量回到 2% 以上。
+这就是当前 `tools/audit-core-*.sh` 的默认上限。
 
 ### 已测量但未采纳：HSTS 预载表（−786,432 字节，−8.57%）
 

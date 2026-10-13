@@ -50,7 +50,7 @@ Core 体积在 7.7–10.2 MB 之间（macOS ARM64 最小，Windows x86_64 最大
 
 `impersonate` 推荐使用精确的 `chrome_<major>` 名称（同时接受 curl-cffi 风格的
 `chrome<major>` 别名，以及解析到最新 pinned 版本的 `chrome`）。当前支持
-Chrome 99–153，共 55 个 profile；范围外的版本抛 `ImpersonateError`，不会静默降级。
+Chrome 99–155，共 57 个 profile；范围外的版本抛 `ImpersonateError`，不会静默降级。
 `available_profiles()` 返回完整列表。Edge、Safari、Firefox、Tor 等非 Chromium 目标
 同样显式报错，而不是当作 Chrome 处理。
 
@@ -63,7 +63,7 @@ Chrome 99–153，共 55 个 profile；范围外的版本抛 `ImpersonateError`�
 | 127–133 | `chrome_127` … `chrome_133` |
 | 134–140 | `chrome_134` … `chrome_140` |
 | 141–147 | `chrome_141` … `chrome_147` |
-| 148–153 | `chrome_148`、`chrome_149`、`chrome_150`、`chrome_151`、`chrome_152`、`chrome_153` |
+| 148–155 | `chrome_148` … `chrome_155`（`chrome_154`、`chrome_155` 为 156 内核重建时加入） |
 
 Profile 影响 TLS ClientHello、ALPN、HTTP/2 设置、QUIC/H3 和相关 Chromium 网络
 参数；它不是完整 Chrome 浏览器，也不包含 Blink、扩展、Service Worker 或持久化
@@ -112,9 +112,9 @@ Args/Returns/示例。运行时行为不变——存根不参与导入，`typing
 ```python
 from chrome_client import Session
 
-with Session(impersonate="chrome_153") as session:
+with Session(impersonate="chrome_155") as session:
     session.get(url, timeout=(5, 15))
-    # 悬停 impersonate= 会列出 chrome_99 … chrome_153，以及 curl-cffi 的
+    # 悬停 impersonate= 会列出 chrome_99 … chrome_155，以及 curl-cffi 的
     # chrome153 别名和 chrome/chromium
     # session.get(...) 会补全 headers/cookies/data/json/timeout/proxies/verify/...
 ```
@@ -136,7 +136,7 @@ response = requests.get(
     "https://example.com/api",
     params={"page": 1},
     headers={"Accept": "application/json"},
-    impersonate="chrome_153",
+    impersonate="chrome_155",
     timeout=15,
 )
 response.raise_for_status()
@@ -237,7 +237,7 @@ with Session(impersonate="chrome152", http_version="v2") as session:
     session.get("https://example.com")
 ```
 
-`impersonate` 接受 `chrome_153`、`chrome153`，以及解析到最新 pinned 版本的
+`impersonate` 接受 `chrome_155`、`chrome155`，以及解析到最新 pinned 版本的
 `chrome`。TLS ClientHello、ALPN、HTTP/2 设置与优先级、HTTP/3 传输参数和默认请求头
 顺序全部来自该 profile：这也是 `ja3=`、`akamai=`、`perk=` 和大部分 `extra_fp` 字段
 会抛 `UnsupportedFeature` 的原因——接受一个 JA3 字符串却仍然发送 Chromium 自己的
@@ -301,7 +301,7 @@ import asyncio
 from chrome_client import AsyncSession
 
 async def main():
-    async with AsyncSession(impersonate="chrome_153", max_clients=64) as session:
+    async with AsyncSession(impersonate="chrome_155", max_clients=64) as session:
         responses = await asyncio.gather(*[session.get(u) for u in urls])
         async with session.stream("GET", big_url) as response:
             async for chunk in response.aiter_content(65536):
@@ -323,7 +323,7 @@ Chromium 对同一 host 组默认最多 6 条 HTTP/1.1 连接（实测同一 hos
 ```python
 from chrome_client import WebSocket
 
-with WebSocket(url="wss://echo.example.com", impersonate="chrome_153") as socket:
+with WebSocket(url="wss://echo.example.com", impersonate="chrome_155") as socket:
     socket.send_str("ping")
     print(socket.recv_str())
 ```

@@ -11,10 +11,10 @@
 分层：`libminicronet`（Chromium C++，唯一协议实现）→ C ABI v8（20 个导出符号）→
 `minicronet-sys`（手写 FFI 声明）→ `minicronet`（Rust 安全层）→ 各语言薄绑定。
 
-- Chromium revision：`b75a5a95ea1a1b55bdbfd6d9f42d47be7507fb8b`（Chrome 153.0.8010.37 stable，2026-09-08）
+- Chromium revision：`58bcc148f76b8975bbe59f1a6012d4ae409d62a9`（Chrome 156.0.8078.31 stable）
 - Python 发布版本与 crate 版本同号（不再有四段版本号映射）；具体版本号只在根
   `Cargo.toml` 的 `workspace.package.version` 里，本文件不再复述，以免再次漂移
-- Chrome profile：`chrome_99` — `chrome_153`，55 个
+- Chrome profile：`chrome_99` — `chrome_155`，57 个
 
 ## 已完成
 
@@ -123,7 +123,46 @@ Request 与 WebSocket 在 ABI v8 里各自建独立 sequenced runner，`Engine` 
 顺手试过让 asyncio 的 `notify` 每次唤醒排空至多 64 个事件，插桩显示实际每次唤醒
 96% 只有 1 个事件可取，零收益，已丢弃。
 
-### chrome_153 已加入（55 个 profile）
+### 156 内核重建的一轮体积精简（8 平台 −376,896 字节）
+
+升级完成后 Windows x86_64 距上限只剩 3,328 字节（0.03%），任何新增 profile 都会顶破
+门禁。定位到 `//third_party/simdutf` 显式用 `optimize_speed` 覆盖了本项目的
+`optimize_for_size`（与先前 Windows 那次 `-O2` 是同一类缺陷：不是漏配，而是某个 target
+把尺寸档换成速度档，只看总字节数的门禁发现不了）。simdutf 在 Core 里只经
+`net::Base64Decode` 到达，不在吞吐热路径，因此让它在该构建下改走 `-Oz`。
+
+实测 8 平台合计 **−376,896（−0.53%）**，linux-x86_64 −102,400、macos-x86_64 −106,496、
+windows-x86_64 −97,280。三档上限按既有规则收敛到 Linux 9,050,000 / Windows 10,510,000 /
+macOS 8,710,000，**最小余量从 0.03% 回到 2.0%**。
+
+验收：smoke、125 个 Python 测试、base64 专项（本地服务端逐字节比对 Basic 凭据）、
+指纹（JA4 / peetprint / Akamai 与改动前逐字节相同）、以及 base64 路径的 A/B
+（356.3/326.0 → 344.8/338.0 req/s，区间重叠）。同批次实测后**否决**了 zstd 的同类改动
+（`-Oz` 反而 +69,632，解压是真实热路径）与关闭 libc++ hardening（省 73,728 但属安全
+取舍）。详见 `docs/CORE_BINARY_SIZE_PLAN.md` 第七节。
+
+### chrome_154 与 chrome_155 已加入（57 个 profile）
+
+两条官方 stable 分支各取首尾 tag 审核：154 是 `154.0.8037.17` 与 `154.0.8037.100`，
+155 是 `155.0.8059.12` 与 `155.0.8059.40`。155 的 12 份审计源码逐字节一致；154 只有
+`net/quic/quic_chromium_client_session.cc` 差 2 字节，且**所有审计信号行完全一致**，
+因此审计面是分支稳定的。
+
+wire gate 都通过：154 用 6 条独立连接、155 用 5 条，全部稳定字段一致，stochastic
+字段每条连接都不同。与 chrome_153 相比，**de-GREASEd cipher 列表、supported groups、
+signature_algorithms、扩展集合、HTTP/2 指纹与 28 个 trust-anchor ID 集合都不变**，
+唯一差异是 UA 主版本；28 条 ID 的顺序不同，那是 absl::flat_hash_set 的进程内属性，
+不是版本差异（见 `profiles/chrome-152/README.md` 的机制说明）。因此两个 profile 复用
+chrome_153 的 `tls` 语义常量，只 pin 各自的版本与 BoringSSL/QUICHE revision。
+
+154 与 155 的 `net/base/features.cc` 里 `kAlpsForHttp2`、`kTryQuicByDefault`、
+`kTLSTrustAnchorIDs`、`kNonMtcTrustAnchorIDs`、`kTlsGreaseSigalgs` 仍为
+`FEATURE_ENABLED_BY_DEFAULT`，`kEnableTLS13EarlyData` 仍为 disabled，网络特性快照
+区间（123–155）与 chrome_153 相同。证据与复现命令见
+[`profiles/chrome-154/`](../profiles/chrome-154/README.md) 与
+[`profiles/chrome-155/`](../profiles/chrome-155/README.md)。
+
+### chrome_153 已加入（历史记录）
 
 官方 stable 分支首尾 tag `153.0.8010.12` 与 `153.0.8010.37` 的 12 份审计源码
 逐字节一致。5 条独立 Chrome 153 连接通过 wire gate：5 个源端口，所有稳定字段一致，
@@ -275,8 +314,9 @@ Core smoke、三个平台审计、103 个 Python 用例全过；**TLS 指纹未�
 
 三个体积上限随之收紧：Linux 9,250,000 → 9,050,000、Windows 12,000,000 → 11,400,000、
 macOS 12,000,000 → 8,750,000。macOS 那一档原来虚高 3 MB 以上，等于没有门禁。`-Oz`
-那轮之后三档又收到 Linux **8,940,000**、Windows **10,400,000**、macOS **8,620,000**，
-即当前 `tools/audit-core-*.sh` 的默认上限。
+那轮之后三档又收到 Linux 8,940,000、Windows 10,400,000、macOS 8,620,000。
+156.0.8078.31 升级后按同一条规则重算两次（上游增长，随后 simdutf 尺寸档修复），
+当前默认上限是 Linux **9,050,000**、Windows **10,510,000**、macOS **8,710,000**。
 
 **已测量但未采纳：HSTS 预载表（−786,432 字节，−8.57%）。** 这是剩下唯一的大头，与上面
 那项叠加可再省到 −10.98%。没做，因为它用保真度换体积：Chrome 会在发出任何字节之前把
@@ -492,7 +532,7 @@ Core 的 `Request::OnAuthRequired` 一次都不执行。逐层证据与调用点
 | `tools/audit-python-typing.py` | mypy 检查存根与消费者，两者都干净（缺 mypy 时跳过） | 是 |
 | Core manifest 与 `CHROMIUM_REVISION` 一致 | 8 个平台通过 | 是 |
 | 扩展可 import 且能发一次真实请求 | 通过 | 是 |
-| `tools/audit-core-linux.sh` | 通过（体积上限 8,940,000） | 否，需 Chromium 树 |
+| `tools/audit-core-linux.sh` | 通过（体积上限 9,050,000） | 否，需 Chromium 树 |
 | 8 个平台构建 | 全部通过 | 否，需 Chromium 树与交叉工具链 |
 | `tools/generate-profile-table.py` | 重新生成与已提交表逐字节一致 | 否，未接入 |
 | `tools/verify-wire-capture.py` | chrome_152 `wire_verified: true` | 否，需抓包 |

@@ -40,7 +40,7 @@ from chrome_client.requests import get as requests_get
 
 
 def sync_use() -> None:
-    with Session(impersonate="chrome_153", http_version="v2", retry=3) as session:
+    with Session(impersonate="chrome_155", http_version="v2", retry=3) as session:
         response = session.get(
             "https://example.com", params={"page": 1}, impersonate="chrome152"
         )
@@ -95,7 +95,7 @@ def sync_use() -> None:
 
 
 async def async_use() -> None:
-    async with AsyncSession(impersonate="chrome_153", max_clients=32) as session:
+    async with AsyncSession(impersonate="chrome_155", max_clients=32) as session:
         response = await session.get("https://example.com")
         reveal_type(response)  # AsyncResponse
 
@@ -126,14 +126,14 @@ async def async_use() -> None:
 
 def facade_use() -> None:
     """The ``chrome_client.requests`` namespace carries the same types."""
-    reveal_type(requests_get("https://example.com", impersonate="chrome_153"))  # Response
-    reveal_type(RequestsAsyncSession(impersonate="chrome_153", max_clients=4))  # AsyncSession
+    reveal_type(requests_get("https://example.com", impersonate="chrome_155"))  # Response
+    reveal_type(RequestsAsyncSession(impersonate="chrome_155", max_clients=4))  # AsyncSession
     asyncio.run(async_use())
 
 
 def annotations() -> None:
     """The exported aliases must be usable in a user's own annotations."""
-    profile: Impersonate = "chrome_153"
+    profile: Impersonate = "chrome_155"
     version: HttpVersion = "v2"
     headers = Headers({"Accept": "application/json"})
     response: Response | None = None
@@ -143,8 +143,8 @@ def annotations() -> None:
 
 def deliberate_mistakes() -> None:
     """Two errors an IDE must flag while typing; see the module docstring."""
-    with Session(impersonate="chrome_153") as session:
-        session.get("https://example.com", impersonate="chrome_200")  # type: ignore[arg-type]  # outside chrome_99..chrome_153
+    with Session(impersonate="chrome_155") as session:
+        session.get("https://example.com", impersonate="chrome_200")  # type: ignore[arg-type]  # outside chrome_99..chrome_155
         session.get("https://example.com", unknowable_option=True)  # type: ignore[call-arg]  # not a request option
 
 

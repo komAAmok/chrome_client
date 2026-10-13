@@ -28,8 +28,10 @@ venv/
 /core/dependencies/*/*
 !/core/dependencies/README.md
 
-# Local native staging
+# Local native staging. The test suite copies target/release/libchrome_client_native.so
+# here renamed; it is a build output, never a source file.
 /native/
+bindings/python/chrome_client/chrome_client_native.so
 
 # WorkBuddy session data (local notes, not part of the source tree)
 /.workbuddy/

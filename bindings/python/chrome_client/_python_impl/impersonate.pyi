@@ -44,7 +44,8 @@ ChromeProfileName: TypeAlias = Literal[
     "chrome_139", "chrome_140", "chrome_141", "chrome_142",
     "chrome_143", "chrome_144", "chrome_145", "chrome_146",
     "chrome_147", "chrome_148", "chrome_149", "chrome_150",
-    "chrome_151", "chrome_152", "chrome_153",
+    "chrome_151", "chrome_152", "chrome_153", "chrome_154",
+    "chrome_155",
 ]
 
 #: curl-cffi's spelling of the same profiles, without the underscore
@@ -64,7 +65,8 @@ ChromeProfileAlias: TypeAlias = Literal[
     "chrome139", "chrome140", "chrome141", "chrome142",
     "chrome143", "chrome144", "chrome145", "chrome146",
     "chrome147", "chrome148", "chrome149", "chrome150",
-    "chrome151", "chrome152", "chrome153",
+    "chrome151", "chrome152", "chrome153", "chrome154",
+    "chrome155",
 ]
 
 #: Bare family names. Both resolve to the newest pinned profile, never to a

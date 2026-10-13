@@ -14,7 +14,7 @@
   target 不进入发布物。
 - 随机值、会话 ID、GREASE、ClientHello/QUIC padding、WebSocket key 等必须
   继续由 Chromium/BoringSSL/QUICHE 的 CSPRNG 生成，发布配置不得注入固定种子。
-- 版本 profile 只覆盖已审计的 Chrome 99--153 差异；无法证明的行为必须
+- 版本 profile 只覆盖已审计的 Chrome 99--155 差异；无法证明的行为必须
   `fail-closed`，不能用当前 Chromium 行为冒充历史版本。
 
 ## 阶段 1：多平台 Rust target 与 linker（当前首项）
@@ -79,7 +79,7 @@
   `effective_protocol_params.json`、`network_feature_snapshots.json`，以及每个发布
   版本一个证据目录 `profiles/chrome-152/`、`profiles/chrome-153/`）；运行时只编译
   精简只读表，不把源码证据文本编入二进制。
-- [ ] 验证 `chrome_99`--`chrome_153` 的 TLS/ALPN、H2 SETTINGS、QUIC/H3、WS
+- [ ] 验证 `chrome_99`--`chrome_155` 的 TLS/ALPN、H2 SETTINGS、QUIC/H3、WS
   和关键 FeatureList 差异；未验证版本保持拒绝或明确降级状态。
 - [ ] 确认 ProfileContext 在 Engine 创建时冻结，profile namespace 进入连接池、
   TLS/QUIC session、Alt-Svc、HTTP cache、Cookie 和代理复用键。

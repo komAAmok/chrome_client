@@ -54,7 +54,7 @@ size ceiling, so a regression fails the build.
 
 Pass an exact `chrome_<major>` string through `impersonate` (the curl-cffi-style
 `chrome<major>` alias and a bare `chrome`, resolving to the newest pinned major,
-are also accepted). Chrome 99 through 153 are supported (55 profiles); a version
+are also accepted). Chrome 99 through 155 are supported (57 profiles); a version
 outside that range raises `ImpersonateError` rather than being downgraded, and
 `available_profiles()` returns the full list. Non-Chromium targets such as Edge,
 Safari, Firefox and Tor also raise rather than being treated as Chrome.
@@ -68,7 +68,7 @@ Safari, Firefox and Tor also raise rather than being treated as Chrome.
 | 127–133 | `chrome_127` … `chrome_133` |
 | 134–140 | `chrome_134` … `chrome_140` |
 | 141–147 | `chrome_141` … `chrome_147` |
-| 148–153 | `chrome_148`, `chrome_149`, `chrome_150`, `chrome_151`, `chrome_152`, `chrome_153` |
+| 148–155 | `chrome_148` … `chrome_155` (`chrome_154` and `chrome_155` arrived with the 156 Core rebuild) |
 
 Profiles control TLS ClientHello, ALPN, HTTP/2 settings, QUIC/H3 and related
 Chromium network parameters. This is not a full browser: Blink, extensions,
@@ -119,9 +119,9 @@ never imported, and `typing_extensions` is a type-checking dependency only.
 ```python
 from chrome_client import Session
 
-with Session(impersonate="chrome_153") as session:
+with Session(impersonate="chrome_155") as session:
     session.get(url, timeout=(5, 15))
-    # hovering impersonate= lists chrome_99 ... chrome_153, the curl-cffi
+    # hovering impersonate= lists chrome_99 ... chrome_155, the curl-cffi
     # chrome153 aliases and chrome/chromium
     # session.get(...) completes headers/cookies/data/json/timeout/proxies/verify/...
 ```
@@ -146,7 +146,7 @@ response = requests.get(
     "https://example.com/api",
     params={"page": 1},
     headers={"Accept": "application/json"},
-    impersonate="chrome_153",
+    impersonate="chrome_155",
     timeout=15,
 )
 response.raise_for_status()
@@ -254,7 +254,7 @@ with Session(impersonate="chrome152", http_version="v2") as session:
     session.get("https://example.com")
 ```
 
-`impersonate` accepts `chrome_153`, `chrome153`, and `chrome` (resolving to the
+`impersonate` accepts `chrome_155`, `chrome155`, and `chrome` (resolving to the
 newest pinned major). The TLS ClientHello, ALPN, HTTP/2 settings and priorities,
 HTTP/3 transport parameters and default header order all come from that profile.
 That is why `ja3=`, `akamai=`, `perk=` and most `extra_fp` fields raise
@@ -323,7 +323,7 @@ import asyncio
 from chrome_client import AsyncSession
 
 async def main():
-    async with AsyncSession(impersonate="chrome_153", max_clients=64) as session:
+    async with AsyncSession(impersonate="chrome_155", max_clients=64) as session:
         responses = await asyncio.gather(*[session.get(u) for u in urls])
         async with session.stream("GET", big_url) as response:
             async for chunk in response.aiter_content(65536):
@@ -346,7 +346,7 @@ use HTTP/2 or HTTP/3 endpoints when you need more per-host concurrency.
 ```python
 from chrome_client import WebSocket
 
-with WebSocket(url="wss://echo.example.com", impersonate="chrome_153") as socket:
+with WebSocket(url="wss://echo.example.com", impersonate="chrome_155") as socket:
     socket.send_str("ping")
     print(socket.recv_str())
 ```

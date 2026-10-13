@@ -676,15 +676,21 @@ class RedirectTests(Base):
 
 class CurlCffiSurfaceTests(Base):
     def test_impersonate_aliases(self):
-        for target in ("chrome_153", "chrome153"):
-            self.assertEqual(chrome_client.normalize_impersonate(target), "chrome_153")
+        # The newest majors are asserted explicitly so a profile that stops
+        # resolving is caught; the older aliases stay pinned to a fixed version
+        # so they do not drift every time the newest major moves.
+        for target, expected in (("chrome_155", "chrome_155"),
+                                 ("chrome155", "chrome_155"),
+                                 ("chrome_154", "chrome_154"),
+                                 ("chrome154", "chrome_154")):
+            self.assertEqual(chrome_client.normalize_impersonate(target), expected)
         for target in ("chrome152", "chrome_152", "chrome151"):
             with chrome_client.Session(impersonate=target) as session:
                 self.assertEqual(session.get(self.url).status_code, 200)
-        self.assertEqual(chrome_client.normalize_impersonate("chrome"), "chrome_153")
+        self.assertEqual(chrome_client.normalize_impersonate("chrome"), "chrome_155")
         self.assertEqual(chrome_client.normalize_impersonate("chrome136"), "chrome_136")
         self.assertEqual(chrome_client.normalize_impersonate("chrome_136"), "chrome_136")
-        self.assertEqual(chrome_client.available_profiles()[-1], "chrome_153")
+        self.assertEqual(chrome_client.available_profiles()[-1], "chrome_155")
 
     def test_unavailable_profiles_fail_closed(self):
         for target in ("safari17", "firefox133", "edge101", "tor145", "chrome_9"):

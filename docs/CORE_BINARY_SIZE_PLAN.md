@@ -191,7 +191,7 @@ Top 符号：
 1. **功能与接口兼容**：ABI v8 的 20 个导出符号、签名、版本协商不变；所有精简
    必须通过 `tools/audit-abi.sh` 与 `audit-core-binaries.sh`（8 平台）。
 2. **指纹红线**：每项落地前后跑 `tools/inspect-client-hello.py`（≥4 次采样，
-   横跨 99–153 的 11 个 profile），cipher 数、稳定扩展集合、profile 间差异
+   横跨 99–155 的 11 个 profile），cipher 数、稳定扩展集合、profile 间差异
    逐字节一致。HSTS 项额外要在 COMPATIBILITY_BOUNDARY 里显式声明行为差异。
 3. **性能红线**：`tools/bench-core-baseline.py` 同口径——同步顺序吞吐、
    asyncio 并发 32/128（每请求不同 URL）、流式 64 MiB、慢消费者隔离 20/20。
@@ -220,7 +220,7 @@ Top 符号：
    同步下调到「新体积 + 2%」，结束「贴线 4 KB」状态。
 2. **段级漂移监控（新增）**：`tools/audit-core-linux.sh` 增加段级断言——
    `.text`/`.rodata` 超过基线 +1% 即失败，比总字节数更早发现代码膨胀。
-3. **profile 表增量门禁（新增）**：当前 35 KB / 55 个 profile（trust anchor 数组
+3. **profile 表增量门禁（新增）**：当前 34 KB / 57 个 profile（trust anchor 数组
    占 186 B×N）。每个新 profile 的合理增量 < 1 KB（共享去重已生效）；把
    「单 profile 增量」写进 audit，防止未来 profile 泛滥。
 
@@ -451,3 +451,83 @@ linux-x86 只降 0.73%（`.text` −43,887），而 linux-x86_64 降 2.85%（`.t
 饱和。不要再按统一的「−1~3%」预期套所有平台。
 
 
+
+## 七、执行结果（2026-10，156.0.8078.31 升级后）
+
+### 7.1 P2-4 `//third_party/simdutf` 无视 `optimize_for_size` —— 实测 −376,896（8 平台）
+
+**发现**：符号级分析显示 `simdutf::` 占 378,937 字节文本，且分成
+`westmere` / `haswell` / `icelake` / `fallback` 四条 ISA 实现。查
+`third_party/simdutf/BUILD.gn` 发现它显式做了
+
+```gn
+configs -= [ "//build/config/compiler:default_optimization" ]
+configs += [ "//build/config/compiler:optimize_speed" ]
+```
+
+也就是**把本项目的 `optimize_for_size` 覆盖掉了**——与 6.8 节 Windows 那次
+「`config("optimize")` 先判 `is_win`，于是 Windows 一直在 `-O2`」是同一类缺陷：
+不是漏配，是某个 target 明确把尺寸档换成了速度档，而门禁只量总字节数，看不出来。
+
+**做法**：`if (!is_debug && !is_minicronet_build)`——与 ICU 同一手法，只影响
+MiniCronet 构建。补丁为 `core/patches/minicronet-simdutf-size.patch`，由
+`tools/sync-core.sh` 应用并由 `tools/audit-core-inputs.sh` 校验。
+
+**为什么安全**：simdutf 在 Core 里只经 `net::Base64Decode`
+（`base/simdutf_shim.cc`）到达，用途是 HTTP Basic/Digest 凭据与 WebSocket 的
+`Sec-WebSocket-Accept`。它不在任何吞吐热路径上，四条 ISA 变体继续全部保留
+（只改优化档，不删实现），运行时仍按 CPU 分派。
+
+**验收**（4.1 节的固定顺序）：
+
+1. `minicronet_smoke` + `tools/run-http-smoke.py`：timeout / cancel 用例通过
+2. Python 套件 125 passed, 2 skipped（含 `RequiresBase64` 一类）
+3. **base64 专项**：本地服务端逐字节比对 `Basic base64("user:pass")`，返回 200 `ok`
+4. **指纹红线**：chrome_155 的 JA4 `t13d1517h2_8daaf6152771_cb7bf5808d99`、
+   peetprint `fc97c1cdfb1409c9a9326c1b726d1dee`、Akamai
+   `52d84b11737d980aef856699f885ca86` 与改动前逐字节相同
+5. **A/B 性能对照**（simdutf 是唯一改动的库，所以专门量它那条路径）：同一个
+   本地 Basic-auth 服务端、400 次请求，两份 Core 各跑两轮——
+   before 356.3 / 326.0 req/s，after 344.8 / 338.0 req/s，**区间重叠**，
+   符合 4.1 节「区间重叠才采纳」的门槛。p50 2.65–2.81 ms 对 2.70–2.74 ms 同理。
+   对 `user:pass` 这种十几字节的输入，`-O2 → -Oz` 在 base64 上量不出差异
+6. `tools/bench-core-baseline.py` 全量：同步顺序 510.3 req/s、并发 32 712.4、
+   并发 128 773.8、流式 109.6 MiB/s、慢消费者隔离通过
+
+| 平台 | 改前 | 改后 | Δ | % |
+| --- | --- | --- | --- | --- |
+| linux-x86_64 | 8,965,792 | 8,863,392 | **−102,400** | −1.14% |
+| linux-x86 | 8,782,540 | 8,776,524 | −6,016 | −0.07% |
+| linux-arm64 | 8,713,752 | 8,692,184 | −21,568 | −0.25% |
+| windows-x86_64 | 10,396,672 | 10,299,392 | −97,280 | −0.94% |
+| windows-x86 | 8,139,776 | 8,134,144 | −5,632 | −0.07% |
+| windows-arm64 | 8,980,992 | 8,960,000 | −20,992 | −0.23% |
+| macos-x86_64 | 8,643,272 | 8,536,776 | −106,496 | −1.23% |
+| macos-arm64 | 7,889,072 | 7,872,560 | −16,512 | −0.21% |
+| **合计** | 70,511,868 | 70,134,972 | **−376,896** | −0.53% |
+
+x86 两档只降 0.07%，与 6.8 节「`-Oz` 收益是平台相关的」一致：32 位默认不开 SSE，
+simdutf 本来就没什么向量化可关。ARM64 的 0.2% 同理。
+
+### 7.2 同批次实测后**否决**的两项
+
+| 候选 | 实测 | 否决理由 |
+| --- | --- | --- |
+| `//third_party/zstd` 同样覆盖为 `-O3` | 改 `-Oz` 后 linux-x86_64 **+69,632（变大）** | zstd 解压是真实热路径，`-O3` 的收益大于体积损失。反直觉但可复现，列此防止再试 |
+| `enable_safe_libcxx = false`（`build_overrides/build.gni:30`） | 省 73,728（linux-x86_64） | 这是**安全取舍**，不是配置缺陷：关掉即失去 libc++ 的边界与生命周期断言。属于本文开头所述「需要产品与安全拍板」的三项，本次不纳入 |
+
+同时复核了 `third_party/{zlib,brotli,libpng,opus,harfbuzz}`：在我们的链接里分别只有
+443 / 11,360 / 0 / 0 / 0 字节，无可捡收益，不动。
+
+### 7.3 审计上限再次按同一条规则收敛
+
+「最大的那个产物 + 2%，向上取整到 1 万」：
+
+| 档 | 156 上游增长后 | 本轮精简后 | 新上限 | 最小余量 |
+| --- | --- | --- | --- | --- |
+| Linux | 8,965,792 | 8,863,392 | 9,050,000 | 186,608（2.1%） |
+| Windows | 10,396,672 | 10,299,392 | 10,510,000 | 210,608（2.0%） |
+| macOS | 8,643,272 | 8,536,776 | 8,710,000 | 173,224（2.0%） |
+
+升级刚完成时 Windows 只剩 3,328 字节余量（0.03%），**任何新增 profile 都会顶破门禁**——
+这正是 1.4-1 记录、6.6 节要消除的「贴线」状态。本轮把三档的最小余量都拉回 2% 以上。
