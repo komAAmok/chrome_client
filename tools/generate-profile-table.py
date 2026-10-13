@@ -15,8 +15,8 @@ FEATURES = ROOT / "profiles" / "network_feature_snapshots.json"
 OUTPUT = ROOT / "core" / "source" / "minicronet" / "profile_table_generated.h"
 
 # Highest profile in the table. Bumping it requires a wire-verified capture set
-# and a source-evidence entry for that release; see profiles/chrome-153/.
-LAST_PROFILE_MAJOR = 153
+# and a source-evidence entry for that release; see profiles/chrome-155/.
+LAST_PROFILE_MAJOR = 155
 
 FEATURE_BITS = {
     "alps_for_http2": 1 << 0,
@@ -120,56 +120,46 @@ def main():
     if set(feature_flags) != {p["profile_id"] for p in profiles}:
         raise SystemExit(
             f"network feature snapshot must cover chrome_99..chrome_{LAST_PROFILE_MAJOR}")
-    expected_pool_boundary = {
-        "chrome_122": (False, False),
-        "chrome_123": (False, False),
-        "chrome_124": (False, False),
-        "chrome_125": (False, False),
-        "chrome_126": (False, False),
-        "chrome_127": (False, False),
-        "chrome_128": (False, False),
-        "chrome_146": (False, False),
-        "chrome_147": (True, False),
-        "chrome_148": (True, False),
-        "chrome_149": (True, False),
-        "chrome_150": (True, False),
-        "chrome_151": (True, True),
-    }
-    for profile_id, expected in expected_pool_boundary.items():
-        actual = (effective[profile_id]["randomize_socket_pool_limit"],
-                  effective[profile_id]["randomize_proxy_socket_pool_limit"])
-        if actual != expected:
-            raise SystemExit(f"unexpected socket-pool boundary for {profile_id}: {actual}")
-    expected_priority_header_boundary = {
-        "chrome_122": False,
-        "chrome_123": False,
-        "chrome_124": True,
-    }
-    for profile_id, expected in expected_priority_header_boundary.items():
-        actual = effective[profile_id]["send_priority_header"]
-        if actual != expected:
+    # Boundary assertions are spans, not hand-listed profiles. The previous
+    # per-profile dictionaries stopped at chrome_151 while the table grew to
+    # chrome_155, so four profiles (and the whole 99..121 span) were never
+    # checked at all -- the gate silently covered less as the table grew. A
+    # span names its endpoints, and `assert_span` refuses to accept a span that
+    # does not tile 99..LAST_PROFILE_MAJOR exactly, so a gap is a failure here
+    # rather than a missing check.
+    def assert_span(field, spans, default=None):
+        covered = []
+        for first, last, expected in spans:
+            for major in range(first, last + 1):
+                profile_id = f"chrome_{major}"
+                actual = effective[profile_id].get(field, default)
+                if actual != expected:
+                    raise SystemExit(
+                        f"unexpected {field} for {profile_id}: {actual} "
+                        f"(span {first}..{last} expects {expected})")
+                covered.append(major)
+        expected_majors = list(range(99, LAST_PROFILE_MAJOR + 1))
+        if sorted(covered) != expected_majors:
+            missing = sorted(set(expected_majors) - set(covered))
             raise SystemExit(
-                f"unexpected priority-header boundary for {profile_id}: {actual}")
-    expected_quic_boundary = {
-        "chrome_122": False,
-        "chrome_123": False,
-        "chrome_124": False,
-        "chrome_125": False,
-        "chrome_126": False,
-        "chrome_127": False,
-        "chrome_128": False,
-        "chrome_146": False,
-        "chrome_147": False,
-        "chrome_148": False,
-        "chrome_149": True,
-        "chrome_150": True,
-        "chrome_151": True,
-    }
-    for profile_id, expected in expected_quic_boundary.items():
-        actual = effective[profile_id]["send_quic_orig"]
-        if actual != expected:
-            raise SystemExit(
-                f"unexpected QUIC ORIG boundary for {profile_id}: {actual}")
+                f"{field}: spans do not cover chrome_99..chrome_{LAST_PROFILE_MAJOR}; "
+                f"uncovered majors: {missing}")
+
+    # kSocketPoolLimitRandomizationForProxy / the hardened socket pool made size
+    # randomization unconditional in 147; the proxy variant follows in 151.
+    assert_span("randomize_socket_pool_limit",
+                [(99, 146, False), (147, 155, True)])
+    assert_span("randomize_proxy_socket_pool_limit",
+                [(99, 150, False), (151, 155, True)])
+    # The HTTP/2 priority header appears in 124 and stays.
+    assert_span("send_priority_header", [(99, 123, False), (124, 155, True)])
+    # QUIC ORIG (RFC 9287) is sent from 149.
+    assert_span("send_quic_orig", [(99, 148, False), (149, 155, True)])
+    # Legacy QUIC version information was briefly on for 144-145 only.
+    assert_span("send_quic_legacy_version_information",
+                [(99, 143, False), (144, 145, True), (146, 155, False)],
+                default=False)
+
     # Capability and default-attempt policy are independent. Chromium's
     # native HttpNetworkSessionParams default keeps QUIC enabled in every
     # supported revision; kTryQuicByDefault is the separate feature bit.
