@@ -1,0 +1,1 @@
+{"http3_supported":false,"protocol":"HTTP/2.0","message":"Your browser connected via HTTP/2.0. HTTP/3 (QUIC) is required for fingerprinting. Please refresh the page - your browser should now try HTTP/3.","retry_hint":"Refresh the page. If HTTP/3 still doesn't work, check that QUIC is enabled in your browser and not blocked by your network."}

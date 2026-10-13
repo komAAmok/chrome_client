@@ -1,0 +1,70 @@
+{
+  "profile_id": "chrome_135",
+  "captures": [
+    "captures/chrome-135-h3-local/session-1.pcap",
+    "captures/chrome-135-h3-local/session-2.pcap",
+    "captures/chrome-135-h3-local/session-3.pcap"
+  ],
+  "connection_count": 3,
+  "client_initial_stable_match": true,
+  "matches": {
+    "quic_version": true,
+    "udp_payload_size_by_ip_family": true,
+    "destination_connection_id_length": true,
+    "source_connection_id_length": true,
+    "alpn": true,
+    "tls_cipher_suites": true,
+    "tls_extension_set": true,
+    "supported_groups": true,
+    "key_share_groups": true,
+    "signature_algorithms": true,
+    "transport_parameter_set": true,
+    "legacy_version_information": true,
+    "max_idle_timeout": true,
+    "max_udp_payload_size": true,
+    "initial_max_data": true,
+    "initial_max_stream_data_bidi_local": true,
+    "initial_max_stream_data_bidi_remote": true,
+    "initial_max_stream_data_uni": true,
+    "initial_max_streams_bidi": true,
+    "initial_max_streams_uni": true,
+    "max_datagram_frame_size": true,
+    "google_connection_options": true,
+    "initial_source_connection_id": true,
+    "version_information_chosen": true,
+    "version_information_supported": true,
+    "ech_present": true,
+    "grease_transport_parameter_present": true,
+    "grease_version_present": true
+  },
+  "mismatches": {},
+  "stochastic": {
+    "fixed_seed_allowed": false,
+    "unique_counts": {
+      "destination_connection_id": 3,
+      "tls_client_random": 3,
+      "key_share_digest": 3,
+      "ech_enc_digest": 3,
+      "ech_payload_digest": 3,
+      "grease_transport_parameter": 3,
+      "grease_transport_parameter_value": 3,
+      "grease_version": 3,
+      "tls_extension_order": 3,
+      "transport_parameter_order": 3
+    },
+    "multi_connection_randomness_verified": true
+  },
+  "verification_boundary": {
+    "client_initial_in_scope": true,
+    "activation_eligible_under_current_policy": true,
+    "activation_policy": "browserleaks_tls_h2_stable_match_and_h3_source_audit_with_successful_request",
+    "minicronet_initial_verified": true,
+    "proxy_pool_profile_verified": true,
+    "proxy_pool_same_process_isolation_verified": false,
+    "server_handshake_verified": true,
+    "http3_settings_wire_verified": true,
+    "http3_request_response_verified": true,
+    "reason": "MiniCronet Chrome 135 completed three decrypted QUIC v1/H3 sessions without the legacy Google version-information transport parameter and passed three independent tls.browserleaks.com TLS/H2 requests with all stable fields matching and all required stochastic fields unique.",
+    "official_chrome_135_initial_verified": false
+  }
+}

@@ -1,0 +1,84 @@
+{
+  "profile_id": "chrome_151",
+  "sessions": [
+    {
+      "capture": "captures/chrome-151-h3-local/minicronet-stochastic-1.pcap",
+      "key_log": "captures/chrome-151-h3-local/minicronet-stochastic-1.keys"
+    },
+    {
+      "capture": "captures/chrome-151-h3-local/minicronet-stochastic-2.pcap",
+      "key_log": "captures/chrome-151-h3-local/minicronet-stochastic-2.keys"
+    },
+    {
+      "capture": "captures/chrome-151-h3-local/minicronet-stochastic-3.pcap",
+      "key_log": "captures/chrome-151-h3-local/minicronet-stochastic-3.keys"
+    }
+  ],
+  "full_h3_session_match": true,
+  "matches": {
+    "initial_present": true,
+    "handshake_present": true,
+    "one_rtt_present": true,
+    "handshake_done_present": true,
+    "quic_version": true,
+    "tls_version": true,
+    "cipher_suite": true,
+    "alpn": true,
+    "client_h3_settings": true,
+    "reserved_setting_count": true,
+    "reserved_setting_modulo": true,
+    "reserved_frame_count": true,
+    "reserved_frame_modulo": true,
+    "priority_update": true,
+    "request_header_names": true,
+    "response_status": true,
+    "response_content_length": true,
+    "response_body_length": true,
+    "response_body_sha256": true,
+    "connection_close_error": true,
+    "connection_close_reason": true
+  },
+  "mismatches": {},
+  "stochastic": {
+    "fixed_seed_allowed": false,
+    "session_count": 3,
+    "unique_counts": {
+      "reserved_setting_id": 3,
+      "reserved_setting_value": 3,
+      "reserved_frame_type": 3
+    },
+    "multi_session_randomness_verified": true
+  },
+  "randomized_samples": [
+    {
+      "reserved_setting": [
+        125353763430,
+        3482881883
+      ],
+      "reserved_frame": [
+        116911619672,
+        "5e:"
+      ]
+    },
+    {
+      "reserved_setting": [
+        54222878753,
+        1190165983
+      ],
+      "reserved_frame": [
+        71575620847,
+        "ed:1c"
+      ]
+    },
+    {
+      "reserved_setting": [
+        126311272985,
+        1416644728
+      ],
+      "reserved_frame": [
+        854043554,
+        "52:da:5a"
+      ]
+    }
+  ]
+}

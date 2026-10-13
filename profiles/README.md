@@ -19,13 +19,15 @@ its regeneration is verified byte-for-byte in CI.
 
 ## Per-release evidence (not read at runtime)
 
-`chrome-146/` through `chrome-155/` hold the capture evidence for those ten
-releases: `captures.json` (wire captures), `source-evidence.json` (the audited
+`chrome-99/` through `chrome-155/` hold the capture evidence for those releases,
+with the original pcaps under each one's `raw/` subdirectory (see
+[`RAW_EVIDENCE.md`](RAW_EVIDENCE.md)): `captures.json` (wire captures), `source-evidence.json` (the audited
 Chromium source lines), `trust-anchor-ids.json`, `validation.json` and a
 `README.md` with the reproduction commands.
 
-The ten newest releases have a directory. The earlier 47 profiles carry their
-evidence inline in `normalized_profiles.json`, because that is where the
+Fifty-three profiles have a directory. The four without one (152--155 keep their
+captures beside `captures.json` instead) carry their evidence inline in
+`normalized_profiles.json`, because that is where the
 generator reads it from. The directories exist for the releases that were audited
 by wire capture as well as by source.
 

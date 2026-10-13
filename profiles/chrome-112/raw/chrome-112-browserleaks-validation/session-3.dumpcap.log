@@ -1,0 +1,5 @@
+Capturing on 'ens33'
+File: captures/chrome-112-browserleaks-validation/session-3.pcap
+
+Packets captured: 38
+Packets received/dropped on interface 'ens33': 38/0 (pcap:0/dumpcap:0/flushed:0/ps_ifdrop:28) (100.0%)

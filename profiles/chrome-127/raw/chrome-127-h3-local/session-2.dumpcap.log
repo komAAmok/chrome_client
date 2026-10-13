@@ -1,0 +1,4 @@
+Capturing on 'Loopback: lo'
+File: captures/chrome-127-h3-local/session-2.pcap
+Packets: 1 Packets: 18 Packets captured: 18
+Packets received/dropped on interface 'Loopback: lo': 18/0 (pcap:0/dumpcap:0/flushed:0/ps_ifdrop:0) (100.0%)

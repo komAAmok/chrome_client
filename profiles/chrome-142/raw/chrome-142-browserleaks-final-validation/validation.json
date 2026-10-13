@@ -1,0 +1,41 @@
+{
+  "profile_id": "chrome_142",
+  "target_url": "https://tls.browserleaks.com/",
+  "stable_match": true,
+  "matches": {
+    "http_version": true,
+    "tls_version_record": true,
+    "tls_version_negotiated": true,
+    "cipher_suites": true,
+    "extension_set": true,
+    "supported_groups": true,
+    "key_share_groups": true,
+    "signature_algorithms": true,
+    "alpn": true,
+    "certificate_compression": true,
+    "alps_codepoint": true,
+    "ech_present": true,
+    "padding_present": true,
+    "padding_length_observed": true,
+    "http2_settings": true,
+    "http2_connection_window_increment": true,
+    "http2_headers_flags": true,
+    "http2_priority": true,
+    "request_headers": true
+  },
+  "mismatches": {},
+  "stochastic": {
+    "grease_required": true,
+    "grease_present": true,
+    "fixed_seed_allowed": false,
+    "unique_counts": {
+      "client_random": 3,
+      "session_id": 3,
+      "extension_order": 3,
+      "grease_values": 3,
+      "key_share_digest": 3,
+      "ech_digest": 3
+    },
+    "multi_connection_randomness_verified": true
+  }
+}

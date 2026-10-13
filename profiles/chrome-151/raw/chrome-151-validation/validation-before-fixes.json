@@ -1,0 +1,156 @@
+{
+  "profile_id": "chrome_151",
+  "stable_match": false,
+  "matches": {
+    "http_version": true,
+    "tls_version_record": true,
+    "tls_version_negotiated": true,
+    "cipher_suites": true,
+    "extension_set": true,
+    "supported_groups": true,
+    "key_share_groups": false,
+    "signature_algorithms": true,
+    "alpn": true,
+    "certificate_compression": true,
+    "alps_codepoint": true,
+    "ech_present": true,
+    "padding_present": true,
+    "padding_length_observed": true,
+    "http2_settings": true,
+    "http2_connection_window_increment": true,
+    "http2_headers_flags": true,
+    "http2_priority": false,
+    "request_headers": false
+  },
+  "mismatches": {
+    "key_share_groups": {
+      "expected": [
+        "X25519MLKEM768 (4588)",
+        "X25519 (29)"
+      ],
+      "actual": [
+        "X25519 (29)"
+      ]
+    },
+    "http2_priority": {
+      "expected": {
+        "weight": 256,
+        "depends_on": 0,
+        "exclusive": 1
+      },
+      "actual": {
+        "weight": 147,
+        "depends_on": 0,
+        "exclusive": 1
+      }
+    },
+    "request_headers": {
+      "expected": [
+        {
+          "name": ":method",
+          "value": "GET"
+        },
+        {
+          "name": ":authority",
+          "value": "tls.peet.ws"
+        },
+        {
+          "name": ":scheme",
+          "value": "https"
+        },
+        {
+          "name": ":path",
+          "value": "/api/all"
+        },
+        {
+          "name": "sec-ch-ua",
+          "value": "\"Not=A?Brand\";v=\"99\", \"Google Chrome\";v=\"151\", \"Chromium\";v=\"151\""
+        },
+        {
+          "name": "sec-ch-ua-mobile",
+          "value": "?0"
+        },
+        {
+          "name": "sec-ch-ua-platform",
+          "value": "\"Windows\""
+        },
+        {
+          "name": "upgrade-insecure-requests",
+          "value": "1"
+        },
+        {
+          "name": "user-agent",
+          "value": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36"
+        },
+        {
+          "name": "accept",
+          "value": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7"
+        },
+        {
+          "name": "sec-fetch-site",
+          "value": "none"
+        },
+        {
+          "name": "sec-fetch-mode",
+          "value": "navigate"
+        },
+        {
+          "name": "sec-fetch-user",
+          "value": "?1"
+        },
+        {
+          "name": "sec-fetch-dest",
+          "value": "document"
+        },
+        {
+          "name": "accept-encoding",
+          "value": "gzip, deflate, br, zstd"
+        },
+        {
+          "name": "accept-language",
+          "value": "zh-CN,zh;q=0.9"
+        },
+        {
+          "name": "priority",
+          "value": "u=0, i"
+        }
+      ],
+      "actual": [
+        {
+          "name": ":method",
+          "value": "GET"
+        },
+        {
+          "name": ":authority",
+          "value": "tls.peet.ws"
+        },
+        {
+          "name": ":scheme",
+          "value": "https"
+        },
+        {
+          "name": ":path",
+          "value": "/api/all"
+        },
+        {
+          "name": "user-agent",
+          "value": "minicronet/0.3.0"
+        },
+        {
+          "name": "accept-encoding",
+          "value": "gzip, deflate, br, zstd"
+        },
+        {
+          "name": "priority",
+          "value": "i"
+        }
+      ]
+    }
+  },
+  "stochastic": {
+    "grease_required": true,
+    "grease_present": true,
+    "fixed_seed_allowed": false,
+    "multi_connection_randomness_verified": false
+  }
+}

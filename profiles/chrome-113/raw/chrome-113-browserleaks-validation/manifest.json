@@ -1,0 +1,36 @@
+{
+  "profile_id": "chrome_113",
+  "target_url": "https://tls.browserleaks.com/",
+  "target_address": "138.197.54.100",
+  "independent_processes": true,
+  "capture_interface": "ens33",
+  "records": [
+    {
+      "profile_id": "chrome_113",
+      "stage": "request",
+      "result": 0,
+      "net_error": 0,
+      "status_code": 200,
+      "body_bytes": 9989,
+      "body_written": true
+    },
+    {
+      "profile_id": "chrome_113",
+      "stage": "request",
+      "result": 0,
+      "net_error": 0,
+      "status_code": 200,
+      "body_bytes": 9989,
+      "body_written": true
+    },
+    {
+      "profile_id": "chrome_113",
+      "stage": "request",
+      "result": 0,
+      "net_error": 0,
+      "status_code": 200,
+      "body_bytes": 9988,
+      "body_written": true
+    }
+  ]
+}

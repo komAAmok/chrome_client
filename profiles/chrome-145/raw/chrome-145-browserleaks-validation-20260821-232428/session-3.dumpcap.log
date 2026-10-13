@@ -1,0 +1,5 @@
+Capturing on 'ens33'
+File: profiles/chrome-145/raw/chrome-145-browserleaks-validation-20260821-232428/session-3.pcap
+
+Packets captured: 21
+Packets received/dropped on interface 'ens33': 21/0 (pcap:0/dumpcap:0/flushed:0/ps_ifdrop:0) (100.0%)
