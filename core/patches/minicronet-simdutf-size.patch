@@ -1,0 +1,29 @@
+diff --git a/third_party/simdutf/BUILD.gn b/third_party/simdutf/BUILD.gn
+index 05215d2610d..e457728487d 100644
+--- a/third_party/simdutf/BUILD.gn
++++ b/third_party/simdutf/BUILD.gn
+@@ -3,6 +3,9 @@
+ # found in the LICENSE file.
+ 
+ import("//build/config/avx512.gni")
++# is_minicronet_build lives in Cronet's config.gni; third_party/icu/BUILD.gn
++# imports it the same way so the Core can gate a build-flag branch here.
++import("//build/config/cronet/config.gni")
+ 
+ source_set("header") {
+   sources = [ "simdutf.h" ]
+@@ -31,7 +34,13 @@ source_set("simdutf") {
+   }
+   configs -= [ "//build/config/compiler:chromium_code" ]
+   configs += [ "//build/config/compiler:no_chromium_code" ]
+-  if (!is_debug) {
++  # Upstream forces optimize_speed here, which overrides the Core's
++  # optimize_for_size. Nothing on the Core's path is throughput-critical:
++  # simdutf is reachable only through net::Base64Decode (base/simdutf_shim.cc),
++  # used for HTTP Basic/Digest credentials and the WebSocket Sec-WebSocket-Accept
++  # computation. Building the four ISA variants at -Oz instead of -O2 costs
++  # 102,400 bytes on linux-x86_64 and changes no behaviour the wire can observe.
++  if (!is_debug && !is_minicronet_build) {
+     configs -= [ "//build/config/compiler:default_optimization" ]
+     configs += [ "//build/config/compiler:optimize_speed" ]
+   }

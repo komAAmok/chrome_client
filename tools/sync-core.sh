@@ -107,6 +107,12 @@ apply_patch icu-minicronet-data.patch third_party/icu \
 apply_patch minicronet-icu-propname-trim.patch third_party/icu \
   'BUILD.gn:defines += [ "MINICRONET_BUILD" ]' \
   'source/common/propname.cpp:#if defined(MINICRONET_BUILD)'
+# //third_party/simdutf forces optimize_speed, which overrides optimize_for_size
+# and compiles all four ISA variants at -O2. The Core only reaches it through
+# net::Base64Decode, so it honours -Oz here instead: -102,400 bytes on
+# linux-x86_64, -376,896 across the eight targets.
+apply_patch minicronet-simdutf-size.patch third_party/simdutf \
+  'BUILD.gn:is_minicronet_build'
 
 # The IDNA-only ICU dataset is embedded into the library, so it has to be in the
 # Chromium checkout before gn runs. Without it the build falls back to nothing

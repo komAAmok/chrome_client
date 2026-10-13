@@ -268,10 +268,14 @@ void WebSocket::StartOnNetworkThread() {
   channel_ = std::make_unique<net::WebSocketChannel>(
       std::make_unique<EventHandler>(this), engine_->context());
   url::Origin origin = url::Origin::Create(origin_url);
+  // `target_network` binds the request to a specific Android network. The Core
+  // exposes no such concept, so the neutral value is used: it is what Chromium
+  // itself passes on every platform without multi-network support.
   channel_->SendAddChannelRequest(
       url, protocols_, origin, net::StorageAccessApiStatus::kNone,
       net::IsolationInfo::CreateForInternalRequest(origin), headers,
-      net::WebSocketPriorityHint::kDefault, kTrafficAnnotation);
+      net::WebSocketPriorityHint::kDefault, kTrafficAnnotation,
+      net::handles::kInvalidNetworkHandle);
   if (timeout_ms_ > 0) {
     timeout_timer_.Start(
         FROM_HERE, base::Milliseconds(timeout_ms_),

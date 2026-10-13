@@ -1,8 +1,8 @@
 diff --git a/base/BUILD.gn b/base/BUILD.gn
-index c6ae66b00e..3081fff8d8 100644
+index 9569528f10d..265453690a8 100644
 --- a/base/BUILD.gn
 +++ b/base/BUILD.gn
-@@ -2396,7 +2399,13 @@ component("base") {
+@@ -2408,7 +2408,13 @@ component("base") {
        "process/set_process_title_linux.h",
        "system/sys_info_linux.cc",
      ]
@@ -17,8 +17,114 @@ index c6ae66b00e..3081fff8d8 100644
        # These dependencies are not required on Android.
        sources += [
          "nix/mime_util_xdg.cc",
+diff --git a/base/nix/xdg_util_minicronet.cc b/base/nix/xdg_util_minicronet.cc
+new file mode 100644
+index 00000000000..0cde180b2df
+--- /dev/null
++++ b/base/nix/xdg_util_minicronet.cc
+@@ -0,0 +1,46 @@
++// Copyright 2026 The Chromium Authors
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#include "base/nix/xdg_util.h"
++
++#include <cstdlib>
++
++#include "base/base_paths.h"
++#include "base/environment.h"
++#include "base/files/file_path.h"
++#include "base/path_service.h"
++#include "base/third_party/xdg_user_dirs/xdg_user_dir_lookup.h"
++
++namespace base::nix {
++
++FilePath GetXDGDirectory(Environment* env,
++                         cstring_view env_name,
++                         const char* fallback_dir) {
++  FilePath path;
++  if (auto value = env->GetVar(env_name).value_or(""); !value.empty()) {
++    path = FilePath(value);
++  } else {
++    PathService::Get(DIR_HOME, &path);
++    path = path.Append(fallback_dir);
++  }
++  return path.StripTrailingSeparators();
++}
++
++FilePath GetXDGUserDirectory(const char* dir_name, const char* fallback_dir) {
++  FilePath path;
++  if (char* value = xdg_user_dir_lookup(dir_name)) {
++    path = FilePath(value);
++    free(value);
++  } else {
++    PathService::Get(DIR_HOME, &path);
++    path = path.Append(fallback_dir);
++  }
++  return path.StripTrailingSeparators();
++}
++
++FilePath GetXDGDataWriteLocation(Environment* env) {
++  return GetXDGDirectory(env, "XDG_DATA_HOME", ".local/share");
++}
++
++}  // namespace base::nix
+diff --git a/build/config/compiler/BUILD.gn b/build/config/compiler/BUILD.gn
+index c106acfca9f..c787d6600b5 100644
+--- a/build/config/compiler/BUILD.gn
++++ b/build/config/compiler/BUILD.gn
+@@ -2650,23 +2650,38 @@ config("default_stack_frames") {
+ # [2]: https://crrev.com/c/5447532
+ config("optimize") {
+   if (is_win) {
+-    # clang-cl's /O2 corresponds to clang's -O3, and really want -O2 for
+-    # consistency with the other platforms.
+-    cflags = [
+-               "/O2",
+-               "/clang:-O2",
+-             ] + common_optimize_on_cflags
++    if (is_minicronet_build) {
++      # This branch is taken before the optimize_for_size check below, so
++      # Windows would otherwise be the only platform compiled for speed while
++      # the others are compiled for size. MiniCronet asks for size everywhere,
++      # so honour that here too: /O1 is clang-cl's size level and /clang:-Oz
++      # pins clang to the same -Oz the other platforms get.
++      cflags = [
++                 "/O1",
++                 "/clang:-Oz",
++               ] + common_optimize_on_cflags
+ 
+-    # The `-O3` for clang turns on extra optimizations compared to the standard
+-    # `-O2`. But for rust, `-Copt-level=3` is the default and is thus reliable
+-    # to use.
+-    rustflags = [ "-Copt-level=3" ]
++      # Mirrors the -Copt-level=s the optimize_for_size branch below uses.
++      rustflags = [ "-Copt-level=s" ]
++    } else {
++      # clang-cl's /O2 corresponds to clang's -O3, and really want -O2 for
++      # consistency with the other platforms.
++      cflags = [
++                 "/O2",
++                 "/clang:-O2",
++               ] + common_optimize_on_cflags
++
++      # The `-O3` for clang turns on extra optimizations compared to the
++      # standard `-O2`. But for rust, `-Copt-level=3` is the default and is thus
++      # reliable to use.
++      rustflags = [ "-Copt-level=3" ]
++    }
+   } else if (optimize_for_size || is_chromeos) {
+     # Favor size over speed.
+     # -Os in clang is more of a size-conscious -O2 than "size at any cost"
+     # (AKA -Oz).
+ 
+-    if (is_fuchsia || enable_cast_receiver) {
++    if (is_fuchsia || enable_cast_receiver || is_minicronet_build) {
+       cflags = [ "-Oz" ] + common_optimize_on_cflags
+     } else {
+       cflags = [ "-Os" ] + common_optimize_on_cflags
 diff --git a/build/config/cronet/config.gni b/build/config/cronet/config.gni
-index e529cc5da1..2291850e69 100644
+index e529cc5da12..2291850e69d 100644
 --- a/build/config/cronet/config.gni
 +++ b/build/config/cronet/config.gni
 @@ -29,6 +29,10 @@ declare_args() {
@@ -38,7 +144,7 @@ index e529cc5da1..2291850e69 100644
  assert(!is_cronet_for_aosp_build || target_os == "android")
 +assert(!is_minicronet_build || is_win || is_linux || is_mac)
 diff --git a/build_overrides/build.gni b/build_overrides/build.gni
-index ea33019983..a0f9378273 100644
+index b686b0855ac..5c81b409ff5 100644
 --- a/build_overrides/build.gni
 +++ b/build_overrides/build.gni
 @@ -29,7 +29,7 @@ build_with_v8_embedder = build_with_chromium
@@ -61,7 +167,7 @@ index ea33019983..a0f9378273 100644
  
  # Allows different projects to specify their own suppression/ignore lists for
 diff --git a/net/BUILD.gn b/net/BUILD.gn
-index be3159b3f9..5215546ed7 100644
+index ba081007c65..e5d66474c4f 100644
 --- a/net/BUILD.gn
 +++ b/net/BUILD.gn
 @@ -86,6 +86,7 @@ buildflag_header("buildflags") {
@@ -72,7 +178,7 @@ index be3159b3f9..5215546ed7 100644
    ]
  }
  
-@@ -1190,6 +1191,26 @@ component("net") {
+@@ -1236,6 +1237,26 @@ component("net") {
      "url_request/websocket_handshake_userdata_key.h",
    ]
  
@@ -99,7 +205,7 @@ index be3159b3f9..5215546ed7 100644
    if (is_posix || is_fuchsia) {
      sources += [ "base/net_errors_posix.cc" ]
    }
-@@ -1211,12 +1232,15 @@ component("net") {
+@@ -1257,12 +1278,15 @@ component("net") {
      ":cronet_buildflags",
      ":net_deps",
      "//components/network_time/time_tracker",
@@ -114,9 +220,9 @@ index be3159b3f9..5215546ed7 100644
 +  }
 +
    public_deps = [
+     ":chrome_root_store_types",
      ":disk_cache_buildflags",
-     ":net_features",
-@@ -1749,19 +1773,6 @@ component("net") {
+@@ -1798,19 +1822,6 @@ component("net") {
  
    if (enable_websockets) {
      sources += [
@@ -136,7 +242,7 @@ index be3159b3f9..5215546ed7 100644
        "websockets/websocket_basic_handshake_stream.cc",
        "websockets/websocket_basic_handshake_stream.h",
        "websockets/websocket_basic_stream.cc",
-@@ -1814,6 +1825,33 @@ component("net") {
+@@ -1863,6 +1874,33 @@ component("net") {
        "websockets/websocket_stream.cc",
        "websockets/websocket_stream.h",
      ]
@@ -171,7 +277,7 @@ index be3159b3f9..5215546ed7 100644
  
    # ICU support.
 diff --git a/net/features.gni b/net/features.gni
-index 29c0520cc3..04588ba12b 100644
+index 29c0520cc36..04588ba12b0 100644
 --- a/net/features.gni
 +++ b/net/features.gni
 @@ -10,16 +10,19 @@ import("//extensions/buildflags/buildflags.gni")
@@ -238,7 +344,7 @@ index 29c0520cc3..04588ba12b 100644
  
  assert(!chrome_root_store_optional || !chrome_root_store_only,
 diff --git a/net/log/net_log_util.cc b/net/log/net_log_util.cc
-index db5da46bc6..53caf1269d 100644
+index db5da46bc60..53caf1269dd 100644
 --- a/net/log/net_log_util.cc
 +++ b/net/log/net_log_util.cc
 @@ -21,22 +21,28 @@
@@ -303,10 +409,10 @@ index db5da46bc6..53caf1269d 100644
  
      net_info_dict.Set(kNetInfoHTTPCache, std::move(info_dict));
 diff --git a/net/url_request/url_request_context.cc b/net/url_request/url_request_context.cc
-index efb430bbf2..7ea35d20e4 100644
+index e5a2130b763..8c6a00154b4 100644
 --- a/net/url_request/url_request_context.cc
 +++ b/net/url_request/url_request_context.cc
-@@ -15,7 +15,6 @@
+@@ -16,7 +16,6 @@
  #include "base/strings/string_util.h"
  #include "base/types/pass_key.h"
  #include "build/build_config.h"
@@ -314,7 +420,7 @@ index efb430bbf2..7ea35d20e4 100644
  #include "net/base/http_user_agent_settings.h"
  #include "net/base/network_delegate.h"
  #include "net/base/proxy_delegate.h"
-@@ -50,6 +49,7 @@
+@@ -51,6 +50,7 @@
  #endif  // BUILDFLAG(ENABLE_REPORTING)
  
  #if BUILDFLAG(ENABLE_DEVICE_BOUND_SESSIONS)
@@ -323,7 +429,7 @@ index efb430bbf2..7ea35d20e4 100644
  #include "net/device_bound_sessions/session_store.h"
  #endif  // BUILDFLAG(ENABLE_DEVICE_BOUND_SESSIONS)
 diff --git a/net/url_request/url_request_context_builder.cc b/net/url_request/url_request_context_builder.cc
-index a6292daadf..9f338efbc6 100644
+index a6292daadf6..9f338efbc69 100644
 --- a/net/url_request/url_request_context_builder.cc
 +++ b/net/url_request/url_request_context_builder.cc
 @@ -52,7 +52,9 @@
@@ -367,108 +473,3 @@ index a6292daadf..9f338efbc6 100644
    context->set_http_transaction_factory(std::move(http_transaction_factory));
    context->set_cache_encryption_delegate(std::move(cache_encryption_delegate_));
  
-diff --git a/base/nix/xdg_util_minicronet.cc b/base/nix/xdg_util_minicronet.cc
-new file mode 100644
---- /dev/null
-+++ b/base/nix/xdg_util_minicronet.cc
-@@ -0,0 +1,46 @@
-+// Copyright 2026 The Chromium Authors
-+// Use of this source code is governed by a BSD-style license that can be
-+// found in the LICENSE file.
-+
-+#include "base/nix/xdg_util.h"
-+
-+#include <cstdlib>
-+
-+#include "base/base_paths.h"
-+#include "base/environment.h"
-+#include "base/files/file_path.h"
-+#include "base/path_service.h"
-+#include "base/third_party/xdg_user_dirs/xdg_user_dir_lookup.h"
-+
-+namespace base::nix {
-+
-+FilePath GetXDGDirectory(Environment* env,
-+                         cstring_view env_name,
-+                         const char* fallback_dir) {
-+  FilePath path;
-+  if (auto value = env->GetVar(env_name).value_or(""); !value.empty()) {
-+    path = FilePath(value);
-+  } else {
-+    PathService::Get(DIR_HOME, &path);
-+    path = path.Append(fallback_dir);
-+  }
-+  return path.StripTrailingSeparators();
-+}
-+
-+FilePath GetXDGUserDirectory(const char* dir_name, const char* fallback_dir) {
-+  FilePath path;
-+  if (char* value = xdg_user_dir_lookup(dir_name)) {
-+    path = FilePath(value);
-+    free(value);
-+  } else {
-+    PathService::Get(DIR_HOME, &path);
-+    path = path.Append(fallback_dir);
-+  }
-+  return path.StripTrailingSeparators();
-+}
-+
-+FilePath GetXDGDataWriteLocation(Environment* env) {
-+  return GetXDGDirectory(env, "XDG_DATA_HOME", ".local/share");
-+}
-+
-+}  // namespace base::nix
-diff --git a/build/config/compiler/BUILD.gn b/build/config/compiler/BUILD.gn
-index 8153e68ce9..bfb9a041e6 100644
---- a/build/config/compiler/BUILD.gn
-+++ b/build/config/compiler/BUILD.gn
-@@ -2604,23 +2604,38 @@ config("default_stack_frames") {
- # [2]: https://crrev.com/c/5447532
- config("optimize") {
-   if (is_win) {
--    # clang-cl's /O2 corresponds to clang's -O3, and really want -O2 for
--    # consistency with the other platforms.
--    cflags = [
--               "/O2",
--               "/clang:-O2",
--             ] + common_optimize_on_cflags
-+    if (is_minicronet_build) {
-+      # This branch is taken before the optimize_for_size check below, so
-+      # Windows would otherwise be the only platform compiled for speed while
-+      # the others are compiled for size. MiniCronet asks for size everywhere,
-+      # so honour that here too: /O1 is clang-cl's size level and /clang:-Oz
-+      # pins clang to the same -Oz the other platforms get.
-+      cflags = [
-+                 "/O1",
-+                 "/clang:-Oz",
-+               ] + common_optimize_on_cflags
- 
--    # The `-O3` for clang turns on extra optimizations compared to the standard
--    # `-O2`. But for rust, `-Copt-level=3` is the default and is thus reliable
--    # to use.
--    rustflags = [ "-Copt-level=3" ]
-+      # Mirrors the -Copt-level=s the optimize_for_size branch below uses.
-+      rustflags = [ "-Copt-level=s" ]
-+    } else {
-+      # clang-cl's /O2 corresponds to clang's -O3, and really want -O2 for
-+      # consistency with the other platforms.
-+      cflags = [
-+                 "/O2",
-+                 "/clang:-O2",
-+               ] + common_optimize_on_cflags
-+
-+      # The `-O3` for clang turns on extra optimizations compared to the
-+      # standard `-O2`. But for rust, `-Copt-level=3` is the default and is thus
-+      # reliable to use.
-+      rustflags = [ "-Copt-level=3" ]
-+    }
-   } else if (optimize_for_size || is_chromeos) {
-     # Favor size over speed.
-     # -Os in clang is more of a size-conscious -O2 than "size at any cost"
-     # (AKA -Oz).
- 
--    if (is_fuchsia || enable_cast_receiver) {
-+    if (is_fuchsia || enable_cast_receiver || is_minicronet_build) {
-       cflags = [ "-Oz" ] + common_optimize_on_cflags
-     } else {
-       cflags = [ "-Os" ] + common_optimize_on_cflags
