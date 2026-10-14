@@ -15,6 +15,7 @@ from .._python_impl.impersonate import (
     ChromeFamilyAlias as ChromeFamilyAlias,
     Impersonate as Impersonate,
     HttpVersion as HttpVersion,
+    HttpVersionNormalized as HttpVersionNormalized,
     CurlHttpVersion as CurlHttpVersion,
     HTTP_VERSIONS as HTTP_VERSIONS,
     normalize_http_version as normalize_http_version,

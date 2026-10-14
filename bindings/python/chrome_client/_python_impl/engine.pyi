@@ -17,6 +17,7 @@ Two rules follow from that:
 from typing import Any, Optional, Tuple
 
 from .cookies import RequestsCookieJar
+from .impersonate import ChromeProfileName, HttpVersionNormalized
 
 #: Extra engines a single session keeps alive for per-request overrides.
 DEFAULT_MAX_ENGINES: int
@@ -45,7 +46,9 @@ class EngineConfig:
         key: The hashable tuple of every field above.
     """
 
-    impersonate: Optional[str]
+    #: The canonical profile this engine was built for, already normalised, or
+    #: ``None`` for Chromium's own defaults.
+    impersonate: Optional[ChromeProfileName]
     proxy: Optional[str]
     verify: bool
     ca_pem: Optional[bytes]
@@ -53,7 +56,8 @@ class EngineConfig:
     accept_language: Optional[str]
     proxy_username: Optional[str]
     proxy_password: Optional[str]
-    http_version: Optional[str]
+    #: ``"v1"``/``"v2"``/``"v3"``, or ``None`` to let Chromium negotiate.
+    http_version: Optional[HttpVersionNormalized]
     cache: bool
     profile_namespace: Optional[str]
     generation: int

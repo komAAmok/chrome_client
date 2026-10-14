@@ -115,6 +115,16 @@ HttpVersion: TypeAlias = Literal[
     "http3",
 ]
 
+#: What :func:`normalize_http_version` returns, i.e. what
+#: :attr:`~chrome_client.sessions.Session.http_version` holds once the accepted
+#: spellings above have collapsed. Generated from the ``HTTP_VERSIONS`` values,
+#: so it cannot drift from the runtime table.
+HttpVersionNormalized: TypeAlias = Literal[
+    "v1",
+    "v2",
+    "v3",
+]
+
 
 class CurlHttpVersion:
     """``curl_cffi.const`` spelling of the protocol pins the Core supports.

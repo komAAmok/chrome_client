@@ -27,6 +27,23 @@ def is_grease(value):
     return number >> 8 == number & 0xff and number & 0x0f == 0x0a
 
 
+def grease_token(value):
+    """One spelling for a GREASE value, whichever schema reported it.
+
+    The captures spell the same number two ways -- tls.peet.ws sends the
+    extension display name (``"TLS_GREASE (0x4a4a)"``) while the pcap parser
+    produces the bare ``"0x4a4a"``. Comparing those two directly made the
+    response/capture cross-check fail on every peet.ws capture even though the
+    values agreed, so both sides are canonicalised to the bare form.
+    """
+    match = re.search(r"0x([0-9a-fA-F]{4})", str(value))
+    if match:
+        return "0x" + match.group(1).lower()
+    if str(value).upper().startswith("GREASE"):
+        return "GREASE"
+    return str(value)
+
+
 def without_grease(values):
     return [value for value in values if not is_grease(value)]
 
@@ -201,7 +218,8 @@ def actual_values(response):
     ech = next((item for item in extensions
                 if item.get("name", "").startswith(
                     "extensionEncryptedClientHello")), {})
-    grease_values = [value for value in tls.get("ciphers", []) + names +
+    grease_values = [grease_token(value)
+                     for value in tls.get("ciphers", []) + names +
                      groups + sigalgs if is_grease(value)]
     frames = http2.get("sent_frames", [])
     settings = next((frame.get("settings", []) for frame in frames

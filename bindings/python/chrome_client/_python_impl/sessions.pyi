@@ -56,7 +56,13 @@ from ._types import (
 from .adapters import BaseAdapter
 from .auth import AuthBase
 from .cookies import RequestsCookieJar
-from .impersonate import ExtraFingerprints, HttpVersion, Impersonate
+from .impersonate import (
+    ChromeProfileName,
+    ExtraFingerprints,
+    HttpVersion,
+    HttpVersionNormalized,
+    Impersonate,
+)
 from .models import AsyncResponse, PreparedRequest, Request, Response
 from .multipart import CurlMime
 from .structures import Headers
@@ -505,8 +511,14 @@ class BaseSession:
     auth: Optional[AuthBase]
     hooks: Mapping[str, List[Hook]]
     adapters: Mapping[str, BaseAdapter]
-    impersonate: Optional[str]
-    http_version: Optional[str]
+    #: The canonical profile name after :func:`normalize_impersonate`, so the
+    #: alias spellings collapse here: ``"chrome153"``, ``"chrome-153"`` and
+    #: ``"CHROME_153"`` all read back as ``"chrome_153"``. ``None`` means the
+    #: request carries Chromium's own defaults for the linked revision.
+    impersonate: Optional[ChromeProfileName]
+    #: The pinned protocol after :func:`normalize_http_version`, one of
+    #: ``"v1"``/``"v2"``/``"v3"``; ``None`` means "let Chromium negotiate".
+    http_version: Optional[HttpVersionNormalized]
     proxy: Optional[str]
     proxy_auth: Optional[Any]
     verify: Verify

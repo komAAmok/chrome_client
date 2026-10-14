@@ -765,7 +765,12 @@ class BaseSession(object):
         if username is None and self.proxy_auth:
             username, password = self.proxy_auth
         return EngineConfig(
-            impersonate=impersonate if impersonate is not None else self.impersonate,
+            # Normalise here, not only in __init__: a per-call ``impersonate=``
+            # reaches the Core through this one function, and without it
+            # ``"CHROME_153"``/``"chrome-153"`` were accepted at construction but
+            # rejected as ``ProfileUnsupported`` when passed per request.
+            impersonate=normalize_impersonate(
+                impersonate if impersonate is not None else self.impersonate),
             proxy=proxy,
             verify=verify_flag,
             ca_pem=ca_pem,

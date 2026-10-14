@@ -434,6 +434,51 @@ def check_verb_signatures(verbose: bool) -> None:
         print("  verb signatures: every parameter list matches its request()")
 
 
+def check_profile_annotations(verbose: bool) -> None:
+    """Attributes holding a profile name must say *which* profiles, not just ``str``.
+
+    ``Session.impersonate`` was annotated ``Optional[str]``, so hovering it showed
+    ``str | None`` and the caller could not see that ``chrome_99``..``chrome_155``
+    are the accepted values -- the Literal lists existed but were only reachable
+    through the ``impersonate=`` parameter. A bare ``str`` here also silently
+    accepts any typo at type-check time while the runtime raises
+    ``ImpersonateError``, which is the opposite of the fail-closed contract.
+
+    The alias must additionally be *imported* by the stub that uses it: an
+    unimported name resolves to ``Any`` in a checker, which is worse than
+    ``str`` because it also disables every other check on the attribute.
+    """
+    wanted = {
+        "impersonate": "ChromeProfileName",
+        "http_version": "HttpVersionNormalized",
+    }
+    for module, aliases in (("sessions", wanted), ("engine", {"impersonate": "ChromeProfileName"})):
+        path = IMPL / f"{module}.pyi"
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        imported = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom):
+                for alias in node.names:
+                    imported.add(alias.asname or alias.name)
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.AnnAssign) or not isinstance(node.target, ast.Name):
+                continue
+            expected = aliases.get(node.target.id)
+            if expected is None:
+                continue
+            text = ast.unparse(node.annotation)
+            if expected not in text:
+                errors.append(
+                    "%s.pyi: %s is annotated %r; use %s so the accepted profiles "
+                    "are visible on hover" % (module, node.target.id, text, expected))
+            elif expected not in imported:
+                errors.append(
+                    "%s.pyi: %s uses %s but does not import it, so a checker "
+                    "resolves the attribute to Any" % (module, node.target.id, expected))
+    if verbose:
+        print("  profile annotations: attributes name the profile Literal")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--verbose", action="store_true", help="print per-module counts")
@@ -445,6 +490,7 @@ def main() -> int:
     check_facade(args.verbose)
     check_generated(args.verbose)
     check_verb_signatures(args.verbose)
+    check_profile_annotations(args.verbose)
 
     total = sum(1 for _ in IMPL.glob("*.pyi"))
     for message in warnings:

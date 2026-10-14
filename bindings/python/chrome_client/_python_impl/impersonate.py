@@ -69,6 +69,11 @@ def normalize_impersonate(value):
         value = target
     name = value.strip()
     lowered = name.lower()
+    # An empty or whitespace-only string means "no profile", the same way
+    # ``normalize_http_version`` reads "" as "let Chromium negotiate". It is a
+    # real spelling in curl_cffi ports, so it is accepted rather than rejected.
+    if not lowered:
+        return None
     if lowered in ALIASES:
         return ALIASES[lowered]
     for family in _UNSUPPORTED_FAMILIES:
@@ -88,7 +93,11 @@ def normalize_impersonate(value):
                     "impersonate=%r is outside the pinned range chrome_%d .. chrome_%d"
                     % (value, OLDEST_CHROME, LATEST_CHROME))
             return "chrome_%d" % number
-    return name
+    raise ImpersonateError(
+        "impersonate=%r is not a profile this build ships: use chrome_%d .. "
+        "chrome_%d, the curl_cffi spelling chrome%d, or the family alias "
+        "\"chrome\"/\"chromium\"" % (value, OLDEST_CHROME, LATEST_CHROME,
+                                    LATEST_CHROME))
 
 
 class ExtraFingerprints(object):

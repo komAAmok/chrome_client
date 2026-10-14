@@ -697,6 +697,32 @@ class CurlCffiSurfaceTests(Base):
             with self.assertRaises(chrome_client.ImpersonateError):
                 chrome_client.Session(impersonate=target)
 
+    def test_unknown_profile_names_fail_at_construction(self):
+        # These were stored verbatim and only rejected later, when the engine was
+        # built: Session(impersonate="notachrome") succeeded and the error
+        # surfaced on the first request. A name outside the pinned set is a
+        # caller mistake, so it has to be reported where it was made.
+        for target in ("notachrome", "chrome_abc", "totally_bogus"):
+            with self.assertRaises(chrome_client.ImpersonateError):
+                chrome_client.Session(impersonate=target)
+
+    def test_blank_impersonate_means_no_profile(self):
+        # "" and whitespace are the "no profile" spelling, the same way
+        # normalize_http_version reads "" as "let Chromium negotiate".
+        for blank in ("", "   "):
+            with chrome_client.Session(impersonate=blank) as session:
+                self.assertIsNone(session.impersonate)
+        self.assertIsNone(chrome_client.normalize_impersonate(None))
+
+    def test_per_call_impersonate_accepts_the_same_spellings(self):
+        # normalize_impersonate ran only in __init__, so "CHROME_153" and
+        # "chrome-153" worked as constructor arguments but were rejected with
+        # ProfileUnsupported when passed per request.
+        for target in ("chrome153", "chrome_153", "CHROME_153", "chrome-153"):
+            with chrome_client.Session() as session:
+                self.assertEqual(
+                    session.get(self.url, impersonate=target).status_code, 200)
+
     def test_fingerprint_overrides_fail_closed(self):
         with self.assertRaises(chrome_client.UnsupportedFeature):
             chrome_client.Session(ja3="771,4865,0,29-23-24,0")

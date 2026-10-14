@@ -79,10 +79,11 @@ ROOT_LOCAL_NAMES = {"core_version", "abi_version", "__all__"}
 # ---------------------------------------------------------------------------
 
 def runtime_values():
-    """Returns ``(oldest, latest, http_version_keys)`` from the runtime module."""
+    """Returns ``(oldest, latest, http_version_keys, normalized_http_versions)``."""
     tree = ast.parse((IMPL / "impersonate.py").read_text(encoding="utf-8"))
     constants: dict[str, object] = {}
     http_versions = None
+    normalized = None
     for node in tree.body:
         if not isinstance(node, ast.Assign):
             continue
@@ -93,19 +94,29 @@ def runtime_values():
                 constants[target.id] = ast.literal_eval(node.value)
             if target.id == "HTTP_VERSIONS":
                 http_versions = [ast.literal_eval(key) for key in node.value.keys]  # type: ignore[attr-defined]
+                # The values are what normalize_http_version() returns, so the
+                # "already normalised" alias is derived rather than restated.
+                seen = []
+                for value in node.value.values:  # type: ignore[attr-defined]
+                    literal = ast.literal_eval(value)
+                    if literal is not None and literal not in seen:
+                        seen.append(literal)
+                normalized = seen
     missing = {"OLDEST_CHROME", "LATEST_CHROME"} - set(constants)
-    if missing or http_versions is None:
+    if missing or http_versions is None or normalized is None:
         raise SystemExit("could not read %s from impersonate.py" % (missing or "HTTP_VERSIONS"))
-    return constants["OLDEST_CHROME"], constants["LATEST_CHROME"], http_versions
+    return (constants["OLDEST_CHROME"], constants["LATEST_CHROME"],
+            http_versions, normalized)
 
 
 def expected_literals():
-    oldest, latest, http_versions = runtime_values()
+    oldest, latest, http_versions, normalized = runtime_values()
     return {
         "ChromeProfileName": ["chrome_%d" % n for n in range(oldest, latest + 1)],
         "ChromeProfileAlias": ["chrome%d" % n for n in range(oldest, latest + 1)],
         "ChromeFamilyAlias": ["chrome", "chromium"],
         "HttpVersion": http_versions,
+        "HttpVersionNormalized": normalized,
     }
 
 

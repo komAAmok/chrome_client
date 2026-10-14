@@ -77,6 +77,28 @@ docstring（Args/Returns/Yields/Raises/Example）。剩下 14 个是**故意**�
 `str`：一旦并入 `str` 类型就退化成"任意字符串"，补全与拼写检查都会失效；docstring 里说明了
 非 Chromium 家族与范围外版本会在运行期显式报错，不会静默降级。
 
+### 属性也要标注，而且必须真的 import
+
+`impersonate=` 是 `Literal` 并不意味着 `session.impersonate` 也是：该属性曾被标注为
+`Optional[str]`，悬停只显示 `str | None`，看不到任何版本；同时它把拼写检查也关掉了——
+`chrome_200` 在类型层面看起来完全合法，直到运行期才抛 `ImpersonateError`。
+
+属性存的是**归一化之后**的值，所以类型是更窄的集合：
+
+| 属性 | 类型 | 说明 |
+| --- | --- | --- |
+| `Session.impersonate` | `Optional[ChromeProfileName]` | 别名在此收敛：`chrome153`/`chrome-153`/`CHROME_153` 读回来都是 `chrome_153` |
+| `Session.http_version` | `Optional[HttpVersionNormalized]` | 只剩 `v1`/`v2`/`v3`；`auto`/`native`/`""` 已归一为 `None` |
+| `EngineConfig.impersonate` / `.http_version` | 同上 | 引擎缓存键的一部分 |
+
+`HttpVersionNormalized` 同样由 `tools/generate-python-stubs.py` 从 `HTTP_VERSIONS` 的**值**
+推导（`HttpVersion` 是键，它是值），所以不会与运行时漂移。
+
+**必须真的 import**：存根里写了一个未 import 的别名，类型检查器会把它解析成 `Any`——
+比 `str` 更糟，因为 `Any` 会连带关掉该属性上的所有其它检查。`tools/audit-python-stubs.py`
+的 `check_profile_annotations()` 同时断言两件事：标注用的是别名，且该别名在本模块被 import。
+（这条门禁加上时立刻抓出了第二处漏改的 `engine.pyi`。）
+
 ### verb 方法的全部选项：显式具名参数（不是 `**kwargs`）
 
 `Session.get("…", imp<tab>` 能补出 `impersonate=`，PyCharm 里也一样——靠的是把每个选项
