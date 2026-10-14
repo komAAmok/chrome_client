@@ -60,26 +60,30 @@ randomness checks passing.
 committed for exactly this reason: without them the captures would be an archive
 rather than evidence.
 
-## Known gap: chrome_148
+## chrome_148 (was a gap, now closed)
 
-`chrome_148` is the one profile whose `wire_verified: true` cannot be
-reproduced from the committed evidence, and this predates the migration:
+`chrome_148` was the one profile whose `wire_verified: true` could not be
+reproduced, and the reason was a packaging accident rather than missing
+measurements: the three responses that carry the evidence were filed under
+`chrome-148-validation/` next to nine records from a different experiment, and
+nothing paired them into a directory the gate could read. Its
+`chrome-148-release-validation/` held only one response, and its pcaps are all
+QUIC/H3, so the directory that looked authoritative could never pass.
 
-- Its only TLS capture directory holds **one** `response-1.json` (the gate needs
-  three) and no pcap at all.
-- The validation file it ships claims `stable_match: true` with
-  `unique_counts` of 3 for every stochastic field, but three connections were not
-  retained, so that summary cannot be re-derived from what exists.
-- The three responses that *are* present have client randoms that appear in none
-  of the profile's pcaps — those pcaps are all QUIC/H3 traffic.
-- Running the original gate with the one available response exits 1
-  (`multi_connection_randomness_verified: false`), so the claim was never
-  reproducible by that tool either.
+They are now collected as `chrome-148-browserleaks-boundary-20261014/`:
 
-The gap is recorded rather than papered over. Closing it needs a fresh Chrome 148
-capture; until then `chrome_148`'s `wire_verified` should be read as inherited
-from the pre-migration pipeline, not as verified here. Every other profile in
-this directory re-verifies.
+- three independent connections, all 19 stable fields matching
+  `wire_expectations.json`, and all six stochastic fields distinct;
+- **no pcaps**, because the tls.peet.ws schema carries the raw `key_share` and
+  ECH bytes inline, so `key_share_digest` and `ech_digest` are computed from the
+  responses. That is why `tools/verify-browserleaks-captures.py` only demands a
+  pcap for the browserleaks schema, which reports key-share *lengths* only.
+
+Three defects in the wrapper were hiding this, and all three are fixed:
+it required a pcap unconditionally, it never passed `--url` (so every tls.peet.ws
+directory failed the `:authority`/`:path` rewrite while the whole TLS fingerprint
+matched), and a directory whose records are named by phase rather than
+`response-<n>` was reported as a failure instead of being left unverifiable.
 
 ## What was deliberately not committed
 

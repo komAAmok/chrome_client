@@ -43,25 +43,85 @@ def capture_dirs(major: int):
     return sorted(out, key=lambda p: (("h3" in p.name), p.name))
 
 
+def _target_url(responses):
+    """The URL the records were captured against, from their own :authority/:path.
+
+    The gate rewrites the expected ``:authority``/``:path`` to match the URL it
+    is given, so it has to be told the real one. Defaulting to browserleaks
+    made every tls.peet.ws directory fail on those two headers while the whole
+    TLS fingerprint matched.
+    """
+    for path in responses:
+        record = json.loads(path.read_text())
+        http2 = record.get("http2")
+        # The browserleaks schema makes http2 a list of frames rather than a
+        # dict, and the default URL already matches those captures.
+        frames = http2.get("sent_frames") if isinstance(http2, dict) else []
+        if isinstance(frames, list) and frames:
+            for frame in frames:
+                headers = frame.get("headers") if isinstance(frame, dict) else None
+                if not isinstance(headers, list):
+                    continue
+                pairs = {}
+                for item in headers:
+                    if isinstance(item, str) and ": " in item:
+                        name, value = item.split(": ", 1)
+                        pairs[name] = value
+                if ":authority" in pairs and ":path" in pairs:
+                    return "https://%s%s" % (pairs[":authority"], pairs[":path"])
+    return "https://tls.browserleaks.com/"
+
+
+def _needs_pcap(responses):
+    """Whether these records omit the raw key material the gate has to resolve.
+
+    The browserleaks schema reports only key-share *lengths*, so its captures
+    need a pcap; the tls.peet.ws schema carries the bytes inline.
+    """
+    for path in responses:
+        record = json.loads(path.read_text())
+        if isinstance(record.get("http2"), list):
+            return True                      # browserleaks schema
+    return False
+
+
 def run_gate(profile_id: str, directory: Path):
-    responses = sorted(directory.glob("response-*.json"),
-                       key=lambda p: int(re.search(r"(\d+)", p.stem).group(1)))
+    # Only the plain ``response-<n>.json`` names are paired positionally. A
+    # directory that labels its records by phase (chrome-151-validation keeps
+    # response-navigation-N / after-N / final-N from a different experiment) is
+    # not the capture this wrapper verifies, so it is left alone rather than
+    # reported as a failure.
+    numbered = [p for p in directory.glob("response-*.json")
+                if re.fullmatch(r"response-\d+", p.stem)]
+    if len(numbered) != len(list(directory.glob("response-*.json"))):
+        return None, "records are not named response-<n>"
+    responses = sorted(numbered, key=lambda p: int(p.stem.split("-")[1]))
     if len(responses) < 3:
         return False, f"only {len(responses)} response records (need 3)"
 
-    # One pcap per response. The captures name them session-N or run-N; the host
-    # side of the same connection is the one whose SYN goes to :443.
+    # One pcap per response, when the responses need them. The captures name
+    # them session-N or run-N; the host side of the same connection is the one
+    # whose SYN goes to :443.
+    #
+    # They are only needed for the two fields BrowserLeaks omits: ``key_share``
+    # and ECH carry their raw bytes in the tls.peet.ws schema, so a directory of
+    # peet.ws records can be verified without any capture at all. Requiring a
+    # pcap unconditionally made those directories unverifiable here even though
+    # `validate-wire-profile.py` accepts them.
+    needs_pcap = _needs_pcap(responses)
     pcaps = []
-    for index in range(1, len(responses) + 1):
-        candidates = [directory / f"session-{index}.pcap",
-                      directory / f"run-{index}.pcap"]
-        found = next((p for p in candidates if p.is_file()), None)
-        if found is None:
-            return False, f"no pcap for response-{index}"
-        pcaps.append(found)
+    if needs_pcap:
+        for index in range(1, len(responses) + 1):
+            candidates = [directory / f"session-{index}.pcap",
+                          directory / f"run-{index}.pcap"]
+            found = next((p for p in candidates if p.is_file()), None)
+            if found is None:
+                return False, f"no pcap for response-{index}"
+            pcaps.append(found)
 
     command = [sys.executable, str(GATE), profile_id,
-               *[str(p) for p in responses]]
+               *[str(p) for p in responses],
+               "--url", _target_url(responses)]
     for pcap in pcaps:
         command += ["--capture", str(pcap)]
     result = subprocess.run(command, capture_output=True, text=True)
@@ -97,16 +157,26 @@ def main():
             # they carry their own h3-session-validation.json.
             if "h3" in directory.name:
                 continue
-            # Some directories are summary copies whose pcaps live elsewhere
-            # (chrome-145-release-validation is the example). They cannot be
-            # checked here, so they do not count as a verification for the
-            # major -- but they are not failures either, as long as another
-            # directory for the same major does verify.
-            has_pcap = any(directory.glob("*.pcap"))
-            if not has_pcap:
+            # A directory is skipped only when it can genuinely not be checked
+            # here: it holds fewer than three responses, or its schema omits the
+            # key material and it has no pcap. Such a directory does not count as
+            # a verification for the major, but is not a failure either, as long
+            # as another directory for the same major does verify.
+            responses = sorted(directory.glob("response-*.json"))
+            if len(responses) < 3:
+                # Fewer than three records, or the directory names them
+                # differently (chrome-151-validation uses response-after-N), so
+                # this wrapper cannot pair them. Not a failure here, as long as
+                # another directory for the same major verifies.
+                unverifiable += 1
+                continue
+            if _needs_pcap(responses) and not any(directory.glob("*.pcap")):
                 unverifiable += 1
                 continue
             ok, detail = run_gate(f"chrome_{major}", directory)
+            if ok is None:
+                unverifiable += 1
+                continue
             checked += 1
             if ok:
                 verified_this_major += 1
