@@ -48,8 +48,10 @@ Core 体积在 7.7–10.2 MB 之间（macOS ARM64 最小，Windows x86_64 最大
 
 ### Chrome profile
 
-`impersonate` 推荐使用精确的 `chrome_<major>` 名称（同时接受 curl-cffi 风格的
-`chrome<major>` 别名，以及解析到最新 pinned 版本的 `chrome`）。当前支持
+`impersonate` 必须给出精确的 `chrome_<major>` 名称（同时接受 curl-cffi 风格的
+`chrome<major>` 别名）。**不接受**裸的 `chrome`/`chromium`：那会解析到本构建恰好
+最后收录的 profile，一旦新增 profile，调用方的指纹就会在无人要求的情况下改变，
+因此抛 `ImpersonateError` 并要求写明确切版本。当前支持
 Chrome 99–155，共 57 个 profile；范围外的版本抛 `ImpersonateError`，不会静默降级。
 `available_profiles()` 返回完整列表。Edge、Safari、Firefox、Tor 等非 Chromium 目标
 同样显式报错，而不是当作 Chrome 处理。
@@ -115,7 +117,7 @@ from chrome_client import Session
 with Session(impersonate="chrome_155") as session:
     session.get(url, timeout=(5, 15))
     # 悬停 impersonate= 会列出 chrome_99 … chrome_155，以及 curl-cffi 的
-    # chrome153 别名和 chrome/chromium
+    # chrome<major> 别名；裸 chrome/chromium 会被拒绝
     # session.get(...) 会补全 headers/cookies/data/json/timeout/proxies/verify/...
 ```
 
@@ -238,11 +240,21 @@ with Session(impersonate="chrome152", http_version="v2") as session:
 ```
 
 `impersonate` 接受 `chrome_155`、`chrome155`，以及解析到最新 pinned 版本的
-`chrome`。TLS ClientHello、ALPN、HTTP/2 设置与优先级、HTTP/3 传输参数和默认请求头
-顺序全部来自该 profile：这也是 `ja3=`、`akamai=`、`perk=` 和大部分 `extra_fp` 字段
-会抛 `UnsupportedFeature` 的原因——接受一个 JA3 字符串却仍然发送 Chromium 自己的
+`chrome`。TLS ClientHello、ALPN、HTTP/2 设置与优先级、HTTP/3 传输参数全部来自该
+profile：这也是 `ja3=`、`akamai=`、`perk=` 和大部分 `extra_fp` 字段会抛
+`UnsupportedFeature` 的原因——接受一个 JA3 字符串却仍然发送 Chromium 自己的
 ClientHello，等于谎报保真度。`extra_fp` 中 facade 能真正实现的两项会被采纳：
 `header_order` 和 `form_boundary`。
+
+**默认请求头不是 profile 数据。** `impersonate` 只把 `User-Agent` 的版本串换成
+对应 Chrome 版本，它**不会**补上 Chrome 实际发送的
+`sec-ch-ua`/`sec-ch-ua-mobile`/`sec-ch-ua-platform`、`Sec-Fetch-*`、`Accept` 或
+`Priority`。那些头由 Chrome 的 `services/network` URLLoader 工厂层注入，而
+`net::URLRequestContextBuilder` 只暴露 `set_user_agent` / `set_accept_language`
+（两者落到只提供 `GetUserAgent()`/`GetAcceptLanguage()` 的
+`StaticHttpUserAgentSettings`），没有对应入口，因此当前**不可得**。默认请求头
+实测只有 `Host`、`Connection`、`User-Agent`、`Accept-Encoding` 四个。补齐需要
+ABI v9，见 [`docs/NEXT_STEPS.md`](https://github.com/komAAmok/chrome_client/blob/main/docs/NEXT_STEPS.md) 的 client hints 条目。
 
 不受支持而显式报错的还有：`cert=`（客户端证书）、`interface=`、`doh_url=`、
 `curl_options=`、`max_recv_speed=`、`referer=`。`referer` 尤其容易误判：Chromium
@@ -393,8 +405,9 @@ Cookie 会按 URL 匹配后附加到握手上。
   `URLRequestContext`，按次新建会付出线程与内存代价。需要隔离时显式建 `Session`，
   或调用 `close_shared_session()`。
 - `session.headers` 默认为空。requests 会预置 `User-Agent`/`Accept`/
-  `Accept-Encoding`/`Connection`，而这里那些头由 profile 和 Chromium 决定，注入
-  `Accept: */*` 会被指纹检测看见。
+  `Accept-Encoding`/`Connection`，而这里 Chromium 只自己发 `Host`/`Connection`/
+  `User-Agent`/`Accept-Encoding`；`Accept` 两者都不发，注入 `Accept: */*` 反而会被
+  指纹检测看见（真实 Chrome 是发的，见上文的 client hints 说明）。
 - `Response.raw` 是覆盖 `read`/`stream`/`close` 的文件对象，不是 urllib3
   `HTTPResponse`。
 - `Response.ok` 用 requests 语义（`status_code < 400`），不是 curl-cffi 的

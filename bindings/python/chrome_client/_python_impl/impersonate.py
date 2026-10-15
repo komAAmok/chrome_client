@@ -2,8 +2,14 @@
 
 The Core registers one profile per pinned Chromium major (``chrome_99`` through
 ``chrome_155``).  Everything about the TLS ClientHello, the HTTP/2 SETTINGS and
-priority frames, the HTTP/3 transport parameters, and the default header order
-lives inside that profile; there is no knob to bend one profile into another.
+priority frames, and the HTTP/3 transport parameters lives inside that profile;
+there is no knob to bend one profile into another.
+
+A profile does **not** own the default request header set.  It owns the
+``User-Agent`` version string and nothing else on that axis: Chrome's
+``sec-ch-ua*``, ``Sec-Fetch-*``, ``Accept`` and ``Priority`` come from the
+``services/network`` URLLoader factory layer, which the ``net`` layer this Core
+builds on cannot reach.  See ``default_headers`` in :mod:`.utils`.
 
 That is why ``ja3``, ``akamai``, ``perk`` and most ``extra_fp`` fields raise
 instead of being ignored.  Accepting a JA3 string and then sending Chromium's
@@ -12,15 +18,12 @@ own ClientHello would report a fidelity this build does not have.
 
 from .exceptions import ImpersonateError, UnsupportedFeature
 
-#: Highest pinned profile.  ``impersonate="chrome"`` resolves here.
+#: Bounds of the pinned profile range.  There is no "latest" alias: a caller must
+#: name the exact major, because "whatever is newest" silently re-points at a
+#: different TLS/H2 fingerprint the moment a profile is added, and a fingerprint
+#: that drifts without the caller asking is worse than one that is missing.
 LATEST_CHROME = 155
 OLDEST_CHROME = 99
-
-#: curl_cffi accepts bare family names; only the Chrome family exists here.
-ALIASES = {
-    "chrome": "chrome_%d" % LATEST_CHROME,
-    "chromium": "chrome_%d" % LATEST_CHROME,
-}
 
 _UNSUPPORTED_FAMILIES = ("edge", "safari", "firefox", "tor", "chrome_android",
                          "chrome-android", "safari_ios", "okhttp")
@@ -59,7 +62,13 @@ def normalize_http_version(value):
 
 
 def normalize_impersonate(value):
-    """Maps curl_cffi-style targets onto Core profile identifiers."""
+    """Maps curl_cffi-style targets onto Core profile identifiers.
+
+    Only exact majors are accepted.  The bare family names ``chrome`` and
+    ``chromium`` are rejected: curl_cffi resolves them to whatever its own build
+    considers newest, which here would mean a fingerprint that changes under the
+    caller the moment a profile is added.  Name the major you audited.
+    """
     if value is None:
         return None
     if not isinstance(value, str):
@@ -74,8 +83,12 @@ def normalize_impersonate(value):
     # real spelling in curl_cffi ports, so it is accepted rather than rejected.
     if not lowered:
         return None
-    if lowered in ALIASES:
-        return ALIASES[lowered]
+    if lowered in ("chrome", "chromium"):
+        raise ImpersonateError(
+            "impersonate=%r is ambiguous: it would resolve to whatever profile "
+            "this build happens to ship last, so the fingerprint would change "
+            "whenever a profile is added. Name the exact major instead, for "
+            "example %r." % (value, "chrome_%d" % LATEST_CHROME))
     for family in _UNSUPPORTED_FAMILIES:
         if lowered.startswith(family):
             raise ImpersonateError(
@@ -95,9 +108,8 @@ def normalize_impersonate(value):
             return "chrome_%d" % number
     raise ImpersonateError(
         "impersonate=%r is not a profile this build ships: use chrome_%d .. "
-        "chrome_%d, the curl_cffi spelling chrome%d, or the family alias "
-        "\"chrome\"/\"chromium\"" % (value, OLDEST_CHROME, LATEST_CHROME,
-                                    LATEST_CHROME))
+        "chrome_%d or the curl_cffi spelling chrome%d"
+        % (value, OLDEST_CHROME, LATEST_CHROME, LATEST_CHROME))
 
 
 class ExtraFingerprints(object):

@@ -16,7 +16,7 @@ Passing a constructor-only option (``base_url``, ``default_headers``,
 that one call instead of reconfiguring the shared one.
 
     import chrome_client as requests
-    response = requests.get("https://example.com", impersonate="chrome_153")
+    response = requests.get("https://example.com", impersonate="chrome_155")
 """
 
 from typing import Any, Callable, Mapping, Optional, Union
@@ -117,9 +117,9 @@ def session(
     Args:
         impersonate: The pinned Chromium profile that owns the TLS ClientHello, ALPN,
             HTTP/2 SETTINGS and HTTP/3 transport parameters. Accepts
-            ``chrome_99``..``chrome_153``, the curl_cffi spelling
-            ``chrome99``..``chrome153``, and ``chrome``/``chromium`` for the
-            newest pinned version.
+            ``chrome_99``..``chrome_155``, the curl_cffi spelling
+            ``chrome99``..``chrome155``. The bare family names
+            ``chrome``/``chromium`` are rejected.
         proxy: A single proxy URL for every request, e.g.
             ``"http://user:pass@127.0.0.1:8080"`` or ``"socks5://127.0.0.1:1080"``.
             Overrides ``proxies``.
@@ -181,7 +181,7 @@ def session(
         ImpersonateError: ``impersonate`` is out of range or the wrong family.
 
     Example:
-        >>> with chrome_client.session(impersonate="chrome_153") as s:
+        >>> with chrome_client.session(impersonate="chrome_155") as s:
         ...     s.get("https://example.com")
     """
     ...
@@ -231,9 +231,9 @@ def async_session(
     Args:
         impersonate: The pinned Chromium profile that owns the TLS ClientHello, ALPN,
             HTTP/2 SETTINGS and HTTP/3 transport parameters. Accepts
-            ``chrome_99``..``chrome_153``, the curl_cffi spelling
-            ``chrome99``..``chrome153``, and ``chrome``/``chromium`` for the
-            newest pinned version.
+            ``chrome_99``..``chrome_155``, the curl_cffi spelling
+            ``chrome99``..``chrome155``. The bare family names
+            ``chrome``/``chromium`` are rejected.
         proxy: A single proxy URL for every request, e.g.
             ``"http://user:pass@127.0.0.1:8080"`` or ``"socks5://127.0.0.1:1080"``.
             Overrides ``proxies``.
@@ -296,7 +296,7 @@ def async_session(
         ImpersonateError: ``impersonate`` is out of range or the wrong family.
 
     Example:
-        >>> session = chrome_client.async_session(impersonate="chrome_153",
+        >>> session = chrome_client.async_session(impersonate="chrome_155",
         ...                                       max_clients=64)
         >>> async with session:
         ...     response = await session.get("https://example.com")
@@ -386,7 +386,7 @@ def request(
         json: JSON body.
         content: Raw body bytes; mutually exclusive with ``data=``.
         multipart: A :class:`~chrome_client.CurlMime` body.
-        impersonate: Profile for this call, e.g. ``"chrome_153"``.
+        impersonate: Profile for this call, e.g. ``"chrome_155"``.
         proxy: Proxy URL for this call.
         http_version: Pin ``"v1"``/``"v2"``/``"v3"``.
         max_redirects: Redirect cap.
@@ -517,7 +517,7 @@ def get(
         json: JSON body.
         content: Raw body bytes; mutually exclusive with ``data=``.
         multipart: A :class:`~chrome_client.CurlMime` body.
-        impersonate: Profile for this call, e.g. ``"chrome_153"``.
+        impersonate: Profile for this call, e.g. ``"chrome_155"``.
         proxy: Proxy URL for this call.
         http_version: Pin ``"v1"``/``"v2"``/``"v3"``.
         max_redirects: Redirect cap.
@@ -562,7 +562,7 @@ def get(
         >>> response = requests.get(
         ...     "https://example.com/api", params={"page": 1},
         ...     headers={"Accept": "application/json"},
-        ...     impersonate="chrome_153", timeout=15)
+        ...     impersonate="chrome_155", timeout=15)
         >>> print(response.status_code, response.reason, response.json())
     """
     ...
@@ -642,7 +642,7 @@ def options(
         json: JSON body.
         content: Raw body bytes; mutually exclusive with ``data=``.
         multipart: A :class:`~chrome_client.CurlMime` body.
-        impersonate: Profile for this call, e.g. ``"chrome_153"``.
+        impersonate: Profile for this call, e.g. ``"chrome_155"``.
         proxy: Proxy URL for this call.
         http_version: Pin ``"v1"``/``"v2"``/``"v3"``.
         max_redirects: Redirect cap.
@@ -762,7 +762,7 @@ def head(
         json: JSON body.
         content: Raw body bytes; mutually exclusive with ``data=``.
         multipart: A :class:`~chrome_client.CurlMime` body.
-        impersonate: Profile for this call, e.g. ``"chrome_153"``.
+        impersonate: Profile for this call, e.g. ``"chrome_155"``.
         proxy: Proxy URL for this call.
         http_version: Pin ``"v1"``/``"v2"``/``"v3"``.
         max_redirects: Redirect cap.
@@ -880,7 +880,7 @@ def post(
         cert: Rejected; ABI v8 has no client-certificate setting.
         content: Raw body bytes; mutually exclusive with ``data=``.
         multipart: A :class:`~chrome_client.CurlMime` body.
-        impersonate: Profile for this call, e.g. ``"chrome_153"``.
+        impersonate: Profile for this call, e.g. ``"chrome_155"``.
         proxy: Proxy URL for this call.
         http_version: Pin ``"v1"``/``"v2"``/``"v3"``.
         max_redirects: Redirect cap.
@@ -1001,7 +1001,7 @@ def put(
         json: JSON body.
         content: Raw body bytes; mutually exclusive with ``data=``.
         multipart: A :class:`~chrome_client.CurlMime` body.
-        impersonate: Profile for this call, e.g. ``"chrome_153"``.
+        impersonate: Profile for this call, e.g. ``"chrome_155"``.
         proxy: Proxy URL for this call.
         http_version: Pin ``"v1"``/``"v2"``/``"v3"``.
         max_redirects: Redirect cap.
@@ -1119,7 +1119,7 @@ def patch(
         json: JSON body.
         content: Raw body bytes; mutually exclusive with ``data=``.
         multipart: A :class:`~chrome_client.CurlMime` body.
-        impersonate: Profile for this call, e.g. ``"chrome_153"``.
+        impersonate: Profile for this call, e.g. ``"chrome_155"``.
         proxy: Proxy URL for this call.
         http_version: Pin ``"v1"``/``"v2"``/``"v3"``.
         max_redirects: Redirect cap.
@@ -1237,7 +1237,7 @@ def delete(
         json: JSON body.
         content: Raw body bytes; mutually exclusive with ``data=``.
         multipart: A :class:`~chrome_client.CurlMime` body.
-        impersonate: Profile for this call, e.g. ``"chrome_153"``.
+        impersonate: Profile for this call, e.g. ``"chrome_155"``.
         proxy: Proxy URL for this call.
         http_version: Pin ``"v1"``/``"v2"``/``"v3"``.
         max_redirects: Redirect cap.
@@ -1355,7 +1355,7 @@ def trace(
         json: JSON body.
         content: Raw body bytes; mutually exclusive with ``data=``.
         multipart: A :class:`~chrome_client.CurlMime` body.
-        impersonate: Profile for this call, e.g. ``"chrome_153"``.
+        impersonate: Profile for this call, e.g. ``"chrome_155"``.
         proxy: Proxy URL for this call.
         http_version: Pin ``"v1"``/``"v2"``/``"v3"``.
         max_redirects: Redirect cap.
@@ -1473,7 +1473,7 @@ def query(
         json: JSON body.
         content: Raw body bytes; mutually exclusive with ``data=``.
         multipart: A :class:`~chrome_client.CurlMime` body.
-        impersonate: Profile for this call, e.g. ``"chrome_153"``.
+        impersonate: Profile for this call, e.g. ``"chrome_155"``.
         proxy: Proxy URL for this call.
         http_version: Pin ``"v1"``/``"v2"``/``"v3"``.
         max_redirects: Redirect cap.

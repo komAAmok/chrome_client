@@ -108,7 +108,7 @@ class WebSocket:
 
     Example:
         >>> with WebSocket(url="wss://echo.example.com",
-        ...                impersonate="chrome_153") as socket:
+        ...                impersonate="chrome_155") as socket:
         ...     socket.send_str("ping")
         ...     print(socket.recv_str())
     """

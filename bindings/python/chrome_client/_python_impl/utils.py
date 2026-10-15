@@ -31,10 +31,17 @@ def default_headers():
 
     requests seeds ``User-Agent``, ``Accept``, ``Accept-Encoding`` and
     ``Connection`` here.  Doing that would corrupt the very thing this client
-    exists for: the impersonation profile and Chromium own the default header
-    set, their values, and their order, and an injected ``Accept: */*`` is
-    visible to any fingerprinter.  Chromium still emits its own defaults, so the
-    request is complete without them.
+    exists for: the impersonation profile owns the UA version string, and an
+    injected ``Accept: */*`` is visible to any fingerprinter.
+
+    What Chromium's ``net/`` layer supplies on its own is only ``Host``,
+    ``Connection``, ``User-Agent`` and ``Accept-Encoding`` -- measured, not
+    assumed.  Real Chrome additionally sends ``sec-ch-ua*``, ``Sec-Fetch-*``,
+    ``Accept`` and ``Priority``, but those are injected by the
+    ``services/network`` URLLoader factory layer, which
+    ``net::URLRequestContextBuilder`` gives no way to reach.  So the default
+    header set is *not* Chrome's and is not profile data; adding the missing
+    ones is tracked as an ABI v9 item in ``docs/NEXT_STEPS.md``.
     """
     return CaseInsensitiveDict()
 

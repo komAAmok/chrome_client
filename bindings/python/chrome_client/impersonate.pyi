@@ -9,10 +9,8 @@ seeing ``Any`` (PEP 561).
 from ._python_impl.impersonate import (
     LATEST_CHROME as LATEST_CHROME,
     OLDEST_CHROME as OLDEST_CHROME,
-    ALIASES as ALIASES,
     ChromeProfileName as ChromeProfileName,
     ChromeProfileAlias as ChromeProfileAlias,
-    ChromeFamilyAlias as ChromeFamilyAlias,
     Impersonate as Impersonate,
     HttpVersion as HttpVersion,
     HttpVersionNormalized as HttpVersionNormalized,

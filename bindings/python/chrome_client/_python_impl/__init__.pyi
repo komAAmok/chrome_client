@@ -105,10 +105,8 @@ from .exceptions import (
     name_net_error as name_net_error,
 )
 from .impersonate import (
-    ALIASES as ALIASES,
     LATEST_CHROME as LATEST_CHROME,
     OLDEST_CHROME as OLDEST_CHROME,
-    ChromeFamilyAlias as ChromeFamilyAlias,
     ChromeProfileAlias as ChromeProfileAlias,
     ChromeProfileName as ChromeProfileName,
     CurlHttpVersion as CurlHttpVersion,

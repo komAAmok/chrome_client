@@ -147,7 +147,7 @@ class EngineConfig:
         """Returns a summary listing only the fields that were set.
 
         Returns:
-            e.g. ``"EngineConfig(impersonate='chrome_153', cache=True)"``."""
+            e.g. ``"EngineConfig(impersonate='chrome_155', cache=True)"``."""
         ...
 
     def build(self) -> Any:
@@ -166,7 +166,7 @@ class EngineConfig:
             RequestException: Any other Core-side initialisation failure.
 
         Example:
-            >>> engine = EngineConfig(impersonate="chrome_153").build()
+            >>> engine = EngineConfig(impersonate="chrome_155").build()
         """
         ...
 
@@ -205,7 +205,7 @@ class EngineCache:
 
     Example:
         >>> cache = EngineCache(max_engines=2)
-        >>> slot = cache.get(EngineConfig(impersonate="chrome_153"))
+        >>> slot = cache.get(EngineConfig(impersonate="chrome_155"))
         >>> len(cache)
         1
     """

@@ -114,7 +114,6 @@ def expected_literals():
     return {
         "ChromeProfileName": ["chrome_%d" % n for n in range(oldest, latest + 1)],
         "ChromeProfileAlias": ["chrome%d" % n for n in range(oldest, latest + 1)],
-        "ChromeFamilyAlias": ["chrome", "chromium"],
         "HttpVersion": http_versions,
         "HttpVersionNormalized": normalized,
     }

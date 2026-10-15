@@ -53,8 +53,11 @@ size ceiling, so a regression fails the build.
 ### Chrome profiles
 
 Pass an exact `chrome_<major>` string through `impersonate` (the curl-cffi-style
-`chrome<major>` alias and a bare `chrome`, resolving to the newest pinned major,
-are also accepted). Chrome 99 through 155 are supported (57 profiles); a version
+`chrome<major>` alias is also accepted). A bare `chrome`/`chromium` is **not**
+accepted: it would resolve to whichever profile this build happens to ship last,
+so a caller's fingerprint would change whenever a profile is added, silently and
+without the caller asking -- it raises `ImpersonateError` and asks for the exact
+major instead. Chrome 99 through 155 are supported (57 profiles); a version
 outside that range raises `ImpersonateError` rather than being downgraded, and
 `available_profiles()` returns the full list. Non-Chromium targets such as Edge,
 Safari, Firefox and Tor also raise rather than being treated as Chrome.
@@ -121,8 +124,8 @@ from chrome_client import Session
 
 with Session(impersonate="chrome_155") as session:
     session.get(url, timeout=(5, 15))
-    # hovering impersonate= lists chrome_99 ... chrome_155, the curl-cffi
-    # chrome153 aliases and chrome/chromium
+    # hovering impersonate= lists chrome_99 ... chrome_155 and the curl-cffi
+    # chrome<major> aliases; bare chrome/chromium is rejected
     # session.get(...) completes headers/cookies/data/json/timeout/proxies/verify/...
 ```
 
@@ -256,11 +259,23 @@ with Session(impersonate="chrome152", http_version="v2") as session:
 
 `impersonate` accepts `chrome_155`, `chrome155`, and `chrome` (resolving to the
 newest pinned major). The TLS ClientHello, ALPN, HTTP/2 settings and priorities,
-HTTP/3 transport parameters and default header order all come from that profile.
-That is why `ja3=`, `akamai=`, `perk=` and most `extra_fp` fields raise
-`UnsupportedFeature`: accepting a JA3 string while still sending Chromium's own
-ClientHello would report a fidelity this build does not have. The two `extra_fp`
-fields the facade can honour are accepted: `header_order` and `form_boundary`.
+and HTTP/3 transport parameters all come from that profile. That is why `ja3=`,
+`akamai=`, `perk=` and most `extra_fp` fields raise `UnsupportedFeature`:
+accepting a JA3 string while still sending Chromium's own ClientHello would
+report a fidelity this build does not have. The two `extra_fp` fields the facade
+can honour are accepted: `header_order` and `form_boundary`.
+
+**Default request headers are not profile data.** `impersonate` swaps the version
+string in `User-Agent`; it does **not** add the
+`sec-ch-ua`/`sec-ch-ua-mobile`/`sec-ch-ua-platform`, `Sec-Fetch-*`, `Accept` or
+`Priority` headers Chrome actually sends. Chrome injects those in the
+`services/network` URLLoader factory layer, and `net::URLRequestContextBuilder`
+exposes only `set_user_agent` / `set_accept_language` (both landing in
+`StaticHttpUserAgentSettings`, which offers just
+`GetUserAgent()`/`GetAcceptLanguage()`), so there is no entry point today. The
+measured default set is `Host`, `Connection`, `User-Agent`, `Accept-Encoding`.
+Closing this needs ABI v9; see the client hints item in
+[`docs/NEXT_STEPS.md`](https://github.com/komAAmok/chrome_client/blob/main/docs/NEXT_STEPS.md).
 
 Also rejected explicitly: `cert=` (client certificates), `interface=`,
 `doh_url=`, `curl_options=`, `max_recv_speed=` and `referer=`. The last one is
@@ -423,8 +438,10 @@ Deliberate behavioural differences:
   construction would cost threads and memory. Build an explicit `Session` when you
   need isolation, or call `close_shared_session()`.
 - `session.headers` starts empty. requests seeds `User-Agent`, `Accept`,
-  `Accept-Encoding` and `Connection`; here those belong to the profile and to
-  Chromium, and an injected `Accept: */*` is visible to a fingerprinter.
+  `Accept-Encoding` and `Connection`; here Chromium sends only `Host`,
+  `Connection`, `User-Agent` and `Accept-Encoding` on its own. `Accept` is sent by
+  neither, so injecting `Accept: */*` is visible to a fingerprinter (real Chrome
+  does send it — see the client hints note above).
 - `Response.raw` is a file object exposing `read`/`stream`/`close`, not a urllib3
   `HTTPResponse`.
 - `Response.ok` uses the requests rule (`status_code < 400`), not curl-cffi's

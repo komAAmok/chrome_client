@@ -143,6 +143,43 @@ QUIC 标记 / ALPN）填写。这需要 ABI v8 → v9：头文件、`crates/mini
 测试、三份导出表、8 个平台产物与 manifest 全部同步，并走一次完整发布验收。
 在此之前绑定层必须继续返回 `None`——错报的指纹比缺失的指纹更糟。
 
+## 待办：默认请求头不是 Chrome 的（client hints / Sec-Fetch，ABI v9）
+
+**现状（实测，非推断）**：`Session(impersonate="chrome_155")` 发出的请求头只有
+`Host`、`Connection`、`User-Agent`、`Accept-Encoding` 四个；`impersonate` 只把
+`User-Agent` 的版本串换成 `Chrome/155.0.0.0`，**默认头集合一个都不变**。
+
+真实 Chrome 在同样的请求上还会发 `sec-ch-ua`、`sec-ch-ua-mobile`、
+`sec-ch-ua-platform`、`Upgrade-Insecure-Requests`、`Accept`、`Sec-Fetch-Site`、
+`Sec-Fetch-Mode`、`Sec-Fetch-User`、`Sec-Fetch-Dest`、`Priority` 和
+`Accept-Language`。因此任何同时检查 `sec-ch-ua` 与 `User-Agent` 的检测方都能把本
+客户端判定为非 Chrome。这是**未闭合的保真度缺口**，README 已如实声明。
+
+**为什么现在拿不到**：那些头由 Chrome 的 `services/network` URLLoader 工厂层注入
+（client hints 与 Sec-Fetch 源自 renderer 的请求头），不在 `net` 层。
+`net::URLRequestContextBuilder` 只有 `set_user_agent` 与 `set_accept_language`
+（`net/url_request/url_request_context_builder.h:244`），二者都落到
+`StaticHttpUserAgentSettings`，而该接口只提供 `GetAcceptLanguage()` /
+`GetUserAgent()`——没有产出 client hints 或 Sec-Fetch 的入口。仓库内零处
+`user_agent_metadata` / `UserAgentMetadata`。
+
+**修法（ABI v9）**：
+
+1. Core 侧为每个 profile 携带 `UserAgentMetadata`（品牌列表、full version、
+   platform、mobile 标志）与 UA 品牌 GREASE 顺序。Chrome 的 client hints 由
+   `net::HttpUtil`/`ClientHints` 序列化，取值随版本变化，必须逐版本从官方源码取。
+2. 在 `Request::StartOnNetworkThread`（`core/source/request.cc`）用
+   `SetExtraRequestHeaders` 注入 `sec-ch-ua*`；`Sec-Fetch-*` 与 `Priority` 需要
+   在 ABI 上新增字段表达（导航型 vs 子资源型请求的取值不同），不能硬编码一组。
+3. `Accept` 与 `Accept-Language` 可先用现有 Engine 字段补齐，代价最小。
+4. 必须先用 `tools/inspect-client-hello.py` 的同款 `--repeat` 采样法对**真实
+   Chrome** 抓包，逐版本确认取值与**顺序**后再冻结。按 AGENTS.md §7，不得把
+   当前猜测值写成期望值。
+
+**验收**：新增一个本地 echo 服务器用例，断言 `impersonate="chrome_155"` 时请求头
+集合与真实 Chrome 155 抓包一致（含顺序），且 `impersonate=None` 时**不**注入任何
+client hint——默认路径不能因为补 profile 而被污染。
+
 ## 待办：32 位 ABI 布局没有执行路径
 
 `crates/minicronet-sys` 的布局测试已有 32 位分支（数值已按头文件修正为
@@ -173,19 +210,29 @@ QUIC 标记 / ALPN）填写。这需要 ABI v8 → v9：头文件、`crates/mini
 `chromium_revision` 与 `CHROMIUM_REVISION` 一致。要真正证明二进制来自这份源码，
 需要一条能跑 Chromium 构建的 CI 路径：重建 → 比对 → 记录，或对产物签名/attestation。
 
-## 待办：Linux 交叉构建的 pkgconf 未迁移
+## 待办：Linux 交叉构建的 pkgconf 未进仓库
 
-`linux-x86` / `linux-arm64` 的交叉构建需要 `pkg-config`（gn 为 NSS 调用它），而这份
-工具目前在仓库之外的历史目录里。可用命令：
+`linux-x86` / `linux-arm64` 的交叉构建需要 `pkg-config`（gn 为 NSS 调用它）。
+**获取方式已文档化**，见 [`BUILD.md`](BUILD.md) 的「Linux cross-builds need
+pkg-config」一节：从发行版取三个 deb、解包到仓库外、用
+`MINICRONET_PKGCONF_DIR` 指过去即可。仓库里不放这份工具（它是发行版包，
+不属于本项目的产物）。
 
 ```bash
-MINICRONET_PKGCONF_DIR=<unpacked pkgconf root> \
-PKG_CONFIG_LIBDIR=$CHROMIUM_SRC/build/linux/debian_bullseye_<arch>-sysroot/usr/lib/pkgconfig \
-tools/build-core-linux-arm64.sh
+MINICRONET_PKGCONF_DIR=/tmp/pkgconf/root tools/build-core-linux-arm64.sh
 ```
 
-注意不要设置 `PKG_CONFIG_SYSROOT_DIR`：gn 自己会传 `--sysroot`，再设一次会拼出双前缀
-（表现为 .../sysroot/home/.../sysroot/usr/include/nss 下找不到 pk11pub.h）。
-把这份 pkgconf 迁进仓库或文档化获取方式，是阶段 1 的剩余项。
+两条**实测**结论，都与旧版本文档不同：
+
+- `PKG_CONFIG_LIBDIR` **不需要设置**。旧文档要求显式指向
+  `.../debian_bullseye_<arch>-sysroot/usr/lib/pkgconfig`，但
+  `build/config/linux/pkg-config.py` 会自己从 `--sysroot` 推导并覆盖这个变量。
+  用 `/nonexistent/bogus/path` 覆盖它仍然构建成功，且产物与不设置时逐字节相同
+  （`069276f884924c4f`）。
+- 不要设置 `PKG_CONFIG_SYSROOT_DIR`：gn 自己会传 `--sysroot`，再设一次会拼出双
+  前缀（`.../sysroot/home/.../sysroot/usr/include/nss`），构建死在
+  `pk11pub.h: file not found`。这一条已复现确认。
+
+剩余项只是「要不要把 deb 也纳入仓库以支持离线构建」，不是「命令未知」。
 
 完成条件是每项都有命令输出或目标机报告；“文件存在”不等于“平台支持完成”。

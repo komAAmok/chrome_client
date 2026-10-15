@@ -767,7 +767,7 @@ class BaseSession(object):
         return EngineConfig(
             # Normalise here, not only in __init__: a per-call ``impersonate=``
             # reaches the Core through this one function, and without it
-            # ``"CHROME_153"``/``"chrome-153"`` were accepted at construction but
+            # ``"CHROME_155"``/``"chrome-155"`` were accepted at construction but
             # rejected as ``ProfileUnsupported`` when passed per request.
             impersonate=normalize_impersonate(
                 impersonate if impersonate is not None else self.impersonate),
@@ -854,6 +854,13 @@ class BaseSession(object):
         # generation is a structurally identical engine with an empty jar.
         self._generation += 1
         replacement = self._engines.get(slot.config.replace(generation=self._generation))
+        # The superseded slot is unreachable -- its mirror no longer matches the
+        # jar, so nothing selects it again -- but it still occupies one of the
+        # bounded cache slots. Measured: 8 caller edits filled all 8 slots with
+        # dead generations and evicted the reusable one. Same reason as the
+        # discard branch above.
+        if replacement is not slot:
+            self._engines.discard(slot.config)
         if desired:
             prepared.headers["Cookie"] = desired
         return replacement

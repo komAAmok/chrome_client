@@ -687,10 +687,30 @@ class CurlCffiSurfaceTests(Base):
         for target in ("chrome152", "chrome_152", "chrome151"):
             with chrome_client.Session(impersonate=target) as session:
                 self.assertEqual(session.get(self.url).status_code, 200)
-        self.assertEqual(chrome_client.normalize_impersonate("chrome"), "chrome_155")
         self.assertEqual(chrome_client.normalize_impersonate("chrome136"), "chrome_136")
         self.assertEqual(chrome_client.normalize_impersonate("chrome_136"), "chrome_136")
         self.assertEqual(chrome_client.available_profiles()[-1], "chrome_155")
+
+    def test_bare_family_names_are_rejected(self):
+        # A family name would resolve to whatever profile ships last, so the
+        # caller's fingerprint would change when a profile is added -- silently,
+        # and without the caller asking. Only exact majors are accepted.
+        for target in ("chrome", "chromium", "Chrome", "CHROMIUM", " chrome "):
+            with self.assertRaises(chrome_client.ImpersonateError) as caught:
+                chrome_client.normalize_impersonate(target)
+            self.assertIn("exact major", str(caught.exception))
+            with self.assertRaises(chrome_client.ImpersonateError):
+                chrome_client.Session(impersonate=target)
+        self.assertFalse(hasattr(chrome_client.impersonate, "ALIASES"),
+                         "the family alias table is gone; nothing may resolve it")
+
+    def test_available_profiles_has_no_family_names(self):
+        profiles = chrome_client.available_profiles()
+        self.assertEqual(profiles[0], "chrome_99")
+        self.assertEqual(profiles[-1], "chrome_155")
+        self.assertEqual(len(profiles), 155 - 99 + 1)
+        for name in profiles:
+            self.assertRegex(name, r"^chrome_\d+$")
 
     def test_unavailable_profiles_fail_closed(self):
         for target in ("safari17", "firefox133", "edge101", "tor145", "chrome_9"):
@@ -1679,6 +1699,38 @@ class SilentLossRegressionTests(unittest.TestCase):
                                     discard_cookies=True).text
             self.assertNotIn("sid=ABC", discarded)
             self.assertNotIn("taste=sweet", discarded)
+
+    def test_editing_the_cookie_jar_does_not_fill_the_engine_cache(self):
+        """A caller edit must not cost a whole Chromium context per request.
+
+        When the jar and the Core's store disagree, the store has to be replaced
+        by a fresh generation -- that part is correct and unavoidable. The defect
+        was that the *superseded* generation was left in the bounded cache even
+        though nothing can ever select it again (its mirror no longer matches the
+        jar). It therefore evicted the engine the next ordinary request needs.
+
+        Measured on the shipped build: eight caller edits filled all eight cache
+        slots with dead generations, so every later request that merely looked
+        like a reuse rebuilt a context. The assertion is on the cache, not on a
+        build counter: a rebuild per *edit* is correct, a cache full of corpses is
+        not.
+        """
+        with chrome_client.Session() as session:
+            # The server sets a cookie, so the mirror is non-empty and a caller
+            # edit actually creates the jar-vs-store disagreement.
+            session.get(self.base + "/set-cookie")
+            self.assertTrue(session.cookies.get_dict())
+
+            for index in range(8):
+                session.cookies.clear()
+                self.assertEqual(
+                    session.get(self.base + "/set-cookie?n=%d" % index).status_code, 200)
+
+            self.assertEqual(
+                len(session._engines), 1,
+                "eight caller edits left %d engines cached; the superseded "
+                "generations are unreachable and must be discarded, not left to "
+                "evict the reusable one" % len(session._engines))
 
     def test_send_honours_session_defaults(self):
         """send() bypassed session defaults, including max_response_bytes."""

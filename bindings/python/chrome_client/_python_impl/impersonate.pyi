@@ -1,9 +1,15 @@
 """Type surface of :mod:`chrome_client.impersonate`.
 
-The Core pins one Chromium major per profile (``chrome_99`` .. ``chrome_153``).
+The Core pins one Chromium major per profile (``chrome_99`` .. ``chrome_155``).
 Everything about the TLS ClientHello, the HTTP/2 SETTINGS and priority frames,
-the HTTP/3 transport parameters and the default header order comes from that
-profile; there is no knob that bends one profile into another.
+and the HTTP/3 transport parameters comes from that profile; there is no knob
+that bends one profile into another.
+
+A profile does not own the default request header set.  It owns the
+``User-Agent`` version string and nothing else on that axis: Chrome's
+``sec-ch-ua*``, ``Sec-Fetch-*``, ``Accept`` and ``Priority`` are injected by the
+``services/network`` URLLoader factory layer, which this Core cannot reach.  See
+``default_headers`` in :mod:`chrome_client.utils`.
 
 That is why ``ja3``, ``akamai``, ``perk`` and most ``extra_fp`` fields raise
 :class:`~chrome_client.exceptions.UnsupportedFeature` instead of being ignored:
@@ -24,9 +30,8 @@ LATEST_CHROME: Final[int]
 #: Lowest pinned profile.
 OLDEST_CHROME: Final[int]
 #: curl_cffi accepts bare family names; only the Chrome family exists here.
-ALIASES: Final[Mapping[str, str]]
 
-#: Canonical profile identifiers, ``chrome_99`` .. ``chrome_153``.
+#: Canonical profile identifiers, ``chrome_99`` .. ``chrome_155``.
 #:
 #: This is the spelling to prefer: it names the exact Chromium major whose
 #: wire behaviour was captured and verified.
@@ -69,21 +74,19 @@ ChromeProfileAlias: TypeAlias = Literal[
     "chrome155",
 ]
 
-#: Bare family names. Both resolve to the newest pinned profile, never to a
-#: guess about which Chrome the host has installed.
-ChromeFamilyAlias: TypeAlias = Literal[
-    "chrome",
-    "chromium",
-]
-
 #: Everything ``impersonate=`` accepts. ``None`` means "send Chromium's own
 #: defaults for the linked revision" and is expressed by the ``Optional`` in the
 #: signatures that take it.
 #:
+#: The bare family names ``"chrome"`` and ``"chromium"`` are **not** accepted.
+#: They would resolve to whichever profile this build ships last, so a caller's
+#: fingerprint would change whenever a profile is added -- silently, and without
+#: the caller asking. Name the exact major you audited.
+#:
 #: Anything else -- ``edge99``, ``safari17_0``, ``firefox133``, ``chrome_200``,
 #: ``tor_145`` -- raises :class:`~chrome_client.exceptions.ImpersonateError`
 #: rather than being silently downgraded to Chrome.
-Impersonate: TypeAlias = Union[ChromeProfileName, ChromeProfileAlias, ChromeFamilyAlias]
+Impersonate: TypeAlias = Union[ChromeProfileName, ChromeProfileAlias]
 
 #: ``http_version=`` pins the protocol instead of letting Chromium negotiate
 #: through Alt-Svc and ALPN. ``None``/``""``/``"native"``/``"auto"`` all mean
@@ -179,7 +182,7 @@ def normalize_impersonate(value: Optional[Any]) -> Optional[str]:
     """Maps curl_cffi-style targets onto Core profile identifiers.
 
     Args:
-        value: An :data:`Impersonate` string (``"chrome_153"``, ``"chrome153"``,
+        value: An :data:`Impersonate` string (``"chrome_155"``, ``"chrome155"``,
             ``"chrome"``), ``None``, or any object exposing a ``profile`` or
             ``impersonate`` attribute -- the shape curl_cffi's own enums have.
             Names are stripped and matched case-insensitively.
@@ -199,7 +202,7 @@ def normalize_impersonate(value: Optional[Any]) -> Optional[str]:
         >>> normalize_impersonate("chrome152")
         'chrome_152'
         >>> normalize_impersonate("chrome")
-        'chrome_153'
+        'chrome_155'
     """
     ...
 
@@ -264,12 +267,12 @@ def available_profiles() -> List[str]:
 
     Returns:
         The canonical names in ascending Chromium-major order, e.g.
-        ``["chrome_99", "chrome_100", ..., "chrome_153"]``. The aliases are not
+        ``["chrome_99", "chrome_100", ..., "chrome_155"]``. The aliases are not
         repeated here; they are accepted by :func:`normalize_impersonate`.
 
     Example:
         >>> available_profiles()[0], available_profiles()[-1]
-        ('chrome_99', 'chrome_153')
+        ('chrome_99', 'chrome_155')
     """
     ...
 

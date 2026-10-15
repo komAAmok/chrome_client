@@ -31,7 +31,9 @@ from __future__ import annotations
 
 import argparse
 import ast
+import builtins
 import pathlib
+import re
 import subprocess
 import sys
 
@@ -479,6 +481,134 @@ def check_profile_annotations(verbose: bool) -> None:
         print("  profile annotations: attributes name the profile Literal")
 
 
+def pinned_profile_range() -> tuple[int, int]:
+    """Returns ``(oldest, latest)`` read from the runtime, not restated here.
+
+    Parsed with ``ast`` rather than imported so the audit does not need the
+    native extension loaded to know the bounds.
+    """
+    tree = ast.parse((IMPL / "impersonate.py").read_text(encoding="utf-8"))
+    constants: dict[str, int] = {}
+    for node in tree.body:
+        if not isinstance(node, ast.Assign):
+            continue
+        for target in node.targets:
+            if isinstance(target, ast.Name) and target.id in ("OLDEST_CHROME", "LATEST_CHROME"):
+                constants[target.id] = ast.literal_eval(node.value)
+    missing = {"OLDEST_CHROME", "LATEST_CHROME"} - set(constants)
+    if missing:
+        raise SystemExit("could not read %s from impersonate.py" % ", ".join(sorted(missing)))
+    return constants["OLDEST_CHROME"], constants["LATEST_CHROME"]
+
+
+def check_prose_version_ranges(verbose: bool) -> None:
+    """Version ranges written in stub prose must match the pinned profile range.
+
+    The Literal blocks are generated, so a bumped Chrome major cannot drift
+    there -- but the prose around them is hand-written and nothing regenerates
+    it.  ``chrome_99 .. chrome_153`` survived two profile additions (154 and
+    155) in nine places across three stubs, including the docstring of
+    ``available_profiles()``, whose example return value was simply wrong.
+
+    Only prose is checked, never the Literal blocks: a Literal is a list of
+    names, not a range, and the generator already owns it.
+    """
+    oldest, latest = pinned_profile_range()
+    text = "\n".join(
+        path.read_text(encoding="utf-8") for path in sorted(IMPL.glob("*.pyi"))
+    )
+    # ``chrome_99`` .. ``chrome_155``, ``chrome99``..``chrome155``,
+    # ``["chrome_99", "chrome_100", ..., "chrome_153"]`` and the en-dash/ellipsis
+    # spellings all reduce to: two version numbers separated by a range token.
+    pattern = re.compile(
+        r"chrome_?(?P<low>\d+)\b[^\n]{0,24}?(?:\.\.\.?|…|--|\bto\b)"
+        r"[^\n]{0,24}?chrome_?(?P<high>\d+)"
+    )
+    found = 0
+    for match in pattern.finditer(text):
+        found += 1
+        low, high = int(match.group("low")), int(match.group("high"))
+        if (low, high) != (oldest, latest):
+            errors.append(
+                "stub prose states a Chrome profile range of %d..%d, but the "
+                "pinned range is %d..%d (offending text: %r)"
+                % (low, high, oldest, latest, match.group(0).strip())
+            )
+    if not found:
+        errors.append(
+            "no Chrome profile range found in the stub prose; either every "
+            "range was deleted or the pattern no longer matches the spelling "
+            "used, and this check would then pass vacuously"
+        )
+    if verbose:
+        print("  prose version ranges: %d checked against %d..%d" % (found, oldest, latest))
+
+
+def stub_defined_names() -> set[str]:
+    """Every name any stub defines, imports or re-exports."""
+    names: set[str] = set()
+    for path in sorted(IMPL.rglob("*.pyi")):
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+                names.add(node.name)
+            elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+                names.add(node.target.id)
+            elif isinstance(node, ast.Assign):
+                for target in node.targets:
+                    if isinstance(target, ast.Name):
+                        names.add(target.id)
+            elif isinstance(node, ast.ImportFrom):
+                for alias in node.names:
+                    names.add(alias.asname or alias.name)
+    return names
+
+
+def check_prose_type_references(verbose: bool) -> None:
+    """Every type named in stub prose must actually exist somewhere.
+
+    Sphinx-style cross-references are how these stubs point at each other, and a
+    reference to a name that no longer exists renders as plain text -- the reader
+    gets no link and no error, so the rot is invisible.  A ``:class:`` pointing
+    at ``ChromeFamilyAlias`` would have survived that type's removal without this
+    check.
+
+    Only the *bare* form is verified against the stub namespace.  A qualified
+    reference such as ``chrome_client.exceptions.UnsupportedFeature`` is resolved
+    through the runtime package instead, and external roots (``json.loads``) are
+    not this project's to verify.  ``:attr:`` is deliberately excluded: it names
+    a member of the enclosing scope, not a module-level type.
+    """
+    defined = stub_defined_names()
+    pattern = re.compile(r":(class|data|func|exc|mod):`~?([A-Za-z_][A-Za-z0-9_.]*)`")
+    #: Modules that exist as packages, so ``:mod:`chrome_client``` is a real
+    #: target even though no stub *defines* it as a name.
+    modules = {"chrome_client"}
+    checked = 0
+    for path in sorted(IMPL.rglob("*.pyi")):
+        for match in pattern.finditer(path.read_text(encoding="utf-8")):
+            role, name = match.group(1), match.group(2)
+            if "." in name:
+                continue
+            checked += 1
+            if name in defined or hasattr(builtins, name):
+                continue
+            if role == "mod" and name in modules:
+                continue
+            errors.append(
+                "%s: prose references %r, which no stub defines and no builtin "
+                "provides; the cross-reference cannot resolve"
+                % (path.relative_to(REPO), name)
+            )
+    if not checked:
+        errors.append(
+            "no bare cross-references found in the stub prose; either they were "
+            "all removed or the pattern no longer matches, and this check would "
+            "then pass vacuously"
+        )
+    if verbose:
+        print("  prose type references: %d bare references resolved" % checked)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--verbose", action="store_true", help="print per-module counts")
@@ -491,6 +621,8 @@ def main() -> int:
     check_generated(args.verbose)
     check_verb_signatures(args.verbose)
     check_profile_annotations(args.verbose)
+    check_prose_version_ranges(args.verbose)
+    check_prose_type_references(args.verbose)
 
     total = sum(1 for _ in IMPL.glob("*.pyi"))
     for message in warnings:

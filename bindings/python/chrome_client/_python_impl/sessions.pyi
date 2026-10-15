@@ -512,8 +512,8 @@ class BaseSession:
     hooks: Mapping[str, List[Hook]]
     adapters: Mapping[str, BaseAdapter]
     #: The canonical profile name after :func:`normalize_impersonate`, so the
-    #: alias spellings collapse here: ``"chrome153"``, ``"chrome-153"`` and
-    #: ``"CHROME_153"`` all read back as ``"chrome_153"``. ``None`` means the
+    #: alias spellings collapse here: ``"chrome155"``, ``"chrome-155"`` and
+    #: ``"CHROME_155"`` all read back as ``"chrome_155"``. ``None`` means the
     #: request carries Chromium's own defaults for the linked revision.
     impersonate: Optional[ChromeProfileName]
     #: The pinned protocol after :func:`normalize_http_version`, one of
@@ -587,9 +587,9 @@ class BaseSession:
         Args:
             impersonate: The pinned Chromium profile that owns the TLS
                 ClientHello, ALPN, HTTP/2 SETTINGS and HTTP/3 transport
-                parameters. Accepts ``chrome_99``..``chrome_153``, the curl_cffi
-                spelling ``chrome99``..``chrome153``, and ``chrome``/``chromium``
-                for the newest pinned version.
+                parameters. Accepts ``chrome_99``..``chrome_155``, the curl_cffi
+                spelling ``chrome99``..``chrome155``. The bare family names
+                ``chrome``/``chromium`` are rejected.
             proxy: A single proxy URL for every request, e.g.
                 ``"http://user:pass@127.0.0.1:8080"`` or
                 ``"socks5://127.0.0.1:1080"``. Overrides ``proxies``.
@@ -656,7 +656,7 @@ class BaseSession:
                 Chrome major outside the pinned range.
 
         Example:
-            >>> with Session(impersonate="chrome_153", http_version="v2") as s:
+            >>> with Session(impersonate="chrome_155", http_version="v2") as s:
             ...     response = s.get("https://example.com", timeout=15)
         """
         ...
@@ -810,7 +810,7 @@ class Session(BaseSession):
     raise the ceiling with HTTP/2 or HTTP/3 endpoints rather than more threads.
 
     Example:
-        >>> with Session(impersonate="chrome_153") as session:
+        >>> with Session(impersonate="chrome_155") as session:
         ...     response = session.get("https://example.com/api", params={"page": 1})
         ...     data = response.json()
     """
@@ -1133,7 +1133,7 @@ class Session(BaseSession):
 
         Example:
             >>> session.get("https://example.com", params={"q": "x"},
-            ...             impersonate="chrome_153").json()
+            ...             impersonate="chrome_155").json()
         """
         ...
 
@@ -2198,7 +2198,7 @@ class AsyncSession(BaseSession):
 
     Example:
         >>> async def main():
-        ...     async with AsyncSession(impersonate="chrome_153",
+        ...     async with AsyncSession(impersonate="chrome_155",
         ...                             max_clients=64) as session:
         ...         responses = await asyncio.gather(
         ...             *[session.get(url) for url in urls])
@@ -2320,7 +2320,7 @@ class AsyncSession(BaseSession):
                 family.
 
         Example:
-            >>> session = AsyncSession(impersonate="chrome_153", max_clients=32)
+            >>> session = AsyncSession(impersonate="chrome_155", max_clients=32)
         """
         ...
 

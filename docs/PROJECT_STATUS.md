@@ -338,16 +338,21 @@ macOS 12,000,000 → 8,750,000。macOS 那一档原来虚高 3 MB 以上，等�
 
 | 目标 | 大小（字节） | SHA-256 前缀 |
 | --- | --- | --- |
-| linux-x86 | 8,555,652 | `462635f0e53cfeac` |
-| linux-x86_64 | 8,955,744 | `e2cb4c7b8956c492` |
-| linux-arm64 | 8,490,832 | `cdd52ff2e640add0` |
-| windows-x86 | 8,971,264 | `cb9bbb7a738cc905` |
-| windows-x86_64 | 11,291,648 | `504868b04c106c21` |
-| windows-arm64 | 9,221,120 | `776ca5d97becf441` |
-| macos-x86_64 | 8,618,588 | `60bf3a174c3d0163` |
-| macos-arm64 | 7,806,416 | `9a9b5f58b4b5e7f8` |
+| linux-x86 | 8,776,524 | `069276f884924c4f` |
+| linux-x86_64 | 8,863,392 | `a4312356a85bc79c` |
+| linux-arm64 | 8,692,184 | `e43d684f995bbb58` |
+| windows-x86 | 8,134,144 | `ecdb8329a8928f0d` |
+| windows-x86_64 | 10,299,392 | `15b909fd30e9e16e` |
+| windows-arm64 | 8,960,000 | `1b9ecbadfb7e155e` |
+| macos-x86_64 | 8,536,776 | `2025d4319658f155` |
+| macos-arm64 | 7,872,560 | `f6dec0e8dbcec087` |
 
-（表中是体积精简后的值；证书修复那一轮的 SHA 已被这一轮覆盖，两处改动都在里面。）
+（表中是随兼容层审计那一轮版本提升重建后的值；此前几轮的 SHA 已被覆盖。
+`audit-core-binaries.sh` 会从产物字节里读 `minicronet/<version>` 标记并与
+工作区版本比对，所以版本提升必须重建，否则门禁直接失败——本轮先改版本号时
+8 个平台全部报「artifact reports the old version but the workspace version
+is the new one」。同一条检查也覆盖了历史上 `core_version()` 长期谎报
+`0.4.0` 的那个缺陷。）
 
 三层证据，因为本机只能执行 x86_64 Linux 二进制（无 qemu、无 wine）：
 
@@ -463,6 +468,46 @@ tag 触发 `pypa/gh-action-pypi-publish`（OIDC 可信发布，需要 PyPI 侧�
 `komAAmok/chrome_client` 的 `build-wheels.yml` 加进 trusted publishers），属于
 不可撤销操作；重复上传同名文件会被 PyPI 以 400 拒绝。
 
+## 兼容层审计（2026-10-14）
+
+**本轮含一个破坏性变更**：`impersonate="chrome"` / `"chromium"` 从「解析到最新
+pinned profile」改为**抛 `ImpersonateError`**，必须给出精确的 `chrome_<major>`。
+
+理由是防漂移：裸家族名会解析到本构建恰好最后收录的 profile，一旦新增 profile，
+调用方的指纹就在**无人要求**的情况下改变。对一个以指纹保真为卖点的库，静默漂移
+比缺失更糟，所以按 fail-closed 处理（AGENTS.md §8）。`chrome<major>` 与
+`chrome-<major>` 等拼写不受影响。版本号因此提升一个 patch 位（按维护者选择，
+未进 minor 位）；具体数字只在根 `Cargo.toml`，本文件不复述。
+
+同一轮修掉的缺陷：
+
+| 缺陷 | 根因 | 证据 | 修复 |
+| --- | --- | --- | --- |
+| 调用方编辑 cookie jar 时 engine 缓存被死 generation 填满 | `_resolve_cookies` 的两条换 generation 路径不对称：`discard=True` 分支有 `discard(slot.config)`，调用方编辑分支没有。被取代的 slot 已不可达（mirror 不再匹配 jar），却仍占着有界缓存槽位 | 8 次调用方编辑 → `len(_engines)` 从 1 涨到 **8**（`DEFAULT_MAX_ENGINES` 正是 8），即全部槽位被尸体占满 | 补上 `discard`，两分支对齐；新增 `test_editing_the_cookie_jar_does_not_fill_the_engine_cache` |
+| stub prose 里的 profile 版本区间漂移 | Literal 块由 `generate-python-stubs.py` 生成，但**周围散文是手写的**，没有任何东西重新生成它 | `chrome_99 .. chrome_153` 在 3 个 stub 的 **9 处**存活，跨越 154 与 155 两次新增；`available_profiles()` 的 docstring 示例返回值直接是错的 | 全部修正为 155；新增 `check_prose_version_ranges()` 门禁 |
+| stub prose 交叉引用指向不存在的类型 | Sphinx 风格的 `:class:`/`:data:` 引用失效时只渲染成纯文本，既不报错也不链接 | 全库扫描 57 处裸引用，全部可解析；`_types.pyi` 的 `__all__` 里有一个**从未定义**的 `ChromeFamilyAlias` | 新增 `check_prose_type_references()` 门禁；删除悬空条目 |
+
+**被证伪的一个假设**（未改代码）：我原本判定 `_AsyncState.notify()` 的节流提前返回
+会因 Rust 侧 `notify_scheduled` 单飞闸门保持置位而永久挂死消费者。插桩三轮后
+**否定**：`buffered >= STREAM_BUFFER_LIMIT` ⟹ `chunks` 非空（`buffered` 是 `chunks`
+元素大小之和，只由 `__anext__` 的弹出递减，弹出后必然调 `resume()`），而消费者只在
+`chunks` 为空时才停泊。实测节流返回次数与 `resume()` 重排次数**逐次相等**（37/37、
+18/18），且从不在消费者停泊时发生。直接合入那个「防御性重排」补丁会引入每 1 ms 的
+忙轮询并掩盖真实观察。**插桩的价值在这里：先证明可达性再决定合入。**
+
+同时量出一个**尚未处理**的精度问题：`STREAM_BUFFER_LIMIT` 是 1 MiB，但控制只在批次
+边界生效，实测 `buffered` 可达 **2,162,160 字节（2.06 倍）**，批次上限
+`ASYNC_POLL_BATCH = 64` 个 chunk。行为有界且正确（`resume()` 会收敛），属于水位精度
+而非泄漏；是否收紧留给后续，因为它触及 ABI v8 的 pause/resume 时序——那是历史上出过
+线上故障的地方。
+
+**新门禁都做了变异测试**（AGENTS.md §6）：破坏版本区间 → exit 1；删光全部区间 →
+触发空转守卫 exit 1；注入裸的 `ChromeFamilyAlias` 引用 → exit 1；删光全部裸引用 →
+触发空转守卫 exit 1。两个守卫都必需：一个「找不到任何东西就通过」的检查等于没有检查。
+
+**测试诚实性**：我先写的第二个 engine 回归测试（断言普通请求不重建）**在修复前也
+通过**，即不具备区分度，已删除而不是留下充数。Python 套件从 128 增至 131 个用例。
+
 ## 本轮审计修复（2026-09-23）
 
 对全仓库做了一次审计与复核，修掉的问题、每条的经验和新增的门禁都记在
@@ -527,8 +572,8 @@ Core 的 `Request::OnAuthRequired` 一次都不执行。逐层证据与调用点
 | `tools/audit-readme.sh` | 通过 | 是 |
 | `cargo fmt` / `clippy -D warnings` | 通过 | 是 |
 | `cargo test --workspace` | 8 个单元测试通过（6 个回调/背压 + 2 个 ABI 布局） | 是 |
-| Python 套件 | 125 个用例通过，1 个 skip（未设 `MINICRONET_WS_URL`/`MINICRONET_WSS_URL`，无真实 WS/WSS 端点） | 是 |
-| `tools/audit-python-stubs.py` | 17 个 stub 模块，0 错 | 是 |
+| Python 套件 | 131 个用例通过，2 个 skip（未设 `MINICRONET_WS_URL`/`MINICRONET_WSS_URL`，无真实 WS/WSS 端点） | 是 |
+| `tools/audit-python-stubs.py` | 17 个 stub 模块，0 错；含 prose 版本区间与裸交叉引用两项扫描（都有空转守卫） | 是 |
 | `tools/audit-python-typing.py` | mypy 检查存根与消费者，两者都干净（缺 mypy 时跳过） | 是 |
 | Core manifest 与 `CHROMIUM_REVISION` 一致 | 8 个平台通过 | 是 |
 | 扩展可 import 且能发一次真实请求 | 通过 | 是 |

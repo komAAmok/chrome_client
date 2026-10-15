@@ -50,7 +50,6 @@ __all__ = [
     "AuthTuple",
     "Body",
     "BytesLike",
-    "ChromeFamilyAlias",
     "ChromeProfileAlias",
     "ChromeProfileName",
     "CacheMode",
