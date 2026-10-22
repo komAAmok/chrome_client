@@ -195,6 +195,50 @@ session.get("https://example.com", proxy="socks5://127.0.0.1:1080")   # 单次�
 `NO_PROXY`。代理是 Engine 级设置，切换代理会换一个 Engine，但 jar 里的 cookie 会
 继续随请求发出。
 
+**代理池要把 `max_engines` 设到不小于池大小。** 一个 Engine 是一整个 Chromium
+`URLRequestContext`（独立线程、socket 池、DNS 缓存、TLS 会话缓存），一个会话默认
+只保留 8 个（`max_engines=8`），超出按 LRU 淘汰。池比它大时，每个请求都会重建上下文
+并新开一条 TCP 连接，而不是复用——20 个代理跑 200 个请求的实测：
+
+| `max_engines` | 构建的 Chromium 上下文 | 代理侧 TCP 连接 | 遗留 TIME_WAIT |
+| --- | --- | --- | --- |
+| 8（默认） | 200 | 200 | +180 |
+| 20 | 20 | 20 | +20 |
+
+```python
+session = chrome_client.Session(max_engines=32)   # 池有 32 个端点
+```
+
+代理规则**优先走 Chromium 原生语法**，只在原生不支持时才扩展。原生可解析的三种
+形式会原样交给 Core（此前 facade 会把它们重写成单个 `scheme://host`，直接弄坏）：
+
+| 原生形式 | 含义 | 之前 |
+| --- | --- | --- |
+| `http=h:p` | 只给 HTTP 用这个代理 | 被改写成 `http://http=h:p` |
+| `http=h:p;https=h:p` | 按目标 scheme 分别指定 | 被改写 |
+| `http://a:p,http://b:p` | 回退列表，按顺序试 | 被拒绝 |
+| `direct://` | 不走代理 | 被当成未知 scheme 拒绝 |
+
+这些只做校验（规则键、`direct://` 位置、内嵌凭据）后**原字节透传**。其余都是
+**扩展层**，只在 Chromium 直接拒绝该输入时才存在：
+
+| 写法 | 处理 | 原因 |
+| --- | --- | --- |
+| `http://` `https://` `socks://` `socks4://` `socks5://` | 原样使用 | Chromium 原生白名单 |
+| `socks5h://` | 改写为 `socks5://` | 同名同事，Chromium 只是少了这个拼写 |
+| `socks4a://` | `UnsupportedFeature` | 要求远端解析，Core 没有 |
+| `quic://` | `UnsupportedFeature` | 本构建未开 `ENABLE_QUIC_PROXY_SUPPORT` |
+| `host:port`（无 scheme） | `http://host:port` | Chromium 把裸规则默认成 HTTP |
+| 尾部 `/`、路径、`#片段`、换行、空白 | 剥掉 | 规则只有 host:port |
+| `host:`（空端口） | `InvalidProxyURL` | Chromium 同样拒绝 |
+| `host:0` | 保留端口 0 | `ParsePort("0")` 是真端口，不是默认值 |
+| 权限部分后面的多余文本 / 未知 scheme / `?query` / 双 scheme | `InvalidProxyURL` | 无法解析 |
+
+原生规则键是 `http`/`https`/`ftp`/`socks`；`socks=` 按 Chromium 语义默认 **SOCKS4**，
+要 SOCKS5 请写 `socks=socks5://h:p`。**SOCKS5 的账号密码认证不支持**
+（Chromium 只提供 `0x00` 无认证方式），需要认证请用 HTTP/HTTPS 代理。细节见
+[docs/COMPATIBILITY_BOUNDARY.md](https://github.com/komAAmok/chrome_client/blob/main/docs/COMPATIBILITY_BOUNDARY.md)。
+
 ### 重定向、异常与响应
 
 ```python

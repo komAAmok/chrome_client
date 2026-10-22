@@ -242,6 +242,12 @@ _NET_ERRORS = {
     -127: ("ERR_PROXY_AUTH_REQUESTED", ProxyError),
     -131: ("ERR_MANDATORY_PROXY_CONFIGURATION_FAILED", ProxyError),
     -136: ("ERR_PROXY_CERTIFICATE_INVALID", ProxyError),
+    # The Core maps these onto the same MN_ERROR_PROXY category as -130,
+    # so naming them here keeps the class independent of that category.
+    -170: ("ERR_UNABLE_TO_REUSE_CONNECTION_FOR_PROXY_AUTH", ProxyError),
+    -323: ("ERR_UNEXPECTED_PROXY_AUTH", ProxyError),
+    -364: ("ERR_PROXY_AUTH_REQUESTED_WITH_NO_CONNECTION", ProxyError),
+    -366: ("ERR_PROXY_HTTP_1_1_REQUIRED", ProxyError),
     # A proxy that keeps answering 407 raises this rather than the 407 itself:
     # Chromium retries an auth challenge up to kMaxRestarts (32) inside one
     # URLRequest and then fails the request. Rejected credentials therefore
@@ -284,6 +290,11 @@ def map_native_error(error, request=None):
     message = str(error)
     match = _NET_ERROR_PATTERN.search(message)
     code = int(match.group(1)) if match else None
+    if code == 0:
+        # net_error 0 is not a code: the Core writes it when it has no
+        # errno to report. Naming it would claim a meaning Chromium never
+        # assigned, so the bare category is left in place.
+        code = None
     named = _NET_ERRORS.get(code) if code is not None else None
     if named is not None:
         # Replace the coarse category with the net error name: "ERR_CERT_DATE_

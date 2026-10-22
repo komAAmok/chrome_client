@@ -20,6 +20,16 @@ inline mn_result_t MapNetError(int net_error) {
     case net::ERR_SOCKS_CONNECTION_FAILED:
     case net::ERR_SOCKS_CONNECTION_HOST_UNREACHABLE:
     case net::ERR_TUNNEL_CONNECTION_FAILED:
+    // Present in net_error_list.h but previously missing here, so these
+    // reached the binding layer as MN_ERROR_NETWORK. The facade's own table
+    // rescued -131 by name, but -323/-170/-364/-366 have no row there and
+    // surfaced as ConnectionError instead of ProxyError.
+    case net::ERR_MANDATORY_PROXY_CONFIGURATION_FAILED:
+    case net::ERR_UNEXPECTED_PROXY_AUTH:
+    case net::ERR_UNABLE_TO_REUSE_CONNECTION_FOR_PROXY_AUTH:
+    // The proxy rule list parsed to nothing, which is a proxy configuration
+    // failure, not a generic network one.
+    case net::ERR_NO_SUPPORTED_PROXIES:
       return MN_ERROR_PROXY;
     case net::ERR_CACHE_MISS:
       return MN_ERROR_CACHE_MISS;

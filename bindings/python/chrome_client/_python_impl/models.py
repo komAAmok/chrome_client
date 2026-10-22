@@ -790,15 +790,31 @@ class AsyncResponse(Response):
             return
         if loop.is_closed():
             return
-        coroutine = reader.aclose(cancel=True)
+        # `asyncio.get_running_loop` is 3.7+. The package still installs on 3.6
+        # (cp36-abi3 wheel), where calling it raised AttributeError past the
+        # `except RuntimeError` guard and leaked the coroutine. Ask for the
+        # loop the way the other 3.6-compatible call sites do.
         try:
-            running = asyncio.get_running_loop()
+            get_running = asyncio.get_running_loop
+        except AttributeError:
+            get_running = None
+        try:
+            running = get_running() if get_running else asyncio.get_event_loop()
         except RuntimeError:
             running = None
         if running is loop:
-            loop.create_task(coroutine)
-        else:
-            asyncio.run_coroutine_threadsafe(coroutine, loop)
+            loop.create_task(reader.aclose(cancel=True))
+            return
+        if loop.is_running():
+            # Another thread owns the loop; hop onto it.
+            asyncio.run_coroutine_threadsafe(reader.aclose(cancel=True), loop)
+            return
+        # The loop exists but is not running, so nothing would ever await a
+        # scheduled coroutine: `run_coroutine_threadsafe` succeeds, the future
+        # is never resolved, and the reader keeps its native request (and the
+        # socket, and the buffered body) alive. Drive the cancellation to
+        # completion here instead.
+        reader.release_without_loop()
 
     def close(self):
         Response.close(self)

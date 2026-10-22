@@ -209,6 +209,57 @@ Lookup order is `scheme://host`, `scheme`, `all://host`, `all`; an explicit
 and `NO_PROXY` are honoured. A proxy is an Engine-level setting, so switching one
 selects a different Engine -- cookies in the jar are still sent.
 
+**A proxy pool needs `max_engines` at least as large as the pool.** An Engine is
+a whole Chromium `URLRequestContext` (its own threads, socket pools, DNS cache and
+TLS session cache); a session keeps `max_engines` of them (8 by default) and
+evicts the least-recently-used one. Once the pool is larger than that, every
+request rebuilds a context and opens a fresh TCP connection instead of reusing
+one. Measured on a 20-endpoint pool over 200 requests:
+
+| `max_engines` | Chromium contexts built | proxy TCP connections | TIME_WAIT left behind |
+| --- | --- | --- | --- |
+| 8 (default) | 200 | 200 | +180 |
+| 20 | 20 | 20 | +20 |
+
+```python
+session = chrome_client.Session(max_engines=32)   # pool of 32 endpoints
+```
+
+Proxy rules **use Chromium's native syntax first** and only extend it where
+native support genuinely does not exist. The three forms the Core already parses
+are passed through unchanged (the facade used to rewrite all of them into a
+single `scheme://host`, which broke them):
+
+| Native form | Meaning | Previously |
+| --- | --- | --- |
+| `http=h:p` | this proxy for HTTP only | rewritten to `http://http=h:p` |
+| `http=h:p;https=h:p` | a different proxy per destination scheme | rewritten |
+| `http://a:p,http://b:p` | fallback list, tried in order | rejected |
+| `direct://` | no proxy | rejected as an unknown scheme |
+
+Those are validated (rule keys, `direct://` placement, embedded credentials) and
+returned byte-identical. Everything else is the **extension layer**, which only
+exists because Chromium rejects the input outright:
+
+| Spelling | Handling | Why |
+| --- | --- | --- |
+| `http://` `https://` `socks://` `socks4://` `socks5://` | used as written | native `GetSchemeFromUriScheme` set |
+| `socks5h://` | rewritten to `socks5://` | same behaviour, a spelling Chromium lacks |
+| `socks4a://` | `UnsupportedFeature` | asks for remote resolution the Core cannot do |
+| `quic://` | `UnsupportedFeature` | `ENABLE_QUIC_PROXY_SUPPORT` is off in this build |
+| `host:port` (no scheme) | `http://host:port` | Chromium defaults a bare rule to HTTP |
+| trailing `/`, path, `#fragment`, newline, spaces | dropped | a rule is host:port only |
+| `host:` (empty port) | `InvalidProxyURL` | Chromium rejects it too |
+| `host:0` | kept as port 0 | `ParsePort("0")` is a real port, not the default |
+| trailing text / unknown scheme / `?query` / doubled scheme | `InvalidProxyURL` | unparseable |
+
+Native rule keys are `http`/`https`/`ftp`/`socks`; a `socks=` entry means
+**SOCKS4** in Chromium's reading, so write `socks=socks5://h:p` for SOCKS5.
+**SOCKS5 username/password authentication is not supported** (Chromium offers
+only the `0x00` no-auth method); use an HTTP or HTTPS proxy when credentials are
+required. See
+[docs/COMPATIBILITY_BOUNDARY.md](https://github.com/komAAmok/chrome_client/blob/main/docs/COMPATIBILITY_BOUNDARY.md).
+
 ### Redirects, exceptions and responses
 
 ```python

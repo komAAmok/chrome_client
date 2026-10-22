@@ -169,6 +169,10 @@ origin), `ERR_PROXY_CONNECTION_FAILED` (-130, the proxy itself is unreachable),
 proxy demanding credentials, `ERR_NO_SUPPORTED_PROXIES` (-336), and
 `ERR_MANDATORY_PROXY_CONFIGURATION_FAILED` (-131).
 
+**-111 does not mean the proxy is broken.** Chromium turns *any* CONNECT response that is not 200 or 407 into `ERR_TUNNEL_CONNECTION_FAILED` (`http_proxy_client_socket.cc`, `DoProcessResponseCode`: the default branch is deliberate, so a proxy cannot impersonate the origin by returning 403/404/501 bodies). A proxy answering 403, 404, 429, 500, 502, 503 or 504 to CONNECT all surface as -111, so the code alone cannot distinguish "proxy is down" from "proxy refuses this destination" or "proxy is rate limiting". Check the proxy logs, not this error name.
+
+**Every redirect mode reports the same error name.** The manual-redirect path (`allow_redirects=False`, which `Session.head` also uses) reads its result from `ResponseFuture`, and it used to unwrap `RequestError` down to its `.error` category -- so a failed tunnel arrived as the single word `Proxy` while the follow-redirect path named `ERR_TUNNEL_CONNECTION_FAILED (net error -111)`. The numeric code lives only in the `net_error` field (`crates/minicronet/src/request.rs`), and it is now carried through every path: sync, async, streaming, WebSocket, and the `chrome_client.requests` shim, which re-exports the same classes and therefore has no separate route.
+
 **Rejected proxy credentials do not surface as the 407 the proxy sent.** Chromium
 re-tries an auth challenge inside the same `URLRequest` and gives up after
 `kMaxRestarts` (32), so a proxy that keeps answering 407 fails the request with
@@ -180,6 +184,96 @@ response the caller can inspect.
 decides which Engine (and therefore which proxy) to use, so a `NO_PROXY` match makes
 it select a direct Engine rather than relying on Chromium to bypass.
 
+### Proxy rule formats
+
+**Chromium's own rule syntax is passed through untouched.** `ProxyRules::ParseFromString` (`net/proxy_resolution/proxy_config.cc`) already understands
+three forms, and the facade used to rewrite all of them into a single
+`scheme://host` URI -- which broke a configuration the Core parses correctly:
+
+| Native form | Meaning | Previously |
+| --- | --- | --- |
+| `http=h:p` | one proxy for HTTP only | mangled into `http://http=h:p` |
+| `http=h:p;https=h:p` | a different proxy per destination scheme | mangled |
+| `http://a:p,http://b:p` | fallback list, tried in order | rejected |
+| `direct://` | no proxy | rejected as an unknown scheme |
+
+Those are validated (rule keys, `direct://` placement, embedded credentials) and
+returned byte-identical. Everything outside them is the **extension layer**,
+which only exists because Chromium rejects the input outright:
+
+| Caller spelling | Handling | Why |
+| --- | --- | --- |
+| `http://`, `https://`, `socks://`, `socks4://`, `socks5://` | used as written | native `GetSchemeFromUriScheme` set |
+| `socks5h://` | rewritten to `socks5://` | same behaviour under a name Chromium lacks |
+| `socks4a://` | `UnsupportedFeature` | asks for remote resolution the Core cannot do |
+| `quic://` | `UnsupportedFeature` | `ENABLE_QUIC_PROXY_SUPPORT` is off in this build |
+| `host:port` (no scheme) | `http://host:port` | Chromium defaults a bare rule to HTTP |
+| trailing `/`, `/path`, `#fragment`, newline, spaces | dropped | a rule is host:port only |
+| `host:` (colon, empty port) | `InvalidProxyURL` | Chromium rejects it too |
+| `host:0` | kept as port 0 | `ParsePort("0")` is a real port, not the default |
+| trailing text after the authority | `InvalidProxyURL` | not part of a rule |
+| two schemes (`http://socks5://h:p`) | `InvalidProxyURL` | a pool prefixed twice |
+| unknown scheme, `?query`, port out of range, no host | `InvalidProxyURL` | unparseable |
+| empty / whitespace only | no proxy, as in requests | requests semantics |
+
+Rule keys accepted by the native form are `http`, `https`, `ftp` and `socks`
+(`MapUrlSchemeToProxyListNoFallback` plus the special `socks` fallback key).
+A `socks=` entry means SOCKS4 by default -- that is Chromium's reading, kept
+as-is; write `socks=socks5://h:p` for SOCKS5.
+
+`socks5h` is a spelling, not a mode: Chromium's SOCKS5 client always sends the
+hostname to the proxy and lets it resolve, so plain `socks5://` already routes
+DNS through the proxy. `socks4a` is the opposite case -- Chromium's SOCKS4
+client resolves locally (`socks_client_socket.cc`, `DoResolveHost`) and ABI v8
+exposes no remote-resolve option -- so the spelling raises rather than silently
+sending the caller's DNS out through this machine. SOCKS4a is therefore **not
+supported**; use `socks5://` when the proxy must resolve names.
+**SOCKS5 username/password authentication is not supported.** Chromium's
+`socks5_client_socket.cc` offers only the `0x00` ("no authentication") method,
+so `proxy_auth` and userinfo have no effect on a SOCKS proxy; a proxy that
+offers only `0x02` fails the handshake with `ERR_SOCKS_CONNECTION_FAILED` (-120).
+Credential-bearing proxying requires an HTTP or HTTPS proxy.
+
+**`proxy_auth` is scoped to the session's own proxy.** An Engine -- and
+therefore a proxy -- is chosen per request, while `proxy_auth` is session state.
+Attaching it unconditionally sent the session's username and password to
+whatever endpoint a rotating pool selected for one call, so the credentials now
+apply only when the request uses the proxy the session itself configured --
+named either by `proxy=` or by the matching entry of `proxies`. A per-request
+`proxy=` / `proxies=` is what the *call* uses, not what the session configured,
+so it is not an owner of the credentials and receives none of them. A session
+that configures neither has nothing to scope against, and the per-request
+proxy is then the only candidate. Credentials written into the proxy URL
+always win over `proxy_auth`.
+
+**One Engine per distinct proxy.** The proxy is an Engine-level setting
+(`engine.py`, `EngineConfig`), and an Engine is a whole Chromium
+`URLRequestContext` with its own threads, socket pools, DNS cache and TLS session
+cache. A session keeps `max_engines` of them (default 8) and evicts the
+least-recently-used one, so a proxy pool larger than `max_engines` rebuilds a
+context and opens a fresh TCP connection on **every** request instead of reusing
+one. Measured on a 20-endpoint pool over 200 requests:
+
+| `max_engines` | Chromium contexts built | proxy TCP connections | TIME_WAIT left behind |
+| --- | --- | --- | --- |
+| 8 (default) | 200 | 200 | +180 |
+| 20 | 20 | 20 | +20 |
+
+Set `max_engines` to at least the pool size. The connection-per-request pattern
+is what turns a pool into `ERR_PROXY_CONNECTION_FAILED` (-130) after a while:
+each abandoned connection leaves a `TIME_WAIT` entry, and once the ephemeral
+port range is consumed a `connect()` to the proxy cannot get a source port.
+Resource exhaustion of any kind surfaces as -130 on the proxy path -- a process
+that has run out of file descriptors reports `ERR_PROXY_CONNECTION_FAILED` for
+proxied requests while direct requests report a different code.
+
+A failed attempt to reach the proxy (-130) or to open a tunnel through it (-111)
+is retried **once** when the caller configured no retry policy, because the
+origin never saw the request. The retry is skipped when the request cannot be
+replayed (any non-idempotent method, and any streamed body, whose iterator is
+already consumed), and for `ERR_TOO_MANY_RETRIES` (-375), which means the proxy
+rejected the credentials. A configured policy replaces the default rather than
+stacking on it: `retry=2` means three attempts however the request failed.
 ### Redirects
 
 `allow_redirects=True` lets Chromium follow inside one `URLRequest`, which

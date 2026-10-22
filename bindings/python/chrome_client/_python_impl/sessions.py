@@ -28,9 +28,10 @@ from . import multipart as _multipart
 from .auth import build_auth
 from .cookies import RequestsCookieJar, cookiejar_from_dict, merge_cookies
 from .engine import DEFAULT_MAX_ENGINES, EngineConfig, EngineCache
-from .exceptions import (InvalidURL, RequestException, ResponseTooLarge,
-                         SessionClosed, Timeout, TooManyRedirects,
-                         UnsupportedFeature, map_native_error)
+from .exceptions import (InvalidProxyURL, InvalidURL, ProxyError,
+                         RequestException, ResponseTooLarge, SessionClosed,
+                         Timeout, TooManyRedirects, UnsupportedFeature,
+                         map_native_error)
 from .impersonate import (normalize_http_version, normalize_impersonate,
                           reject_fingerprint_overrides, validate_extra_fp)
 from .models import (DEFAULT_REDIRECT_LIMIT, PreparedRequest, Request, Response,
@@ -123,30 +124,294 @@ def _validate_max_response_bytes(value):
     return value
 
 
-def split_proxy_credentials(proxy):
-    """Splits ``user:pass@host:port`` out of a proxy URL.
+#: Schemes Chromium's rule parser accepts in a proxy URI, from
+#: ``GetSchemeFromUriScheme`` in net/base/proxy_string_util.cc.  These are
+#: passed through untouched -- the Core parses them itself, and rewriting a form
+#: Chromium already understands is how the facade would break it.
+_PROXY_SCHEMES = ("http", "https", "socks", "socks4", "socks5")
 
-    Chromium's proxy rules cannot carry userinfo: ``ParseFromString`` does not
-    accept an ``@`` in the rule, so ``proxy="http://user:pass@host:port"`` used
-    to parse to an empty rule list and every request failed with
-    ``ERR_NO_SUPPORTED_PROXIES`` (-336) before a socket was even opened. The
-    credentials have to travel in the Engine's separate proxy_username /
-    proxy_password fields, which is also how requests does it.
+#: Per-scheme rule keys accepted by ``MapUrlSchemeToProxyListNoFallback`` plus the
+#: special ``socks`` key.  ``http=h:p;https=h:p`` is Chromium's own spelling for
+#: "a different proxy per destination scheme", and it must not be rewritten:
+#: ``ParseFromString`` splits on ``;`` and then on ``=``, so treating the whole
+#: string as one URI produced a rule naming a host literally called "http".
+_NATIVE_RULE_KEYS = ("http", "https", "ftp", "socks")
 
-    Returns ``(proxy_without_userinfo, username, password)``. ``None`` values
-    mean the caller supplied nothing and the session-level ``proxy_auth`` (if
-    any) still applies.
+#: ``direct://`` is a real Chromium token meaning "no proxy".  It is only valid
+#: as the sole entry of a list (``MultiProxyUrisToProxyChain`` rejects it next to
+#: other servers), and it is why the facade must not demand a host.
+_NATIVE_DIRECT = "direct://"
+
+#: Pool spellings that are pure renames of a native scheme. ``socks5h`` differs
+#: from ``socks5`` only in name: Chromium's SOCKS5 client always sends the
+#: hostname to the proxy and lets it resolve (socks5_client_socket.cc), so the
+#: "h" is already the behaviour. This is an extension, applied only because
+#: Chromium rejects the spelling itself with -336.
+_PROXY_SCHEME_ALIASES = {"socks5h": "socks5"}
+
+#: Spellings that request behaviour the Core cannot provide. These fail closed
+#: rather than being rewritten, because the difference is observable at the
+#: proxy: Chromium resolves SOCKS4 hostnames locally (socks_client_socket.cc
+#: DoResolveHost) and ABI v8 exposes no remote-resolve mode, so accepting
+#: ``socks4a`` would silently send the caller's DNS out through this machine.
+_PROXY_SCHEME_UNSUPPORTED = {
+    "socks4a": "Chromium resolves SOCKS4 hostnames locally and the Core exposes "
+               "no SOCKS4a (remote-resolve) mode; use socks5 or socks5h, which "
+               "send the hostname to the proxy",
+    "quic": "this build has no QUIC proxy support "
+            "(ENABLE_QUIC_PROXY_SUPPORT is off), so Chromium rejects quic:// "
+            "with ERR_NO_SUPPORTED_PROXIES",
+}
+
+
+def _native_uri_scheme(uri):
+    """Returns the scheme prefix of a proxy URI, or ``None`` when absent.
+
+    Mirrors ``ProxyUriToProxyServer``: a scheme exists only when ``://`` follows
+    it, so ``h:p`` has none and Chromium applies the rule's default scheme.
+    """
+    marker = uri.find("://")
+    if marker == -1:
+        return None
+    return uri[:marker].strip().lower()
+
+
+def _is_native_rule_list(text):
+    """True when *text* is a rule Chromium parses as more than one proxy URI.
+
+    Detection follows ``ParseFromString``: it tokenizes on ``;`` and, when a
+    token contains ``=``, treats it as ``<scheme>=<uri-list>``. A bare ``;`` or a
+    ``,`` therefore signals the native multi-proxy forms, and ``direct://`` is a
+    single token whose meaning (no proxy) needs no host.
+    """
+    if text.lower() == _NATIVE_DIRECT:
+        return True
+    if ";" in text:
+        return True
+    if "," in text:
+        return True
+    # "http=h:p" has an "=" before any "://"; a URI never does.
+    equals = text.find("=")
+    if equals != -1 and (text.find("://") == -1 or equals < text.find("://")):
+        return True
+    return False
+
+
+def _validate_native_rule_list(text):
+    """Rejects native rule syntaxes this build would fail on, otherwise no-op.
+
+    Everything Chromium can parse is left byte-identical. Only the two shapes it
+    cannot express are rejected, each with a message naming the problem instead
+    of letting the Core answer with the opaque -336.
+    """
+    # A rule list made only of separators parses to an empty rule list, and an
+    # empty ProxyRules means "direct" to Chromium. The Core rejects it instead
+    # (non-empty input that yields no rule -> MN_ERROR_INVALID_ARGUMENT), so it
+    # is reported here as an unusable proxy rule rather than as a URL error.
+    if not any(part.strip() for part in text.split(";")):
+        raise InvalidProxyURL(
+            "proxy rule %r contains no rule; pass a proxy URL or leave the "
+            "option unset for a direct connection" % (text,))
+
+    for token in text.split(";"):
+        token = token.strip()
+        if not token:
+            continue
+        value = token
+        if "=" in token:
+            key, value = token.split("=", 1)
+            key = key.strip().lower()
+            if key not in _NATIVE_RULE_KEYS:
+                raise InvalidProxyURL(
+                    "proxy rule %r uses %r as a rule key; Chromium accepts %s"
+                    % (text, key, ", ".join(_NATIVE_RULE_KEYS)))
+        uris = [uri.strip() for uri in value.split(",") if uri.strip()]
+        if not uris:
+            continue
+        if any(uri.lower() == _NATIVE_DIRECT for uri in uris) and len(uris) > 1:
+            raise InvalidProxyURL(
+                "proxy rule %r mixes direct:// with other servers; Chromium "
+                "accepts direct:// only as the sole entry" % (text,))
+        for uri in uris:
+            if "@" in uri:
+                raise InvalidProxyURL(
+                    "proxy rule %r carries credentials inside a rule list; "
+                    "Chromium rejects userinfo in a proxy rule, so pass the "
+                    "credentials with proxy_auth= instead" % (text,))
+            scheme = _native_uri_scheme(uri)
+            if scheme is None or scheme == "direct":
+                continue
+            if scheme in _PROXY_SCHEME_UNSUPPORTED:
+                raise UnsupportedFeature(_PROXY_SCHEME_UNSUPPORTED[scheme])
+            if scheme not in _PROXY_SCHEMES:
+                raise InvalidProxyURL(
+                    "proxy rule %r uses scheme %r; Chromium accepts %s"
+                    % (text, scheme, ", ".join(_PROXY_SCHEMES)))
+
+
+def _split_authority(authority):
+    """Splits ``[userinfo@]host[:port]`` into ``(host, userinfo, port_text)``.
+
+    ``urlsplit`` is not used here because it silently drops a ``:0`` port and
+    keeps the userinfo in the netloc, and both of those matter to Chromium: port
+    0 is a real port to ``ParsePort``, and userinfo has to be moved into the
+    Engine's separate credential fields. ``port_text`` is ``None`` when there is
+    no colon at all, and ``""`` when the colon is present but nothing follows.
+    """
+    userinfo = None
+    if "@" in authority:
+        userinfo, authority = authority.rsplit("@", 1)
+    if authority.startswith("["):
+        # An IPv6 literal keeps its brackets and its colons are not a port.
+        end = authority.find("]")
+        if end == -1:
+            return authority, userinfo, None
+        host = authority[:end + 1]
+        remainder = authority[end + 1:]
+        if not remainder:
+            return host, userinfo, None
+        if remainder.startswith(":"):
+            return host, userinfo, remainder[1:]
+        # Anything else after "]" is junk; report it as trailing text.
+        return host, userinfo, remainder
+    if ":" in authority:
+        host, port_text = authority.rsplit(":", 1)
+        return host, userinfo, port_text
+    return authority, userinfo, None
+
+
+def normalize_proxy_url(proxy):
+    """Normalises one proxy URL into a rule Chromium can parse.
+
+    Chromium's rule parser is strict about the shape of a proxy rule and the
+    facade used to hand it the caller's string untouched, so a pool string with
+    a trailing newline, a comment, a path or a fragment parsed to an empty rule
+    list and every request failed with ``ERR_NO_SUPPORTED_PROXIES`` (-336).
+
+    Chromium's rules also cannot carry userinfo: ``ParseFromString`` rejects an
+    ``@`` in the rule, so ``http://user:pass@host:port`` used to parse to an
+    empty rule list as well.  The credentials therefore travel in the Engine's
+    separate proxy_username / proxy_password fields, which is also how requests
+    does it.
+
+    Returns ``(rule, username, password)``.  ``None`` credentials mean the
+    caller supplied none; the session-level ``proxy_auth`` then decides.
     """
     if not proxy or not isinstance(proxy, str):
         return proxy, None, None
-    parts = urlsplit(proxy)
-    if not parts.username and not parts.password:
-        return proxy, None, None
-    host = parts.hostname or ""
-    if parts.port:
-        host = "%s:%d" % (host, parts.port)
-    clean = "%s://%s" % (parts.scheme, host) if parts.scheme else host
-    return clean, unquote(parts.username or ""), unquote(parts.password or "")
+
+    # Native Chromium rule syntax is passed through untouched. ParseFromString
+    # already understands per-scheme lists (http=h:p;https=h:p), comma-separated
+    # fallback lists and direct://; rewriting those is how the facade would
+    # break a form the Core parses correctly on its own.
+    rule = proxy.strip()
+    if rule and _is_native_rule_list(rule):
+        _validate_native_rule_list(rule)
+        return rule, None, None
+
+    # A value with no content at all means "no proxy", as an empty string does
+    # in requests, so it is not an error. Leading/trailing whitespace is not
+    # whitespace to Chromium's tokenizer: a newline inside the rule list splits
+    # it, which is why the strip happens before any parsing.
+    if not rule:
+        return "", None, None
+
+    scheme = None
+    rest = rule
+    if "://" in rule:
+        scheme, rest = rule.split("://", 1)
+        scheme = scheme.strip().lower()
+        if scheme in _PROXY_SCHEME_UNSUPPORTED:
+            raise UnsupportedFeature(_PROXY_SCHEME_UNSUPPORTED[scheme])
+        scheme = _PROXY_SCHEME_ALIASES.get(scheme, scheme)
+        if scheme not in _PROXY_SCHEMES:
+            raise InvalidProxyURL(
+                "unsupported proxy scheme %r; Chromium accepts %s"
+                % (scheme, ", ".join(_PROXY_SCHEMES)))
+
+    # Drop everything that is not authority.  A pool entry such as
+    # "http://host:port/path#frag" would otherwise parse to no proxy at all.
+    # A pool that returns "socks5://host:port" fed into f"http://{raw}" arrives
+    # as "http://socks5://host:port". Splitting on the first "://" would leave a
+    # host of "socks5", so the doubled scheme is refused instead of being
+    # silently turned into a request to a machine named after a protocol.
+    if "://" in rest:
+        raise InvalidProxyURL(
+            "proxy URL %r has two schemes; the pool entry probably already "
+            "carries one, so do not prefix it again" % (proxy,))
+
+    rest = rest.split("#", 1)[0].split("/", 1)[0]
+    if "?" in rest:
+        raise InvalidProxyURL(
+            "proxy URL %r has a query string; a proxy rule is host:port only"
+            % (proxy,))
+    # Trailing text after the authority -- a pool comment, for instance -- would
+    # otherwise be handed to urlsplit as part of the port and reported as an
+    # "invalid port", which points the caller at the wrong part of the string.
+    rest = rest.strip()
+
+    host, userinfo, port_text = _split_authority(rest)
+    if not host:
+        raise InvalidProxyURL("proxy URL %r has no host" % (proxy,))
+    if port_text is None:
+        port = None
+    elif port_text == "":
+        # Chromium rejects a rule whose port is present but empty
+        # (ProxySchemeHostAndPortToProxyServer), and silently reading it as the
+        # scheme default would turn an input Chromium refuses into a request.
+        raise InvalidProxyURL(
+            "proxy URL %r ends with an empty port; drop the colon or give a port"
+            % (proxy,))
+    elif not port_text.isdigit():
+        raise InvalidProxyURL(
+            "proxy URL %r has trailing text after the authority; a proxy rule is "
+            "host:port only" % (proxy,))
+    else:
+        port = int(port_text)
+        if port > 65535:
+            raise InvalidProxyURL(
+                "proxy URL %r has an invalid port" % (proxy,))
+    if ":" in host and not host.startswith("["):
+        host = "[%s]" % host
+    # Port 0 is a real value to Chromium (ParsePort returns 0, not the default).
+    # Falsy-testing it here quietly turned ":0" into the scheme default.
+    authority = "%s:%d" % (host, port) if port is not None else host
+
+    username = password = None
+    if userinfo is not None:
+        name, separator, secret = userinfo.partition(":")
+        username = unquote(name) if name else None
+        password = unquote(secret) if separator else None
+    return "%s://%s" % (scheme or "http", authority), username, password
+
+
+def split_proxy_credentials(proxy):
+    """Returns ``(rule, username, password)`` for *proxy*.
+
+    Kept as the historical name; the parsing lives in
+    :func:`normalize_proxy_url`, which also repairs the URL shapes Chromium
+    rejects.
+    """
+    return normalize_proxy_url(proxy)
+
+
+#: Proxy failures that say nothing about the origin: the proxy itself was
+#: unreachable (-130) or refused the tunnel (-111). A rotating pool produces
+#: both on healthy traffic, so they are retried once by default even when the
+#: caller asked for no retry policy. Reaching the proxy is what failed, so the
+#: origin never saw the request and re-sending it cannot duplicate an effect.
+#: Excluded: -375 (ERR_TOO_MANY_RETRIES) means the proxy rejected credentials,
+#: and retrying spends another 32 Chromium restarts to fail the same way.
+RETRIABLE_PROXY_ERRORS = ("ERR_PROXY_CONNECTION_FAILED",
+                          "ERR_TUNNEL_CONNECTION_FAILED")
+
+#: Extra attempt granted to the errors above, but only while the effective
+#: retry policy is inert (``count == 0``). A caller who configured a policy
+#: keeps exactly that many attempts instead of getting one more on top, so
+#: ``retry=2`` always means three attempts whichever way a request failed.
+#: One attempt, not a loop: a pool whose endpoint is genuinely dead must still
+#: fail the caller quickly rather than absorb the request for a long time.
+DEFAULT_PROXY_RETRY_COUNT = 1
 
 
 def proxy_from_proxies(url, proxies):
@@ -242,6 +507,28 @@ class RetryStrategy(object):
 
     def should_retry_status(self, status_code):
         return status_code in self.codes
+
+
+def _request_is_replayable(prepared):
+    """True when re-sending *prepared* cannot duplicate an effect at the origin.
+
+    Retrying a transport failure is only safe for requests whose body can be
+    produced again and whose method is idempotent. A streamed body has already
+    been consumed from the caller's iterator, so a second attempt would send a
+    truncated payload; a POST/PATCH that did reach the origin would apply twice.
+    """
+    if prepared.method.upper() not in ("GET", "HEAD", "OPTIONS", "TRACE", "PUT",
+                                       "DELETE"):
+        return False
+    return not prepared.stream_body
+
+
+def _is_retriable_proxy_failure(error):
+    """True when *error* is a proxy failure that never reached the origin."""
+    if not isinstance(error, ProxyError):
+        return False
+    text = str(error)
+    return any(name in text for name in RETRIABLE_PROXY_ERRORS)
 
 
 class _SyncBodyReader(object):
@@ -345,6 +632,19 @@ class _AsyncBodyReader(object):
                 raise
 
     async def aclose(self, cancel=False):
+        self.release_without_loop(cancel=cancel)
+
+    def release_without_loop(self, cancel=False):
+        """Finishes the reader without needing a running event loop.
+
+        ``aclose`` exists so callers can ``await`` the teardown, but every
+        step it takes -- ``state.finish`` cancels the Core request, detaches
+        the callback and clears the buffer -- is synchronous. A caller that
+        must release from *outside* the loop (an abandoned response being
+        closed from another thread, or a loop that already stopped) needs
+        this form: scheduling a coroutine on a loop that will never run it
+        leaves the native request alive and the socket open.
+        """
         if self._closed:
             return
         self._closed = True
@@ -742,12 +1042,18 @@ class BaseSession(object):
             raise SessionClosed("Session is closed")
 
     # -- engine selection ---------------------------------------------------
-    def _engine_config(self, impersonate, proxy, verify, http_version):
+    def _engine_config(self, impersonate, proxy, verify, http_version, url=None,
+                        request_proxy=None, request_proxies=None):
         # Credentials embedded in the proxy URL have to be moved into the
         # Engine's separate fields: Chromium's proxy rule parser rejects
         # userinfo, so leaving them inline made the rule list empty and every
         # request failed with ERR_NO_SUPPORTED_PROXIES before opening a socket.
         # The URL's own credentials win over the session-level proxy_auth.
+        #
+        # proxy_auth is session state, but an Engine is per-proxy, so it may only
+        # be attached when this request actually uses the session's own proxy.
+        # Attaching it unconditionally sent the session's credentials to whatever
+        # proxy a proxied pool happened to select for one call.
         proxy, url_user, url_password = split_proxy_credentials(proxy)
         ca_pem = None
         if isinstance(verify, str):
@@ -762,7 +1068,9 @@ class BaseSession(object):
         else:
             verify_flag = bool(verify)
         username, password = url_user, url_password
-        if username is None and self.proxy_auth:
+        if username is None and self.proxy_auth \
+                and self._proxy_auth_applies(proxy, url, request_proxy,
+                                            request_proxies):
             username, password = self.proxy_auth
         return EngineConfig(
             # Normalise here, not only in __init__: a per-call ``impersonate=``
@@ -783,6 +1091,52 @@ class BaseSession(object):
             profile_namespace=None,
             generation=self._generation,
         )
+
+    def _proxy_auth_applies(self, rule, url=None, request_proxy=None,
+                            request_proxies=None):
+        """True when *rule* is the proxy this session's ``proxy_auth`` belongs to.
+
+        ``proxy_auth`` is configured once on the session, while an Engine -- and
+        therefore a proxy -- is chosen per request. A rotating pool selects a
+        different proxy on most calls, so treating ``proxy_auth`` as applicable
+        everywhere sent the session's username and password to every proxy in the
+        pool.
+
+        The session names its proxy directly (``proxy=``) or through the
+        ``proxies`` mapping, and a single call may override either, so all four
+        spellings are candidates. When none of them names a proxy there is
+        nothing to scope against and the request's own proxy is the only
+        candidate, which is what makes the credentials apply there.
+        """
+        # Only the SESSION's own spellings are candidates. A per-request
+        # proxy= / proxies= is what the request will use, not what the session
+        # configured, so treating it as an owner of proxy_auth is exactly the
+        # leak this method exists to prevent.
+        candidates = []
+        if self.proxy is not None:
+            candidates.append(self.proxy)
+        if self.proxies:
+            mapping = dict(self.proxies)
+            if request_proxies:
+                # A per-request mapping overrides individual keys; the
+                # session's remaining entries still name its proxy.
+                mapping.update({key: value for key, value in request_proxies.items()
+                                if key not in self.proxies})
+            selected = proxy_from_proxies(url, mapping) if url is not None else None
+            if selected is not None:
+                candidates.append(selected)
+        if not candidates:
+            return True
+        for candidate in candidates:
+            try:
+                configured, _, _ = normalize_proxy_url(candidate)
+            except (InvalidProxyURL, UnsupportedFeature):
+                # An unusable session proxy cannot be the owner of the
+                # credentials; Engine construction reports it separately.
+                continue
+            if configured == rule:
+                return True
+        return False
 
     def _effective_proxy(self, url, proxy, proxies):
         """Picks the proxy for one request.
@@ -808,8 +1162,12 @@ class BaseSession(object):
 
     def _slot(self, url, impersonate, proxy, proxies, verify, http_version):
         self._ensure_open()
+        # The per-request proxy= / proxies= have to reach _engine_config too:
+        # proxy_auth may only be attached to the proxy the session itself
+        # configured, and a per-request mapping can select a different one.
         config = self._engine_config(
-            impersonate, self._effective_proxy(url, proxy, proxies), verify, http_version)
+            impersonate, self._effective_proxy(url, proxy, proxies), verify,
+            http_version, url, proxy, proxies)
         return self._engines.get(config)
 
     # -- cookie policy ------------------------------------------------------
@@ -1186,17 +1544,28 @@ class Session(BaseSession):
                 cert=options.get("cert"), proxies=options.get("proxies"))
         retry = options.get("retry") or self.retry
         attempt = 0
+        proxy_attempt = 0
         while True:
             attempt += 1
             try:
                 response = self._send_once(request, options)
             except ResponseTooLarge:
                 raise
-            except RequestException:
-                if attempt > retry.count:
-                    raise
-                time.sleep(retry.sleep_for(attempt))
-                continue
+            except RequestException as error:
+                if attempt <= retry.count:
+                    time.sleep(retry.sleep_for(attempt))
+                    continue
+                # A pool endpoint that is briefly unreachable is the common case
+                # behind ERR_PROXY_CONNECTION_FAILED / ERR_TUNNEL_CONNECTION_FAILED,
+                # and those never reached the origin, so one retry costs nothing
+                # but a second connection attempt.
+                if (retry.count == 0
+                        and proxy_attempt < DEFAULT_PROXY_RETRY_COUNT
+                        and _is_retriable_proxy_failure(error)
+                        and _request_is_replayable(request)):
+                    proxy_attempt += 1
+                    continue
+                raise
             if retry.should_retry_status(response.status_code) and attempt <= retry.count:
                 response.close()
                 time.sleep(retry.sleep_for(attempt))
@@ -1455,17 +1824,24 @@ class AsyncSession(BaseSession):
             raise ValueError("You can only send PreparedRequests")
         retry = options.get("retry") or self.retry
         attempt = 0
+        proxy_attempt = 0
         while True:
             attempt += 1
             try:
                 response = await self._send_once(request, options)
             except ResponseTooLarge:
                 raise
-            except RequestException:
-                if attempt > retry.count:
-                    raise
-                await asyncio.sleep(retry.sleep_for(attempt))
-                continue
+            except RequestException as error:
+                if attempt <= retry.count:
+                    await asyncio.sleep(retry.sleep_for(attempt))
+                    continue
+                if (retry.count == 0
+                        and proxy_attempt < DEFAULT_PROXY_RETRY_COUNT
+                        and _is_retriable_proxy_failure(error)
+                        and _request_is_replayable(request)):
+                    proxy_attempt += 1
+                    continue
+                raise
             if retry.should_retry_status(response.status_code) and attempt <= retry.count:
                 await response.aclose()
                 await asyncio.sleep(retry.sleep_for(attempt))

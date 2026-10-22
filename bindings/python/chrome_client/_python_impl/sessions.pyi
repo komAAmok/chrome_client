@@ -3619,6 +3619,74 @@ Client: TypeAlias = Session
 AsyncClient: TypeAlias = AsyncSession
 
 
+#: Proxy schemes Chromium's rule parser accepts.
+_PROXY_SCHEMES: Tuple[str, ...]
+
+#: Pool spellings rewritten to a scheme Chromium knows.
+_PROXY_SCHEME_ALIASES: Dict[str, str]
+
+#: Pool spellings that request a mode the Core cannot provide.
+_PROXY_SCHEME_UNSUPPORTED: Dict[str, str]
+
+#: Proxy failures that never reached the origin, so they may be retried.
+RETRIABLE_PROXY_ERRORS: Tuple[str, ...]
+
+#: Extra attempt granted to those failures when no retry policy is configured.
+DEFAULT_PROXY_RETRY_COUNT: int
+
+
+def normalize_proxy_url(
+    proxy: Optional[str],
+) -> Tuple[Optional[str], Optional[str], Optional[str]]:
+    """Normalises one proxy URL into a rule Chromium can parse.
+
+    Chromium's own rule syntax is passed through untouched: per-scheme lists
+    (``http=h:p;https=h:p``), comma-separated fallback lists and ``direct://``
+    are validated and returned byte-identical, because ``ParseFromString``
+    already understands them and rewriting them is what would break them. The
+    remaining normalisation is an extension layer for input Chromium rejects
+    outright.
+
+    A single proxy URI is repaired before it reaches the Core: a rule it cannot
+    parse leaves the rule list empty, which the Core reports as
+    ``ERR_NO_SUPPORTED_PROXIES`` (-336) -- a message that reads like "no proxy
+    configured". A pool endpoint read from a file therefore failed every
+    request if the line carried a trailing newline, a path or a fragment.
+
+    The rule also cannot carry userinfo, so credentials are split into the
+    Engine's separate ``proxy_username`` / ``proxy_password`` fields, as
+    requests does it.
+
+    Args:
+        proxy: The proxy URL as the caller wrote it, possibly with a scheme,
+            userinfo, trailing whitespace, a path, a fragment, or no scheme at
+            all.
+
+    Returns:
+        ``(rule, username, password)``. A native rule list is returned as
+        written; otherwise the rule is ``scheme://host[:port]`` with a scheme
+        Chromium knows. Username and
+        password are ``None`` when the URL carried no userinfo, which leaves
+        the session-level ``proxy_auth`` in charge. An empty or whitespace-only
+        input returns ``("", None, None)``, meaning "no proxy", as in requests.
+
+    Raises:
+        InvalidProxyURL: The scheme is unknown, the rule carries a query
+            string, two schemes are present (a pool entry that already had one
+            prefixed again), the port is out of range, or there is no host.
+        UnsupportedFeature: The scheme names a mode the Core cannot provide:
+            ``socks4a`` asks for remote name resolution, while Chromium's SOCKS4
+            client resolves locally, so accepting the spelling would silently
+            send the caller's DNS out through this machine.
+
+    Example:
+        >>> normalize_proxy_url("socks5h://user:pw@1.2.3.4:1080/")
+        ('socks5://1.2.3.4:1080', 'user', 'pw')
+        >>> normalize_proxy_url("http://1.2.3.4:8080\n")[0]
+        'http://1.2.3.4:8080'
+    """
+    ...
+
 def split_proxy_credentials(
     proxy: Optional[str],
 ) -> Tuple[Optional[str], Optional[str], Optional[str]]:

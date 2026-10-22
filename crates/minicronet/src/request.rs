@@ -363,7 +363,7 @@ impl Request {
         lock(&self.0.shared.state).redirects.pop_front()
     }
 
-    pub fn wait_for_redirect(&self, timeout: Duration) -> Result<Option<Redirect>, Error> {
+    pub fn wait_for_redirect(&self, timeout: Duration) -> Result<Option<Redirect>, RequestError> {
         let mut state = lock(&self.0.shared.state);
         if let Some(redirect) = state.redirects.pop_front() {
             return Ok(Some(redirect));
@@ -381,7 +381,11 @@ impl Request {
         if wait_result.timed_out() {
             Ok(None)
         } else if let Some(Err(error)) = state.terminal {
-            Err(error.error)
+            // The whole RequestError, not its `.error` category: the category
+            // alone is just "Proxy", and dropping net_error is what made a
+            // manual-redirect failure print `Proxy` with no Chromium code,
+            // while the follow-redirect path named the error properly.
+            Err(error)
         } else {
             Ok(None)
         }
@@ -727,6 +731,19 @@ unsafe extern "C" fn on_complete(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn wait_for_redirect_preserves_the_net_error() {
+        // The manual-redirect path used to unwrap `RequestError` down to its
+        // `.error` category, so a -111 tunnel failure surfaced as the bare word
+        // "Proxy" while the follow-redirect path named ERR_TUNNEL_CONNECTION_FAILED.
+        // The net_error field is the only place that code lives.
+        let error = RequestError {
+            error: Error::Proxy,
+            net_error: -111,
+        };
+        assert_eq!(format!("{error}"), "Proxy (Chromium net error -111)");
+    }
 
     #[test]
     fn response_and_body_preserve_callback_order() {

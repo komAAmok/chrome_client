@@ -47,7 +47,10 @@ fn duration(seconds: Option<f64>) -> PyResult<Option<Duration>> {
             if !value.is_finite() || value < 0.0 {
                 return Err(error("timeout must be a finite non-negative number"));
             }
-            Ok(Duration::from_secs_f64(value))
+            // See the modern binding: from_secs_f64 panics on an out-of-range
+            // value, and a PanicException escapes `except Exception`.
+            Duration::try_from_secs_f64(value)
+                .map_err(|_| error("timeout must be a finite non-negative number"))
         })
         .transpose()
 }
@@ -169,7 +172,7 @@ fn websocket_event(event: WebSocketEvent) -> PyWebSocketEvent {
 #[pymethods]
 impl PyWebSocket {
     fn connect(&self) -> PyResult<()> {
-        *self.events.lock().unwrap() = Some(self.inner.start().map_err(error)?);
+        *self.events.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Some(self.inner.start().map_err(error)?);
         Ok(())
     }
     fn send_text(&self, text: &str) -> PyResult<()> {
@@ -180,7 +183,7 @@ impl PyWebSocket {
     }
     fn recv(&self, py: Python) -> PyResult<Option<PyWebSocketEvent>> {
         py.allow_threads(|| {
-            let mut events = self.events.lock().unwrap();
+            let mut events = self.events.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             let events = events
                 .as_mut()
                 .ok_or_else(|| error("WebSocket is not connected"))?;
@@ -224,7 +227,7 @@ impl PyWebSocket {
     }
     fn poll_event(&self) -> PyResult<Option<PyWebSocketEvent>> {
         self.notify_scheduled.store(false, Ordering::Release);
-        let mut events = self.events.lock().unwrap();
+        let mut events = self.events.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let events = events
             .as_mut()
             .ok_or_else(|| error("WebSocket is not connected"))?;
@@ -241,7 +244,7 @@ impl PyWebSocket {
     #[args(limit = "64")]
     fn poll_events(&self, limit: usize) -> PyResult<Vec<PyWebSocketEvent>> {
         self.notify_scheduled.store(false, Ordering::Release);
-        let mut events = self.events.lock().unwrap();
+        let mut events = self.events.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let events = events
             .as_mut()
             .ok_or_else(|| error("WebSocket is not connected"))?;
@@ -275,7 +278,7 @@ impl PyRequest {
     /// asyncio bridge creates.
     fn finish(&self) {
         self.inner.clear_event_callback();
-        self.response_future.lock().unwrap().take();
+        self.response_future.lock().unwrap_or_else(std::sync::PoisonError::into_inner).take();
     }
 
     fn poll_one(&self) -> PyResult<Option<PyEvent>> {
@@ -298,10 +301,10 @@ impl PyRequest {
             .as_mut()
             .and_then(ResponseFuture::try_take);
         if let Some(response) = response {
-            self.response_future.lock().unwrap().take();
+            self.response_future.lock().unwrap_or_else(std::sync::PoisonError::into_inner).take();
             return Ok(Some(match response {
                 Ok(response) => {
-                    *self.body_stream.lock().unwrap() = Some(response.body);
+                    *self.body_stream.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Some(response.body);
                     (
                         "response".into(),
                         response.status_code,
@@ -430,7 +433,7 @@ impl PyRequest {
                     .as_mut()
                     .and_then(ResponseFuture::try_take);
                 if let Some(result) = taken {
-                    self.response_future.lock().unwrap().take();
+                    self.response_future.lock().unwrap_or_else(std::sync::PoisonError::into_inner).take();
                     let response = match result {
                         Ok(response) => response,
                         Err(err) => {
@@ -439,7 +442,7 @@ impl PyRequest {
                         }
                     };
                     let head = (response.status_code, response.headers);
-                    *self.body_stream.lock().unwrap() = Some(response.body);
+                    *self.body_stream.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Some(response.body);
                     return Ok((None, Some(head)));
                 }
                 let now = Instant::now();
@@ -457,7 +460,7 @@ impl PyRequest {
     fn start_stream(&self, py: Python) -> PyResult<PyResponse> {
         py.allow_threads(|| {
             let response = self.inner.start().map_err(error)?.wait().map_err(error)?;
-            *self.body_stream.lock().unwrap() = Some(response.body);
+            *self.body_stream.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Some(response.body);
             Ok(PyResponse {
                 status_code: response.status_code,
                 headers: response.headers,
@@ -468,7 +471,7 @@ impl PyRequest {
 
     fn start(&self) -> PyResult<()> {
         let future = self.inner.start().map_err(error)?;
-        *self.response_future.lock().unwrap() = Some(future);
+        *self.response_future.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Some(future);
         Ok(())
     }
 
@@ -481,7 +484,7 @@ impl PyRequest {
             .ok_or_else(|| error("request is not started"))?;
         py.allow_threads(|| {
             let response = future.wait().map_err(error)?;
-            *self.body_stream.lock().unwrap() = Some(response.body);
+            *self.body_stream.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Some(response.body);
             Ok(PyResponse {
                 status_code: response.status_code,
                 headers: response.headers,
@@ -492,7 +495,7 @@ impl PyRequest {
 
     fn next_body(&self, py: Python) -> PyResult<Option<Vec<u8>>> {
         py.allow_threads(|| {
-            let mut stream = self.body_stream.lock().unwrap();
+            let mut stream = self.body_stream.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             let stream = stream
                 .as_mut()
                 .ok_or_else(|| error("request body stream is not started"))?;
@@ -502,7 +505,7 @@ impl PyRequest {
 
     fn read_body(&self, py: Python) -> PyResult<Vec<u8>> {
         py.allow_threads(|| {
-            let mut stream = self.body_stream.lock().unwrap();
+            let mut stream = self.body_stream.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             let stream = stream
                 .as_mut()
                 .ok_or_else(|| error("request body stream is not started"))?;
@@ -517,7 +520,7 @@ impl PyRequest {
     fn start_async(&self, py: Python, loop_: PyObject, notify: PyObject) -> PyResult<()> {
         self.attach_async(py, loop_, notify);
         let future = self.inner.start().map_err(error)?;
-        *self.response_future.lock().unwrap() = Some(future);
+        *self.response_future.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Some(future);
         Ok(())
     }
 

@@ -570,3 +570,314 @@ early return」与「删掉」在**所有 pinned profile** 上等价，且不会
 
 **教训**：这一条是被自己踩出来的——同一份文件里既记录着「变异测试后要恢复原状」，也
 因为恢复手段选错而丢了内容。
+## 29. 一个会话里「每次请求都换配置」会悄悄退化成每次新建一条连接
+
+**现象**：代理池跑一段时间后大量 `ERR_PROXY_CONNECTION_FAILED`(-130) 与
+`ERR_TUNNEL_CONNECTION_FAILED`(-111)。代理本身是健康的，日志里没有任何配置错误。
+
+**根因**：代理是 Engine 级设置（`engine.py` 的 `EngineConfig` 键含 `proxy`），而一个
+Engine 是一整个 Chromium `URLRequestContext`——独立线程、socket 池、DNS 缓存、TLS
+会话缓存。会话默认只保留 `max_engines=8` 个（`engine.py:DEFAULT_MAX_ENGINES`），超出
+按 LRU 淘汰。**池比 8 大时，几乎每个请求都命中一次淘汰**，于是每个请求重建一个上下文
+并新开一条 TCP 连接，连接复用彻底失效。实测（20 端点池、200 请求）：
+
+```
+max_engines=8   -> 构建 200 个 Chromium 上下文、代理侧 200 条 TCP、遗留 TIME_WAIT +180
+max_engines=20  -> 构建 20 个、20 条 TCP、TIME_WAIT +20
+```
+
+每条废弃连接留下一个 TIME_WAIT；临时端口（`32768-60999`）耗尽后 `connect()` 拿不到
+源端口，代理路径随即报 -130。同一台机器上，**资源耗尽在代理路径上的表现就是 -130**：
+把进程 fd 打到 `EMFILE` 后，走代理的请求报 `ERR_PROXY_CONNECTION_FAILED`，直连请求报
+的是另一个码。所以「跑一阵子才炸」不是库变坏了，是连接数线性累积后的资源问题。
+
+**规则**：凡是「按请求切换的配置」，都要先问它是不是**有代价的全局设施**。Engine 就是：
+换代理 = 换整个上下文。这类参数必须同时满足两条：文档里出现，且与使用者能数出来的规模
+（这里是池大小）挂钩。`max_engines` 此前只写在 `.pyi` 里，README 一次都没提，于是没有
+人会想到去调它。
+
+**门禁**：`ProxyRetryPolicyTests` 用 `_send_once` 的调用次数锁定重试语义；
+`ProxyURLNormalisationTests` / `ProxyCredentialScopeTests` 覆盖 scheme、URL 形态与凭据
+作用域。三组都用变异测试确认过：把归一化改成恒等、把 `socks5h` 别名清空、把
+`proxy_auth` 的作用域判断去掉，对应测试各自失败。
+
+## 30. 池里读来的字符串不是 URL，是「看起来像 URL 的字节」
+
+**现象**：同一批代理，直接用能通，从文件/接口读来就整批 `ERR_NO_SUPPORTED_PROXIES`
+(-336)。该错误读起来像「没配代理」，实际是「规则解析出空列表」。
+
+**根因**：`ProxyRules::ParseFromString` 对规则形状很严格，而 facade 把调用方字符串
+**原样**交给它（`split_proxy_credentials` 在没有 userinfo 时直接 return）。尾随换行、
+路径、片段都会让整条规则解析为空。实测这些写法在修复前各自失败：
+
+```
+"http://h:p/"      -> -336     "http://h:p#f"      -> -336
+"http://h:p/path"  -> -336     "http://h:p\n"      -> -336
+"http://h:p?x=1"   -> -105     "http://h:p "       -> 200（被 TrimLWS 吃掉）
+```
+
+同一类问题的另一半是 scheme：Chromium 的白名单只有
+`http`/`https`/`socks`/`socks4`/`socks5`（`GetSchemeFromUriScheme`），而池子常给
+`socks5h://` / `socks4a://`，两者都变成 -336。**但这两个词含义不同**：`socks5h` 只是
+拼写（Chromium 的 SOCKS5 本来就把主机名交给代理），`socks4a` 是能力（Chromium 的
+SOCKS4 在本地解析，Core 没有远端解析模式）。所以前者改写、后者抛
+`UnsupportedFeature`——把后者「顺手支持」等于把用户的 DNS 悄悄改走本机。
+
+**规则**：外部输入在进入严格解析器之前必须归一化，且归一化只能吞掉**确定无意义**的部分；
+凡是改变语义的拼写差异，要么证明它与已有行为等价（`socks5h`），要么 fail-closed
+（`socks4a`）。这正是 AGENTS.md §8 的承诺在代理路径上的落点。
+
+**门禁**：`ProxyURLNormalisationTests` 逐条锁定上表，并用真实 Core 在
+`test_pool_string_shapes_actually_route_through_the_core` 里断言响应体是代理回显的
+`proxied:<url>`——所以「直连成功」伪装不了通过。
+
+## 31. 会话级凭据不能跟着逐请求的目标走
+
+**现象**：`Session(proxy=A, proxy_auth=(u, p))` 搭配单次 `proxy=B` 时，**B 收到了 A 的
+用户名和密码**。
+
+**根因**：`proxy_auth` 是会话状态，Engine 却按请求选。旧代码在 URL 没有 userinfo 时
+无条件套用 `self.proxy_auth`，于是任何一次换代理的请求都会把会话凭据发出去。
+
+这个缺陷**不会自己暴露**：`ProxyHandler` 这类从不挑战的代理收下 `Proxy-Authorization`
+就照常 200，泄漏无声。只有让代理**真的回 407** 才看得见——修复前观测到
+`Basic cG9vbHVzZXI6cG9vbHBhc3M=` 被发给了无关代理，随后以
+`ERR_TOO_MANY_RETRIES`(-375) 结束。
+
+「会话自己的代理」有两个写法：`proxy=` 与 `proxies` 映射。初版只锚定了前者，
+于是用 `proxies={'http': A}` 配的会话在单次 `proxy=B` 时**仍然把凭据发给了 B**——
+同一个缺陷换了个入口。修完两个入口都要有测试，只修一个等于没修。
+
+**规则**：凭据要绑定到**所有者**（这里是「会话自己配置的那个代理」），不是绑定到
+「发出请求的这一次」。首次写测试时我断言的是「会话自己的代理能拿到凭据」——那是正向
+路径，永远为真，变异测试立刻证明它抓不到缺陷。改成断言「无关代理收到的
+`Proxy-Authorization` 全为 None」后，去掉作用域判断会让测试失败。
+
+**门禁**：`ProxyCredentialScopeTests` 的
+`test_a_per_request_proxy_does_not_receive_the_session_credentials` 与
+`test_the_session_proxies_mapping_also_scopes_the_credentials`，两个入口各一条，
+都用真实 407 挑战夹具记录实际收到的头。
+
+## 32. 错误穿过一层「更安全」的类型时，会丢掉调用方唯一能用的字段
+
+**现象**：同一个 -111 隧道失败，`allow_redirects=True` 报
+`ERR_TUNNEL_CONNECTION_FAILED (net error -111)`，而 `allow_redirects=False`
+（`Session.head()` 也走这条路）只报一个裸的 `Proxy`。用户看到的
+`Proxy (Chromium net error -111)` 就是这个形态。
+
+**根因**：Rust 层有两个错误类型。`RequestError` 有 `.error`（粗类别）和
+`.net_error`（Chromium 数字码），`Display` 会拼出 `Proxy (Chromium net error -111)`；
+而 `Error` 只有类别，`Display` 就是 `Proxy`。
+
+```
+crates/minicronet/src/request.rs:366
+  pub fn wait_for_redirect(&self, timeout: Duration)
+      -> Result<Option<Redirect>, Error>        // ← 返回窄类型
+crates/minicronet/src/request.rs:384
+  } else if let Some(Err(error)) = state.terminal {
+      Err(error.error)                          // ← 拆包，丢掉 net_error
+```
+
+`wait_manual` 先看 `try_take()`（`ResponseFuture`，返回 `RequestError`，正常），超时切片
+里再调 `wait_for_redirect`（返回 `Error`，已丢码）。同一段循环里两条分支的粒度不同，
+所以只有「先等到 redirect 事件」那条路会掉字段。
+
+**规则**：错误类型在**所有**返回路径上必须携带同样多的信息。「更窄的返回类型更安全」
+是错觉——它把调用方唯一能据以行动的字段（数字码）删掉了。收缩错误类型前先问：调用方
+拿这个类别能做什么？这里答案是「什么都做不了」，因为类别名恰好是 `Proxy`。
+
+**门禁**：`wait_for_redirect_preserves_the_net_error`（Rust，断言
+`Display` 含 `-111`）+ `ManualRedirectErrorNamingTests`（Python，断言
+`head` / `allow_redirects=False` / 跟随三种模式都以 `ERR_` 开头且含 `net error`）。
+变异测试：把 `Err(error)` 改回 `Err(RequestError { error: error.error, net_error: 0 })`，
+两条 Python 测试立刻失败。
+
+## 33. 一个错误码把多件事折叠成一件时，文档要写清它折叠了什么
+
+**现象**：用户报告「大量 `-111`」，直觉是隧道实现有问题。
+
+**根因**（上游行为，非缺陷）：`http_proxy_client_socket.cc:521-530` 的
+`DoProcessResponseCode` 只对 `200` 与 `407` 分别处理，**其余状态码一律**
+`ERR_TUNNEL_CONNECTION_FAILED`。源码注释写明了原因——防代理冒充源站。实测确认
+403/404/405/429/500/502/503/504/301/400 全部报同一个 -111。
+
+所以「大量 -111」的真实含义可能是：代理在限流（429）、代理不让你去这个目标（403）、
+代理自己上游挂了（502/503），三者对调用方是同一个字符串。
+
+**规则**：上游把多个原因折叠成一个码时，**折叠的事实本身**必须进兼容边界文档。用户会
+把这个码当成诊断结论反复误判，而库这边无法拆开它（拆开就要改 Chromium）。能给的只有
+「这个码不区分 X/Y/Z，去查代理日志」。
+
+**门禁**：无自动化门禁（这是上游语义）；已写入
+`docs/COMPATIBILITY_BOUNDARY.md` 的 Proxies 一节，并附 10 个状态码的实测结果。
+
+## 34. 「修好了」必须由独立的对抗性审计确认，不能由修它的人确认
+
+**现象**：代理三处修复（scheme 归一化、凭据作用域、`-111` 命名）当时逐条验证过，
+测试也全绿。但要求「审计排查」时，实测又查出 **3 个真实缺陷**，其中 2 个是上一轮
+自己引入的。
+
+**漏掉的三个**：
+
+1. **凭据作用域只锚定了半个入口**。会话用它自己的 `proxy=` / `proxies` 声明代理，
+   **单次调用的** `proxy=` / `proxies=` 是另一回事。上一轮修完两个会话入口后，
+   单次 `proxies={B}` 仍会把会话凭据发给 B（实测 B 收到 `Basic ...` 后 `-375`）。
+2. **`:0` 被当成假值丢掉**。`authority = ... if port else host` 让 `http://h:0`
+   变成 `http://h`，而 Chromium 的 `ParsePort("0")` 返回的是**真的 0**，不是方案
+   默认端口。于是「连端口 0」被静默改成「连端口 80」。
+3. **空端口被静默补成默认端口**。`http://h:` 是 Chromium 明确**拒绝**的规则
+   （`ProxySchemeHostAndPortToProxyServer`：端口存在但为空 → `ProxyServer()`），
+   归一化却把它读成 `http://h`（端口 80）——一个 Chromium 会拒绝的输入变成了能
+   发出去的请求。同一个假值判断还让 `http://h:8080 # rot=2` 报 invalid port，
+   把用户指向了字符串里错误的位置。
+
+**为什么自己的测试没抓到**：三条测试都是**正向**的（凭据能到位、合法 URL 能解析），
+没有一条断言**不该发生的事**。变异测试当时只覆盖了我改动的行，没覆盖我**没改**的
+相邻分支——`:0` 和 `:` 恰好都落在同一条 `if port` 里。
+
+**规则**：审计要按**输入空间**穷举，不是按「我改过的行」复查。具体做法：
+
+- 拿上游语义当**判据**（这里逐条对照 `ParsePort` / `GetDefaultPortForScheme` /
+  `ProxySchemeHostAndPortToProxyServer`），而不是拿「我当时的意图」当判据；
+- 每个假值/空值分支都要有一个用例（`0`、空串、`None`、缺省）；
+- 每个「作用域」概念都要把**所有**入口列出来，缺一个就等于没修。
+
+**门禁**：`ProxyURLPortTests`（`:0` 保留、`:` 拒绝、尾随文本、幂等性）+
+`ProxyCredentialScopeTests` 补到 4 个入口。三条新变异（假值端口、空端口放行、
+把单次代理当凭据所有者）各自都能让对应测试失败，已逐个确认。
+
+## 35. 扩展层必须长在原生之上，而不是替代原生
+
+**现象**：为了让代理池的脏字符串能用，我写了一个归一化层，把任何合法输入都改写成
+`scheme://host:port`。结果是**把 Chromium 本来就能用的配置改坏了**。
+
+**根因**：`ProxyRules::ParseFromString` 支持三种形式，归一化只认识其中一种：
+
+```
+"http=h:p"                    -> 原样变成 "http://http=h:p"  （host 叫 "http"）
+"http=h:p;https=h:p"          -> 变成 "http://[http=h:p;https=h:p]:8080"
+"http://a:p,http://b:p"       -> InvalidProxyURL（把逗号当成尾随文本）
+"direct://"                   -> InvalidProxyURL（当成未知 scheme）
+```
+
+`;` 和 `=` 是 `ParseFromString` 的 tokenizer 分隔符，`,` 是 `AddProxyURIListToProxyList`
+的回退列表分隔符，`direct://` 是 `MultiProxyUrisToProxyChain` 认的"不走代理"记号。
+我的归一化把这些全当成了脏数据。
+
+**实测确认**（绕过 facade 直接喂 Engine）：
+`http=h:p` → 200；`http=h:p;https=h:p` → 200；`a,b` → 200 且第一条挂了会自动用第二条；
+`direct://` → 不走代理。四种在修复前全部被 facade 弄坏。
+
+**规则**：写兼容层时，先穷举上游**接受**什么，再决定要改什么。默认动作必须是
+「原样透传」，扩展只处理上游**明确拒绝**的输入（这里是 `socks5h`、脏尾字符、
+裸 `host:port`）。判断顺序固定为：能原生解析 → 不改；不能 → 扩展或 fail-closed。
+把「我认识的形式」当成「唯一的正确形式」是这类缺陷的共同来源。
+
+**门禁**：`NativeProxyRuleTests` 8 条，逐条锁定上表，其中一条用真实 Core 断言
+`http=h:p` 与 `a,b` 的响应体是代理回显的 `proxied:<url>`，所以"只是字符串没变、
+实际没走代理"伪装不过。变异测试：关掉透传分支后 3 条失败，放行 `direct://` 混用后 1 条失败。
+
+## 36. 三层各自的「我以为已经对了」
+
+**背景**：要求按 Core / Rust / Python 三层分别审计。查出的不是协议实现问题，而是**每一层
+对「同一个事实」各记了一份，且互不校验**。
+
+**缺陷 1（Core）**：`core/source/minicronet/error_mapping.h` 的代理分支漏了四个上游码——
+`ERR_MANDATORY_PROXY_CONFIGURATION_FAILED`(-131)、`ERR_UNEXPECTED_PROXY_AUTH`(-323)、
+`ERR_UNABLE_TO_REUSE_CONNECTION_FOR_PROXY_AUTH`(-170)、`ERR_NO_SUPPORTED_PROXIES`(-336)。
+它们落到 `default` 分支变成 `MN_ERROR_NETWORK`。实测修复前 `proxy=" ; "` 报
+`Network (Chromium net error -336)`，修复后报 `Proxy (net error -336)`。
+
+**缺陷 2（Rust 绑定）**：两个版本的 `duration()` 都用 `Duration::from_secs_f64`，它在超过
+`u64::MAX` 秒时**panic**。pyo3 把它转成 `PanicException`，而它继承 `BaseException`——
+**穿透所有 `except Exception`**，直接杀进程。实测 `timeout=1e20` 触发，`timeout=1e19` 正常。
+
+**缺陷 3（Rust 绑定一致性）**：`bindings/python36` 有 15 处 `lock().unwrap()`，而
+`bindings/python` 全部用 `lock().unwrap_or_else(PoisonError::into_inner)`。一次 panic 会让
+那个 mutex 永久中毒，之后每次加锁都再 panic——同一个进程再也发不出请求。
+
+**缺陷 4（Python facade）**：`-336` 在 facade 表里本来就有，但**只有这一处记得它**。
+表格靠 `_NATIVE_ERRORS` 的子串匹配决定异常类，Core 说 `Network` 时不是 `ProxyError`；
+而表里没登记的 `-170/-323/-364/-366` 完全靠 Core 的类别，于是变成 `ConnectionError`。
+
+**规则**：同一份「协议事实」被三层各存一份时，三层必须有同样的覆盖面，并且**由测试
+同时断言三者**。只测一层会得到「测试全绿但用户看到 ConnectionError」的结果。
+
+**门禁**：(1) `cargo build` 编译 Core 后 `audit-net-error-names.py` 仍然逐行核对；
+(2) `ProxyErrorClassificationTests` 用 14 个码 × 2 种类别断言都得到 `ProxyError`；
+(3) `TimeoutBoundaryTests` 断言 `1e20/1e300/inf/nan/-1` 全部**抛异常而不是 panic**，
+并显式 `assertNotIsInstance(..., KeyboardInterrupt)` 以保证不是 `BaseException` 逃逸。
+变异测试：删掉 5 行新表格 → 2 条失败；关掉分隔符守卫 → 1 条失败。
+
+## 37. 声明支持的版本，必须由「最老的那一版」来验证
+
+**问题**：`requires-python = ">=3.6,<3.14"`，扩展用 `abi3-py36` 编译，CI 也真的在
+3.6 上装过 wheel——但**纯 Python 那一半从没在 3.6 上跑过**。
+
+**缺陷 1**：`_python_impl/models.py` 直接调用 `asyncio.get_running_loop()`，那是 3.7+。
+在 3.6 上抛 `AttributeError`，而周围的守卫只写了 `except RuntimeError`——
+`AttributeError` 直接穿过去。实测（摘掉该属性模拟 3.6）：
+
+```
+resp.close() -> AttributeError: module "asyncio" has no attribute "get_running_loop"
+```
+
+同一个文件里那行 `reader.aclose(cancel=True)` 已经建好了协程，异常逃逸后它**永远不被
+await**，于是 native request、socket 和缓冲的 body 一起泄漏。**一处兼容性错误同时是
+一处资源泄漏。**
+
+**缺陷 2**（与 3.6 无关，3.12 上同样存在）：`asyncio.run_coroutine_threadsafe` 的目标
+循环**没在运行**时，它照样返回一个 Future，但那个协程永远不会被调度。于是
+`response.close()` 在「循环已停止」的路径上静默不释放任何东西。
+
+**修复**：`_AsyncBodyReader` 增加 `release_without_loop()`——`state.finish()` 本来就是全
+同步的（取消 Core 请求、摘掉回调、清空缓冲），不需要 await。释放路径改成：在同一循环里
+→ `create_task`；循环在别的线程运行 → `run_coroutine_threadsafe`；**循环存在但没运行**
+→ 直接同步释放。
+
+**规则**：
+- 支持范围的下界必须有一条**真正在那一版解释器上执行**的门禁。只做「wheel 能装」是
+  不够的：装得上、导得进、但调用即崩的版本，比不支持还糟。
+- `try/except` 的异常类型要和**失败模式**匹配。`get_running_loop()` 在 3.6 上不是
+  `RuntimeError`，是 `AttributeError`；写错一个 except 就吞不掉。
+- 把「异步关闭」当成需要循环的动作之前，先确认它**真的**需要循环。这里三步全是同步
+  调用，协程只是语法糖。
+
+**门禁**：`Python36SyntaxFloorTests` 用 `ast.parse(..., feature_version=(3, 6))` 解析
+全部 18 个 `*.py`，并用 AST 扫描 3.7+ 的 stdlib 属性调用、要求每一处都在
+`hasattr`/`except AttributeError` 守卫内；`AsyncReleaseWithoutLoopTests` 在**循环关闭后**
+调 `close()` 并断言不产生 `RuntimeWarning`（unawaited coroutine）。
+变异测试：把守卫改回裸 `get_running_loop()` → 语法/守卫测试失败。
+
+## 38. 「装不上」与「没测过」是两件事，支持的边界要写清是哪一种
+
+**背景**：需要回答四个关于版本边界的问题——py36 分支支持 3.4/3.5 吗？主分支支持 3.14/
+3.15 吗？这两个版本的 free-threaded 构建呢？
+
+**答案的四个依据**（都可复核）：
+
+| 问题 | 结论 | 决定性依据 |
+| --- | --- | --- |
+| py36 支持 3.4/3.5 | **不可能** | `pyo3-build-config-0.15.2/src/impl_.rs:21` `MINIMUM_SUPPORTED_VERSION = 3.6`；pyo3 0.15.1 的 feature 表里根本没有 `abi3-py35`/`abi3-py34` |
+| 主分支支持 3.14 | **装不上** | 两个 `pyproject.toml` 都写 `requires-python = ">=3.6,<3.14"`；pip 直接拒绝 |
+| 主分支支持 3.15 | **装不上** | 同上；且 `ABI3_MAX_MINOR = 14`（`impl_.rs:43`），abi3 的版本上限就是 3.14 |
+| 3.14/3.15 free-threaded | **不承诺，且 abi3 在 free-threaded 上不生效** | `impl_.rs:193` `if self.abi3 && !self.is_free_threaded()`；`impl_.rs:730` 明确写「free-threaded build 不支持 abi3」 |
+
+**容易说错的地方**：
+
+1. **abi3 与 free-threaded 是互斥的**。`abi3-py37` 在 3.13t/3.14t 上不会生成 limited API，
+   所以「一个 abi3 wheel 顺带覆盖 free-threaded」是错的——必须为 `3.14t` 单独出 wheel，
+   且 hint 是 `cp314t` 而不是 `cp314`。
+2. **`ABI3_MAX_MINOR` 是硬上限**。pyo3 0.28.3 的上限是 14；跑到 3.15 解释器上它只会
+   `warn!` 然后回落（`impl_.rs:751`），不是「自动支持 3.15」。
+3. **模块声明了 `gil_used = true`**（`bindings/python/src/lib.rs:846`）。即使装了
+   free-threaded 解释器，这个扩展也会被强制重新启用 GIL——「能导入」不等于「并行」。
+   代码注释写的是「在专门的 3.13t 测试矩阵出现前保留 GIL」，这是一条有意的选择，不是疏漏。
+
+**规则**：回答「支持到哪个版本」时，必须区分三种状态：**装不上**（元数据拒绝）、
+**能装但没测**（风险最高，本仓库 3.6 就长期处在这里）、**测过**。三者不能混说成
+「支持」或「不支持」。
+
+**门禁**：`tools/audit-pypi-metadata.sh` 校验 `requires-python`、classifiers 与 README
+徽章三者一致；`docs/PYTHON_BINDING_AUDIT.md` 把「free-threaded 3.13t 明确不承诺」
+写进表格而不是留给读者猜。

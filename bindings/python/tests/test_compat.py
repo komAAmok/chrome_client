@@ -2049,6 +2049,787 @@ class ProxyRegressionTests(unittest.TestCase):
             self.assertTrue(name.startswith("ERR_"), (code, name))
 
 
+class ProxyURLNormalisationTests(unittest.TestCase):
+    """Pool strings Chromium rejects must be repaired or refused, not passed on.
+
+    ``ProxyRules::ParseFromString`` is strict: a rule it cannot parse leaves the
+    rule list empty, which the Core reports as ``ERR_NO_SUPPORTED_PROXIES``
+    (-336). That message reads like "no proxy is configured" rather than "your
+    proxy string has a trailing newline", which is how a proxy-pool endpoint
+    read from a file failed for every request.
+    """
+
+    def test_rule_shapes_that_used_to_fail_now_parse(self):
+        from chrome_client._python_impl.sessions import normalize_proxy_url
+        for raw in ("http://127.0.0.1:8080/", "http://127.0.0.1:8080/path",
+                    "http://127.0.0.1:8080#frag", "http://127.0.0.1:8080\n",
+                    "  http://127.0.0.1:8080  ", "HTTP://127.0.0.1:8080",
+                    "127.0.0.1:8080"):
+            rule, user, password = normalize_proxy_url(raw)
+            self.assertEqual(rule, "http://127.0.0.1:8080", raw)
+            self.assertIsNone(user, raw)
+            self.assertIsNone(password, raw)
+
+    def test_socks5h_is_a_spelling_not_a_mode(self):
+        """Chromium's SOCKS5 client always sends the hostname to the proxy.
+
+        ``socks5h`` is therefore the behaviour of plain ``socks5``, and the alias
+        is all that is needed. GetSchemeFromUriScheme (net/base/proxy_string_util
+        .cc) has no ``socks5h`` entry, so passing the spelling through produced
+        -336 ERR_NO_SUPPORTED_PROXIES.
+        """
+        from chrome_client._python_impl.sessions import normalize_proxy_url
+        self.assertEqual(normalize_proxy_url("socks5h://1.2.3.4:1080")[0],
+                         "socks5://1.2.3.4:1080")
+        self.assertEqual(normalize_proxy_url("socks5://1.2.3.4:1080")[0],
+                         "socks5://1.2.3.4:1080")
+
+    def test_socks4a_fails_closed(self):
+        """SOCKS4a asks for remote name resolution, which the Core cannot do.
+
+        Chromium's SOCKS4 client resolves locally (socks_client_socket.cc
+        DoResolveHost), so accepting the spelling would silently send the
+        caller's DNS out through this machine instead of the proxy.
+        """
+        from chrome_client._python_impl.sessions import normalize_proxy_url
+        with self.assertRaises(chrome_client.UnsupportedFeature):
+            normalize_proxy_url("socks4a://1.2.3.4:1080")
+
+    def test_doubled_scheme_is_refused(self):
+        """A pool entry that already carries a scheme, prefixed again by the caller.
+
+        Splitting on the first "://" would leave a host literally named "socks5",
+        so the request would be sent to a machine named after a protocol instead
+        of failing.
+        """
+        from chrome_client._python_impl.sessions import normalize_proxy_url
+        for raw in ("http://socks5://1.2.3.4:1080", "http://http://1.2.3.4:8080"):
+            with self.assertRaises(chrome_client.InvalidProxyURL):
+                normalize_proxy_url(raw)
+
+    def test_unknown_scheme_and_query_are_refused(self):
+        from chrome_client._python_impl.sessions import normalize_proxy_url
+        with self.assertRaises(chrome_client.InvalidProxyURL):
+            normalize_proxy_url("ftp://1.2.3.4:21")
+        with self.assertRaises(chrome_client.InvalidProxyURL):
+            normalize_proxy_url("http://1.2.3.4:8080?x=1")
+
+    def test_credentials_are_split_out_of_the_rule(self):
+        from chrome_client._python_impl.sessions import normalize_proxy_url
+        rule, user, password = normalize_proxy_url("http://u%40x:p%3Ass@1.2.3.4:8080")
+        self.assertEqual(rule, "http://1.2.3.4:8080")
+        self.assertEqual(user, "u@x")
+        self.assertEqual(password, "p:ss")
+
+    def test_empty_means_no_proxy(self):
+        from chrome_client._python_impl.sessions import normalize_proxy_url
+        self.assertEqual(normalize_proxy_url("")[0], "")
+        self.assertEqual(normalize_proxy_url("   ")[0], "")
+        self.assertIsNone(normalize_proxy_url(None)[0])
+
+
+class NativeProxyRuleTests(unittest.TestCase):
+    """Chromium's own rule syntax must reach the Core untouched.
+
+    `ProxyRules::ParseFromString` already understands per-scheme lists
+    (`http=h:p;https=h:p`, split on `;` then `=`), comma-separated fallback lists
+    and the `direct://` token. The facade used to rewrite every one of them as a
+    single `scheme://host` URI, which turned `http=h:p` into a rule naming a host
+    literally called "http" and made a valid configuration unroutable.
+    """
+
+    def test_per_scheme_lists_are_passed_through(self):
+        from chrome_client._python_impl.sessions import normalize_proxy_url
+        for raw in ("http=127.0.0.1:8080",
+                    "http=127.0.0.1:8080;https=127.0.0.1:8081",
+                    "http=127.0.0.1:8080 ; https=127.0.0.1:8081",
+                    "ftp=127.0.0.1:21"):
+            self.assertEqual(normalize_proxy_url(raw)[0], raw.strip(), raw)
+
+    def test_fallback_lists_are_passed_through(self):
+        """A comma-separated list is Chromium's own failover mechanism."""
+        from chrome_client._python_impl.sessions import normalize_proxy_url
+        raw = "http://127.0.0.1:8080,http://127.0.0.1:8081"
+        self.assertEqual(normalize_proxy_url(raw)[0], raw)
+
+    def test_direct_token_means_no_proxy(self):
+        from chrome_client._python_impl.sessions import normalize_proxy_url
+        self.assertEqual(normalize_proxy_url("direct://")[0], "direct://")
+        self.assertEqual(normalize_proxy_url("DIRECT://")[0], "DIRECT://")
+
+    def test_direct_mixed_with_a_server_is_refused(self):
+        """Chromium only accepts direct:// as the sole entry of a list."""
+        from chrome_client._python_impl.sessions import normalize_proxy_url
+        with self.assertRaises(chrome_client.InvalidProxyURL):
+            normalize_proxy_url("direct://,http://127.0.0.1:8080")
+
+    def test_unknown_rule_key_is_refused_with_the_accepted_set(self):
+        from chrome_client._python_impl.sessions import normalize_proxy_url
+        with self.assertRaises(chrome_client.InvalidProxyURL) as caught:
+            normalize_proxy_url("socks5=127.0.0.1:1080")
+        self.assertIn("http", str(caught.exception))
+
+    def test_credentials_inside_a_rule_list_fail_closed(self):
+        """A rule list carries no userinfo, so say so instead of dropping it."""
+        from chrome_client._python_impl.sessions import normalize_proxy_url
+        with self.assertRaises(chrome_client.InvalidProxyURL) as caught:
+            normalize_proxy_url("http=user:pass@127.0.0.1:8080")
+        self.assertIn("proxy_auth", str(caught.exception))
+
+    def test_quic_fails_closed_because_this_build_lacks_it(self):
+        """ENABLE_QUIC_PROXY_SUPPORT is off, so quic:// would be -336."""
+        from chrome_client._python_impl.sessions import normalize_proxy_url
+        with self.assertRaises(chrome_client.UnsupportedFeature):
+            normalize_proxy_url("quic://127.0.0.1:443")
+
+    def test_a_native_rule_list_still_works_through_the_core(self):
+        """Pass-through must be real routing, not just string preservation.
+
+        The proxy echoes the absolute URI, so a direct connection cannot pass.
+        """
+        proxy = ThreadingHTTPServer(("127.0.0.1", 0), ProxyHandler)
+        proxy.daemon_threads = True
+        proxy_thread = threading.Thread(target=proxy.serve_forever)
+        proxy_thread.daemon = True
+        proxy_thread.start()
+        url = "127.0.0.1:%d" % proxy.server_address[1]
+        target = "http://proxy-target.test/hello"
+        try:
+            for rule in ("http=" + url, "http://" + url + ",http://" + url):
+                with chrome_client.Session(proxy=rule) as session:
+                    response = session.get(target, timeout=10)
+                self.assertEqual(response.status_code, 200, rule)
+                self.assertEqual(response.text, "proxied:" + target, rule)
+        finally:
+            proxy.shutdown()
+            proxy_thread.join(timeout=5)
+
+class ProxyURLPortTests(unittest.TestCase):
+    """Port handling has to match Chromium, including the falsy port 0.
+
+    `ProxyServer::ParsePort` returns 0 for ":0" -- a real port -- and
+    `ProxySchemeHostAndPortToProxyServer` rejects a rule whose port is present but
+    empty. Falsy-testing the port collapsed both cases into the scheme default,
+    so an input Chromium refuses became a working request and a request to port 0
+    silently went to port 80.
+    """
+
+    def test_port_zero_survives(self):
+        from chrome_client._python_impl.sessions import normalize_proxy_url
+        self.assertEqual(normalize_proxy_url("http://h:0")[0], "http://h:0")
+        self.assertEqual(normalize_proxy_url("http://[::1]:0")[0], "http://[::1]:0")
+
+    def test_absent_port_is_left_to_chromium(self):
+        """No colon at all means "scheme default", which Chromium applies itself.
+
+        http=80, socks4/socks5=1080, https=443 come from
+        ProxyServer::GetDefaultPortForScheme; repeating them here would be a
+        repeated here would be a second definition of the same table.
+        """
+        from chrome_client._python_impl.sessions import normalize_proxy_url
+        for raw in ("http://h", "https://h", "socks5://h", "socks4://h"):
+            self.assertEqual(normalize_proxy_url(raw)[0], raw)
+
+    def test_empty_port_is_refused(self):
+        from chrome_client._python_impl.sessions import normalize_proxy_url
+        with self.assertRaises(chrome_client.InvalidProxyURL):
+            normalize_proxy_url("http://h:")
+
+    def test_trailing_text_is_reported_as_trailing_text(self):
+        """A pool comment is not a bad port; say which part is wrong."""
+        from chrome_client._python_impl.sessions import normalize_proxy_url
+        with self.assertRaises(chrome_client.InvalidProxyURL) as caught:
+            normalize_proxy_url("http://h:8080 comment")
+        self.assertIn("trailing text", str(caught.exception))
+        self.assertNotIn("invalid port", str(caught.exception))
+
+    def test_a_hash_comment_is_stripped_like_any_other_fragment(self):
+        from chrome_client._python_impl.sessions import normalize_proxy_url
+        self.assertEqual(normalize_proxy_url("http://h:8080 # rot=2")[0],
+                         "http://h:8080")
+
+    def test_normalisation_is_idempotent(self):
+        """Re-normalising a rule must not change it.
+
+        The rule is the value that reaches the Core; if a second pass altered it,
+        the cached Engine keys and the proxy actually used could disagree.
+        """
+        from chrome_client._python_impl.sessions import normalize_proxy_url
+        for raw in ("http://h:8080", "socks5h://h:1080", "h:80",
+                    "HTTP://u:p@h:80/", "http://[::1]:8080", "http://h:0"):
+            once = normalize_proxy_url(raw)[0]
+            self.assertEqual(normalize_proxy_url(once)[0], once, raw)
+
+class ProxyCredentialScopeTests(unittest.TestCase):
+    """``proxy_auth`` belongs to the session's proxy, not to every proxy.
+
+    An Engine -- and therefore a proxy -- is chosen per request, while
+    ``proxy_auth`` is session state. Applying it unconditionally sent the
+    session's username and password to whatever endpoint a rotating pool picked
+    for one call.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.proxy = ThreadingHTTPServer(("127.0.0.1", 0), ProxyHandler)
+        cls.proxy.daemon_threads = True
+        cls.proxy_thread = threading.Thread(target=cls.proxy.serve_forever)
+        cls.proxy_thread.daemon = True
+        cls.proxy_thread.start()
+        cls.proxy_url = "http://127.0.0.1:%d" % cls.proxy.server_address[1]
+        cls.target = "http://proxy-target.test/hello"
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.proxy.shutdown()
+        cls.proxy_thread.join(timeout=5)
+
+    def test_credentials_follow_only_the_session_proxy(self):
+        with chrome_client.Session(proxy=self.proxy_url,
+                                   proxy_auth=("pooluser", "poolpass")) as session:
+            # The session's own proxy gets the credentials.
+            self.assertTrue(session._proxy_auth_applies(self.proxy_url))
+            # Any other endpoint does not.
+            self.assertFalse(session._proxy_auth_applies("http://127.0.0.1:9"))
+        # A session with no proxy of its own has nothing to scope against, so
+        # the per-request proxy is the only candidate.
+        with chrome_client.Session() as session:
+            self.assertTrue(session._proxy_auth_applies("http://127.0.0.1:9"))
+
+    def test_pool_string_shapes_actually_route_through_the_core(self):
+        """The normalised rule must work on the wire, not only in the parser.
+
+        Each of these spellings used to fail with ERR_NO_SUPPORTED_PROXIES,
+        which reads like "no proxy configured". The assertion is on the response
+        body the proxy echoed, so a direct connection cannot pass.
+        """
+        for raw in (self.proxy_url + "/", self.proxy_url + "\n",
+                    self.proxy_url + "/path", self.proxy_url + "#frag",
+                    "  " + self.proxy_url + "  "):
+            with chrome_client.Session(proxy=raw) as session:
+                response = session.get(self.target, timeout=10)
+            self.assertEqual(response.status_code, 200, raw)
+            self.assertEqual(response.text, "proxied:" + self.target, raw)
+
+    def test_socks4a_raises_before_any_socket_is_opened(self):
+        """Fail-closed must be a construction-time error, not a -336.
+
+        The Core cannot do SOCKS4a, so the caller has to learn that from an
+        exception naming the feature rather than from a proxy error code.
+        """
+        with self.assertRaises(chrome_client.UnsupportedFeature):
+            with chrome_client.Session(proxy="socks4a://127.0.0.1:1080") as session:
+                session.get(self.target, timeout=5)
+
+    def test_doubled_scheme_raises_before_any_socket_is_opened(self):
+        with self.assertRaises(chrome_client.InvalidProxyURL):
+            with chrome_client.Session(proxy="http://socks5://127.0.0.1:1080") as session:
+                session.get(self.target, timeout=5)
+    def test_a_per_request_proxy_does_not_receive_the_session_credentials(self):
+        """A pool endpoint must not be handed the session's password.
+
+        The session is configured with proxy A plus ``proxy_auth``; the request is
+        pinned to proxy B, which answers 407 with a realm. Before the fix the
+        Engine built for B carried the session credentials anyway and sent them
+        to B unprompted, so B saw a ``Proxy-Authorization`` header it should
+        never have received (and, answering 407 again, the call ended in
+        ERR_TOO_MANY_RETRIES instead of returning the challenge).
+
+        Asserting on the header B actually received is what makes this a test:
+        the status code alone cannot distinguish "B was challenged" from "B
+        never got credentials".
+        """
+        class Challenger(BaseHTTPRequestHandler):
+            """Always answers 407; records any credentials it was given."""
+
+            protocol_version = "HTTP/1.1"
+            seen = []
+
+            def do_GET(self):
+                type(self).seen.append(self.headers.get("Proxy-Authorization"))
+                self.send_response(407)
+                self.send_header("Proxy-Authenticate", 'Basic realm="p"')
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+
+            def log_message(self, *_args):
+                pass
+
+        challenger = ThreadingHTTPServer(("127.0.0.1", 0), Challenger)
+        challenger.daemon_threads = True
+        challenger_thread = threading.Thread(target=challenger.serve_forever)
+        challenger_thread.daemon = True
+        challenger_thread.start()
+        challenger_url = "http://127.0.0.1:%d" % challenger.server_address[1]
+        try:
+            with chrome_client.Session(proxy=self.proxy_url,
+                                       proxy_auth=("pooluser", "poolpass")) as session:
+                try:
+                    session.get(self.target, proxy=challenger_url, timeout=15)
+                except chrome_client.RequestException:
+                    pass
+        finally:
+            challenger.shutdown()
+            challenger_thread.join(timeout=5)
+        self.assertTrue(Challenger.seen, "the per-request proxy was never used")
+        self.assertEqual([value for value in Challenger.seen if value is not None], [])
+
+    def test_the_session_proxies_mapping_also_scopes_the_credentials(self):
+        """The session can name its proxy through ``proxies`` instead of ``proxy=``.
+
+        Scoping only on ``proxy=`` left the mapping form unscoped, so a request
+        pinned to a different proxy still received the session credentials.
+        ``ProxyHandler`` never challenges, so this asserts on the header each
+        proxy actually received.
+        """
+        class Challenger(BaseHTTPRequestHandler):
+            protocol_version = "HTTP/1.1"
+            seen = []
+
+            def do_GET(self):
+                type(self).seen.append(self.headers.get("Proxy-Authorization"))
+                self.send_response(407)
+                self.send_header("Proxy-Authenticate", 'Basic realm="p"')
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+
+            def log_message(self, *_args):
+                pass
+
+        challenger = ThreadingHTTPServer(("127.0.0.1", 0), Challenger)
+        challenger.daemon_threads = True
+        challenger_thread = threading.Thread(target=challenger.serve_forever)
+        challenger_thread.daemon = True
+        challenger_thread.start()
+        challenger_url = "http://127.0.0.1:%d" % challenger.server_address[1]
+        try:
+            with chrome_client.Session(
+                    proxies={"http": self.proxy_url, "https": self.proxy_url},
+                    proxy_auth=("pooluser", "poolpass")) as session:
+                try:
+                    session.get(self.target, proxy=challenger_url, timeout=15)
+                except chrome_client.RequestException:
+                    pass
+        finally:
+            challenger.shutdown()
+            challenger_thread.join(timeout=5)
+        self.assertTrue(Challenger.seen, "the per-request proxy was never used")
+        self.assertEqual([value for value in Challenger.seen if value is not None], [])
+
+    def test_a_per_request_proxies_mapping_does_not_receive_them_either(self):
+        """Both override spellings must be scoped, not only `proxy=`.
+
+        Fixing only `proxy=` left `proxies={...}` leaking: the session named its
+        proxy through the mapping, the call replaced it via `proxies=`, and the
+        Engine for the replacement still carried the session credentials.
+        """
+        class Challenger(BaseHTTPRequestHandler):
+            protocol_version = "HTTP/1.1"
+            seen = []
+
+            def do_GET(self):
+                type(self).seen.append(self.headers.get("Proxy-Authorization"))
+                self.send_response(407)
+                self.send_header("Proxy-Authenticate", 'Basic realm="p"')
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+
+            def log_message(self, *_args):
+                pass
+
+        challenger = ThreadingHTTPServer(("127.0.0.1", 0), Challenger)
+        challenger.daemon_threads = True
+        challenger_thread = threading.Thread(target=challenger.serve_forever)
+        challenger_thread.daemon = True
+        challenger_thread.start()
+        challenger_url = "http://127.0.0.1:%d" % challenger.server_address[1]
+        try:
+            with chrome_client.Session(proxies={"http": self.proxy_url},
+                                       proxy_auth=("pooluser", "poolpass")) as session:
+                try:
+                    session.get(self.target, proxies={"http": challenger_url},
+                                timeout=15)
+                except chrome_client.RequestException:
+                    pass
+        finally:
+            challenger.shutdown()
+            challenger_thread.join(timeout=5)
+        self.assertTrue(Challenger.seen, "the per-request proxy was never used")
+        self.assertEqual([value for value in Challenger.seen if value is not None], [])
+
+    def test_the_session_proxy_still_authenticates_when_overridden_by_itself(self):
+        """Scoping must not disable the credentials for the session proxy itself.
+
+        The session is pinned to a challenging proxy and the call repeats it; the
+        credentials have to be attached, or every request would 407 forever.
+        """
+        received = []
+        original = AuthProxyHandler.do_GET
+
+        def capturing(handler):
+            received.append(handler.headers.get("Proxy-Authorization"))
+            return original(handler)
+
+        proxy = ThreadingHTTPServer(("127.0.0.1", 0), AuthProxyHandler)
+        proxy.daemon_threads = True
+        proxy_thread = threading.Thread(target=proxy.serve_forever)
+        proxy_thread.daemon = True
+        proxy_thread.start()
+        url = "http://127.0.0.1:%d" % proxy.server_address[1]
+        AuthProxyHandler.do_GET = capturing
+        try:
+            with chrome_client.Session(proxy=url,
+                                       proxy_auth=("user", "pass")) as session:
+                response = session.get(self.target, proxy=url, timeout=20)
+        finally:
+            AuthProxyHandler.do_GET = original
+            proxy.shutdown()
+            proxy_thread.join(timeout=5)
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(any(value for value in received), received)
+
+    def test_the_session_proxy_still_gets_its_credentials(self):
+        """The scoping must not disable authentication for the session proxy."""
+        self.assertTrue(chrome_client.Session(
+            proxy=self.proxy_url, proxy_auth=("pooluser", "poolpass")
+        )._proxy_auth_applies(self.proxy_url))
+
+
+class ProxyRetryPolicyTests(unittest.TestCase):
+    """A proxy failure that never reached the origin is retried once.
+
+    A rotating pool produces ERR_PROXY_CONNECTION_FAILED (-130) and
+    ERR_TUNNEL_CONNECTION_FAILED (-111) on healthy traffic: the endpoint chosen
+    for this call was momentarily unreachable or refused the CONNECT. Since the
+    origin never saw the request, one extra attempt cannot duplicate an effect --
+    but the retry must not apply to a request whose body cannot be replayed, nor
+    to credentials the proxy already rejected.
+    """
+
+    TARGET = "http://proxy-target.test/hello"
+
+    def test_replayability_guards_the_retry(self):
+        from chrome_client._python_impl.models import PreparedRequest
+        from chrome_client._python_impl.sessions import _request_is_replayable
+
+        get = PreparedRequest()
+        get.method, get.url = "GET", self.TARGET
+        self.assertTrue(_request_is_replayable(get))
+
+        post = PreparedRequest()
+        post.method, post.url = "POST", self.TARGET
+        self.assertFalse(_request_is_replayable(post))
+
+        streamed = PreparedRequest()
+        streamed.method, streamed.url = "GET", self.TARGET
+        streamed.stream_body = True
+        self.assertFalse(_request_is_replayable(streamed))
+
+    def test_only_unreachable_or_tunnelled_proxy_errors_are_retried(self):
+        from chrome_client._python_impl.sessions import _is_retriable_proxy_failure
+
+        self.assertTrue(_is_retriable_proxy_failure(
+            chrome_client.ProxyError("ERR_PROXY_CONNECTION_FAILED (net error -130)")))
+        self.assertTrue(_is_retriable_proxy_failure(
+            chrome_client.ProxyError("ERR_TUNNEL_CONNECTION_FAILED (net error -111)")))
+        # Rejected credentials: another attempt just spends 32 more restarts.
+        self.assertFalse(_is_retriable_proxy_failure(
+            chrome_client.ProxyError("ERR_TOO_MANY_RETRIES (net error -375)")))
+        self.assertFalse(_is_retriable_proxy_failure(
+            chrome_client.ProxyError("ERR_NO_SUPPORTED_PROXIES (net error -336)")))
+        self.assertFalse(_is_retriable_proxy_failure(RuntimeError("not a proxy error")))
+
+    def test_a_dead_proxy_is_attempted_twice_for_a_get_and_once_for_a_post(self):
+        """Attempt counting is the only way to see the retry from outside.
+
+        Nothing listens on the port, so every attempt fails with -130 and the
+        call still raises -- the difference is how many connection attempts were
+        made, which the proxy cannot report because it does not exist.
+        """
+        from chrome_client._python_impl import sessions as sessions_module
+
+        attempts = []
+        original = sessions_module.Session._send_once
+
+        def counting(self, prepared, options):
+            attempts.append(prepared.method)
+            return original(self, prepared, options)
+
+        sessions_module.Session._send_once = counting
+        try:
+            with chrome_client.Session(proxy="http://127.0.0.1:1") as session:
+                with self.assertRaises(chrome_client.ProxyError):
+                    session.get(self.TARGET, timeout=5)
+                self.assertEqual(len(attempts), 2)
+
+            del attempts[:]
+            with chrome_client.Session(proxy="http://127.0.0.1:1") as session:
+                with self.assertRaises(chrome_client.ProxyError):
+                    session.post(self.TARGET, data=b"x", timeout=5)
+                self.assertEqual(len(attempts), 1)
+
+            # An explicit policy replaces the default instead of stacking on it.
+            del attempts[:]
+            policy = chrome_client.RetryStrategy(count=2, delay=0.01)
+            with chrome_client.Session(proxy="http://127.0.0.1:1",
+                                       retry=policy) as session:
+                with self.assertRaises(chrome_client.ProxyError):
+                    session.get(self.TARGET, timeout=5)
+                self.assertEqual(len(attempts), 3)
+        finally:
+            sessions_module.Session._send_once = original
+
+class ManualRedirectErrorNamingTests(unittest.TestCase):
+    """Every redirect mode must name the Chromium net error, not a bare category.
+
+    The manual-redirect path (`allow_redirects=False`, which `Session.head` also
+    uses) went through `ResponseFuture` and lost the numeric code, so a tunnel
+    failure surfaced as the single word `Proxy` while the follow-redirect path
+    reported `ERR_TUNNEL_CONNECTION_FAILED (net error -111)`. Callers act on the
+    name; `Proxy` alone says nothing about what to fix.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        # A proxy that refuses every CONNECT with 502. Chromium turns any
+        # non-200/407 CONNECT response into ERR_TUNNEL_CONNECTION_FAILED
+        # (http_proxy_client_socket.cc DoProcessResponseCode).
+        cls.target = "https://tunnel-target.test/"
+
+    def test_manual_and_follow_modes_report_the_same_error_name(self):
+        from chrome_client._python_impl.exceptions import map_native_error
+        # The mapping itself is the contract; the transport path that produced
+        # the string is covered by the live fixture below.
+        for raw in ("Proxy (Chromium net error -111)",
+                    "Proxy (net error -111)"):
+            mapped = map_native_error(raw)
+            self.assertIsInstance(mapped, chrome_client.ProxyError)
+            self.assertIn("ERR_TUNNEL_CONNECTION_FAILED", str(mapped))
+            self.assertNotEqual(str(mapped), "Proxy")
+
+    def test_head_and_no_redirect_name_the_net_error(self):
+        """Live check: a refused tunnel reports its code in every mode.
+
+        A loopback proxy would be implicitly bypassed by Chromium, so this uses
+        a dead port, whose failure mode is ERR_PROXY_CONNECTION_FAILED (-130).
+        The point is identical: the code must survive the manual-redirect path.
+        """
+        dead = "http://127.0.0.1:1"
+        for call in (lambda s: s.head(self.target, timeout=5),
+                     lambda s: s.get(self.target, timeout=5, allow_redirects=False),
+                     lambda s: s.get(self.target, timeout=5)):
+            with chrome_client.Session(proxy=dead) as session:
+                with self.assertRaises(chrome_client.ProxyError) as caught:
+                    call(session)
+            message = str(caught.exception)
+            self.assertIn("net error", message)
+            self.assertTrue(message.startswith("ERR_"), message)
+
+    def test_requests_namespace_session_behaves_identically(self):
+        """`from chrome_client import requests` must not have a separate path.
+
+        The shim re-exports the same Session class, so a proxy failure has to
+        arrive with the same name and the same exception type.
+        """
+        from chrome_client import requests as cc_requests
+
+        self.assertIs(cc_requests.Session, chrome_client.Session)
+        session = cc_requests.Session()
+        session.proxies = {"http": "http://127.0.0.1:1",
+                           "https": "http://127.0.0.1:1"}
+        try:
+            with self.assertRaises(chrome_client.ProxyError) as caught:
+                session.head(self.target, timeout=5)
+        finally:
+            session.close()
+        self.assertIn("ERR_PROXY_CONNECTION_FAILED", str(caught.exception))
+
+class ProxyErrorClassificationTests(unittest.TestCase):
+    """Every proxy failure must be a ProxyError, whatever the Core category says.
+
+    `core/source/minicronet/error_mapping.h` decides the coarse category the
+    Core sends; the facade table decides the exception class. Rows that were
+    missing from BOTH sides (-170, -323, -336, -364, -366) fell through to
+    ConnectionError, and -336 -- the one a misconfigured proxy rule produces --
+    arrived as a generic network error.
+    """
+
+    def test_every_proxy_code_maps_to_proxy_error(self):
+        from chrome_client._python_impl.exceptions import map_native_error
+        codes = {-111, -115, -120, -121, -127, -130, -131, -136,
+                 -170, -323, -336, -364, -366, -375}
+        for code in sorted(codes):
+            # The Core used to send "Network" for the ones missing from its own
+            # switch; both spellings must reach the same class.
+            for category in ("Proxy", "Network"):
+                mapped = map_native_error(
+                    "%s (Chromium net error %d)" % (category, code))
+                self.assertIsInstance(mapped, chrome_client.ProxyError,
+                                      (code, category, type(mapped).__name__))
+                self.assertIn("net error %d" % code, str(mapped))
+
+    def test_no_supported_proxies_is_named(self):
+        from chrome_client._python_impl.exceptions import map_native_error
+        mapped = map_native_error("Proxy (Chromium net error -336)")
+        self.assertIn("ERR_NO_SUPPORTED_PROXIES", str(mapped))
+
+    def test_a_rule_list_of_only_separators_is_refused(self):
+        """Empty ProxyRules means "direct" to Chromium, not an error.
+
+        The Core rejects non-empty input that parses to no rule, so the facade
+        has to say what is wrong instead of letting it surface as InvalidURL.
+        """
+        from chrome_client._python_impl.sessions import normalize_proxy_url
+        for raw in (" ; ", ";", "  ;  "):
+            with self.assertRaises(chrome_client.InvalidProxyURL):
+                normalize_proxy_url(raw)
+
+    def test_an_empty_option_still_means_direct(self):
+        from chrome_client._python_impl.sessions import normalize_proxy_url
+        self.assertEqual(normalize_proxy_url("")[0], "")
+        self.assertEqual(normalize_proxy_url("   ")[0], "")
+
+
+class TimeoutBoundaryTests(unittest.TestCase):
+    """An out-of-range timeout must raise, not abort the interpreter.
+
+    `Duration::from_secs_f64` panics above u64::MAX seconds. pyo3 turns that
+    into PanicException, which derives from BaseException -- so it escaped every
+    `except Exception` and killed the process rather than the call.
+    """
+
+    def test_huge_and_non_finite_timeouts_are_rejected(self):
+        from chrome_client._python_impl.engine import EngineConfig
+        engine = EngineConfig().build()
+        for value in (1e20, 1e300, float("inf"), float("nan"), -1.0):
+            with self.assertRaises((RuntimeError, ValueError)) as caught:
+                engine.request("GET", "http://127.0.0.1:1/", [], None, value,
+                               True, None, None, None, False)
+            self.assertNotIsInstance(caught.exception, KeyboardInterrupt)
+
+    def test_a_large_but_representable_timeout_still_works(self):
+        from chrome_client._python_impl.engine import EngineConfig
+        engine = EngineConfig().build()
+        request = engine.request("GET", "http://127.0.0.1:1/", [], None, 1e19,
+                                 True, None, None, None, False)
+        with self.assertRaises(RuntimeError):
+            request.start_stream()
+
+class Python36SyntaxFloorTests(unittest.TestCase):
+    """The cp36-abi3 wheel claims 3.6, so the pure-Python half must honour it.
+
+    The extension is built against `abi3-py36`, but the package also ships
+    `chrome_client/**/*.py`, which is parsed by whatever interpreter installs it.
+    A 3.7-only stdlib call in that code therefore fails on a supported version
+    even though the wheel installed fine.
+    """
+
+    @staticmethod
+    def _package_root():
+        import chrome_client
+        import pathlib
+        return pathlib.Path(chrome_client.__file__).parent
+
+    def test_shipped_modules_parse_with_the_36_grammar(self):
+        import ast
+        root = self._package_root()
+        files = sorted(root.rglob("*.py"))
+        self.assertTrue(files, "no Python sources found to check")
+        for path in files:
+            with self.subTest(path=str(path)):
+                ast.parse(path.read_text(encoding="utf-8"),
+                          filename=str(path), feature_version=(3, 6))
+
+    def test_stdlib_attributes_absent_on_36_are_guarded(self):
+        """Calling a 3.7+ attribute must be guarded, not assumed.
+
+        `asyncio.get_running_loop` is the one that bit: it is 3.7+, and on 3.6
+        the AttributeError slipped past an `except RuntimeError`, leaking the
+        coroutine it was about to schedule.
+        """
+        import ast
+        root = self._package_root()
+        gated = {"asyncio": ("get_running_loop", "create_task", "all_tasks",
+                             "current_task", "run")}
+        offenders = []
+        for path in sorted(root.rglob("*.py")):
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Attribute):
+                    continue
+                if not isinstance(node.value, ast.Name):
+                    continue
+                names = gated.get(node.value.id)
+                if names and node.attr in names:
+                    # A guarded call is a string lookup (hasattr/getattr) or an
+                    # attribute of a module object fetched under try/except.
+                    offenders.append("%s:%d asyncio.%s"
+                                     % (path.name, node.lineno, node.attr))
+        # Every current use is either hasattr-guarded or inside try/except
+        # AttributeError; assert that by looking for the guard in the file.
+        for entry in offenders:
+            name, lineno = entry.split(":")[0], int(entry.split(":")[1].split()[0])
+            source = (root / "_python_impl" / name)
+            if not source.exists():
+                source = next(root.rglob(name))
+            lines = source.read_text(encoding="utf-8").splitlines()
+            window = chr(10).join(lines[max(0, lineno - 8):lineno + 2])
+            guarded = (
+                "hasattr(asyncio" in window
+                # Fetching the attribute itself inside try/except is the other
+                # accepted form: `except AttributeError` has to guard the
+                # lookup, not merely appear somewhere nearby.
+                or ("= asyncio." in window and "except AttributeError" in window)
+            )
+            self.assertTrue(
+                guarded,
+                "%s calls a 3.7+ attribute without a 3.6 guard" % entry)
+
+
+class AsyncReleaseWithoutLoopTests(unittest.TestCase):
+    """An abandoned async response must release itself with no running loop.
+
+    `release_without_loop` exists because scheduling the teardown coroutine on
+    a loop that will never run it left the native request -- and its socket and
+    buffered body -- alive for the process lifetime.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        cls.server.daemon_threads = True
+        cls.thread = threading.Thread(target=cls.server.serve_forever)
+        cls.thread.daemon = True
+        cls.thread.start()
+        cls.url = "http://127.0.0.1:%d/big" % cls.server.server_address[1]
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.server.shutdown()
+        cls.thread.join(timeout=5)
+
+    def test_close_after_the_loop_stopped(self):
+        import warnings
+
+        async def scenario():
+            async with chrome_client.AsyncSession() as session:
+                return await session.get(self.url, stream=True)
+
+        loop = asyncio.new_event_loop()
+        try:
+            response = loop.run_until_complete(scenario())
+        finally:
+            loop.close()
+        with warnings.catch_warnings():
+            # An unawaited coroutine is the symptom of the old behaviour.
+            warnings.simplefilter("error", RuntimeWarning)
+            response.close()
+
+    def test_the_reader_exposes_a_synchronous_release(self):
+        from chrome_client._python_impl.sessions import _AsyncBodyReader
+        self.assertTrue(callable(getattr(_AsyncBodyReader,
+                                       "release_without_loop", None)))
+
 class StreamingErrorOwnershipTests(unittest.TestCase):
     """A deadline belongs to the request; a size limit belongs to the consumer.
 

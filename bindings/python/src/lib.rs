@@ -50,7 +50,13 @@ fn duration(seconds: Option<f64>) -> PyResult<Option<Duration>> {
             if value.is_sign_negative() || !value.is_finite() {
                 return Err(native_error("timeout must be a finite non-negative number"));
             }
-            Ok(Duration::from_secs_f64(value))
+            // `Duration::from_secs_f64` panics above u64::MAX seconds
+            // (~5.8e11 years). A huge-but-finite float therefore aborted the
+            // process through a PanicException, which derives from
+            // BaseException and so slips past every `except Exception`.
+            // Rejecting it here keeps the failure a normal Python error.
+            Duration::try_from_secs_f64(value)
+                .map_err(|_| native_error("timeout must be a finite non-negative number"))
         })
         .transpose()
 }
