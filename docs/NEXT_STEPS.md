@@ -180,6 +180,76 @@ QUIC 标记 / ALPN）填写。这需要 ABI v8 → v9：头文件、`crates/mini
 集合与真实 Chrome 155 抓包一致（含顺序），且 `impersonate=None` 时**不**注入任何
 client hint——默认路径不能因为补 profile 而被污染。
 
+## 待办：逐请求 / 会话级 DNS 配置（ABI v9）
+
+**现状（实测，非推断）**：`dns_options` 在仓库内**零命中**——`grep -rn "dns_options"`
+扫过 `*.py` / `*.pyi` / `*.rs` / `*.cc` / `*.h` / `*.md` 无任何结果，Python 绑定里连
+`dns` 这个词都不存在。实测：
+
+```
+>>> chrome_client.get("http://example.com/", dns_options={"timeout": 1})
+TypeError: Session.request() got an unexpected keyword argument 'dns_options'
+>>> chrome_client.get("http://example.com/", doh_url="https://dns.example/dns-query")
+UnsupportedFeature: doh_url= is not supported: ABI v8 exposes no Core setting for it
+```
+
+即最接近的 DNS 开关 `doh_url` 是被**主动拒绝**的（`sessions.py:995` 与 `:1444` 的
+fail-closed 分支），不是已实现。根因在 ABI：`mn_engine_config_t` 的全部字段为
+`user_agent` / `proxy_rules` / `proxy_username` / `proxy_password` /
+`http_cache_mode` / `accept_language` / `profile_id` / `profile_namespace` /
+`protocol_mode` / `tls_verify_mode` / `custom_ca_pem`，**没有任何 DNS / resolver /
+DoH / nameserver 字段**，DNS 行为完全由 Chromium 内部默认值决定。
+
+**Chromium 侧注入点已核实齐全**（这是可行性依据）：
+`net/dns/public/dns_config_overrides.h` 提供 `DnsConfigOverrides`，字段为
+`nameservers` / `dns_over_tls_active` / `dns_over_tls_hostname` / `search` /
+`append_to_multi_label_name` / `ndots` / `fallback_period` / `attempts` /
+`doh_attempts` / `rotate` / `use_local_ipv6` / `dns_over_https_config` /
+`secure_dns_mode` / `allow_dns_over_https_upgrade` / `fallback_doh_nameservers`。
+注入路径两条：`HostResolverManager::SetDnsConfigOverrides()`
+（`net/dns/host_resolver_manager.h:201`，public）与
+`HostResolver::ManagerOptions::dns_config_overrides`（正式构造路径，
+`host_resolver_manager.cc:495` 消费）。`net/BUILD.gn:97` 定义了
+`ENABLE_BUILT_IN_DNS`，说明默认 resolver 走 `DnsClient`，overrides 会真正生效——
+否则改了也是空转。
+
+**修法（ABI v9）**：
+
+1. `mn_engine_config_t` 增加 DNS 字段（指针 + 长度成对，沿用现有结构体风格），
+   `MN_ABI_VERSION` 8 → 9；三份导出表版本符号 `MINICRONET_2` → `MINICRONET_3`。
+2. `crates/minicronet-sys/src/lib.rs` 同步 `#[repr(C)]` 与布局测试——注意 32 位
+   分支要重算（`mn_engine_config_t` 加字段后 68/72 那类断言必须跟着改，
+   且见下文「32 位 ABI 布局没有执行路径」，该分支目前无 CI 执行证明）。
+3. Core 侧在 `Engine::InitializeOnNetworkThread`（`core/source/engine.cc`）
+   构造 `DnsConfigOverrides` 并注入；参数校验沿用 `core/source/minicronet.cc`
+   既有的 `kMax*` 上界风格，调用方传入的长度不可信。
+4. 绑定层：`EngineConfig` 加字段（进缓存键）、`Session.__init__` 加参数、
+   解除 `doh_url` 的拒绝分支；`.pyi` 由 `tools/expand-verb-signatures.py`
+   重生成（该脚本幂等，`--check` 可断言），不要手改 24 处 verb 签名。
+
+**必须先定的两个取舍**（不是实现细节，是语义决定）：
+
+- **逐请求 vs 会话级**。DNS 是 engine 级设置（`set_*` 只在建 context 时生效）。
+  若要做 `get(..., dns_options=...)`，每个不同配置都会重建 engine 并占用一个
+  缓存槽——项目里已有同类教训（`_resolve_cookies` 注释记载「8 次调用方改动填满
+  8 个槽并挤掉可复用那个」）。复用 `discard_cookies` 的 `_one_shot_slot` 可以规避
+  缓存问题，但一次性 engine **会丢掉连接池与 TLS 会话缓存**，即逐请求 DNS 的请求
+  享受不到 keep-alive。建议先只做**会话级**（进 `EngineConfig` 缓存键），语义清晰、
+  无一次性 engine 代价。
+- **`doh_url` 的语义映射**。curl_cffi 的 `doh_url` 是单个 URL，Chromium 是
+  `DnsOverHttpsConfig`（多服务器 + 模板）。要么 1:1 映射，要么继续 fail-closed
+  拒绝——按 AGENTS.md §8 不得静默忽略。
+
+**验收**：
+
+- 每个暴露的 overrides 字段都要有**可观测证据**证明它真的改变了 Chromium 行为
+  （例如指向自定义 nameserver 后解析一个只有该服务器知道的域名）。按 AGENTS.md §7，
+  没有实测的字段不能声明支持——`use_local_ipv6` 这类依赖系统栈行为的字段若无法
+  证明，就 fail-closed 拒绝而不是暴露。
+- 8 个平台产物与 manifest 全部重建并同步（`tools/install-core-binaries.py`）。
+- 回归用例覆盖：默认路径（不传 DNS 参数）行为不变；非法 nameserver 报
+  `InvalidArgument` 而非崩溃；DNS 配置不同的两个 Session 不串用解析结果。
+
 ## 待办：32 位 ABI 布局没有执行路径
 
 `crates/minicronet-sys` 的布局测试已有 32 位分支（数值已按头文件修正为

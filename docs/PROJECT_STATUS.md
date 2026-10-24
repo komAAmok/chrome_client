@@ -661,7 +661,7 @@ pinned profile」改为**抛 `ImpersonateError`**，必须给出精确的 `chrom
 - 工具脚本里的开发者绝对路径：改为 `tools/core-paths.sh` 统一解析（兄弟目录 → `$HOME/chromium`）。
 - 8 个平台 Core 已按上述 Core 源码改动全部重建并刷新 manifest。
 
-仍未闭合、已记入 `NEXT_STEPS.md` 的：ABI v9 协商协议、32 位布局的 CI 执行路径、
+仍未闭合、已记入 `NEXT_STEPS.md` 的：ABI v9 协商协议、ABI v9 逐请求/会话级 DNS 配置、32 位布局的 CI 执行路径、
 产物来源证明（重建比对/签名）、Linux 交叉构建的 pkgconf 迁移、git 历史瘦身。
 
 ## 代理认证修复（2026-09-24）
