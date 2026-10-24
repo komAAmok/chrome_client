@@ -344,6 +344,12 @@ void WebSocket::OnOpen(const std::string& protocol,
   if (terminal_.load()) {
     return;
   }
+  // The deadline covers the opening handshake only. Leaving it armed after the
+  // socket was open tore down a healthy connection: a caller that passed
+  // timeout=1 and then idled past one second got ERR_TIMED_OUT on the next
+  // recv() and InvalidState on the next send(). This runs on the same network
+  // sequence the timer was started on, which Stop() requires.
+  timeout_timer_.Stop();
   opened_.store(true);
   if (!callbacks_.on_open) {
     StartReading();

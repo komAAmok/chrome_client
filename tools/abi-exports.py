@@ -24,6 +24,12 @@ def declared_exports(header: Path):
     # prototype wrapped across lines (the header has several) still parses as
     # one declaration.
     text = re.sub(r"^#.*$", "", header.read_text(), flags=re.M)
+    # Comments go too. A declaration inside /* */ or after // is not a
+    # declaration, and scanning the raw text counted it: commenting out the only
+    # MN_EXPORT line of a symbol still produced "declares exactly the N v8
+    # exports". The header holds no string literal containing a comment marker,
+    # so a plain textual strip cannot remove a declaration that is really there.
+    text = re.sub(r"/\*.*?\*/|//[^\n]*", "", text, flags=re.S)
     return set(re.findall(r"MN_EXPORT\b[^;]*?\b(mn_[a-z_]+)\s*\(", text, re.S))
 
 

@@ -65,12 +65,14 @@ Node (N-API) ──┘
 
 ```bash
 tools/audit-abi.sh
+python3 tools/audit-abi-layout.py
 tools/audit-readme.sh
 tools/audit-pypi-metadata.sh
 python3 tools/audit-python-stubs.py
 python3 tools/audit-python-typing.py
 tools/audit-core-binaries.sh
 tools/audit-core-inputs.sh
+python3 tools/audit-net-error-names.py   # needs a Chromium checkout (CHROMIUM_SRC)
 cargo fmt --all -- --check
 cargo check --workspace --all-targets
 cargo clippy --workspace --all-targets -- -D warnings

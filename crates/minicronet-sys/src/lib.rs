@@ -1,6 +1,5 @@
 #![no_std]
 #![allow(non_camel_case_types)]
-#![allow(non_upper_case_globals)]
 
 use core::ffi::c_void;
 
@@ -775,7 +774,15 @@ mod abi_layout_tests {
             if cfg!(target_pointer_width = "64") {
                 128
             } else {
-                68
+                // 72, not 68: u64 is 8-byte aligned even on i386, so the
+                // compiler inserts 4 bytes of padding after `callbacks`
+                // (which ends at 68). Verified against the real header with
+                // `gcc -m32` static asserts, and against rustc's own i686
+                // layout: `nm --print-size` on an i686 object reports
+                // offset_of!(mn_websocket_config_t, timeout_ms) == 0x48 = 72.
+                // The previous 68 was never executed, because CI only runs the
+                // 64-bit branch, so nothing caught it.
+                72
             }
         );
     }

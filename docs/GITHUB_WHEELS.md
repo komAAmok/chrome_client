@@ -14,6 +14,8 @@ Windows 构建前由 `tools/stage-windows-wheel.ps1` 把匹配架构的 `minicro
 
 macOS 构建后使用 `delocate-wheel` 收集并修复匹配架构的 `libminicronet.dylib`。
 
-主绑定使用 `cp37-abi3`，Python 3.6 使用独立的 `bindings/python36`、PyO3 0.15.1 和 `cp36-abi3`。为满足 maturin 的最低运行时要求，Linux 和 macOS 的 Python 3.6 ABI3 wheel 使用 CPython 3.7/3.10 作为构建解释器，最低兼容版本仍由 `abi3-py36` feature 和 wheel 标签决定；实际导入和运行需在独立 Python 3.6 环境中验证。Linux ARM64 在原生 `ubuntu-24.04-arm` runner 上构建，macOS 使用 `macos-15`（ARM64）和 `macos-15-intel`（x86_64）。Windows ARM64 暂不生成 Python 3.6 wheel：官方没有可用的 Python 3.6 ARM64 构建和对应导入库；准备好该工具链后再加入矩阵。
+主绑定使用 `cp39-abi3`，Python 3.6–3.8 使用独立的 `bindings/python36`、PyO3 0.15.1 和 `cp36-abi3`。
+
+现代 wheel 的构建解释器必须 **>= 3.9**，这是 pyo3 0.30.1 的硬约束：`abi3-py39` 配上 3.7 解释器会直接报 "cannot set a minimum Python version 3.9 higher than the interpreter version 3.7"（`pyo3-build-config-0.30.1/src/impl_.rs:82-89`）。manylinux2014 镜像现在也只提供 CPython 3.9 及以上的 `/opt/python/cp3XX-cp3XX` 目录，原来的 `cp37-cp37m` 已经不存在，所以 Linux 全部改用 `/opt/python/cp39-cp39/bin/python3.9`。Python 3.6 的 ABI3 wheel 同样用 CPython 3.9 作为构建解释器（maturin 0.14.17 要求 >= 3.7），最低兼容版本仍由 `abi3-py36` feature 和 wheel 标签决定；实际导入和运行需在独立 Python 3.6 环境中验证。Linux ARM64 在原生 `ubuntu-24.04-arm` runner 上构建，macOS 使用 `macos-15`（ARM64）和 `macos-15-intel`（x86_64）。Windows ARM64 暂不生成 Python 3.6 wheel：官方没有可用的 Python 3.6 ARM64 构建和对应导入库；准备好该工具链后再加入矩阵。
 
 Alpine 不在本工作流中伪装成 glibc wheel。`musllinux` wheel 只有在准备好 musl 版 `libminicronet` 后才能增加对应 job；现有 glibc Core 不能放进 Alpine wheel。

@@ -222,12 +222,12 @@ Python 包重写为多个模块，公开导入仍只有 `chrome_client`，另加
 - `session.stream` 同时是 requests 的布尔标志和 curl_cffi 的上下文管理器方法
   （`int` 子类且 callable）。
 
-## 主版本（Python 3.7–3.13）
+## 主版本（Python 3.9–3.15）
 
 | 项目 | 结果 | 证据 |
 | --- | --- | --- |
-| PyO3 版本 | 通过 | `pyo3 = =0.28.3` |
-| 最低 Python | 通过 | `abi3-py37`、`requires-python >=3.7` |
+| PyO3 版本 | 通过 | `pyo3 = =0.30.1` |
+| 最低 Python | 通过 | `abi3-py39`（pyo3 0.30.1 的 `MINIMUM_SUPPORTED_VERSION`，`impl_.rs:26`） |
 | 扩展入口 | 通过 | 导出 `PyInit_chrome_client_native` |
 | 公开导入 | 通过 | `import chrome_client`、`from chrome_client import requests` |
 | GIL | 通过 | `Python::detach` 包住同步等待；回调只 `Python::attach` 调度 loop |
@@ -241,12 +241,12 @@ Python 包重写为多个模块，公开导入仍只有 `chrome_client`，另加
 | 分块上传 | 通过 | 文件对象 / 迭代器 / 异步迭代器均走 `upload_write` |
 | 重定向 | 通过 | history、最终 URL、`max_redirects`、`allow_redirects=False` |
 
-## Python 3.6 版本
+## Python 3.6–3.8 版本
 
 | 项目 | 结果 | 证据 |
 | --- | --- | --- |
 | PyO3 版本 | 通过 | `pyo3 = =0.15.1` |
-| 最低 Python | 通过 | `abi3-py36`、`requires-python >=3.6,<3.7` |
+| 最低 Python | 通过 | `abi3-py36`，服务 3.6–3.8（`cp36-abi3` wheel 的 abi3 下界是 3.6，不是 3.8；3.9 起由 `bindings/python` 接走） |
 | 扩展入口 | 通过 | 导出 `PyInit_chrome_client_native36` |
 | native 方法对齐 | 通过 | 脚本比对两个扩展的方法集合；facade 使用的 25 个方法在 3.6 侧齐全 |
 | 共享 facade 语法 | 通过 | 全部 `.py` 用 `ast.parse(feature_version=(3, 6))` 通过；无 f-string、无 walrus |

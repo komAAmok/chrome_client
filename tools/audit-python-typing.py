@@ -7,13 +7,26 @@ the stub promises. CI ran it, but nothing in the local gate list did, so a
 missing ``Tuple``/``Literal`` import reached the remote and failed the build
 there -- the slowest possible place to find out.
 
-Runs the two commands from .github/workflows/ci.yml verbatim. Needs mypy, which
-is a type-checking-only dependency: when it is absent this script says so and
-exits 0 rather than failing a checkout that never intended to type-check.
+Runs the two commands from .github/workflows/ci.yml verbatim.
 
-    python3 tools/audit-python-typing.py
+    python3 tools/audit-python-typing.py            # needs mypy; fails if absent
+    python3 tools/audit-python-typing.py --optional # SKIPPED, exit 0, if absent
 
-Exit status 0 when clean, 1 when mypy reports an error.
+mypy is a type-checking-only dependency, and this script is in the AGENTS.md
+gate list, so it *is* a gate: a gate that cannot run must not report success.
+It used to print "mypy is not installed; skipping." and exit 0, which is the
+"a local gate you cannot run is no gate" failure mode. The check was already
+finding real defects -- two undefined ``Dict`` names in sessions.pyi -- and no
+local run ever showed them, because every local run said "skipped" and CI was
+the only place it actually executed.
+
+The default is therefore to fail when mypy is missing. `--optional` is the
+documented escape hatch for a checkout that never intended to type-check; it
+prints SKIPPED with the reason, so a caller reading logs cannot mistake it for a
+pass. Neither the AGENTS.md gate list nor .github/workflows/ci.yml passes it.
+
+Exit status 0 when clean, 1 when mypy reports an error, and 1 when mypy is
+missing without `--optional`.
 """
 
 from __future__ import annotations
@@ -41,11 +54,29 @@ def run(label: str, argv: list[str], env: dict[str, str]) -> bool:
     return result.returncode == 0
 
 
-def main() -> int:
+def main(argv: list[str]) -> int:
+    optional = "--optional" in argv
+    unknown = [arg for arg in argv if arg != "--optional"]
+    if unknown:
+        print("usage: %s [--optional]" % pathlib.Path(__file__).name, file=sys.stderr)
+        return 1
+
     if not have_mypy():
-        print("audit-python-typing: mypy is not installed; skipping.")
-        print("  install it with: python3 -m pip install 'mypy>=1.11,<2' typing_extensions")
-        return 0
+        install = "python3 -m pip install 'mypy>=1.11,<2' typing_extensions"
+        if optional:
+            # Explicitly marked, never silent: the word SKIPPED and the reason are
+            # both required so this cannot be read as a passing type check.
+            print("audit-python-typing: SKIPPED -- mypy is not installed (%s)" % install)
+            return 0
+        print(
+            "audit-python-typing: FAILED -- mypy is not installed, so the stubs "
+            "were not type-checked.\n"
+            "  install it with: %s\n"
+            "  (pass --optional only if this checkout never intended to type-check; "
+            "the AGENTS.md gate list and CI do not)" % install,
+            file=sys.stderr,
+        )
+        return 1
 
     env = dict(os.environ)
     env["MYPYPATH"] = str(MYPYPATH)
@@ -69,4 +100,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(main(sys.argv[1:]))

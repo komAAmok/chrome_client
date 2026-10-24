@@ -13,6 +13,9 @@ ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 # script works from any directory on any machine. Point CHROMIUM_SRC at your
 # checkout if it lives elsewhere.
 source "$(dirname "${BASH_SOURCE[0]}")/core-paths.sh"
+# Installs the rg() wrapper the Android/Java/JNI leak check below uses, so a
+# missing rg fails the build instead of reading as "no leak".
+require_rg
 export CHROMIUM_SRC=$(resolve_chromium_src)
 OUT_DIR=${OUT_DIR:-$CHROMIUM_SRC/out/MiniCronet-linux-x86_64}
 JOBS=${JOBS:-2}
@@ -84,9 +87,14 @@ cd "$CHROMIUM_SRC"
 "$GN" gen "$OUT_DIR" --fail-on-unused-args \
   --root-target=//minicronet '--root-pattern=//minicronet:*'
 
-# The desktop Core must never pull in the Android/Java/JNI graph.
-if grep -rlE '(components/cronet/android|obj/base/android/|\.java( |$)|\.jar( |$)|jni_headers|/jni/)' \
-  "$OUT_DIR" --include='*.ninja' >/dev/null 2>&1; then
+# The desktop Core must never pull in the Android/Java/JNI graph. rg() (installed
+# by require_rg) is used instead of `grep -r ... >/dev/null 2>&1`, which reported
+# an unreadable or missing build directory as exit 2 -- the same status the `if`
+# reads as "no leak", so the check passed without reading a single file. rg()
+# fails loudly on status 2 and this pattern is identical to the seven cross
+# build scripts, which all already use it.
+if rg -q '(components/cronet/android|obj/base/android/|\.java( |$)|\.jar( |$)|jni_headers|/jni/)' \
+  "$OUT_DIR" -g '*.ninja' -g '*.rsp'; then
   die 'Android/Java/JNI dependency leaked into the desktop Core'
 fi
 

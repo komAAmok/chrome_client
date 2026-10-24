@@ -53,13 +53,28 @@ apply_patch() {
     printf 'applied %s\n' "$name"
     return
   fi
-  local marker file text
-  for marker in "$@"; do
-    file=${marker%%:*}
-    text=${marker#*:}
-    grep -Fq "$text" "$repo/$file" \
-      || die "$name is partially applied: $file lacks '$text'"
-  done
+  # The patch does not apply forward, so it is supposed to be applied already.
+  # The marker list alone cannot prove that: it is a hand-maintained sample of the
+  # patch's files and covered 6 of the 10 files in minicronet-core.patch and 3 of
+  # 27 in profile-context-net.patch, so a hunk missing from any unlisted file left
+  # every named marker present and this printed "verified". `git apply --reverse
+  # --check` succeeds only when *every* hunk of the patch is present, so it is the
+  # authority here; the markers stay as the diagnostic that names a wrong file.
+  if ! git -C "$repo" apply --check --reverse "$patch_file" 2>/dev/null; then
+    local marker file text
+    for marker in "$@"; do
+      file=${marker%%:*}
+      text=${marker#*:}
+      grep -Fq "$text" "$repo/$file" \
+        || die "$name is partially applied: $file lacks '$text'"
+    done
+    # Every named marker is present, yet the patch neither applies forward nor
+    # reverses: some hunk in a file the marker list does not name is missing (or
+    # the tree was edited under the patch). Either way the tree cannot be trusted.
+    # Single-quoted segments: backticks inside a double-quoted string would be
+    # command-substituted by the shell and the paths would vanish from the message.
+    die "$name neither applies forward nor is fully present: every marker below is in place, so the difference is in a file the marker list does not name. Rejected by 'git -C $repo apply --reverse --check $patch_file'; run 'git -C $repo apply --reverse $patch_file' to unwind what is there, then re-sync"
+  fi
   printf 'verified %s\n' "$name"
 }
 
@@ -68,6 +83,7 @@ apply_patch minicronet-core.patch . \
   'build_overrides/build.gni:is_cronet_build || is_minicronet_build' \
   'build/config/compiler/BUILD.gn:is_fuchsia || enable_cast_receiver || is_minicronet_build' \
   'build/config/compiler/BUILD.gn:/clang:-Oz' \
+  'build/config/compiler/BUILD.gn:lto_opt_level = 1' \
   'net/features.gni:disable_file_support = is_cronet_build || is_minicronet_build' \
   'net/BUILD.gn:!is_cronet_build && !is_minicronet_build' \
   'base/BUILD.gn:nix/xdg_util_minicronet.cc'

@@ -23,15 +23,42 @@ die() { printf 'ABI audit: %s\n' "$*" >&2; exit 1; }
 grep -qx '#define MN_ABI_VERSION 8u' "$HEADER" \
   || die "header ABI version is not 8"
 
-for symbol in "${symbols[@]}"; do
-  grep -Eq "\\b${symbol}\\b" "$HEADER" || die "$symbol: missing from header"
-  grep -Eq "pub fn ${symbol}\\(" "$SYS" || die "$symbol: missing from Rust FFI"
-  grep -Eq "(^|[^[:alnum:]_])${symbol}\\(" "$CORE" \
-    || die "$symbol: missing from Core implementation"
-done
-
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
+
+# Every carrier is stripped of C and C++ comments before any symbol is looked
+# for. Matching the raw text made the audit blind to the one edit that actually
+# removes an export: commenting the declaration out. Deleting the MN_EXPORT line
+# from the header, the "pub fn" from the FFI and the MN_CALL definition from the
+# Core while leaving them in /* */ or // comments passed all 60 greps and still
+# printed "20 symbols". A commented-out declaration is not a declaration.
+python3 - "$HEADER" "$SYS" "$CORE" "$tmp" <<'PY'
+import pathlib
+import re
+import sys
+
+# /* ... */ (possibly multi-line) and // to end of line. The three carriers hold
+# no string literal containing a comment marker, so a plain textual strip cannot
+# eat a declaration that is really there.
+COMMENTS = re.compile(r"/\*.*?\*/|//[^\n]*", re.S)
+for source, name in zip(sys.argv[1:4], ("header", "sys", "core")):
+    text = pathlib.Path(source).read_text()
+    pathlib.Path(sys.argv[4], name).write_text(COMMENTS.sub("", text))
+PY
+
+for symbol in "${symbols[@]}"; do
+  grep -Eq "\\b${symbol}\\(" "$tmp/header" \
+    || die "$symbol: missing from header (a commented-out declaration is not a declaration)"
+  grep -Eq "pub fn ${symbol}\\(" "$tmp/sys" \
+    || die "$symbol: missing from Rust FFI (a commented-out declaration is not a declaration)"
+  # Anchored on MN_CALL, the calling-convention macro every ABI definition uses.
+  # Matching a bare "symbol(" accepted any *call* of the function: renaming only
+  # the definition of mn_request_retain to mn_request_retain_REMOVED still passed,
+  # because mn_request_start() calls it internally. The definition is what the
+  # export table points at, so the definition is what must be there.
+  grep -Eq "MN_CALL[[:space:]]+${symbol}\\(" "$tmp/core" \
+    || die "$symbol: missing from Core implementation (no 'MN_CALL $symbol(' definition)"
+done
 
 awk '/^[[:space:]]+mn_[a-z_]+;[[:space:]]*$/ { gsub(/[;[:space:]]/, ""); print }' \
   "$ROOT/core/exports/minicronet.lds" | sort -u >"$tmp/lds"

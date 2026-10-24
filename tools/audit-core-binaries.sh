@@ -6,6 +6,9 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BINARIES="$ROOT/core/binaries"
 HEADER="$ROOT/core/abi/minicronet.h"
+# The per-target triple and library-name catalog. It restates facts that also
+# live in each manifest, so it needs its own gate or the two drift.
+TARGETS_JSON="$BINARIES/targets.json"
 
 targets=(
   linux-x86 linux-x86_64 linux-arm64
@@ -40,15 +43,33 @@ workspace_version="$(python3 "$ROOT/tools/version.py")" \
 grep -Eq '^#define MN_ABI_VERSION 8u$' "$HEADER" \
   || die "header ABI version is not 8"
 
+[[ -f "$TARGETS_JSON" ]] \
+  || die "missing core/binaries/targets.json; the per-target catalog is gone"
+
 for target in "${targets[@]}"; do
   dir="$BINARIES/$target"
   manifest="$dir/manifest.json"
   [[ -f "$manifest" ]] || die "$target: missing manifest.json"
 
   # Parse JSON with the standard library, avoiding a jq dependency.
-  python3 - "$manifest" "$target" <<'PY'
+  # CHROMIUM_REVISION is the pinned tree every artifact must have been built
+  # from, and the manifest is the only record of which tree that was. The field
+  # was required to *exist* but never compared, so a manifest naming any other
+  # 40-hex commit passed: the audit then certified an artifact against a tree this
+  # repository does not build against, which is exactly the drift the size
+  # ceilings and the version marker exist to catch.
+  pinned_revision=$(tr -d '[:space:]' <"$ROOT/CHROMIUM_REVISION")
+  [[ "$pinned_revision" =~ ^[0-9a-f]{40}$ ]] \
+    || die "CHROMIUM_REVISION is not a 40-character commit hash"
+  # core/binaries/targets.json states the same two facts per target that the
+  # manifest does -- the triple and the library filename -- and it is the file
+  # build.rs reads to pick an artifact. Nothing compared the two, so a manifest
+  # could name i686 while sitting in linux-x86_64/ and this audit stayed green;
+  # the artifact was then certified against a triple the repository does not
+  # use for that directory.
+  python3 - "$manifest" "$target" "$pinned_revision" "$TARGETS_JSON" <<'PY'
 import json, pathlib, sys
-path, expected_target = sys.argv[1:]
+path, expected_target, pinned_revision, targets_json = sys.argv[1:]
 data = json.loads(pathlib.Path(path).read_text())
 required = ("project", "core", "abi_version", "chromium_revision",
             "target", "triple", "library", "sha256",
@@ -60,8 +81,29 @@ if data["project"] != "chrome_client" or data["core"] != "minicronet":
     raise SystemExit("unexpected project/core")
 if data["abi_version"] != 8 or data["target"] != expected_target:
     raise SystemExit("ABI or target mismatch")
+if data["chromium_revision"] != pinned_revision:
+    raise SystemExit(
+        f"chromium_revision is {data['chromium_revision']} but CHROMIUM_REVISION "
+        f"pins {pinned_revision}; this artifact was built from a different tree "
+        "than the one this repository builds against")
 if not isinstance(data["runtime_dependencies"], list):
     raise SystemExit("runtime_dependencies must be an array")
+catalog = json.loads(pathlib.Path(targets_json).read_text())
+if catalog.get("abi_version") != 8:
+    raise SystemExit(
+        f"targets.json abi_version is {catalog.get('abi_version')}, not 8; it "
+        "describes a different ABI than the one this audit certifies")
+entry = catalog.get("targets", {}).get(expected_target)
+if entry is None:
+    raise SystemExit(f"targets.json has no {expected_target} entry")
+if entry.get("triple") != data["triple"]:
+    raise SystemExit(
+        f"triple is {data['triple']} in the manifest but {entry.get('triple')} "
+        f"in targets.json for {expected_target}")
+if entry.get("library") != data["library"]:
+    raise SystemExit(
+        f"library is {data['library']} in the manifest but {entry.get('library')} "
+        f"in targets.json for {expected_target}")
 PY
 
   library="$(python3 - "$manifest" <<'PY'
@@ -100,7 +142,14 @@ PY
     macos-arm64) [[ "$description" == *"Mach-O 64-bit arm64"* ]] || die "$target: wrong architecture ($description)" ;;
   esac
 
-  if [[ "$target" == linux-* ]] && command -v readelf >/dev/null; then
+  # readelf is required, not merely used when present: `&& command -v readelf`
+  # made the SONAME check vanish on a machine without binutils, so an artifact
+  # with a wrong or missing SONAME passed on that machine and failed in CI. The
+  # command is already a hard requirement of the top of this script (sha256sum,
+  # file); this one was the only conditional.
+  if [[ "$target" == linux-* ]]; then
+    command -v readelf >/dev/null \
+      || die "readelf is required to check the SONAME of the Linux artifacts"
     readelf -d "$path" | grep -q 'SONAME.*libminicronet\.so' \
       || die "$target: missing libminicronet.so SONAME"
   fi
@@ -183,9 +232,16 @@ PY
   # minicronet.cc rather than a run-time concatenation, so it is present
   # verbatim in the image. Only the artifact's own bytes are searched, never
   # the manifest, so a stale manifest cannot satisfy the check.
+  # The trailing '|| true' is load-bearing and belongs to this pipeline only.
+  # Under 'set -e' a grep with no match makes the whole pipeline non-zero, so
+  # the assignment itself aborted the script and the diagnostic below was
+  # unreachable: a markerless artifact died with an empty stderr and no
+  # explanation. Swallowing the status here is safe because the next line turns
+  # an empty result into a hard failure; it must not be copied to a check that
+  # has no such successor.
   artifact_version="$(strings -a "$path" \
     | grep -oE 'minicronet/[0-9]+\.[0-9]+\.[0-9]+' \
-    | head -1 | cut -d/ -f2)"
+    | head -1 | cut -d/ -f2 || true)"
   [[ -n "$artifact_version" ]] \
     || die "$target: no minicronet/<version> marker in the artifact"
   [[ "$artifact_version" == "$workspace_version" ]] \

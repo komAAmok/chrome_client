@@ -12,7 +12,8 @@ Two stores exist and they are not the same thing:
 
 Because the Core wins ties, a caller mutation that conflicts with what the Core
 already stored can only be honoured by rebuilding the engine; ``Session`` does
-that automatically, and the jar's ``revision`` is how it notices.
+that automatically, by comparing the ``Cookie`` line this jar would send against
+the one its engine mirror would send -- not by watching ``revision``.
 
 ``RequestsCookieJar`` is declared as a ``MutableMapping[str, str]`` (the same
 shape typeshed gives ``requests.cookies.RequestsCookieJar``) so ``jar["k"]``,
@@ -243,7 +244,10 @@ def morsel_to_cookie(morsel: Morsel) -> cookielib.Cookie:
 
     Args:
         morsel: The parsed cookie. ``max-age`` wins over ``expires``, and both
-            are converted to an absolute epoch time.
+            are converted to an absolute epoch time. ``expires`` is read in
+            every date format RFC 6265 requires (RFC 1123, RFC 850 and
+            asctime); a value in none of them means "no expiry" rather than a
+            dropped cookie.
 
     Returns:
         The equivalent ``cookielib.Cookie``.
@@ -263,10 +267,12 @@ class RequestsCookieJar(  # type: ignore[misc]  # cookielib and Mapping disagree
 ):
     """``cookielib.CookieJar`` with the dict interface requests exposes.
 
-    ``revision`` increments on every mutation. ``Session`` snapshots it after
-    mirroring server cookies, so a later change means the *caller* edited the jar
-    and the Core's own cookie store has to be discarded for the edit to take
-    effect.
+    ``revision`` counts mutations for callers that want to poll the jar. It is
+    not what ``Session`` uses: the engine's cookie store is rebuilt when the
+    ``Cookie`` line this jar would send differs from the one the engine's mirror
+    would send. Reading can move this counter, because
+    ``cookielib.add_cookie_header`` calls ``clear_expired_cookies`` and that
+    clears each expired cookie through ``clear()``.
 
     Attributes:
         revision: Mutation counter, incremented by every caller-visible change.
@@ -320,10 +326,11 @@ class RequestsCookieJar(  # type: ignore[misc]  # cookielib and Mapping disagree
         ...
 
     def clear_expired_cookies(self) -> None:
-        """Drops expired cookies without bumping :attr:`revision`.
+        """Drops expired cookies.
 
-        ``cookielib.add_cookie_header`` calls this on every read, so counting it
-        as a caller mutation would make every request look like a jar edit.
+        ``cookielib.add_cookie_header`` calls this on every read. The stdlib
+        implementation removes each expired cookie through :meth:`clear`, so
+        :attr:`revision` still moves when the jar actually holds one.
         """
         ...
 
@@ -622,9 +629,14 @@ class RequestsCookieJar(  # type: ignore[misc]  # cookielib and Mapping disagree
             url: The URL the response came from.
             lines: One string per ``Set-Cookie`` field.
 
+        Deletions land on this jar, not on the returned one: ``cookielib``
+        implements ``Max-Age=0`` and a past ``Expires`` by clearing the cookie
+        from the jar it extracts into, so a temporary jar would delete nothing
+        the session can see.
+
         Returns:
             A fresh jar holding only the cookies *this* hop set, which becomes
-            ``response.cookies``.
+            ``response.cookies``. A deletion therefore leaves it empty.
 
         Example:
             >>> response.cookies = jar.absorb_set_cookie(url, lines)

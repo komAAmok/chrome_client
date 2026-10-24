@@ -7,6 +7,10 @@ ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 # script works from any directory on any machine. Point CHROMIUM_SRC at your
 # checkout if it lives elsewhere.
 source "$(dirname "${BASH_SOURCE[0]}")/core-paths.sh"
+# Installs the rg() wrapper used by the Android/Java/JNI leak check below. Without
+# it a missing rg made that check evaluate false and the build continued as if
+# the graph were clean.
+require_rg
 export CHROMIUM_SRC=$(resolve_chromium_src)
 OUT_DIR=${OUT_DIR:-$CHROMIUM_SRC/out/MiniCronet-win-x86_64}
 JOBS=${JOBS:-2}

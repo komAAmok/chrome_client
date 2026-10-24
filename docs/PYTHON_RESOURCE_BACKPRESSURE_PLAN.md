@@ -3,7 +3,7 @@
 状态：阶段 1--4 已实现初版；阶段 5 的 HTTP 部分已随 ABI v8 落地，WebSocket
 部分仍未实施。
 
-本文记录 `chrome_client` Python 主版本（3.7--3.13）和 Python 3.6 兼容版本的
+本文记录 `chrome_client` Python 主版本（3.9--3.15）和 Python 3.6--3.8 兼容版本的
 后续改造顺序。目标是减少回调争用、限制 Python/native 内存增长、明确关闭语义，
 同时保持 Python facade 为薄绑定，不在 Python 层复制 Chromium 网络协议。
 

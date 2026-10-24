@@ -16,6 +16,7 @@ Every exception carries the request/response it belongs to, which is what makes
         ...
 """
 
+import json as _json
 from typing import Any, Optional
 
 from typing_extensions import TypeAlias
@@ -51,12 +52,41 @@ class InvalidJSONError(RequestException):
     """Raised when a body was expected to be JSON and is not."""
 
 
-class JSONDecodeError(InvalidJSONError, ValueError):
+class JSONDecodeError(InvalidJSONError, _json.JSONDecodeError):
     """Raised by ``Response.json()`` when the body is not valid JSON.
 
-    Subclasses ``ValueError`` too, so existing ``except ValueError`` handlers
-    keep working.
+    Subclasses ``json.JSONDecodeError`` exactly as requests does, so
+    ``except json.JSONDecodeError`` catches it and the parsed position is
+    available as ``msg``/``doc``/``pos``/``lineno``/``colno``.
+    ``ValueError`` comes in through that base, so existing
+    ``except ValueError`` handlers keep working.
+
+    Attributes:
+        msg: The parser message without the position suffix.
+        doc: The document that was being decoded.
+        pos: Character index where decoding failed.
+        lineno: Line of ``pos``, 1-based.
+        colno: Column of ``pos``, 1-based.
+        response: The response whose body failed to decode.
     """
+
+    msg: str
+    doc: Any
+    pos: int
+    lineno: int
+    colno: int
+    response: Optional[Any]
+    request: Optional[Any]
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        """Builds the exception.
+
+        Args:
+            *args: ``msg``, ``doc`` and ``pos``, as
+                :class:`json.JSONDecodeError` takes them.
+            **kwargs: ``response=`` and ``request=`` are stored as attributes.
+        """
+        ...
 
 
 class HTTPError(RequestException):

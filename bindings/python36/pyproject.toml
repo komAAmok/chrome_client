@@ -11,10 +11,12 @@ description = "Chromium Core HTTP/WebSocket client"
 # python36 is its own Cargo workspace, so the root README is mirrored here and
 # `tools/audit-readme.sh` fails the build if the copy drifts.
 readme = "README.md"
-# cp36-abi3 wheel: installs on any CPython 3.6 through 3.13. The old bound
+# cp36-abi3 wheel: installs on any CPython 3.6 through 3.15. The old bound
 # (<3.7) understated this and, intersected with the main wheel's bound on the
-# PyPI page, made the project show "Requires Python <3.7, >=3.6".
-requires-python = ">=3.6,<3.14"
+# PyPI page, made the project show "Requires Python <3.7, >=3.6". pip's tag
+# matching prefers the cp39-abi3 wheel from bindings/python on 3.9 and newer,
+# so this wheel serves 3.6-3.8.
+requires-python = ">=3.6,<3.16"
 
 classifiers = [
   "Programming Language :: Python :: 3",
@@ -26,6 +28,8 @@ classifiers = [
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+  "Programming Language :: Python :: 3.15",
 ]
 
 [project.urls]

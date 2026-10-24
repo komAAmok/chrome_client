@@ -61,6 +61,15 @@ ALIASED = (
     "websockets",
 )
 
+#: Modules that have a runtime module and a stub, so they get the
+#: class/method/parameter/docstring comparison. ALIASED above is the subset
+#: that also has a facade module to re-export it. Auditing only ALIASED left
+#: __init__ and _native -- the two stubs with no facade -- with no coverage
+#: at all: a phantom function added to _native.pyi passed every check,
+#: because no loop ever opened the file.
+AUDITED = ALIASED + ("_native", "__init__")
+
+
 #: Runtime constants the stubs spell as literals.
 CONSTANTS = {
     "DEFAULT_REDIRECT_LIMIT": "30",
@@ -323,11 +332,24 @@ def check_module(module: str, verbose: bool) -> None:
         if key in impl.calls or impl.declares(key):
             continue
         owner, _, member = key.partition(".")
-        if member in SKIP_MEMBERS.get(member, ()) or not member:
+        # A module-level name has no dot, so member is empty. Skipping those
+        # ("or not member") exempted every module-level function from this
+        # check: injecting "def totally_phantom_function() -> int: ..." into
+        # _native.pyi passed with 0 errors. SKIP_MEMBERS is keyed by member
+        # name and only holds dunders, which always come with an owner, so the
+        # guard must require member to be non-empty rather than its absence.
+        if member and member in SKIP_MEMBERS.get(member, ()):
             continue
         if owner and impl.inherits(owner, member):
             continue
-        warnings.append(f"_python_impl/{module}.pyi: {key} has no runtime counterpart")
+        # fail-closed: a stub that declares a member the runtime does not have
+        # promises the caller an attribute that raises AttributeError. A warning
+        # here let nine phantom members survive with every gate green, and the
+        # only reader who ever saw it was the one who ran the audit by hand.
+        errors.append(
+            f"_python_impl/{module}.pyi: {key} has no runtime counterpart; the "
+            f"stub promises an attribute that raises AttributeError"
+        )
 
     if verbose:
         print(f"  {module}: {len(impl.public_keys())} runtime callables checked")
@@ -386,6 +408,152 @@ def check_facade(verbose: bool) -> None:
         errors.append("chrome_client/py.typed: missing, so type checkers will ignore the stubs")
 
 
+def delegation_failure(tool: str, result: subprocess.CompletedProcess) -> str:
+    """The error a delegated check must produce when its output is unusable.
+
+    A non-zero exit whose output matched no known prefix used to append nothing
+    at all, so a crashed generator or expander read as a clean audit. The exit
+    status and the output tail are the only facts available, so report those.
+    """
+    combined = "\n".join(
+        part.strip() for part in (result.stdout, result.stderr) if part.strip()
+    )
+    tail = "\n".join(combined.splitlines()[-5:]) or "<no output>"
+    return (
+        "%s --check exited %d but its output matched no known prefix, so the "
+        "check could not be evaluated; that is a failure, not a pass. Output "
+        "tail: %s" % (tool, result.returncode, tail)
+    )
+
+
+def parse_delegated_output(
+    tool: str,
+    result: subprocess.CompletedProcess,
+    stale_prefix: str,
+    rerun_prefix: str,
+    stale_label: str,
+) -> None:
+    """Collect errors from a delegated check, reading BOTH streams.
+
+    Reading one stream is how these two checks silently passed: the generator
+    writes to stderr and the expander to stdout, so a traceback landing on the
+    other stream left zero errors behind a non-zero exit. Every non-empty line
+    of either stream is consumed, and an exit with nothing recognisable becomes
+    one fallback error instead of an empty error list.
+    """
+    recognised = 0
+    unmatched: list[str] = []
+    for stream in (result.stdout, result.stderr):
+        for line in stream.strip().splitlines():
+            stripped = line.strip()
+            if stripped.startswith(stale_prefix):
+                errors.append(stale_label % stripped[len(stale_prefix) :])
+                recognised += 1
+            elif stripped.startswith(rerun_prefix) or not stripped:
+                continue
+            else:
+                unmatched.append(stripped)
+    if recognised == 0:
+        errors.append(delegation_failure(tool, result))
+    else:
+        errors.extend(unmatched)
+
+
+def runtime_names(path: pathlib.Path) -> set[str]:
+    """Every name the runtime module binds at import time.
+
+    Read with ``ast`` rather than by importing: the package pulls in the native
+    extension, which needs the Core shared library on the loader path. Imports
+    inside ``if``/``try`` blocks are included because those are the conditional
+    definitions (a ``TYPE_CHECKING`` block is not, since its body is not part of
+    a real import, but nothing in ``_python_impl`` uses one).
+    """
+    names: set[str] = set()
+
+    def walk(body: list[ast.stmt]) -> None:
+        for node in body:
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                names.add(node.name)
+            elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+                names.add(node.target.id)
+            elif isinstance(node, ast.Assign):
+                for target in node.targets:
+                    if isinstance(target, ast.Name):
+                        names.add(target.id)
+            elif isinstance(node, ast.ImportFrom):
+                for alias in node.names:
+                    names.add(alias.asname or alias.name)
+            elif isinstance(node, ast.Import):
+                for alias in node.names:
+                    names.add(alias.asname or alias.name.split(".")[0])
+            elif isinstance(node, (ast.If, ast.Try)):
+                walk(node.body)
+                walk(node.orelse)
+                walk(getattr(node, "finalbody", []))
+
+    walk(ast.parse(path.read_text(encoding="utf-8")).body)
+    return names
+
+
+def type_alias_names(path: pathlib.Path) -> set[str]:
+    """Names a stub declares as ``TypeAlias``, which exist only at type-check time.
+
+    ``AuthCredentials: TypeAlias = Tuple[...]`` is a statement to a checker and
+    nothing at all to CPython, so it is legitimately absent from the runtime. The
+    facade must still re-export it for the checker, which is why this is an
+    exemption from the runtime-existence rule rather than a violation of it.
+    """
+    aliases: set[str] = set()
+    for node in ast.parse(path.read_text(encoding="utf-8")).body:
+        if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            if ast.unparse(node.annotation).endswith("TypeAlias"):
+                aliases.add(node.target.id)
+    return aliases
+
+
+def check_facade_runtime_names(verbose: bool) -> None:
+    """A facade re-export must name something the runtime module actually binds.
+
+    The facades are generated from the *implementation stubs*, so a name that
+    exists only in ``_python_impl/X.pyi`` -- a type alias, or a type that was
+    removed from the runtime but kept in the stub -- is re-exported by
+    ``chrome_client/X.pyi`` as if it were importable. At runtime the facade is
+    the ``_python_impl`` module itself, so ``from chrome_client.models import
+    RawHeaderBlock`` raises ImportError on a name the stub advertises. Type
+    aliases are exempt (they are not importable by design); everything else must
+    be bound by the runtime module.
+    """
+    checked = 0
+    aliases_exempt = 0
+    for module in ALIASED:
+        runtime = runtime_names(IMPL / f"{module}.py")
+        aliases = type_alias_names(IMPL / f"{module}.pyi")
+        for facade in (PY_PKG / f"{module}.pyi", PY_PKG / "requests" / f"{module}.pyi"):
+            if not facade.exists():
+                continue
+            for node in ast.parse(facade.read_text(encoding="utf-8")).body:
+                if not isinstance(node, ast.ImportFrom) or not node.module:
+                    continue
+                if not node.module.endswith(f"_python_impl.{module}"):
+                    continue
+                for alias in node.names:
+                    checked += 1
+                    if alias.name in runtime:
+                        continue
+                    if alias.name in aliases:
+                        aliases_exempt += 1
+                        continue
+                    errors.append(
+                        f"{facade.relative_to(REPO)}: re-exports {alias.name}, but "
+                        f"_python_impl/{module}.py does not bind it, so the import "
+                        "raises ImportError on a name the stub advertises"
+                    )
+    if verbose:
+        print(
+            "  facade re-exports: %d names checked against the runtime "
+            "(%d type aliases exempt)" % (checked, aliases_exempt)
+        )
+
 def check_generated(verbose: bool) -> None:
     """The derived stub parts must match what the generator would write.
 
@@ -398,13 +566,13 @@ def check_generated(verbose: bool) -> None:
         [sys.executable, str(GENERATOR), "--check"], capture_output=True, text=True
     )
     if result.returncode != 0:
-        for line in result.stderr.strip().splitlines():
-            if line.startswith("stale: "):
-                errors.append("stale generated stub: %s" % line[len("stale: ") :])
-            elif line.startswith("run "):
-                continue
-            else:
-                errors.append(line)
+        parse_delegated_output(
+            "tools/generate-python-stubs.py",
+            result,
+            "stale: ",
+            "run ",
+            "stale generated stub: %s",
+        )
     elif verbose:
         print("  generated stubs: facade re-exports and profile Literals are current")
 
@@ -423,15 +591,13 @@ def check_verb_signatures(verbose: bool) -> None:
         [sys.executable, str(EXPANDER), "--check"], capture_output=True, text=True
     )
     if result.returncode != 0:
-        for line in result.stdout.strip().splitlines():
-            if line.startswith("stale: "):
-                errors.append(
-                    "verb signature out of date: %s" % line[len("stale: ") :]
-                )
-            elif line.startswith("run:") or not line.strip():
-                continue
-            else:
-                errors.append(line)
+        parse_delegated_output(
+            "tools/expand-verb-signatures.py",
+            result,
+            "stale: ",
+            "run:",
+            "verb signature out of date: %s",
+        )
     elif verbose:
         print("  verb signatures: every parameter list matches its request()")
 
@@ -615,9 +781,10 @@ def main() -> int:
     args = parser.parse_args()
 
     print("Auditing Python type stubs")
-    for module in ALIASED:
+    for module in AUDITED:
         check_module(module, args.verbose)
     check_facade(args.verbose)
+    check_facade_runtime_names(args.verbose)
     check_generated(args.verbose)
     check_verb_signatures(args.verbose)
     check_profile_annotations(args.verbose)

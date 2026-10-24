@@ -16,6 +16,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: tools/audit-abi.sh
+      # audit-abi.sh compares symbol names. This compiles the header and
+      # compares every field's real offsetof/sizeof against the Rust
+      # #[repr(C)] declaration, so adding a field to the header alone fails
+      # here instead of silently shifting what every caller reads.
+      - run: python3 tools/audit-abi-layout.py
       - run: tools/audit-readme.sh
       - run: tools/audit-pypi-metadata.sh
       # The .pyi stubs are hand-written, so this asserts every runtime

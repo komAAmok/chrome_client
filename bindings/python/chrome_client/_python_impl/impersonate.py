@@ -178,7 +178,13 @@ def validate_extra_fp(extra_fp):
             continue
         if name in _NEUTRAL_EXTRA_FP and value in _NEUTRAL_EXTRA_FP[name]:
             continue
-        if value in (None, False):
+        # ``value in (None, False)`` also matched 0, because ``0 == False``.
+        # That silently accepted real requests for a zero setting --
+        # ``http2_stream_weight=0`` and ``split_cookies=0`` both came back
+        # unapplied and unreported -- which is exactly the silent-ignore the
+        # fail-closed contract forbids. Only a genuine "not asked for" value
+        # (None, or the boolean False) passes.
+        if value is None or value is False:
             continue
         unsupported.append(name)
     if unsupported:

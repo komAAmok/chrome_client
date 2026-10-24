@@ -20,13 +20,14 @@ CHROMIUM_SRC=$(resolve_chromium_src)
 # and Digest need to decode a realm -- without it every realm-carrying challenge
 # silently skipped authentication.
 #
-# Re-baselined twice for the 153 -> 156.0.8078.31 upgrade. Upstream growth alone
-# moved the largest artifact (linux-x86_64) from 8,763,240 to 8,965,792; then
-# making //third_party/simdutf honour optimize_for_size under MINICRONET_BUILD
-# (it forced optimize_speed, overriding the Core's -Oz) took the three targets to
-# 8,863,392 / 8,776,524 / 8,692,184. The ceiling keeps the established rule: the
-# largest artifact plus 2%, rounded up to 10,000.
-MAX_BYTES=${MAX_BYTES:-9050000}
+# Re-baselined for the 153 -> 156.0.8078.31 upgrade and again after the size
+# pass. The rule has not changed: the largest artifact plus 2%, rounded up to
+# 10,000. The three committed artifacts are now 8,805,936 (x86_64) / 8,446,248
+# (x86) / 8,273,120 (arm64), so 8,805,936 * 1.02 = 8,982,054 rounds up to the
+# 8,990,000 below. Quote the artifacts, not an earlier build: the number is
+# derived from them, and a comment naming a superseded size reads as if the
+# ceiling had drifted from its own rule.
+MAX_BYTES=${MAX_BYTES:-8990000}
 LIB=$OUT_DIR/libminicronet.so
 READELF=$CHROMIUM_SRC/third_party/llvm-build/Release+Asserts/bin/llvm-readelf
 NM=$CHROMIUM_SRC/third_party/llvm-build/Release+Asserts/bin/llvm-nm
@@ -34,12 +35,10 @@ ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 # Core sources, ABI header, export tables and Chromium patches all live under
 # core/ in this repository, so one root covers every MiniCronet-owned file.
 CORE_DIR=$ROOT_DIR/core
-RG=${RG:-$(command -v rg || true)}
-if [[ -z $RG ]]; then
-  printf 'audit-core-linux: ripgrep (rg) is required; set RG to its path\n' >&2
-  exit 1
-fi
-rg() { "$RG" "$@"; }
+# require_rg also installs the rg() wrapper, which turns a ripgrep *error*
+# (status 2: unreadable path, bad pattern) into a failure instead of the "no
+# match" that an `if rg -q` condition would read as a clean result.
+require_rg
 
 test -d "$CHROMIUM_SRC/net" || { printf 'audit-core-linux: no Chromium checkout at %s; set CHROMIUM_SRC to your Chromium checkout\n' "$CHROMIUM_SRC" >&2; exit 1; }
 

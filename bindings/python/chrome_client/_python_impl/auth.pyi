@@ -184,12 +184,16 @@ class HTTPDigestAuth(AuthBase):
             url: The request URL; its path and query are digested.
 
         Returns:
-            The complete header value.
+            The complete header value. The ``qop`` directive is emitted only
+            when the server offered ``auth``; a challenge with no ``qop`` gets
+            the RFC 2069 form, without ``nc``/``cnonce``.
 
         Raises:
-            UnsupportedFeature: :meth:`parse_challenge` has not run, or the
+            UnsupportedFeature: :meth:`parse_challenge` has not run, the
                 challenge names an algorithm that is not supported (MD5,
-                MD5-SESS, SHA, SHA-256, SHA-256-SESS, SHA-512).
+                MD5-SESS, SHA, SHA-256, SHA-256-SESS, SHA-512), or it offers
+                only ``qop="auth-int"``, which needs the request body this
+                layer cannot see.
 
         Example:
             >>> auth.parse_challenge(header)

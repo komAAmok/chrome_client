@@ -47,6 +47,26 @@ namespace {
 constexpr char kVersion[] = MINICRONET_VERSION;
 constexpr char kDefaultUserAgent[] = "minicronet/" MINICRONET_VERSION;
 
+// Caller-supplied counts and lengths are untrusted. Every one of them reaches a
+// std::string/vector constructor or a base::span before Chromium sees it, and
+// this build is compiled -fno-exceptions, so an over-long value does not throw
+// -- it aborts the host process (measured: header_count = 2^60 aborted with
+// "length_error ... in -fno-exceptions mode"; header_count = 4096 over a
+// one-element array read past the end).
+//
+// These are safety valves against a corrupt count, not feature limits. The
+// header cap sits far above real use -- the Core was measured sending 16000
+// request headers -- and 16384 * sizeof(pair<string,string>) is a harmless
+// 1 MiB reserve. The field cap keeps a single line sane; the two together bound
+// the total, since either one alone leaves the product unbounded.
+// kMaxUrlLength is Chromium's own cross-process ceiling (url/url_constants.h
+// kMaxURLChars).
+constexpr size_t kMaxUrlLength = 2u * 1024u * 1024u;
+constexpr size_t kMaxHeaderCount = 16384u;
+constexpr size_t kMaxHeaderFieldLength = 64u * 1024u;
+constexpr size_t kMaxUploadBodyLength = 256u * 1024u * 1024u;
+constexpr size_t kMaxWebSocketProtocolCount = 64u;
+
 std::string HistoricalUserAgent(const minicronet::ProfileContext& profile) {
   static constexpr const char* kFullVersions[] = {
       "99.0.4844.84", "100.0.4896.127", "101.0.4951.64",
@@ -106,6 +126,12 @@ bool IsForbiddenWebSocketHeader(std::string_view name) {
                           base::CompareCase::INSENSITIVE_ASCII);
 }
 
+// Mirrors net::IsStrictlyValidCloseStatusCode
+// (net/websockets/websocket_channel.cc): 1014 is unassigned and [1015, 3000) is
+// reserved. 1014 used to be listed here, so mn_websocket_close accepted it and
+// WebSocketChannel then silently substituted 1011 with an empty reason --
+// measured: requested 1014, the peer received 1011. A validator must reject
+// what it cannot honour rather than hand the caller a different close code.
 bool IsValidWebSocketCloseCode(uint16_t code) {
   switch (code) {
     case 1000:
@@ -119,7 +145,6 @@ bool IsValidWebSocketCloseCode(uint16_t code) {
     case 1011:
     case 1012:
     case 1013:
-    case 1014:
       return true;
     default:
       return code >= 3000 && code <= 4999;
@@ -331,12 +356,20 @@ mn_result_t MN_CALL mn_request_create(mn_engine_t *engine,
     return MN_ERROR_INVALID_ARGUMENT;
   }
   *out_request = nullptr;
+  // size first: it is the only field that proves the caller allocated a struct
+  // large enough to hold callbacks, which starts at offset 64. Reading
+  // callbacks.version before this check read past the end of a shorter, older
+  // caller's allocation. Kept separate from the version check rather than
+  // folded into a single disjunction, because a folded chain evaluates size and
+  // callbacks.version in written order and is exactly how this got inverted.
+  if (config->size != sizeof(mn_request_config_t)) {
+    return MN_ERROR_INVALID_ARGUMENT;
+  }
   if (config->version != MN_ABI_VERSION ||
       config->callbacks.version != MN_ABI_VERSION) {
     return MN_ERROR_UNSUPPORTED_ABI;
   }
-  if (config->size != sizeof(mn_request_config_t) || !config->url ||
-      config->url_length == 0 || !config->method ||
+  if (!config->url || config->url_length == 0 || !config->method ||
       config->method_length == 0 ||
       config->callbacks.size != sizeof(mn_request_callbacks_t) ||
       (config->header_count > 0 && !config->headers)) {
@@ -366,11 +399,18 @@ mn_result_t MN_CALL mn_request_create(mn_engine_t *engine,
     return MN_ERROR_INVALID_ARGUMENT;
   }
   if (upload_mode == MN_UPLOAD_FIXED && config->body_length != 0) {
+    if (config->body_length > kMaxUploadBodyLength) {
+      return MN_ERROR_INVALID_ARGUMENT;
+    }
     auto input_body =
         UNSAFE_BUFFERS(base::span(config->body, config->body_length));
     body.assign(input_body.begin(), input_body.end());
   }
 
+  if (config->url_length > kMaxUrlLength ||
+      config->method_length > kMaxHeaderFieldLength) {
+    return MN_ERROR_INVALID_ARGUMENT;
+  }
   std::string url(config->url, config->url_length);
   std::string method(config->method, config->method_length);
   if (url.find('\0') != std::string::npos ||
@@ -389,12 +429,19 @@ mn_result_t MN_CALL mn_request_create(mn_engine_t *engine,
   // "delete request" early returns: the only place in this file where the
   // out-param invariant was maintained by hand rather than by falling through
   // to a single exit.
+  if (config->header_count > kMaxHeaderCount) {
+    return MN_ERROR_INVALID_ARGUMENT;
+  }
   std::vector<std::pair<std::string, std::string>> headers;
   headers.reserve(config->header_count);
   auto input_headers =
       UNSAFE_BUFFERS(base::span(config->headers, config->header_count));
   for (const mn_header_t &header : input_headers) {
     if (!header.name || !header.value || header.name_length == 0) {
+      return MN_ERROR_INVALID_ARGUMENT;
+    }
+    if (header.name_length > kMaxHeaderFieldLength ||
+        header.value_length > kMaxHeaderFieldLength) {
       return MN_ERROR_INVALID_ARGUMENT;
     }
     std::string name(header.name, header.name_length);
@@ -481,17 +528,26 @@ mn_result_t MN_CALL mn_websocket_create(mn_engine_t *engine,
     return MN_ERROR_INVALID_ARGUMENT;
   }
   *out_websocket = nullptr;
+  // size first, for the same reason as mn_request_create: callbacks starts at
+  // offset 72 here, so reading callbacks.version before proving the allocation
+  // is long enough reads past the end of a shorter caller's struct.
+  if (config->size != sizeof(mn_websocket_config_t)) {
+    return MN_ERROR_INVALID_ARGUMENT;
+  }
   if (config->version != MN_ABI_VERSION ||
       config->callbacks.version != MN_ABI_VERSION) {
     return MN_ERROR_UNSUPPORTED_ABI;
   }
-  if (config->size != sizeof(mn_websocket_config_t) || !config->url ||
-      config->url_length == 0 || !config->origin ||
+  if (!config->url || config->url_length == 0 || !config->origin ||
       config->origin_length == 0 ||
       config->callbacks.size != sizeof(mn_websocket_callbacks_t) ||
       !config->callbacks.on_failure ||
       (config->protocol_count > 0 && !config->protocols) ||
       (config->header_count > 0 && !config->headers)) {
+    return MN_ERROR_INVALID_ARGUMENT;
+  }
+  if (config->url_length > kMaxUrlLength ||
+      config->origin_length > kMaxUrlLength) {
     return MN_ERROR_INVALID_ARGUMENT;
   }
 
@@ -509,6 +565,9 @@ mn_result_t MN_CALL mn_websocket_create(mn_engine_t *engine,
     return MN_ERROR_INVALID_ARGUMENT;
   }
 
+  if (config->protocol_count > kMaxWebSocketProtocolCount) {
+    return MN_ERROR_INVALID_ARGUMENT;
+  }
   std::vector<std::string> protocols;
   protocols.reserve(config->protocol_count);
   auto input_protocols =
@@ -527,12 +586,19 @@ mn_result_t MN_CALL mn_websocket_create(mn_engine_t *engine,
     protocols.push_back(std::move(value));
   }
 
+  if (config->header_count > kMaxHeaderCount) {
+    return MN_ERROR_INVALID_ARGUMENT;
+  }
   std::vector<std::pair<std::string, std::string>> headers;
   headers.reserve(config->header_count);
   auto input_headers =
       UNSAFE_BUFFERS(base::span(config->headers, config->header_count));
   for (const mn_header_t &header : input_headers) {
     if (!header.name || !header.value || header.name_length == 0) {
+      return MN_ERROR_INVALID_ARGUMENT;
+    }
+    if (header.name_length > kMaxHeaderFieldLength ||
+        header.value_length > kMaxHeaderFieldLength) {
       return MN_ERROR_INVALID_ARGUMENT;
     }
     std::string name(header.name, header.name_length);

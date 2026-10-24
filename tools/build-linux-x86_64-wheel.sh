@@ -19,7 +19,6 @@ test -f "$CORE_DIR/libminicronet.so" || {
 }
 
 mkdir -p "$OUT_DIR"
-find "$OUT_DIR" -maxdepth 1 -type f -name '*.whl' -delete
 
 (
   cd "$ROOT_DIR/bindings/python"
@@ -27,7 +26,29 @@ find "$OUT_DIR" -maxdepth 1 -type f -name '*.whl' -delete
     maturin build --release --auditwheel skip --out "$RAW_DIR"
 )
 
-LD_LIBRARY_PATH="$CORE_DIR${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
-  auditwheel repair --wheel-dir "$OUT_DIR" "$RAW_DIR"/*.whl
+# The raw wheel must exist before the output directory is touched. Deleting the
+# stale wheels first meant a failed maturin run (a compile error, a missing
+# toolchain) destroyed the last good wheel and left nothing in its place: the
+# build reported failure, and the previous artifact was gone too. maturin already
+# writes into the private mktemp directory, so by here the new wheel is known to
+# exist and only now is the old one replaced.
+shopt -s nullglob
+raw_wheels=("$RAW_DIR"/*.whl)
+shopt -u nullglob
+(( ${#raw_wheels[@]} == 1 )) \
+  || { echo "maturin produced ${#raw_wheels[@]} wheels in $RAW_DIR, expected exactly 1" >&2; exit 1; }
 
-echo "Wheel written to: $OUT_DIR"
+find "$OUT_DIR" -maxdepth 1 -type f -name '*.whl' -delete
+
+LD_LIBRARY_PATH="$CORE_DIR${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
+  auditwheel repair --wheel-dir "$OUT_DIR" "${raw_wheels[0]}"
+
+# auditwheel can succeed and still emit nothing (an unsupported platform, a
+# skipped repair); the previous script printed the directory either way.
+shopt -s nullglob
+built=("$OUT_DIR"/*.whl)
+shopt -u nullglob
+(( ${#built[@]} > 0 )) \
+  || { echo "auditwheel wrote no wheel into $OUT_DIR" >&2; exit 1; }
+
+printf 'Wheel written to: %s\n' "${built[*]}"

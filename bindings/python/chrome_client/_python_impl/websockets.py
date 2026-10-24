@@ -11,7 +11,7 @@ import time
 from collections import deque
 
 from .exceptions import (WebSocketClosed, WebSocketError, WebSocketTimeout,
-                         name_net_error)
+                         map_native_error, name_net_error)
 
 #: Close code the ``close()`` default sends, matching ``WsCloseCode.OK``.
 OK = 1000
@@ -19,6 +19,20 @@ OK = 1000
 #: Bounds on the queue an async socket buffers before it refuses more frames.
 MAX_QUEUED_EVENTS = 1024
 MAX_QUEUED_BYTES = 4 * 1024 * 1024
+
+
+def _native(method, *args):
+    """Calls one Core socket method, mapping a native failure onto the hierarchy.
+
+    PyO3 surfaces a Core error as a bare ``RuntimeError`` (``'InvalidState'`` for a
+    terminal socket). Only ``recv()`` mapped it, so ``send``/``close``/``ping``/``terminate``
+    leaked that bare error past every ``except RequestException`` a caller writes.
+    Everything that crosses the ABI goes through here.
+    """
+    try:
+        return method(*args)
+    except RuntimeError as error:
+        raise map_native_error(error)
 
 
 class WsCloseCode(object):
@@ -87,7 +101,7 @@ class WebSocket(object):
             if deadline is not None and time.monotonic() > deadline:
                 self.terminate()
                 raise WebSocketTimeout("WebSocket handshake timed out")
-            event = self._socket.recv()
+            event = _native(self._socket.recv)
             if event is None:
                 self._closed = True
                 raise WebSocketClosed("WebSocket closed before the handshake completed")
@@ -112,19 +126,19 @@ class WebSocket(object):
     # -- sending ------------------------------------------------------------
     def send(self, data):
         if isinstance(data, str):
-            return self._socket.send_text(data)
-        return self._socket.send_bytes(bytes(data))
+            return _native(self._socket.send_text, data)
+        return _native(self._socket.send_bytes, bytes(data))
 
     def send_str(self, text):
-        return self._socket.send_text(text)
+        return _native(self._socket.send_text, text)
 
     def send_bytes(self, data):
-        return self._socket.send_bytes(bytes(data))
+        return _native(self._socket.send_bytes, bytes(data))
 
     send_binary = send_bytes
 
     def send_json(self, value, dumps=_json.dumps):
-        return self._socket.send_text(dumps(value))
+        return _native(self._socket.send_text, dumps(value))
 
     def ping(self, payload=b""):
         # The Core answers protocol-level pings itself; an application ping is a
@@ -133,7 +147,14 @@ class WebSocket(object):
 
     # -- receiving ----------------------------------------------------------
     def _next(self):
-        event = self._pending.popleft() if self._pending else self._socket.recv()
+        # Every other call that crosses the ABI goes through _native(); recv()
+        # did not, so an unconnected or already-released socket raised a bare
+        # RuntimeError("WebSocket is not connected") past every
+        # ``except RequestException``. Measured on a native socket built by
+        # _open_websocket() but never connected: recv()/recv_str()/
+        # recv_fragment() all leaked it.
+        event = self._pending.popleft() if self._pending \
+            else _native(self._socket.recv)
         if event is None:
             self._closed = True
             return None
@@ -204,21 +225,48 @@ class WebSocket(object):
     def close(self, code=OK, message=b""):
         if self._closed:
             return None
-        self._closed = True
         reason = message.decode("utf-8", "replace") if isinstance(message, bytes) \
             else (message or "")
+        # Ask the Core first, as terminate() does: setting _closed before a call
+        # that can raise left this object reporting a state the native socket
+        # never reached, and turned every later close() into a silent no-op, so
+        # a failed close could never be retried. Measured on a terminal socket:
+        # close() raised RequestException while _closed was already True.
         try:
-            return self._socket.close(code, reason)
+            result = _native(self._socket.close, code, reason)
         finally:
-            # A Session created for this socket alone owns a Chromium Engine;
-            # releasing it here is what keeps `WebSocket(url=...)` from leaking one.
-            if self._owned_session is not None:
-                self._owned_session.close()
-                self._owned_session = None
+            # The Session is released even when the close fails: the C++
+            # WebSocket holds its own scoped_refptr<Engine>
+            # (core/source/websocket.cc), so dropping the Python owner cannot
+            # tear down a context the socket still uses.
+            self._release_owned_session()
+        self._closed = True
+        return result
 
     def terminate(self):
+        # The Core is asked first: marking the socket closed before a call that
+        # raises left this object claiming a state the native socket never
+        # reached.
+        result = _native(self._socket.cancel)
         self._closed = True
-        return self._socket.cancel()
+        # close() released the Session this socket owns; terminate() did not,
+        # so `WebSocket(url=...)` followed by terminate() leaked a whole
+        # Chromium Engine. Released only after the Core accepted the cancel, so
+        # a failed terminate never tears down an Engine still in use.
+        self._release_owned_session()
+        return result
+
+    def _release_owned_session(self):
+        """Drops the Session this socket created for itself, if any.
+
+        A Session owns a whole Chromium ``URLRequestContext``, so a
+        ``WebSocket(url=...)`` that never releases it leaks one Engine per
+        socket. The native socket keeps its own reference to the context, so
+        the in-flight close is unaffected.
+        """
+        session, self._owned_session = self._owned_session, None
+        if session is not None:
+            session.close()
 
     @property
     def closed(self):
@@ -406,19 +454,19 @@ class AsyncWebSocket(object):
 
     async def send(self, data):
         if isinstance(data, str):
-            return self._socket.send_text(data)
-        return self._socket.send_bytes(bytes(data))
+            return _native(self._socket.send_text, data)
+        return _native(self._socket.send_bytes, bytes(data))
 
     async def send_str(self, text):
-        return self._socket.send_text(text)
+        return _native(self._socket.send_text, text)
 
     async def send_bytes(self, data):
-        return self._socket.send_bytes(bytes(data))
+        return _native(self._socket.send_bytes, bytes(data))
 
     send_binary = send_bytes
 
     async def send_json(self, value, dumps=_json.dumps):
-        return self._socket.send_text(dumps(value))
+        return _native(self._socket.send_text, dumps(value))
 
     async def ping(self, payload=b""):
         return await self.send(payload)
@@ -426,22 +474,30 @@ class AsyncWebSocket(object):
     async def close(self, code=OK, message=b""):
         if self._closed:
             return None
-        self._closed = True
-        self._wake.set()
+        # Same order as the synchronous path: the Core is asked first, so a
+        # failed close leaves _closed reporting the state the socket is really
+        # in and the caller can retry, instead of the socket silently claiming
+        # to be closed while the Core never closed it.
         try:
             self._socket.detach_callback()
         except RuntimeError:
             pass
         reason = message.decode("utf-8", "replace") if isinstance(message, bytes) \
             else (message or "")
-        return self._socket.close(code, reason)
+        result = _native(self._socket.close, code, reason)
+        self._closed = True
+        self._wake.set()
+        return result
 
     aclose = close
 
     async def terminate(self):
+        # Same order as the synchronous path: the Core is asked first, so a
+        # failure leaves _closed reporting the state the socket is really in.
+        result = _native(self._socket.cancel)
         self._closed = True
         self._wake.set()
-        return self._socket.cancel()
+        return result
 
     @property
     def closed(self):

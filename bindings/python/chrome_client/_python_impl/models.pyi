@@ -38,7 +38,12 @@ CONTENT_CHUNK_SIZE: int
 ITER_CHUNK_SIZE: int
 #: Statuses that carry a redirect, as requests defines them.
 REDIRECT_STATI: Tuple[int, ...]
-#: requests' own redirect cap; Chromium's internal cap is 20.
+#: requests' own default redirect cap (30), kept because
+#: ``requests.models.DEFAULT_REDIRECT_LIMIT`` is a public name callers import.
+#: This package no longer uses it: Chromium enforces 20 hops inside one
+#: ``URLRequest``, so a cap at or above 20 raises ``UnsupportedFeature``
+#: instead of being clamped, and the facade defaults to ``None`` -- "use
+#: Chromium's ceiling" (``CHROMIUM_MAX_REDIRECTS``).
 DEFAULT_REDIRECT_LIMIT: int
 
 #: A status line and its headers, as parsed out of the Core's raw header block.
@@ -732,11 +737,26 @@ class Response:
         ``iter_content`` cannot be used afterwards. Accessing it twice is free.
 
         Returns:
-            The complete body."""
+            The complete body.
+
+        Raises:
+            StreamConsumedError: A stream reader already consumed the body
+                (``iter_content`` was started, or ``close()`` cancelled it). The bytes are
+                gone, so reporting ``b""`` would claim an empty body."""
         ...
 
     @content.setter
-    def content(self, value: Any) -> None: ...
+    def content(self, value: Any) -> None:
+        """Replaces the body with ``value``.
+
+        A live stream reader is cancelled, so every reader agrees afterwards:
+        ``.content``, ``.text``, ``.raw`` and ``iter_content()`` all answer the
+        assigned bytes rather than the discarded native body.
+
+        Args:
+            value: The replacement body; coerced with ``bytes()``.
+        """
+        ...
 
     @property
     def text(self) -> str:
@@ -819,7 +839,9 @@ class Response:
             TypeError: ``chunk_size`` is not an int or ``None``.
             ValueError: ``chunk_size`` is not positive.
             StreamConsumedError: The body was already consumed by another
-                reader.
+                reader, or cancelled by ``close()``. A cancelled body raises
+                rather than yielding nothing: an empty iterator would claim a
+                zero-length body.
 
         Example:
             >>> for chunk in response.iter_content(64 * 1024):
@@ -859,6 +881,12 @@ class Response:
 
         Cancels an unfinished native request, so closing a partially read
         ``stream=True`` response does not leak a paused body queue.
+
+        Afterwards the body is gone: ``.content``, ``iter_content()`` and
+        ``iter_lines()`` raise :class:`StreamConsumedError`. requests raises a
+        bare ``RuntimeError`` for the same state; that is not a ``RequestException``,
+        so this is stricter and catchable the same way as every other failure.
+        Headers and status remain readable.
         """
         ...
 
@@ -871,6 +899,15 @@ class AsyncResponse(Response):
     and ``aiter_content()`` consumes it incrementally.
     """
 
+    def __del__(self) -> None:        """Releases a stream the caller never closed.
+
+        Every explicit path (``aclose()``, the ``content`` setter) needs the
+        caller to act.  A response that is simply dropped runs the stream
+        generator's ``finally`` during garbage collection, and that path must
+        cancel the Core request -- detaching its callback alone leaves the
+        socket in the engine pool.  Measured over a never-ending chunked
+        body: 20 abandoned responses leaked 46 file descriptors.
+        """
     async def acontent(self) -> bytes:
         """Drains and returns the body as bytes.
 
@@ -919,9 +956,15 @@ class AsyncResponse(Response):
             chunk_size: Bytes per yielded block; ``None`` means
                 :data:`CONTENT_CHUNK_SIZE`.
             decode_unicode: Decode with the response encoding and yield ``str``.
+                Decoding is incremental, so a multi-byte character split
+                across two chunks is carried over rather than replaced.
 
         Yields:
             ``bytes``, or ``str`` when ``decode_unicode`` is ``True``.
+
+        Raises:
+            StreamConsumedError: The body was already consumed by another
+                reader.
 
         Example:
             >>> async for chunk in response.aiter_content(65536):

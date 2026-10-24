@@ -13,7 +13,7 @@
 
 ## 为什么用 `.pyi`，而不是把标注写进 `.py`
 
-同一套 `.py` 会被打进两个 wheel：`bindings/python`（cp37-abi3）与 `bindings/python36`
+同一套 `.py` 会被打进两个 wheel：`bindings/python`（cp39-abi3）与 `bindings/python36`
 （cp36-abi3，`python-source = "../python"`）。也就是说这些模块必须能在 **Python 3.6**
 上运行。由此产生两个硬约束：
 

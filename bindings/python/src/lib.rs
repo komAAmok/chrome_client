@@ -371,8 +371,14 @@ impl PyRequest {
     #[pyo3(signature = (timeout=None))]
     fn wait_manual(&self, py: Python<'_>, timeout: Option<f64>) -> PyResult<PyManualWait> {
         let total = duration(timeout)?.unwrap_or(Duration::from_secs(86_400));
+        // `Instant + Duration` panics once the sum leaves the range the clock
+        // can represent, and a PanicException derives from BaseException, so it
+        // slips past every `except Exception` and kills the caller. `checked_add`
+        // keeps an unrepresentable deadline an ordinary Python error.
+        let deadline = Instant::now()
+            .checked_add(total)
+            .ok_or_else(|| native_error("timeout is too large for the system clock"))?;
         py.detach(|| {
-            let deadline = Instant::now() + total;
             loop {
                 if let Some(hop) = self.inner.take_redirect() {
                     return Ok((Some(redirect_tuple(hop)), None));
@@ -503,22 +509,7 @@ impl PyRequest {
     /// asyncio-compatible event loop. The callback only schedules `notify`; it
     /// never runs user Python code or waits for network I/O.
     fn start_async(&self, py: Python<'_>, loop_: Py<PyAny>, notify: Py<PyAny>) -> PyResult<()> {
-        let scheduled = Arc::clone(&self.notify_scheduled);
-        let loop_ref = loop_.clone_ref(py);
-        let notify_ref = notify.clone_ref(py);
-        self.inner.set_event_callback(Arc::new(move || {
-            if scheduled.swap(true, Ordering::AcqRel) {
-                return;
-            }
-            Python::attach(|py| {
-                if loop_ref
-                    .call_method1(py, "call_soon_threadsafe", (notify_ref.clone_ref(py),))
-                    .is_err()
-                {
-                    scheduled.store(false, Ordering::Release);
-                }
-            });
-        }));
+        self.attach_async(py, loop_, notify);
         let response_future = self.inner.start().map_err(native_error)?;
         *self
             .response_future
@@ -530,22 +521,7 @@ impl PyRequest {
     /// Registers the asyncio bridge without starting the request, for chunked
     /// uploads that must be fed after `start`.
     fn attach_async(&self, py: Python<'_>, loop_: Py<PyAny>, notify: Py<PyAny>) {
-        let scheduled = Arc::clone(&self.notify_scheduled);
-        let loop_ref = loop_.clone_ref(py);
-        let notify_ref = notify.clone_ref(py);
-        self.inner.set_event_callback(Arc::new(move || {
-            if scheduled.swap(true, Ordering::AcqRel) {
-                return;
-            }
-            Python::attach(|py| {
-                if loop_ref
-                    .call_method1(py, "call_soon_threadsafe", (notify_ref.clone_ref(py),))
-                    .is_err()
-                {
-                    scheduled.store(false, Ordering::Release);
-                }
-            });
-        }));
+        self.install_event_bridge(py, loop_, notify);
     }
 
     /// Returns one non-blocking event as `(kind, status, headers, body, error)`.
@@ -578,6 +554,32 @@ impl PyRequest {
 }
 
 impl PyRequest {
+    /// Installs the asyncio notification bridge.
+    ///
+    /// The hook holds strong references to the event loop and to the Python
+    /// `notify` callable, and `notify` holds this `PyRequest`. That cycle
+    /// passes through Rust, so Python's GC cannot break it; `finish` clears the
+    /// callback to release it. Both `start_async` and `attach_async` install
+    /// exactly this bridge, so it lives here once.
+    fn install_event_bridge(&self, py: Python<'_>, loop_: Py<PyAny>, notify: Py<PyAny>) {
+        let scheduled = Arc::clone(&self.notify_scheduled);
+        let loop_ref = loop_.clone_ref(py);
+        let notify_ref = notify.clone_ref(py);
+        self.inner.set_event_callback(Arc::new(move || {
+            if scheduled.swap(true, Ordering::AcqRel) {
+                return;
+            }
+            Python::attach(|py| {
+                if loop_ref
+                    .call_method1(py, "call_soon_threadsafe", (notify_ref.clone_ref(py),))
+                    .is_err()
+                {
+                    scheduled.store(false, Ordering::Release);
+                }
+            });
+        }));
+    }
+
     fn poll_one(&self) -> PyResult<Option<PyEvent>> {
         // Redirects are reported before the response in every mode, and in
         // manual mode the response never arrives until `follow_redirect`, so the

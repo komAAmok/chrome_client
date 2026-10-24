@@ -13,8 +13,9 @@ Two stores exist and they are not the same thing:
 
 Because the Core wins ties, a caller mutation that conflicts with what the Core
 already stored can only be honoured by discarding that Core cookie store, which
-means rebuilding the Engine.  ``Session`` does that automatically; the jar's job
-is just to record that a mutation happened (``revision``).
+means rebuilding the Engine.  ``Session`` does that automatically, by comparing
+the ``Cookie`` line this jar would send against the one its engine mirror would
+send (``BaseSession._resolve_cookies``); no counter is involved.
 """
 
 import calendar
@@ -134,6 +135,38 @@ def create_cookie(name, value, **kwargs):
     return Cookie(**result)
 
 
+#: The three date formats RFC 6265 section 5.1.1 requires a cookie parser to
+#: accept, plus the one ``http.cookies`` itself emits.
+#: RFC 850 spells the weekday out in full ("Sunday, 06-Nov-94 08:49:37 GMT")
+#: while RFC 1123 abbreviates it. `%a` matches only the abbreviation, so the
+#: strict RFC 850 spelling is listed separately with `%A`; without that entry a
+#: server using the RFC 850 form lost its expiry. Both spellings occur in the
+#: wild, so both are accepted instead of picking one.
+_COOKIE_DATE_FORMATS = (
+    "%a, %d %b %Y %H:%M:%S GMT",   # RFC 1123, what servers actually send
+    "%a, %d-%b-%Y %H:%M:%S GMT",   # RFC 850 with an abbreviated weekday
+    "%A, %d-%b-%Y %H:%M:%S GMT",   # RFC 850 as specified, weekday spelled out
+    "%a %b %d %H:%M:%S %Y",        # asctime
+    "%a, %d-%b-%y %H:%M:%S GMT",   # two-digit RFC 850 year
+    "%A, %d-%b-%y %H:%M:%S GMT",   # two-digit year, weekday spelled out
+)
+
+
+def _parse_cookie_date(text):
+    """Parses a cookie ``Expires`` value; returns epoch seconds or ``None``.
+
+    An unparseable date means "no expiry" rather than a failed cookie:
+    RFC 6265 tells parsers to ignore an attribute they cannot read, and
+    raising here lost the whole cookie instead of just its expiry.
+    """
+    for template in _COOKIE_DATE_FORMATS:
+        try:
+            return calendar.timegm(time.strptime(text, template))
+        except ValueError:
+            continue
+    return None
+
+
 def morsel_to_cookie(morsel):
     """Converts a ``http.cookies.Morsel`` to a ``cookielib.Cookie``."""
     expires = None
@@ -143,9 +176,13 @@ def morsel_to_cookie(morsel):
         except ValueError:
             raise TypeError("max-age: %s must be integer" % morsel["max-age"])
     elif morsel["expires"]:
-        expires = calendar.timegm(
-            time.strptime(morsel["expires"], "%a, %d-%b-%Y %H:%M:%S GMT")
-        )
+        # ``http.cookies`` accepts three date formats (RFC 1123 "Wed, 21 Oct
+        # 2015 ...", RFC 850 "Wednesday, 21-Oct-15 ...", and asctime), and
+        # every real server sends the first. Parsing only the RFC 850 shape
+        # requests happens to use raised ValueError("time data ... does not
+        # match format") on the common form -- measured with
+        # ``expires=Wed, 21 Oct 2015 07:28:00 GMT``.
+        expires = _parse_cookie_date(morsel["expires"])
     return create_cookie(
         comment=morsel["comment"] or None, comment_url=bool(morsel["comment"]),
         discard=False, domain=morsel["domain"], expires=expires,
@@ -158,10 +195,12 @@ def morsel_to_cookie(morsel):
 class RequestsCookieJar(cookielib.CookieJar, MutableMapping):
     """``cookielib.CookieJar`` with the dict interface requests exposes.
 
-    ``revision`` increments on every mutation.  ``Session`` snapshots it after
-    mirroring server cookies, so a later change means the *caller* edited the jar
-    and the Core's own cookie store has to be discarded for the edit to take
-    effect.
+    ``revision`` counts mutations for callers that want to poll the jar.  It is
+    not what ``Session`` uses: the engine's cookie store is rebuilt when the
+    ``Cookie`` line this jar would send differs from the one the engine's mirror
+    would send (``BaseSession._resolve_cookies``).  Reading can move this counter,
+    because ``cookielib.add_cookie_header`` calls ``clear_expired_cookies`` and
+    that clears each expired cookie through ``clear()``.
     """
 
     def __init__(self, policy=None):
@@ -367,15 +406,31 @@ class RequestsCookieJar(cookielib.CookieJar, MutableMapping):
         return request.get_new_headers().get("Cookie")
 
     def absorb_set_cookie(self, url, lines):
-        """Records ``Set-Cookie`` lines observed for *url*; returns a fresh jar."""
+        """Records ``Set-Cookie`` lines observed for *url*; returns a fresh jar.
+
+        Returns the cookies this response *set*, which is what
+        ``Response.cookies`` exposes. Deletion is recorded on the jar itself
+        rather than on that throwaway jar: ``cookielib`` implements
+        ``Max-Age=0`` and a past ``Expires`` by calling ``clear(domain, path,
+        name)`` on the jar it is extracting into, so extracting into a temporary
+        jar deleted the cookie from a jar nobody kept and left the live entry in
+        place. Measured: a server that set ``sid=ABC`` and then deleted it with
+        ``Set-Cookie: sid=; Max-Age=0`` left ``{'sid': 'ABC'}`` in the session.
+        """
         received = RequestsCookieJar()
         if not lines:
             return received
         request = MockRequest(url)
         response = MockResponse(lines)
+        # Extract into ``self`` so an expiring cookie really deletes the stored
+        # one. ``extract_cookies`` only ever sets or clears entries; it never
+        # touches the rest of the jar.
+        self.extract_cookies(response, request)
+        # The same lines go into a second, throwaway jar for
+        # ``Response.cookies``. A deletion correctly leaves that jar empty, so
+        # ``response.cookies`` reports what this response set, not what the
+        # session holds.
         received.extract_cookies(response, request)
-        for cookie in received:
-            self.set_cookie(copy.copy(cookie))
         return received
 
 

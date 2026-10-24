@@ -280,9 +280,21 @@ stacking on it: `retry=2` means three attempts however the request failed.
 preserves the original request's site-for-cookies and is the higher-fidelity
 path; the facade reconstructs `Response.history` and the post-redirect URL from
 the per-hop redirect events the Core reports. Because Chromium enforces its own
-limit rather than the caller's, a `max_redirects` tighter than the default makes
-the facade re-issue each hop from Python instead. `allow_redirects=False` uses
-manual redirect mode: the Core defers the hop and the facade returns the 3xx.
+limit rather than the caller's, a `max_redirects` tighter than Chromium's 20
+makes the facade re-issue each hop from Python instead. `allow_redirects=False`
+uses manual redirect mode: the Core defers the hop and the facade returns the 3xx.
+
+The facade's `max_redirects` default is `None`, which means "adopt Chromium's 20"
+-- **not** requests' 30. `requests.models.DEFAULT_REDIRECT_LIMIT` is still 30 and
+still importable, but adopting it as this session's default would promise 30 hops
+from a build that stops at 20. The two numbers are different on purpose.
+
+Chromium's own ceiling is **20 hops** (`net::URLRequest::kMaxRedirects`, installed
+as the request's redirect limit in `url_request.cc`). Asking for more than that
+cannot be honoured: a `max_redirects` at or above 20 raises `UnsupportedFeature`
+instead of being silently clamped to 20. Clamping would tell the caller a limit
+this build does not enforce, and the lie would surface later as an unexplained
+`TooManyRedirects` at hop 21. `allow_redirects` defaults to the session setting.
 
 ### Response fields the ABI cannot provide
 

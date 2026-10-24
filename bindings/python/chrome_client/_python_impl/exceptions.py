@@ -5,6 +5,7 @@ style code ports unchanged, with the extra leaves ``curl_cffi`` defines added
 alongside. ``RequestException`` derives from ``IOError`` exactly as in requests.
 """
 
+import json as _json
 import re
 
 
@@ -24,8 +25,21 @@ class InvalidJSONError(RequestException):
     pass
 
 
-class JSONDecodeError(InvalidJSONError, ValueError):
-    """Raised by ``Response.json()`` when the body is not valid JSON."""
+class JSONDecodeError(InvalidJSONError, _json.JSONDecodeError):
+    """Raised by ``Response.json()`` when the body is not valid JSON.
+
+    Inherits :class:`json.JSONDecodeError` exactly as requests does, so
+    ``except json.JSONDecodeError`` catches it and the parsed position is
+    available as ``msg``/``doc``/``pos``/``lineno``/``colno``.  ``ValueError``
+    comes in through that base, which keeps ``except ValueError`` working.
+    """
+
+    def __init__(self, *args, **kwargs):
+        # json.JSONDecodeError.__init__ builds the position suffix and sets the
+        # five attributes; InvalidJSONError.__init__ then stores response= and
+        # request= and passes the formatted message on to IOError.
+        _json.JSONDecodeError.__init__(self, *args)
+        InvalidJSONError.__init__(self, *self.args, **kwargs)
 
 
 class HTTPError(RequestException):
@@ -253,6 +267,15 @@ _NET_ERRORS = {
     # URLRequest and then fails the request. Rejected credentials therefore
     # surface as a proxy error, which is what the caller has to fix.
     -375: ("ERR_TOO_MANY_RETRIES", ProxyError),
+    # The remaining proxy-class errors Chromium can report. Unmapped, each of
+    # these degraded to a bare RequestException carrying only "net error -N":
+    # the caller could not catch ProxyError and could not see the name, so a
+    # PAC failure looked like an unrelated request fault.
+    -186: ("ERR_PROXY_UNABLE_TO_CONNECT_TO_DESTINATION", ProxyError),
+    -187: ("ERR_PROXY_DELEGATE_CANCELED_CONNECT_REQUEST", ProxyError),
+    -188: ("ERR_PROXY_DELEGATE_CANCELED_CONNECT_RESPONSE", ProxyError),
+    -327: ("ERR_PAC_SCRIPT_FAILED", ProxyError),
+    -367: ("ERR_PAC_SCRIPT_TERMINATED", ProxyError),
 }
 
 _NET_ERROR_PATTERN = re.compile(r"net error (-?\d+)")

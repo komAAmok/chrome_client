@@ -13,22 +13,19 @@ CHROMIUM_SRC=$(resolve_chromium_src)
 # optimize_for_size used to be ignored (config("optimize") checks is_win before
 # it, so Windows was built at -O2 while the other five were at -Os), and
 # honouring it costs more here than -Oz does anywhere else -- x86 is -1,119,232
-# (-12.36%), x86_64 -1,203,200 (-10.56%), arm64 -630,272 (-6.71%). The largest
-# artifact is now x86_64 at 10,191,360 bytes; the ceiling is that plus 2%.
+# (-12.36%), x86_64 -1,203,200 (-10.56%), arm64 -630,272 (-6.71%).
 #
-# Re-baselined twice for the 153 -> 156.0.8078.31 upgrade. Upstream growth alone
-# took x86_64 to 10,396,672 (only 3,328 bytes under the old ceiling); then making
-# //third_party/simdutf honour optimize_for_size under MINICRONET_BUILD took the
-# three targets to 10,299,392 / 8,134,144 / 8,960,000. The ceiling moves with the
-# largest one plus 2% again.
-MAX_BYTES=${MAX_BYTES:-10510000}
+# Re-baselined for the 153 -> 156.0.8078.31 upgrade and again after the size
+# pass. The three committed artifacts are now 10,073,600 (x86_64) / 8,489,472
+# (arm64) / 8,075,776 (x86), so 10,073,600 * 1.02 = 10,275,072 rounds up to the
+# 10,280,000 below. The rule is unchanged: the largest artifact plus 2%, rounded
+# up to 10,000.
+MAX_BYTES=${MAX_BYTES:-10280000}
 ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-RG=${RG:-$(command -v rg || true)}
-if [[ -z $RG ]]; then
-  printf 'ripgrep (rg) is required; set RG to its path\n' >&2
-  exit 1
-fi
-rg() { "$RG" "$@"; }
+# require_rg also installs the rg() wrapper, which turns a ripgrep *error*
+# (status 2: unreadable path, bad pattern) into a failure instead of the "no
+# match" that an `if rg -q` condition would read as a clean result.
+require_rg
 
 test -d "$CHROMIUM_SRC/net" || { printf 'audit-core-windows: no Chromium checkout at %s; set CHROMIUM_SRC to your Chromium checkout\n' "$CHROMIUM_SRC" >&2; exit 1; }
 READELF=$CHROMIUM_SRC/third_party/llvm-build/Release+Asserts/bin/llvm-readobj

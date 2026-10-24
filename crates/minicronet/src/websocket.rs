@@ -3,7 +3,6 @@ use std::{
     panic::{catch_unwind, AssertUnwindSafe},
     pin::Pin,
     ptr::NonNull,
-    slice,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc, Condvar, Mutex,
@@ -15,7 +14,9 @@ use std::{
 use futures_core::Stream;
 use minicronet_sys as sys;
 
-use crate::{ffi_bytes, lock, timeout_ms, Engine, Error, Header};
+use crate::{
+    copy_bytes, copy_string, ffi_bytes, lock, result, timeout_ms, Engine, Error, Header, WAIT_SLICE,
+};
 
 const WS_EVENT_BUFFER_LIMIT: usize = 4 * 1024 * 1024;
 const WS_EVENT_COUNT_LIMIT: usize = 1024;
@@ -106,6 +107,22 @@ struct WebSocketShared {
     callback_ref_live: AtomicBool,
 }
 
+/// Wakers taken under the state lock and woken after it is released.
+///
+/// `Waker::wake` runs arbitrary consumer code; invoking it with the state
+/// mutex held deadlocks a consumer whose wake path re-enters that mutex.
+struct Wakeups {
+    event: Option<Waker>,
+}
+
+impl Wakeups {
+    fn wake(self) {
+        if let Some(waker) = self.event {
+            waker.wake();
+        }
+    }
+}
+
 impl WebSocketShared {
     fn new() -> Self {
         Self {
@@ -121,37 +138,41 @@ impl WebSocketShared {
         if state.terminal {
             return;
         }
-        let event_size = event_size(&event);
+        let incoming_size = event_size(&event);
         if state.events.len() >= WS_EVENT_COUNT_LIMIT
-            || state.event_bytes.saturating_add(event_size) > WS_EVENT_BUFFER_LIMIT
+            || state.event_bytes.saturating_add(incoming_size) > WS_EVENT_BUFFER_LIMIT
         {
+            // Discard the backlog, then account for the replacement event:
+            // leaving event_bytes at 0 while one event is queued made the
+            // counter disagree with the queue it describes.
             state.events.clear();
-            state.event_bytes = 0;
-            state
-                .events
-                .push_back(WebSocketEvent::Failure(WebSocketFailure {
-                    error: Error::BufferLimit,
-                    net_error: 0,
-                    response_code: 0,
-                    message: "WebSocket event buffer limit exceeded".into(),
-                }));
+            let failure = WebSocketEvent::Failure(WebSocketFailure {
+                error: Error::BufferLimit,
+                net_error: 0,
+                response_code: 0,
+                message: "WebSocket event buffer limit exceeded".into(),
+            });
+            state.event_bytes = event_size(&failure);
+            state.events.push_back(failure);
             state.terminal = true;
-            if let Some(waker) = state.waker.take() {
-                waker.wake();
-            }
+            let wakeups = Wakeups {
+                event: state.waker.take(),
+            };
             self.changed.notify_all();
             drop(state);
+            wakeups.wake();
             self.schedule_event();
             return;
         }
-        state.event_bytes = state.event_bytes.saturating_add(event_size);
+        state.event_bytes = state.event_bytes.saturating_add(incoming_size);
         state.events.push_back(event);
         state.terminal |= terminal;
-        if let Some(waker) = state.waker.take() {
-            waker.wake();
-        }
+        let wakeups = Wakeups {
+            event: state.waker.take(),
+        };
         self.changed.notify_all();
         drop(state);
+        wakeups.wake();
         self.schedule_event();
     }
 
@@ -162,27 +183,55 @@ impl WebSocketShared {
         // a binding and releasing the guard first keeps that ordering one-way.
         let callback = lock(&self.event_callback).clone();
         if let Some(callback) = callback {
-            callback();
+            // This runs on a Core callback thread. A panic here would unwind
+            // into the C ABI, and `extern "C"` cannot unwind: the runtime turns
+            // that into "panic in a function that cannot unwind" and aborts the
+            // host process. Record the panic instead, and deliberately do not
+            // re-invoke the hook -- it is the thing that just failed.
+            if catch_unwind(AssertUnwindSafe(|| callback())).is_err() {
+                self.record_callback_panic();
+                // Drop the broken hook so later callbacks stop re-running it.
+                let broken = lock(&self.event_callback).take();
+                drop(broken);
+            }
         }
     }
 
-    fn callback_panicked(&self) {
+    /// Marks the socket failed because a Rust callback panicked, returning
+    /// whether this call is the one that recorded the failure.
+    ///
+    /// This never re-invokes the event hook: the caller is either the hook's
+    /// own panic guard or a path whose hook call already failed.
+    fn record_callback_panic(&self) -> bool {
         let mut state = lock(&self.state);
-        if !state.terminal {
-            state
-                .events
-                .push_back(WebSocketEvent::Failure(WebSocketFailure {
-                    error: Error::CallbackPanic,
-                    net_error: 0,
-                    response_code: -1,
-                    message: "Rust callback panicked".into(),
-                }));
-            state.terminal = true;
-            if let Some(waker) = state.waker.take() {
-                waker.wake();
-            }
-            self.changed.notify_all();
-            drop(state);
+        if state.terminal {
+            return false;
+        }
+        let failure = WebSocketEvent::Failure(WebSocketFailure {
+            error: Error::CallbackPanic,
+            net_error: 0,
+            response_code: -1,
+            message: "Rust callback panicked".into(),
+        });
+        // Keep `event_bytes` describing the queue it accounts for: this path
+        // queues an event without going through `push`, so it has to add the
+        // replacement event's size itself.
+        state.event_bytes = state.event_bytes.saturating_add(event_size(&failure));
+        state.events.push_back(failure);
+        state.terminal = true;
+        let wakeups = Wakeups {
+            event: state.waker.take(),
+        };
+        self.changed.notify_all();
+        drop(state);
+        wakeups.wake();
+        true
+    }
+
+    /// Records a panic raised outside the event hook, then wakes the consumer.
+    /// The hook is still invoked here because it is not what failed.
+    fn callback_panicked(&self) {
+        if self.record_callback_panic() {
             self.schedule_event();
         }
     }
@@ -326,7 +375,7 @@ impl WebSocket {
     }
 
     pub fn close(&self, code: u16, reason: &str) -> Result<(), Error> {
-        native_result(unsafe {
+        result(unsafe {
             sys::mn_websocket_close(
                 self.0.raw.as_ptr(),
                 code,
@@ -337,7 +386,7 @@ impl WebSocket {
     }
 
     pub fn cancel(&self) -> Result<(), Error> {
-        native_result(unsafe { sys::mn_websocket_cancel(self.0.raw.as_ptr()) })
+        result(unsafe { sys::mn_websocket_cancel(self.0.raw.as_ptr()) })
     }
 
     pub fn is_finished(&self) -> bool {
@@ -349,7 +398,7 @@ impl WebSocket {
         message_type: sys::mn_websocket_message_type_t,
         data: &[u8],
     ) -> Result<(), Error> {
-        native_result(unsafe {
+        result(unsafe {
             sys::mn_websocket_send(
                 self.0.raw.as_ptr(),
                 message_type,
@@ -388,11 +437,12 @@ impl WebSocketEvents {
             if state.terminal {
                 return None;
             }
-            state = self
+            let (next, _) = self
                 .shared
                 .changed
-                .wait(state)
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
+                .wait_timeout(state, WAIT_SLICE)
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            state = next;
         }
     }
 }
@@ -414,14 +464,6 @@ impl Stream for WebSocketEvents {
     }
 }
 
-fn native_result(value: sys::mn_result_t) -> Result<(), Error> {
-    if value == sys::mn_result_t::MN_OK {
-        Ok(())
-    } else {
-        Err(value.into())
-    }
-}
-
 fn event_size(event: &WebSocketEvent) -> usize {
     match event {
         WebSocketEvent::Message { data, .. } => data.len(),
@@ -433,18 +475,6 @@ fn event_size(event: &WebSocketEvent) -> usize {
         WebSocketEvent::Failure(WebSocketFailure { message, .. }) => message.len(),
         WebSocketEvent::Closing => 0,
     }
-}
-
-fn copy_bytes(data: *const u8, length: usize) -> Vec<u8> {
-    if length == 0 {
-        Vec::new()
-    } else {
-        unsafe { slice::from_raw_parts(data, length) }.to_vec()
-    }
-}
-
-fn copy_string(data: *const i8, length: usize) -> String {
-    String::from_utf8_lossy(&copy_bytes(data.cast(), length)).into_owned()
 }
 
 unsafe fn shared<'a>(user_data: *mut std::ffi::c_void) -> &'a WebSocketShared {
@@ -644,5 +674,141 @@ mod tests {
             observed.load(Ordering::Acquire),
             "schedule_event held event_callback while invoking the hook"
         );
+    }
+}
+
+#[cfg(test)]
+mod abi_regressions {
+    use super::*;
+    use std::sync::atomic::AtomicUsize;
+    use std::task::{RawWaker, RawWakerVTable, Waker};
+    use std::time::Duration;
+
+    fn reentrant_waker(shared: Arc<WebSocketShared>, hits: Arc<AtomicUsize>) -> Waker {
+        unsafe fn clone(data: *const ()) -> RawWaker {
+            let inner = unsafe { &*(data as *const (Arc<WebSocketShared>, Arc<AtomicUsize>)) };
+            let boxed = Box::new((Arc::clone(&inner.0), Arc::clone(&inner.1)));
+            RawWaker::new(Box::into_raw(boxed) as *const (), &VTABLE)
+        }
+        unsafe fn wake(data: *const ()) {
+            let boxed =
+                unsafe { Box::from_raw(data as *mut (Arc<WebSocketShared>, Arc<AtomicUsize>)) };
+            boxed.1.fetch_add(1, Ordering::SeqCst);
+            let _guard = lock(&boxed.0.state);
+        }
+        unsafe fn wake_by_ref(data: *const ()) {
+            let inner = unsafe { &*(data as *const (Arc<WebSocketShared>, Arc<AtomicUsize>)) };
+            inner.1.fetch_add(1, Ordering::SeqCst);
+            let _guard = lock(&inner.0.state);
+        }
+        unsafe fn drop_fn(data: *const ()) {
+            drop(unsafe { Box::from_raw(data as *mut (Arc<WebSocketShared>, Arc<AtomicUsize>)) });
+        }
+        static VTABLE: RawWakerVTable = RawWakerVTable::new(clone, wake, wake_by_ref, drop_fn);
+        let boxed = Box::new((shared, hits));
+        unsafe { Waker::from_raw(RawWaker::new(Box::into_raw(boxed) as *const (), &VTABLE)) }
+    }
+
+    #[test]
+    fn push_does_not_wake_the_waker_under_the_state_lock() {
+        let shared = Arc::new(WebSocketShared::new());
+        let hits = Arc::new(AtomicUsize::new(0));
+        {
+            let mut state = lock(&shared.state);
+            state.waker = Some(reentrant_waker(Arc::clone(&shared), Arc::clone(&hits)));
+        }
+
+        let (tx, rx) = std::sync::mpsc::channel();
+        let worker = Arc::clone(&shared);
+        std::thread::spawn(move || {
+            worker.push(WebSocketEvent::Closing, false);
+            let _ = tx.send(());
+        });
+
+        rx.recv_timeout(Duration::from_secs(5))
+            .expect("push() woke the waker while the state lock was held");
+        assert_eq!(hits.load(Ordering::SeqCst), 1, "the waker ran exactly once");
+    }
+
+    #[test]
+    fn callback_panic_failure_event_is_accounted_for() {
+        // record_callback_panic queues its Failure event without going through
+        // push(), so it has to account for the bytes itself. It did not, and
+        // event_bytes stayed at 0 while two events were queued -- the counter
+        // then described a queue it no longer matched, which is the exact
+        // invariant overflow_failure_event_is_accounted_for protects.
+        let shared = Arc::new(WebSocketShared::new());
+        *lock(&shared.event_callback) = Some(Arc::new(|| panic!("hook exploded")));
+
+        shared.push(WebSocketEvent::Closing, false);
+
+        let state = lock(&shared.state);
+        let queued: usize = state.events.iter().map(event_size).sum();
+        assert_eq!(
+            state.event_bytes, queued,
+            "event_bytes must describe the queue that remains"
+        );
+        assert!(state.terminal, "a callback panic is terminal");
+    }
+
+    #[test]
+    fn overflow_failure_event_is_accounted_for() {
+        // The overflow branch replaces the backlog with one Failure event. Its
+        // bytes must land in event_bytes, or the counter describes a queue it
+        // no longer matches.
+        let shared = Arc::new(WebSocketShared::new());
+        for _ in 0..WS_EVENT_COUNT_LIMIT {
+            shared.push(
+                WebSocketEvent::Message {
+                    message_type: MessageType::Binary,
+                    final_fragment: true,
+                    data: vec![0u8; 64],
+                },
+                false,
+            );
+        }
+        shared.push(WebSocketEvent::Closing, false);
+
+        let state = lock(&shared.state);
+        assert_eq!(state.events.len(), 1, "only the failure event survives");
+        assert!(state.terminal, "overflow is terminal");
+        let queued = state.events.front().expect("the failure event");
+        assert_eq!(
+            state.event_bytes,
+            event_size(queued),
+            "event_bytes must describe the queue that remains"
+        );
+        assert!(state.event_bytes > 0, "a queued event cannot weigh nothing");
+    }
+
+    #[test]
+    fn a_panicking_event_hook_does_not_escape_the_callback() {
+        // push() calls schedule_event on a Core callback thread. An unguarded
+        // panic there unwinds into `extern "C"`, which cannot unwind, so the
+        // runtime aborts the host process.
+        let shared = Arc::new(WebSocketShared::new());
+        let panics = Arc::new(AtomicUsize::new(0));
+        let counter = Arc::clone(&panics);
+        *lock(&shared.event_callback) = Some(Arc::new(move || {
+            counter.fetch_add(1, Ordering::SeqCst);
+            panic!("hook exploded");
+        }));
+
+        // Must return rather than abort.
+        shared.push(WebSocketEvent::Closing, false);
+
+        assert_eq!(panics.load(Ordering::SeqCst), 1, "the hook ran once");
+        assert!(
+            lock(&shared.event_callback).is_none(),
+            "the broken hook is dropped so it cannot re-run on every callback"
+        );
+        let state = lock(&shared.state);
+        assert!(state.terminal);
+        match state.events.back() {
+            Some(WebSocketEvent::Failure(failure)) => {
+                assert_eq!(failure.error, Error::CallbackPanic)
+            }
+            other => panic!("expected a CallbackPanic failure, got {other:?}"),
+        }
     }
 }

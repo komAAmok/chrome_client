@@ -1,7 +1,7 @@
 # chrome_client
 
 [![PyPI version](https://img.shields.io/pypi/v/chrome-client)](https://pypi.org/project/chrome-client/)
-[![Python versions](https://img.shields.io/badge/python-3.6%20%7C%203.7%20%7C%203.8%20%7C%203.9%20%7C%203.10%20%7C%203.11%20%7C%203.12%20%7C%203.13-blue)](https://pypi.org/project/chrome-client/)
+[![Python versions](https://img.shields.io/badge/python-3.6%20%7C%203.7%20%7C%203.8%20%7C%203.9%20%7C%203.10%20%7C%203.11%20%7C%203.12%20%7C%203.13%20%7C%203.14%20%7C%203.15-blue)](https://pypi.org/project/chrome-client/)
 [![License: MIT](https://img.shields.io/pypi/l/chrome-client)](https://pypi.org/project/chrome-client/)
 
 An HTTP/WebSocket client built on the Chromium network stack. The native Core
@@ -21,7 +21,7 @@ the [compatibility boundary](https://github.com/komAAmok/chrome_client/blob/main
 
 ### Operating systems, architectures and bindings
 
-| OS | Core targets | Python 3.7–3.13 | Python 3.6 | Rust | Notes |
+| OS | Core targets | Python 3.9–3.15 | Python 3.6–3.8 | Rust | Notes |
 | --- | --- | --- | --- | --- | --- |
 | Linux | x86 (`i686`), x86_64, ARM64 | ✓ | ✓ (separate abi3 extension) | ✓ | Runtime dependencies are listed in each manifest |
 | Windows | x86, x86_64, ARM64 | ✓ | x86/x86_64 ✓ | ✓ | Wheels bundle the DLL; ICU data is linked in |
@@ -270,6 +270,12 @@ print(response.status_code, response.headers["Location"], response.next.url)
 session.get("https://example.com/r", max_redirects=5)   # raises TooManyRedirects
 ```
 
+`max_redirects` must be below 20 (Chromium stops at 20 hops inside one
+`URLRequest`); a value of 20 or more raises `UnsupportedFeature` instead of being
+silently clamped to 20. The default is `None`, meaning "adopt Chromium's 20" --
+**not** requests' 30. `requests.models.DEFAULT_REDIRECT_LIMIT` is still 30 and
+still importable, but this package does not use it as the session default.
+
 The exception hierarchy matches `requests.exceptions` (`RequestException` derives
 from `IOError`) plus curl-cffi's extra leaves. Chromium net errors map to a
 specific class and a readable name:
@@ -505,8 +511,8 @@ Deliberate behavioural differences:
 | `core/abi/` | Stable C ABI v8 |
 | `core/binaries/` | Eight audited Core targets |
 | `crates/minicronet/` | Rust safety layer, streams and lifetimes |
-| `bindings/python/` | Python 3.7–3.13 binding and the shared facade |
-| `bindings/python36/` | Separate Python 3.6 abi3 binding (same facade) |
+| `bindings/python/` | Python 3.9–3.15 binding and the shared facade |
+| `bindings/python36/` | Separate Python 3.6–3.8 abi3 binding (same facade) |
 | `bindings/python/tests/` | `test_stability.py` for lifetimes and concurrency; `test_compat.py` for the requests/curl-cffi surface |
 | `docs/` | Build, platform, ABI, compatibility and audit docs |
 

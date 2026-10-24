@@ -854,22 +854,26 @@ await**，于是 native request、socket 和缓冲的 body 一起泄漏。**一�
 **背景**：需要回答四个关于版本边界的问题——py36 分支支持 3.4/3.5 吗？主分支支持 3.14/
 3.15 吗？这两个版本的 free-threaded 构建呢？
 
-**答案的四个依据**（都可复核）：
+**答案的四个依据**（都可复核）。下面三行的「装不上」结论是**当时（PyO3 0.28.3、
+`requires-python ">=3.6,<3.14"`）的边界**；0.30.1 之后上界已经抬到 3.15，见第 39 条。
+行的形式保留，因为要说明的是「三种状态不能混说」这个方法，而不是那几个数字：
 
 | 问题 | 结论 | 决定性依据 |
 | --- | --- | --- |
-| py36 支持 3.4/3.5 | **不可能** | `pyo3-build-config-0.15.2/src/impl_.rs:21` `MINIMUM_SUPPORTED_VERSION = 3.6`；pyo3 0.15.1 的 feature 表里根本没有 `abi3-py35`/`abi3-py34` |
-| 主分支支持 3.14 | **装不上** | 两个 `pyproject.toml` 都写 `requires-python = ">=3.6,<3.14"`；pip 直接拒绝 |
-| 主分支支持 3.15 | **装不上** | 同上；且 `ABI3_MAX_MINOR = 14`（`impl_.rs:43`），abi3 的版本上限就是 3.14 |
-| 3.14/3.15 free-threaded | **不承诺，且 abi3 在 free-threaded 上不生效** | `impl_.rs:193` `if self.abi3 && !self.is_free_threaded()`；`impl_.rs:730` 明确写「free-threaded build 不支持 abi3」 |
+| py36 支持 3.4/3.5 | **不可能**（今天仍然成立） | `pyo3-build-config-0.15.2/src/impl_.rs:21` `MINIMUM_SUPPORTED_VERSION = 3.6`；pyo3 0.15.1 的 feature 表里根本没有 `abi3-py35`/`abi3-py34` |
+| 主分支支持 3.14 | 当时**装不上**；现在可装（`>=3.6,<3.16` + `abi3-py39`，覆盖 3.9–3.15） | 当时两个 `pyproject.toml` 都写 `requires-python = ">=3.6,<3.14"`，pip 直接拒绝 |
+| 主分支支持 3.15 | 当时**装不上**；现在可装（同上） | 当时同上；且 0.28.3 的 `ABI3_MAX_MINOR = 14`（`impl_.rs:43`），abi3 的版本上限就是 3.14。0.30.1 的 `STABLE_ABI_MAX_MINOR = 15`（`impl_.rs:40`）——**上界同样是上游的事实**，换版本才会变 |
+| 3.14/3.15 free-threaded | **不承诺，且 abi3 在 free-threaded 上不生效**（今天仍然成立） | `impl_.rs:193` `if self.abi3 && !self.is_free_threaded()`；`impl_.rs:730` 明确写「free-threaded build 不支持 abi3」 |
 
 **容易说错的地方**：
 
-1. **abi3 与 free-threaded 是互斥的**。`abi3-py37` 在 3.13t/3.14t 上不会生成 limited API，
+1. **abi3 与 free-threaded 是互斥的**。任何 `abi3-py3N`（当时是 `abi3-py37`，现在是
+   `abi3-py39`）在 3.13t/3.14t 上都不会生成 limited API，
    所以「一个 abi3 wheel 顺带覆盖 free-threaded」是错的——必须为 `3.14t` 单独出 wheel，
    且 hint 是 `cp314t` 而不是 `cp314`。
-2. **`ABI3_MAX_MINOR` 是硬上限**。pyo3 0.28.3 的上限是 14；跑到 3.15 解释器上它只会
-   `warn!` 然后回落（`impl_.rs:751`），不是「自动支持 3.15」。
+2. **`ABI3_MAX_MINOR` 是硬上限**。pyo3 0.28.3 的上限是 14（0.30.1 把
+   `STABLE_ABI_MAX_MINOR` 抬到 15）；超出上限的解释器上它只会 `warn!` 然后回落
+   （`impl_.rs:751`），不是「自动支持」。
 3. **模块声明了 `gil_used = true`**（`bindings/python/src/lib.rs:846`）。即使装了
    free-threaded 解释器，这个扩展也会被强制重新启用 GIL——「能导入」不等于「并行」。
    代码注释写的是「在专门的 3.13t 测试矩阵出现前保留 GIL」，这是一条有意的选择，不是疏漏。
@@ -881,3 +885,266 @@ await**，于是 native request、socket 和缓冲的 body 一起泄漏。**一�
 **门禁**：`tools/audit-pypi-metadata.sh` 校验 `requires-python`、classifiers 与 README
 徽章三者一致；`docs/PYTHON_BINDING_AUDIT.md` 把「free-threaded 3.13t 明确不承诺」
 写进表格而不是留给读者猜。
+
+## 39. abi3 的下界是 PyO3 的事实，不是打包选择
+
+**背景**：把 PyO3 从 0.28.3 升到 0.30.1 之后，需要重新回答「这个 wheel 从哪一版
+Python 起装得上」。当时文档、徽章、CI 都还写着 3.7–3.13，而新 crate 已经装不到 3.7 了。
+
+**现象**：0.30.1 的最低支持版本是 **3.9**——`pyo3-build-config-0.30.1/src/impl_.rs:26`
+`MINIMUM_SUPPORTED_VERSION: PythonVersion { major: 3, minor: 9 }`。它的 feature 表里
+abi3 只有 `abi3-py39` 到 `abi3-py315`，**没有** `abi3-py37`/`abi3-py38`（写上去是
+编译期错误，不是运行期降级）。abi3 下界决定 wheel 标签，所以打进 PyPI 的是
+`cp39-abi3`：本机 maturin 1.15.0 实跑得到 `tagprobe-0.0.0-cp39-abi3-manylinux_2_38_x86_64.whl`。
+pip 对 `cp39-abi3` 的处理是**拒绝安装**，不是「装了再 ImportError」——3.7/3.8 用户
+看到的是「找不到匹配的发行版」。反方向同样被挡住：用 3.7 解释器配 `abi3-py39` 会让
+pyo3 直接报 "cannot set a minimum Python version 3.9 higher than the interpreter
+version 3.7"（同文件 `:82-89` 的 `ensure!(min_version <= version, ...)`）。
+
+**根因**：facade 里那句 `sys.version_info < (3, M)` 和扩展的 abi3 下界 N 是**两个
+互相独立的数字**，分别活在两处不同的文件里，谁也不知道谁：
+
+- `bindings/python/chrome_client/_python_impl/_native.py` 的 `MODULE_NAME` 行决定
+  某个解释器去 import 哪个原生模块；
+- `bindings/python/Cargo.toml` 的 `abi3-py3N` 决定那个模块的 wheel 能在哪一版上装。
+
+pyo3 只校验 N 与**构建解释器**的关系，从不读 facade。于是 M 可以停在 3.7 而 N 已经是
+3.9，形式化地写成「3.7 的用户装 `cp36-abi3` wheel，然后 facade 去找
+`chrome_client_native`」——那个 .so 只在现代轮子里。结果是 **ImportError，且发生在
+一个 README 打着 ✓ 的版本上**。这类矛盾不会自己暴露：CI 在 3.10 上跑，本地只有
+3.12，两边都离边界很远。
+
+**规则**：
+
+- 「哪个解释器加载哪个扩展」的阈值 **必须等于** 那个扩展的 abi3 下界。两者是同一个
+  事实的两种写法，不是两个可以各自调的产品决策。
+- 这条等式必须由**门禁断言**，不能靠注释说明。注释在这里特别没用——旧注释把
+  「both abi3 wheels cover 3.6-3.13」写得很清楚，而代码早就不是那样了。
+- 升级 PyO3 时要顺着问三件事：`MINIMUM_SUPPORTED_VERSION` 还是不是原来那个值、
+  `abi3-py3N` 这个 feature 还存不存在、facade 的阈值跟没跟上。三个里错一个都是上面
+  那个 ImportError。
+- 下界是**上游**的事实。想支持更老的 Python 只能换 pyo3 版本（本仓库就是这么做的：
+  0.15.1 的 `ABI3_MAX_MINOR = 9`、`abi3-py36`，覆盖 3.6–3.8），不能靠改 feature 名
+  把一个不存在的 abi3 目标「配」出来。
+
+**门禁**：`tools/audit-pypi-metadata.sh` 末尾新增一段，直接从源码解析两边再比：
+
+- 从 `bindings/python/Cargo.toml` 的 pyo3 行取 `abi3-py3N` → N=9；
+- 从 `_native.py` 的 `MODULE_NAME` 行取 `sys.version_info < (3, M)` → M=9；
+- 断言 `N == M`，不等就报出两个数字与两处 file:line；
+- 断言 `bindings/python36/Cargo.toml` 仍是 `=0.15.1` + `abi3-py36`（3.6 侧不许漂）；
+- 断言现代 crate 的 abi3 feature 不是 `abi3-py37`/`abi3-py38`（0.30.1 里不存在，
+  但它是「想把下界改回去」时最容易写上的值，所以单列一条诊断）。
+
+解析上有一个坑值得记下来：`"abi3-py39"` 里的 39 是「3.9」不是「3.39」。第一版正则写成
+`abi3-py(\d+)`，抓到 `36`/`39`，于是 py36 那侧报出 "abi3 floor is 3.36"。现在用
+`abi3-py3(\d+)`：既能把 `abi3-py36`/`abi3-py39` 读成 6/9，也能正确处理
+`abi3-py315` → 15。
+
+变异测试：把 `_native.py` 的 `(3, 9)` 改回 `(3, 7)` → 门禁 exit 1，报
+「declares abi3-py39 (floor 3.9) but ... switches at (3, 7)」；把 `abi3-py39` 改成
+`abi3-py38` → exit 1，命中「abi3-py38 does not exist in pyo3 0.30.1」那条。两处都恢复后
+门禁重新 exit 0。
+
+**另一半**：光有静态等式还不够，因为等式只证明「两个数字相同」，不证明「那一版真的
+能跑」。所以 `.github/workflows/build-wheels.yml` 增加 `python39-smoke` job：在真
+Python 3.9 上装 Linux x86_64 现代 wheel，断言
+`chrome_client._python_impl._native.MODULE_NAME == 'chrome_client_native'`，然后真发
+一次 `https://example.com` 请求并断言 200。这就是第 37 条规则的落点——下界必须有
+一条真在那一版解释器上执行的门禁。
+
+---
+
+## 40. 委派出去的检查，读错一个流就会永远为真
+
+**现象**：`tools/audit-python-stubs.py` 里有两个「把判定委派给另一个工具」的检查，
+一个读 `stderr`、一个读 `stdout`。把 `tools/expand-verb-signatures.py` 换成
+「只往 stderr 写 traceback 然后 exit 1」，审计仍然打印 `0 error(s), 0 warning(s)`
+并以 **rc=0** 退出；把 `tools/generate-python-stubs.py` 换成「只往 stdout 写
+traceback 然后 exit 1」，同样 rc=0。两个方向都实测复现。
+
+**根因**：两个子工具恰好各写一个流——generator 写 `stderr`（`--check` 的
+`stale: ...`），expander 写 `stdout`。审计各自只读了自己预期的那一个，于是
+**另一个流里的任何内容都不存在**。更严重的是第二个缺陷：`returncode != 0` 时
+代码只做「逐行匹配已知前缀」，**一行都没匹配上时一条 error 都不追加**——退出码
+被读到了，却被丢弃了。于是「解析失败」等价于「通过」，这正是 AGENTS.md 第 6 节
+禁止的「永远为真的判断」的一种变体：不是条件恒真，而是**失败路径静默产出空集**。
+
+**规则**：
+
+- 委派检查必须**同时读两个流**。子工具往哪个流写是实现细节，审计不该赌。
+- `returncode != 0` 且两个流都没解析出任何已知前缀时，必须追加一条**兜底
+  error**，带上子工具的 returncode 与输出尾部。退出码本身就是证据，不能因为
+  「输出看不懂」而作废。
+- 已知前缀的匹配要 `strip()` 之后再比。expander 的 `stale: get (api.pyi)` 前面有
+  两个空格（它在分组标题下缩进），第一版用 `line.startswith("stale: ")` 永远匹配
+  不上，结果真正过期的签名只能靠兜底 error 报出来——能红，但丢掉了具体信息。
+
+**门禁**：`tools/audit-python-stubs.py` 新增 `parse_delegated_output()` 与
+`delegation_failure()`，两个检查共用同一段解析逻辑（单一定义，不再各写一份）。
+
+变异测试（两个方向都必须做，只做一个会漏掉另一个流的假设）：
+
+```bash
+# 方向 A：expander 只写 stderr + exit 1
+printf 'import sys\nsys.stderr.write("Traceback...\\n")\nsys.exit(1)\n' > tools/expand-verb-signatures.py
+python3 tools/audit-python-stubs.py    # 修复前 rc=0；修复后 rc=1
+# 方向 B：generator 只写 stdout + exit 1
+printf 'import sys\nprint("Traceback...")\nsys.exit(1)\n' > tools/generate-python-stubs.py
+python3 tools/audit-python-stubs.py    # 修复前 rc=0；修复后 rc=1
+```
+
+修复后两条都 rc=1，并打印
+`--check exited 1 but its output matched no known prefix, so the check could not be evaluated; that is a failure, not a pass.`
+
+---
+
+## 41. stub 单侧多出的成员是谎言，不是警告
+
+**现象**：往 `_python_impl/sessions.pyi` 注入一个运行时不存在的方法
+`phantom_probe_method`，审计只打印一行 `warning: ... has no runtime counterpart`，
+**rc=0**。也就是说门禁看见了缺陷、说出来了，然后放行。
+
+**根因**：`check_module()` 把「stub 有、运行时没有」归到 `warnings`，而
+`main()` 只在 `errors` 非空时返回 1。方向是不对称的：运行时多出的成员是
+error（`is not declared`），stub 多出的成员是 warning。可这两件事对调用方的伤害
+完全相同——只是方向相反：**stub 说有、运行时没有，调用方写下的代码会在运行期
+拿到 AttributeError**，而类型检查器全程绿灯。这正是 fail-closed 要禁止的
+「对调用方的谎言」，不是提示。
+
+**规则**：stub 单侧多出的 public 成员一律 **error**。唯一的豁免是
+`_python_impl/*.pyi` 里的 `X: TypeAlias = ...`——类型别名按定义就不是运行期
+值，对检查器是「类型」不是「值」，它不存在于运行时是**正确**的，不是缺陷。
+豁免必须窄：只认显式标注了 `TypeAlias` 的声明，不能推广成「凡名字对不上都放过」。
+
+**门禁**：`check_module()` 的 `warnings.append` 改为 `errors.append`，消息里
+写明后果（`the stub promises an attribute that raises AttributeError`）。
+
+变异测试：注入 `phantom_probe_method` → 修复前 rc=0（仅 warning）；修复后 rc=1，
+`error: _python_impl/sessions.pyi: Session.phantom_probe_method has no runtime counterpart`。
+恢复后 rc=0。
+
+---
+
+## 42. facade 重导出的名字，运行期必须真的绑定了
+
+**现象**：`bindings/python/chrome_client/<mod>.pyi` 里有 21 个名字从
+`._python_impl.<mod>` 重导出，但运行时那个模块根本不绑定它们。实测：
+
+```
+from chrome_client.models import RawHeaderBlock
+# ImportError: cannot import name 'RawHeaderBlock' from 'chrome_client._python_impl.models'
+```
+
+而这 21 个名字**全部**是 `_python_impl/*.pyi` 里的 `X: TypeAlias = ...` 声明，
+所以它们不是缺陷——类型别名重导出给检查器是标准 PEP 484 用法。真正的问题是
+**没有任何门禁区分这两类**：`check_facade()` 只比「facade 是否包含 stub 里
+列的名字」，两边同源于同一份 `.pyi`，于是它永远自洽。一个**运行时真的被删掉**
+的 public 名字会原样通过。
+
+**根因**：facade 的期望集合取自 `_python_impl/<mod>.pyi`（声明），而被检查的
+对象也是声明。拿声明去校验声明，等于没校验运行期。AGENTS.md 第 6 节问的
+「还有哪些同类载体没被扫到」，这里就是：`_python_impl/<mod>.py`（真正的运行期
+绑定）从未进入这条比较。
+
+**规则**：
+
+- facade 里每个 `from ._python_impl.X import Y` 的 Y，必须能在
+  `_python_impl/X.py` 里找到绑定；找不到就是 error，因为运行期那句 import 会
+  抛 ImportError。
+- 唯一豁免：`Y: TypeAlias = ...`。判定用 `ast` 看注解是否以 `TypeAlias` 结尾，
+  不靠名单，避免豁免随文件增删而腐化。
+- 用 `ast` 解析而不是 `import`：导入这个包需要 Core 共享库在 loader path 上，
+  门禁不该有这种运行期依赖。
+
+**门禁**：`tools/audit-python-stubs.py` 新增 `check_facade_runtime_names()`，
+配 `runtime_names()`（遍历 `if`/`try` 体内的定义，因为它们也是真实绑定）与
+`type_alias_names()`。实测扫描 364 条重导出，42 条 TypeAlias 豁免，0 error。
+
+变异测试（正向：必须报错；反向：必须不报错。只做正向会漏掉「豁免过宽」）：
+
+- 注入运行期不存在的 `PhantomProbe` 到 `models.pyi` → rc=1，
+  `re-exports PhantomProbe, but _python_impl/models.py does not bind it`；
+- 从 `_python_impl/sessions.py` 删掉真实的 `def merge_setting` → rc=1，
+  同时命中 `sessions.pyi` 与 `requests/sessions.pyi` 两条；
+- 把豁免临时改成 `if False:` → 21 个真实 TypeAlias 全部浮现（42 条，两个
+  facade 各一份），证明这项检查不是空转；
+- **反向**：新增一个 `BrandNewAlias: TypeAlias = int` 并让 facade 重导出它 →
+  rc=0（TypeAlias 合法地不存在于运行期）；把同一个名字改写成不带 `TypeAlias` 的
+  `BrandNewAlias = int` → rc=1。这一对证明豁免**只**认显式的 TypeAlias 声明，
+  没有退化成「凡名字对不上都放过」。
+
+**一个被证伪的假设（留档，勿重犯）**：这条缺陷最初被描述成「facade stub 谎报了
+22 个可导入的名字」，并打算用 `if TYPE_CHECKING:` 包住这些重导出来「修复」。实测
+这个做法是**纯 no-op，而且会打破门禁**：
+
+1. `.pyi` 在运行期从不被执行。把 `models.pyi` 里 `RawHeaderBlock` 那几行**整行
+   删除**，运行期行为逐字节不变——`hasattr` 依旧 `False`，
+   `ImportError: cannot import name 'RawHeaderBlock' from
+   chrome_client._python_impl.models` 依旧来自 `_python_impl/models.py`。
+   谎报的载体是运行期模块，不是 stub。
+2. PEP 484 规定检查器在 `.pyi` 中把 `TYPE_CHECKING` 视为 `True`，所以包起来对
+   检查器也是恒真。两个方向都没有任何变化。
+3. facade `.pyi` 是 `tools/generate-python-stubs.py` 的生成物
+   （`regenerate_facades()`），手改必然让 `--check` 报 stale，等于让
+   `audit-python-stubs` 永久红。
+4. 名单本身也是错的：是 **21** 个不是 22 个，且 `cookies` 不属于这 9 个模块——
+   `cookies.Cookie` 在运行期真实存在（`cookies.py:25` 的
+   `from http.cookiejar import Cookie`），实测 `from chrome_client.cookies import
+   Cookie` → `<class 'http.cookiejar.Cookie'>`。
+
+结论：真正的缺陷类别是「**既不是 TypeAlias、运行期又不存在**」，不是「stub 里有
+运行时没有的名字」。改门禁前先分清这两类，否则会去修一个不存在的 bug，还会顺手
+把生成物改坏。
+
+
+---
+
+## 43. 用一个"更干净"的默认值换来的，是一次上下文重建
+
+**现象**：`discard_cookies=True` 的语义是"既不发送也不记录 cookie"。实测原始缺陷：
+
+```
+session.get(/set-a)                          # 服务端 Set-Cookie: sid=AAA
+session.get(/set-b, discard_cookies=True)    # 丢弃成功，但服务端回了 sid=BBB
+session.get(/plain)                          # 仍然带 Cookie: sid=BBB   <-- 错
+```
+
+最后那次普通请求本该只带 `sid=AAA`，实际带的是 `sid=BBB`——discard 请求**自己的**
+响应把 cookie 写进了整个会话后续都在用的 store。也就是说这个"丢弃"请求反过来污染了
+它本该隔离的东西。
+
+**根因**：ABI v8 **没有任何入口能清空 Core 的 CookieMonster**（`core/abi/minicronet.h`
+里 grep `cookie` 一条都没有）。所以"用一个空 store"只能靠换 Engine 实现——而
+**一个 Engine 就是一整个 Chromium `URLRequestContext`**：独立线程、socket 池、
+DNS 缓存、TLS 会话缓存。
+
+代价先摆在这里：**每个 discard 请求都多一次完整上下文构建**。这不是可以优化的实现
+细节，是 ABI 缺一个 clear 入口的必然结果。
+
+真正的缺陷出在"怎么拿这个一次性 Engine"。原实现靠 `self._generation += 1` 换新
+generation——而 `self._generation` 正是**之后每个普通请求读的那个键**。于是那个
+本应一次性的 store，变成了全会话的默认 store，正好制造出它要防止的污染。
+
+**规则**：
+
+- 一次性 Engine 的键必须**独立于** `self._generation`。当前实现用负数计数器
+  `self._discard_serial`（`generation=-self._discard_serial`），负数与只从 0 增长的
+  `_generation` 不可能相撞。
+- 用完立即从 `EngineCache` 摘除（`self._engines.discard(one_shot)`），绝不写回
+  `self._generation`。不摘除有两个后果：它会成为后续普通请求的默认 store（原缺陷），
+  以及它会挤掉本该被复用的普通 Engine（有界缓存）。
+- 也不能复用上一次的 discard Engine：它的 store 已经被上一次 discard 响应填过，
+  复用就会把上一次的 cookie 泄漏进这一次。每次都要新的空 store。
+- Engine 本身要靠 `EngineSlot` 保活（流式响应下还有 native request 持有 Chromium
+  上下文的引用），"从缓存摘除"不等于"立刻销毁"。
+
+**门禁**：回归测试覆盖上面那段三步序列——discard 之后紧接的普通请求**不得**带上
+discard 响应里的 cookie，且 discard 请求本身既不发送也不记录。这条必须断言正确行为，
+不能把"带了 sid=BBB"冻结成期望（AGENTS.md 第 7 节）。
+
+**记在账上的代价**：`discard_cookies=True` 比普通请求贵一次上下文构建。这是
+fail-closed 的正当成本——宁可多建一个上下文，也不能假装丢弃了 cookie 而实际把
+它们带进下一个请求。等 ABI 增加清空 cookie store 的入口后，这条代价才能消掉；
+在那之前它应当写在文档里，而不是藏起来。
+

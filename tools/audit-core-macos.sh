@@ -13,18 +13,16 @@ CHROMIUM_SRC=$(resolve_chromium_src)
 # two plus 2% so a regression on either architecture fails here rather than in a
 # release.
 #
-# Re-baselined twice for the 153 -> 156.0.8078.31 upgrade. Upstream growth alone
-# took x86_64 to 8,643,272 and arm64 to 7,889,072; then making
-# //third_party/simdutf honour optimize_for_size under MINICRONET_BUILD took them
-# to 8,536,776 and 7,872,560. The ceiling is the larger plus 2% again.
-MAX_BYTES=${MAX_BYTES:-8710000}
+# Re-baselined for the 153 -> 156.0.8078.31 upgrade and again after the size
+# pass. The two committed artifacts are now 8,397,232 (x86_64) and 7,608,096
+# (arm64), so 8,397,232 * 1.02 = 8,565,176 rounds up to the 8,570,000 below.
+# The rule is unchanged: the larger architecture plus 2%, rounded up to 10,000.
+MAX_BYTES=${MAX_BYTES:-8570000}
 ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-RG=${RG:-$(command -v rg || true)}
-if [[ -z $RG ]]; then
-  printf 'ripgrep (rg) is required; set RG to its path\n' >&2
-  exit 1
-fi
-rg() { "$RG" "$@"; }
+# require_rg also installs the rg() wrapper, which turns a ripgrep *error*
+# (status 2: unreadable path, bad pattern) into a failure instead of the "no
+# match" that an `if rg -q` condition would read as a clean result.
+require_rg
 
 test -d "$CHROMIUM_SRC/net" || { printf 'audit-core-macos: no Chromium checkout at %s; set CHROMIUM_SRC to your Chromium checkout\n' "$CHROMIUM_SRC" >&2; exit 1; }
 READOBJ=$CHROMIUM_SRC/third_party/llvm-build/Release+Asserts/bin/llvm-readobj

@@ -33,9 +33,17 @@ def main() -> int:
     if not HEADER.is_file():
         print("audit-net-error-names: no net_error_list.h at %s" % HEADER)
         return 1
+    # Only lines that are not commented out define an error. The header keeps
+    # removed errors as "// NET_ERROR(NAME, -N)" (17 of them today), and matching
+    # those would treat a retired code as current -- which let one be added to
+    # the table with the gate still green.
     truth = {}
-    for match in re.finditer(r"NET_ERROR\(([A-Z0-9_]+), (-?\d+)\)", HEADER.read_text()):
-        truth[int(match.group(2))] = "ERR_" + match.group(1)
+    for line in HEADER.read_text().splitlines():
+        if line.lstrip().startswith("//"):
+            continue
+        match = re.search(r"NET_ERROR\(([A-Z0-9_]+), (-?\d+)\)", line)
+        if match:
+            truth[int(match.group(2))] = "ERR_" + match.group(1)
 
     text = TABLE.read_text()
     start = text.index("_NET_ERRORS = {")

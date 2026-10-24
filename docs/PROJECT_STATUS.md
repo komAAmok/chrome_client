@@ -1,6 +1,6 @@
 # chrome_client 项目状态
 
-记录时间：2026-09-23。本文覆盖已完成、进行中、已知缺陷和后续计划。数字都来自本机
+记录时间：2026-10-22。本文覆盖已完成、进行中、已知缺陷和后续计划。数字都来自本机
 实测，可用 `tools/` 下的脚本复现。
 
 ## 项目定位
@@ -334,20 +334,43 @@ macOS 12,000,000 → 8,750,000。macOS 那一档原来虚高 3 MB 以上，等�
 ### 证书错误码修复的跨平台验收状态
 
 8 个平台的 Core 全部已重建、安装并刷新 manifest（`tools/audit-core-binaries.sh`
-8/8 通过，ABI 仍是 v8）：
+8/8 通过，ABI 仍是 v8），且**全部包含本轮 C++ 修复**：
 
 | 目标 | 大小（字节） | SHA-256 前缀 |
 | --- | --- | --- |
-| linux-x86 | 8,776,524 | `069276f884924c4f` |
-| linux-x86_64 | 8,863,392 | `a4312356a85bc79c` |
-| linux-arm64 | 8,692,184 | `e43d684f995bbb58` |
-| windows-x86 | 8,134,144 | `ecdb8329a8928f0d` |
-| windows-x86_64 | 10,299,392 | `15b909fd30e9e16e` |
-| windows-arm64 | 8,960,000 | `1b9ecbadfb7e155e` |
-| macos-x86_64 | 8,536,776 | `2025d4319658f155` |
-| macos-arm64 | 7,872,560 | `f6dec0e8dbcec087` |
+| linux-x86_64 | 8,805,936 | `512231db68d79b50` |
+| linux-x86 | 8,446,536 | `16b2d13b08f276d7` |
+| linux-arm64 | 8,273,312 | `bffadd2775284b27` |
+| windows-x86 | 8,076,288 | `038740851413f6c0` |
+| windows-x86_64 | 10,074,112 | `bd4d10a0cd0fa80f` |
+| windows-arm64 | 8,489,472 | `132a4a76da8db885` |
+| macos-x86_64 | 8,397,232 | `35dc1715d66ba6a9` |
+| macos-arm64 | 7,608,096 | `acd443d52398af0f` |
 
-（表中是随兼容层审计那一轮版本提升重建后的值；此前几轮的 SHA 已被覆盖。
+### 本轮 C++ 修复的平台覆盖
+
+`core/source/` 的四处修改（长度字段上限、close code 1014、`protocol_mode`
+移出 profile 块、WebSocket 握手定时器）已进入全部 8 个平台。
+
+证据分三层，因为本机只能执行 x86_64 Linux 二进制（无 qemu、无 wine）：
+
+1. **单一源码来源**：`tools/sync-core.sh` 把 `core/source/*` 安装到唯一位置
+   `$CHROMIUM_SRC/minicronet/`，8 个 out 目录全部从这里编译。该副本与仓库
+   `core/source/` 逐字节一致（`cmp` 验证 `minicronet.cc`/`engine.cc`/`websocket.cc`），
+   四个补丁标记齐备（`kMaxHeaderCount` 3 处、`timeout_timer_.Stop` 3 处、
+   `force_quic_everywhere` 3 处、close code 白名单内 1014 为 0 处）。
+2. **逐平台重建**：8 个 `build-core-*.sh` 各自退出 0，并各自跑通该平台的
+   `audit-core-*.sh`（架构、导出符号、体积上限、运行时依赖）。产物与 HEAD 逐
+   字节不同，证明确实重新编译。
+3. **可复现性**：linux-x86_64 连续两次强制重建得到逐字节相同的产物
+   （`512231db…`），说明产物确实由当前源码确定性构建。
+
+**仍未做到的**：7 个非本机平台没有一次真实运行（AGENTS.md §11
+「构建成功 ≠ 能加载 ≠ 能发请求」）。行为验证只在 linux-x86_64 上完成——
+`http_version=v3` 报 `ERR_QUIC_HANDSHAKE_FAILED`(-358)、close code 1014 被拒绝、
+四个 P0 长度输入返回 `INVALID_ARGUMENT`。其余平台的同三项行为待有对应运行环境时补测。
+
+（表中尺寸与 SHA 是当前提交的产物值。
 `audit-core-binaries.sh` 会从产物字节里读 `minicronet/<version>` 标记并与
 工作区版本比对，所以版本提升必须重建，否则门禁直接失败——本轮先改版本号时
 8 个平台全部报「artifact reports the old version but the workspace version
@@ -468,6 +491,110 @@ tag 触发 `pypa/gh-action-pypi-publish`（OIDC 可信发布，需要 PyPI 侧�
 `komAAmok/chrome_client` 的 `build-wheels.yml` 加进 trusted publishers），属于
 不可撤销操作；重复上传同名文件会被 PyPI 以 400 拒绝。
 
+## PyO3 0.30.1 迁移与 Python 支持矩阵（2026-10-22）
+
+把现代绑定从 PyO3 0.28.3 升到 **0.30.1**，并把「哪个解释器加载哪个扩展」的下界从
+3.7 抬到 **3.9**。这不是一次纯粹的依赖升级：新读到的两个上游事实改变了打包矩阵。
+
+| 事实 | 复核位置 |
+| --- | --- |
+| PyO3 0.30.1 的最低支持版本是 **3.9** | `pyo3-build-config-0.30.1/src/impl_.rs:26` `MINIMUM_SUPPORTED_VERSION = { major: 3, minor: 9 }` |
+| 它的 abi3 上限是 **3.15** | 同文件 `:40` `STABLE_ABI_MAX_MINOR: u8 = 15` |
+| feature 表只有 `abi3-py39`..`abi3-py315`，**没有** `abi3-py37`/`abi3-py38` | crates.io 索引 0.30.1 的 features；写上不存在的 feature 是编译期错误 |
+| 因此现代轮子标签是 `cp39-abi3` | maturin 1.15.0 实跑产物 `tagprobe-0.0.0-cp39-abi3-manylinux_2_38_x86_64.whl` |
+| PyO3 0.15.1 的 abi3 上限是 **3.9**（`ABI3_MAX_MINOR = 9`） | `pyo3-build-config-0.15.2/src/impl_.rs:23` |
+
+于是矩阵变成：**3.6–3.8 → `bindings/python36`（0.15.1 + `abi3-py36`，cp36-abi3）**，
+**3.9–3.15 → `bindings/python`（0.30.1 + `abi3-py39`，cp39-abi3）**。
+free-threaded（3.13t/3.14t/3.15t）维持**明确不承诺**：abi3 在 free-threaded 上不生效
+（`applicable_stable_abi` 在该情况下返回 `None`），模块也仍声明 `gil_used = true`。
+
+### 破坏性更新对本 crate 的影响是零
+
+0.30.1 的变更清单里踩不到本 crate 的有：移除 0.28 弃用项、`#[pyclass]` 不再默认派生
+`FromPyObject`、`pyo3_build_config` 若干 API 改动、`PyBuffer` 若干方法弃用。
+两个 `src/lib.rs` **一行未改**即可编译，且 `cargo clippy -- -D warnings` 干净。
+证据：两处 `git diff` 为空；`cargo tree -p chrome-client-python -i pyo3` → 0.30.1。
+
+真正需要动的是**版本与打包**两处，不是源码：
+
+```
+bindings/python/Cargo.toml: pyo3 = { version = "=0.30.1", features = ["extension-module", "abi3-py39"] }
+bindings/python36/Cargo.toml: pyo3 = { version = "=0.15.1", features = ["extension-module", "abi3-py36"] }   # 未动
+```
+
+`generate-import-lib` 被删除：0.29 起它是 no-op（Windows 改走 `raw-dylib`）且已弃用。
+删除后 `cargo check --target x86_64-pc-windows-msvc` 仍通过，并连带移除了 4 个依赖
+（`python3-dll-a` → `cc` → `shlex`/`find-msvc-tools`）。锁文件里 `syn 2.0.119 → 3.0.9`
+看着像大升级，但 `cargo tree -i syn` 表明只有 pyo3 的两个 proc-macro crate 使用它，
+属强制升级而非顺带漂移。
+
+### 修掉的那个真实缺陷：facade 阈值与 abi3 下界是两个数字
+
+`bindings/python/chrome_client/_python_impl/_native.py` 用
+`sys.version_info < (3, M)` 决定加载哪个原生模块，而 `abi3-py3N` 决定那个模块的轮子
+能在哪一版上装。**两者互不知情**，PyO3 只校验 N 与*构建解释器*的关系，从不读 facade。
+迁移后若 M 仍停在 7，3.7/3.8 的解释器会装 cp36-abi3 轮子（其中只有
+`chrome_client_native36`）却去要 `chrome_client_native`，**在一个 README 打着 ✓ 的
+版本上 ImportError**。修法是 M 改为 9，并把这条等式变成门禁（见下）。
+
+### 新增的门禁与它们的变异测试
+
+- `tools/audit-pypi-metadata.sh` 末尾新增一致性断言：从 `bindings/python/Cargo.toml`
+  解析 `abi3-py3N` 得 N，从 `_native.py` 的 `MODULE_NAME` 行解析 `(3, M)` 得 M，
+  断言 **N == M**，不等就报出两个数字与两处 file:line。附带断言 py36 crate 仍是
+  `=0.15.1` + `abi3-py36`、现代 crate 的 abi3 不是 `abi3-py37/38`（防回退）、pyo3 必须用
+  `=` 精确 pin（否则 feature 表不可知）。
+- 该门禁自己先有一个缺陷：首版正则 `abi3-py(\d+)` 把 `abi3-py36` 读成 `36`，
+  报出「abi3 floor is 3.36」。改为 `abi3-py3(\d+)` 后 `36→6`、`39→9`、`315→15`。
+- 变异测试（AGENTS.md §6）：`_native.py` 改回 `(3, 7)` → exit 1，报错数字是
+  `3.9`/`3.7` 而非 `3.39`；`abi3-py39` 改 `abi3-py38` → 命中「does not exist in
+  pyo3 0.30.1」。两次都恢复并用 diff 证明字节一致。
+- `.github/workflows/build-wheels.yml` 新增 `python39-smoke` job：在**真 Python 3.9**
+  上装 Linux x86_64 现代轮子，断言 `MODULE_NAME == 'chrome_client_native'` 并真发一次
+  `https://example.com` 请求断言 200，且已加入 `publish.needs`——否则装不上的轮子照样能
+  发布，门禁形同虚设。这是 LESSONS 37「下界必须真在那一版解释器上执行」的落点。
+
+该 job 上线前修掉三个缺陷：artifact 名少一层 `linux-`（实际上传名是
+`wheel-linux-linux-x86_64-python`，`matrix.core-target` 本身已含前缀）；断言用了
+`chrome_client._python_impl._native` 这个**被覆盖的包属性**
+（`_python_impl/__init__.py:17` 的 `from ._native import native as _native` 把它重绑成
+扩展模块本身，无 `MODULE_NAME`），改用 `importlib.import_module`；`publish.needs`
+不含该 job。
+
+### 版本提升与 Core 重建必须同时落地
+
+升版本号会让 `tools/audit-core-binaries.sh` 全红：它从每个产物的**字节**里读
+`minicronet/<version>`（`minicronet.cc` 的默认 User-Agent 字面量）与工作区版本比对，
+它读产物不读 manifest，所以陈旧 manifest 骗不过它。本轮 8 个平台已全部重建并刷新
+manifest（`--abi-version 8`）：
+
+| 目标 | 字节 | SHA-256 前 16 位 |
+| --- | --- | --- |
+| linux-x86_64 | 8,863,392 | c5806d82473c6229 |
+| linux-x86 | 8,776,588 | 8e7d378b7d71f954 |
+| linux-arm64 | 8,692,184 | 652687b39eac573b |
+| windows-x86_64 | 10,299,392 | 78d519fb43d95eb4 |
+| windows-x86 | 8,134,656 | 57b7c1a59ea80840 |
+| windows-arm64 | 8,960,000 | 7dabbd24677ed50a |
+| macos-x86_64 | 8,536,776 | 9cae8c52ff777c89 |
+| macos-arm64 | 7,872,560 | 2ae93a3341fb1f08 |
+
+重建是增量的（各 `out/` 已有 obj，只重编 Core 相关目标并重链接），
+`sync-core.sh` 先从根 `Cargo.toml` 注入版本头（版本号只在那里），`install-core-binaries.py` 再刷新 manifest。
+三者现已一致：`core_version()` = `__version__` = 根 `Cargo.toml` 的 `workspace.package.version`。
+
+### 验收
+
+12 项门禁全绿（`audit-abi`、`audit-readme`、`audit-pypi-metadata`、
+`audit-python-stubs`、`audit-python-typing`、`audit-core-binaries`（8/8，产物字节里的版本与工作区版本一致）、
+`audit-core-inputs`、`cargo fmt`/`check`/`clippy -D warnings`/`test`、`python36 --locked`）；
+Python 套件 **177 个用例通过、2 个 skip**（未设 `MINICRONET_WS_URL`/`MINICRONET_WSS_URL`）；
+`cargo test --workspace` 9 个用例通过。
+
+**仍未验证的一项**：真实 Python 3.9 解释器上运行现代轮子只能由 CI 的 `python39-smoke`
+证明，本机只有 3.12；同样，3.7/3.8 上安装 cp36 轮子这条路本机也无法执行。
+
 ## 兼容层审计（2026-10-14）
 
 **本轮含一个破坏性变更**：`impersonate="chrome"` / `"chromium"` 从「解析到最新
@@ -567,15 +694,19 @@ Core 的 `Request::OnAuthRequired` 一次都不执行。逐层证据与调用点
 
 | 检查 | 状态 | 在 CI |
 | --- | --- | --- |
-| `tools/audit-abi.sh` | 20 个符号，header / FFI / Core / 三份导出表一致 | 是 |
-| `tools/audit-core-binaries.sh` | 8 个平台通过 | 是 |
+| `tools/audit-abi.sh` | 20 个符号，header / FFI / Core / 三份导出表一致；注释掉的声明不算声明 | 是 |
+| `tools/audit-abi-layout.py` | 7 个结构体、70 个字段：用 C 编译器取头文件真实的 `offsetof`/`sizeof`，与 Rust `#[repr(C)]` 声明逐字段比对 | 是 |
+| `tools/audit-core-binaries.sh` | 8 个平台通过；同时比对每个 manifest 的 `chromium_revision` 与 `CHROMIUM_REVISION` | 是 |
+| `tools/audit-net-error-names.py` | `_NET_ERRORS` 的 69 行逐条与 `net_error_list.h` 比对：0 处错标、0 处陈旧、**0 个未映射的代理类错误**。注释掉的 `// NET_ERROR(...)` 不算定义（17 个已移除码因此不会被误认为当前码） | 否，需 Chromium 树 |
 | `tools/audit-readme.sh` | 通过 | 是 |
 | `cargo fmt` / `clippy -D warnings` | 通过 | 是 |
-| `cargo test --workspace` | 8 个单元测试通过（6 个回调/背压 + 2 个 ABI 布局） | 是 |
-| Python 套件 | 131 个用例通过，2 个 skip（未设 `MINICRONET_WS_URL`/`MINICRONET_WSS_URL`，无真实 WS/WSS 端点） | 是 |
+| `cargo test --workspace` | 14 个单元测试通过（`request.rs` 11、`websocket.rs` 1、`minicronet-sys/lib.rs` 2）；含 panic 不穿越 FFI 边界、丢弃 body stream 不搁死请求、`Some(Duration::ZERO)` 仍是真实 deadline 三项 | 是 |
+| Python 套件 | 252 个用例通过，2 个 skip（未设 `MINICRONET_WS_URL`/`MINICRONET_WSS_URL`，无真实 WS/WSS 端点） | 是 |
 | `tools/audit-python-stubs.py` | 17 个 stub 模块，0 错；含 prose 版本区间与裸交叉引用两项扫描（都有空转守卫） | 是 |
-| `tools/audit-python-typing.py` | mypy 检查存根与消费者，两者都干净（缺 mypy 时跳过） | 是 |
+| `tools/audit-python-typing.py` | mypy 检查存根与消费者，两者都干净；**缺 mypy 时非零退出**（`--optional` 是显式逃生门，CI 与门禁清单都不传），不再静默跳过 | 是 |
 | Core manifest 与 `CHROMIUM_REVISION` 一致 | 8 个平台通过 | 是 |
+| `tools/audit-pypi-metadata.sh` 的扩展分界断言 | `abi3-py3N`（N=9）== facade 的 `(3, M)`（M=9），另断言 py36 仍 `=0.15.1`+`abi3-py36`、现代 crate 不得用 `abi3-py37/38`、pyo3 必须 `=` pin | 是 |
+| 真 Python 3.9 上安装并实发一次请求 | `build-wheels.yml` 的 `python39-smoke`；已进 `publish.needs`，装不上的轮子无法发布 | 是（需要构建产物） |
 | 扩展可 import 且能发一次真实请求 | 通过 | 是 |
 | `tools/audit-core-linux.sh` | 通过（体积上限 9,050,000） | 否，需 Chromium 树 |
 | 8 个平台构建 | 全部通过 | 否，需 Chromium 树与交叉工具链 |

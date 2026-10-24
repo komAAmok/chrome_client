@@ -18,9 +18,18 @@ from .sessions import AsyncSession, Session
 
 #: Constructor-only options; passing one of these builds a private session for
 #: that call rather than reconfiguring the shared one.
+#:
+#: ``max_clients`` is deliberately absent: it is an ``AsyncSession`` option and
+#: ``Session`` does not accept it. Listing it here forwarded it to
+#: ``Session(**constructor)``, so ``chrome_client.get(url, max_clients=2)``
+#: raised TypeError instead of being accepted for curl_cffi parity.
 _SESSION_ONLY = ("base_url", "default_headers", "trust_env", "max_engines",
                  "user_agent", "accept_language", "cache", "response_class",
-                 "proxy_auth", "max_clients")
+                 "proxy_auth")
+
+#: Options curl_cffi accepts that the synchronous path has no equivalent for.
+#: Dropped rather than forwarded: ``Session`` would reject the keyword.
+_IGNORED_ON_SYNC_PATH = ("max_clients",)
 
 _lock = threading.Lock()
 _shared = {"session": None, "pid": None}
@@ -72,6 +81,10 @@ def request(method, url, **kwargs):
     # session's defaults -- the one thing this facade promises never to do.
     constructor = {name: kwargs.pop(name) for name in _SESSION_ONLY
                    if name in kwargs and kwargs[name] is not None}
+    # curl_cffi accepts these on every verb, but there is no synchronous
+    # equivalent, so they are accepted and dropped rather than raising.
+    for name in _IGNORED_ON_SYNC_PATH:
+        kwargs.pop(name, None)
     if constructor:
         with Session(**constructor) as private:
             return private.request(method, url, **kwargs)

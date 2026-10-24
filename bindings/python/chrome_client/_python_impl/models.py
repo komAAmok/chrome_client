@@ -31,6 +31,13 @@ from .utils import (get_encoding_from_headers, get_encodings_from_content,
 CONTENT_CHUNK_SIZE = 10 * 1024
 ITER_CHUNK_SIZE = 512
 REDIRECT_STATI = (301, 302, 303, 307, 308)
+#: requests' own default redirect cap (30), kept because
+#: ``requests.models.DEFAULT_REDIRECT_LIMIT`` is a public name callers import.
+#: This package no longer uses it: Chromium enforces 20 hops inside one
+#: ``URLRequest`` (``net::URLRequest::kMaxRedirects``), so a cap at or above 20
+#: is rejected with ``UnsupportedFeature`` instead of being clamped to 20, and
+#: the facade's own default is ``None`` -- "use Chromium's ceiling". Passing 30
+#: here would advertise a limit this build cannot enforce.
 DEFAULT_REDIRECT_LIMIT = 30
 
 
@@ -83,12 +90,28 @@ def http_version_from_status_line(status_line):
         >>> http_version_from_status_line("HTTP/2 200")
         'HTTP/2'
     """
-    if not status_line:
+    parts = status_line.split(None, 1) if status_line else []
+    if not parts:
         return None
-    token = status_line.split(None, 1)[0].upper()
+    token = parts[0].upper()
     return {"HTTP/1.0": "HTTP/1.0", "HTTP/1.1": "HTTP/1.1",
             "HTTP/2": "HTTP/2", "HTTP/2.0": "HTTP/2",
             "HTTP/3": "HTTP/3", "HTTP/3.0": "HTTP/3"}.get(token, token or None)
+
+
+def _decode_failure(error, response):
+    """Rebuilds a parser failure as this package's :class:`JSONDecodeError`.
+
+    ``json.JSONDecodeError`` carries ``msg``/``doc``/``pos``, so passing them
+    on keeps both the formatted message ("Expecting value: line 1 column 6
+    (char 5)") and the position attributes the stdlib error offers. A bare
+    ``ValueError`` -- from a caller's own ``parse_float``, say -- has no
+    position to report, so it is re-raised unchanged rather than wrapped in a
+    fabricated "line 1 column 1"; it still reaches ``except ValueError``.
+    """
+    if isinstance(error, _json.JSONDecodeError):
+        return JSONDecodeError(error.msg, error.doc, error.pos, response=response)
+    return error
 
 
 def _negotiated_http_version(status_line):
@@ -221,7 +244,6 @@ class PreparedRequest(object):
         self.body = None
         self.hooks = {"response": []}
         self._cookies = None
-        self._body_position = None
         #: Set when ``body`` must be uploaded chunk by chunk.
         self.stream_body = False
         #: Emission order for headers, when a caller pins one.
@@ -240,7 +262,6 @@ class PreparedRequest(object):
         clone._cookies = self._cookies.copy() if self._cookies is not None else None
         clone.body = self.body
         clone.hooks = self.hooks
-        clone._body_position = self._body_position
         clone.stream_body = self.stream_body
         clone.header_order = self.header_order
         clone.quote = self.quote
@@ -443,6 +464,11 @@ class Response(object):
         self._content = False
         self._content_consumed = False
         self._body_reader = None
+        #: The reader an ``iter_content()`` call has already claimed. Kept so
+        #: ``close()`` can still cancel it: the claim transfers ownership out
+        #: of ``_body_reader``, and without this the body kept downloading in
+        #: the background after ``close()`` returned.
+        self._claimed_reader = None
         self._raw = None
         self._next = None
         self.status_code = None
@@ -486,12 +512,20 @@ class Response(object):
         return {name: getattr(self, name, None) for name in self.__attrs__}
 
     def __setstate__(self, state):
+        # ``__attrs__`` carries only the serialisable payload. ``__init__`` also
+        # establishes live handles and derived metadata that are deliberately
+        # left out of it, so a restored response used to be missing them
+        # entirely: ``.text``/``.charset`` raised AttributeError on
+        # ``default_encoding``, and ``http_version``/``status_line``/``infos``/
+        # ``redirect_count``/``redirect_url``/``history_headers`` were gone even
+        # though this class's type surface declares them. Re-establish every
+        # default from a fresh instance before applying the payload, so the
+        # set cannot drift as fields are added.
+        for name, value in type(self)().__dict__.items():
+            setattr(self, name, value)
         for name, value in state.items():
             setattr(self, name, value)
         self._content_consumed = True
-        self._body_reader = None
-        self._raw = None
-        self._next = None
 
     @property
     def ok(self):
@@ -554,7 +588,23 @@ class Response(object):
 
     @property
     def content(self):
+        """Returns the body as bytes.
+
+        Draining it here consumes a stream, so ``iter_content()`` cannot be used
+        afterwards. Reading a body that is already in memory is free.
+
+        Raises:
+            StreamConsumedError: A stream reader already took the body, or
+                ``close()`` cancelled it. Returning ``b""`` instead would claim
+                an empty body for one that had bytes.
+        """
         if self._content is False:
+            if self._content_consumed:
+                # A reader already took the body: streaming consumed it, or
+                # close() cancelled it. Returning b"" here reported an empty
+                # body for a response that had one.
+                raise StreamConsumedError(
+                    "the response body was already consumed")
             if self._body_reader is None:
                 self._content = b""
             else:
@@ -567,6 +617,19 @@ class Response(object):
     def content(self, value):
         self._content = bytes(value)
         self._content_consumed = True
+        # A live reader would otherwise keep serving the native body, so the
+        # object answered with two different bodies: ``.content`` and
+        # ``.text`` returned the assigned bytes while ``iter_content()`` and
+        # ``iter_lines()`` streamed the discarded one. Release it.
+        if self._body_reader is not None:
+            reader, self._body_reader = self._body_reader, None
+            reader.close(cancel=True)
+        # The same applies to a reader an ``iter_content()`` call already
+        # claimed: leaving it live let the abandoned native body keep
+        # streaming while ``.content`` answered with the assigned bytes.
+        if self._claimed_reader is not None:
+            reader, self._claimed_reader = self._claimed_reader, None
+            reader.close(cancel=True)
 
     @property
     def text(self):
@@ -587,7 +650,7 @@ class Response(object):
 
     def json(self, **kwargs):
         if not self.content:
-            raise JSONDecodeError("Expecting value: line 1 column 1 (char 0)")
+            raise JSONDecodeError("Expecting value", "", 0, response=self)
         if self.encoding is None and len(self.content) > 3:
             guessed = guess_json_utf(self.content)
             if guessed is not None:
@@ -596,11 +659,11 @@ class Response(object):
                 except UnicodeDecodeError:
                     pass
                 except ValueError as error:
-                    raise JSONDecodeError(str(error))
+                    raise _decode_failure(error, self)
         try:
             return _json.loads(self.text, **kwargs)
         except ValueError as error:
-            raise JSONDecodeError(str(error))
+            raise _decode_failure(error, self)
 
     @property
     def links(self):
@@ -626,13 +689,45 @@ class Response(object):
         return self
 
     def iter_content(self, chunk_size=1, decode_unicode=False):
+        """Iterates the body in chunks.
+
+        Three cases, in this order:
+
+        1. A stream reader is still live: it is claimed by this call (so a
+           second ``iter_content()`` raises rather than racing), and the body
+           is streamed from the Core.
+        2. The body is gone -- already streamed away, or cancelled by
+           ``close()``: raises :class:`StreamConsumedError`.
+        3. The body is in memory: it is sliced, so the call is repeatable.
+
+        Args:
+            chunk_size: Bytes per yielded block. ``None`` means
+                :data:`CONTENT_CHUNK_SIZE`.
+            decode_unicode: Decode with the response encoding and yield ``str``.
+                Decoding is incremental, so a multi-byte character split across
+                two chunks is carried over rather than replaced.
+
+        Returns:
+            An iterator of ``bytes``, or of ``str`` when ``decode_unicode``.
+
+        Raises:
+            TypeError: ``chunk_size`` is not an int or ``None``.
+            ValueError: ``chunk_size`` is not positive.
+            StreamConsumedError: The body was already consumed.
+        """
         if chunk_size is not None and not isinstance(chunk_size, int):
             raise TypeError("chunk_size must be an int or None")
         if chunk_size is not None and chunk_size <= 0:
             raise ValueError("chunk_size must be positive")
         chunk_size = chunk_size or CONTENT_CHUNK_SIZE
         if self._body_reader is not None:
-            generator = self._stream_chunks(chunk_size)
+            # Bind the reader here, not on the generator's first next(): the
+            # body runs lazily, so two iterators over one response used to race
+            # for self._body_reader and the loser dereferenced None.
+            reader, self._body_reader = self._body_reader, None
+            self._claimed_reader = reader
+            self._content_consumed = True
+            generator = self._stream_chunks(reader, chunk_size)
         elif self._content_consumed and self._content is False:
             raise StreamConsumedError("the response body was already consumed")
         else:
@@ -643,9 +738,7 @@ class Response(object):
             return self._decode_stream(generator)
         return generator
 
-    def _stream_chunks(self, chunk_size):
-        reader, self._body_reader = self._body_reader, None
-        self._content_consumed = True
+    def _stream_chunks(self, reader, chunk_size):
         pending = b""
         try:
             for chunk in reader:
@@ -655,13 +748,25 @@ class Response(object):
                     pending = pending[chunk_size:]
         finally:
             reader.close()
+            if self._claimed_reader is reader:
+                self._claimed_reader = None
         if pending:
             yield pending
 
-    def _decode_stream(self, generator):
+    def _text_decoder(self):
+        """Returns an incremental decoder for the resolved encoding.
+
+        Both the synchronous and the asynchronous stream decode through this,
+        so a multi-byte character split across two chunks is carried over in
+        each: decoding each block on its own turned the tail of every split
+        character into U+FFFD.
+        """
         encoding = self.encoding or self.charset_encoding or self.default_encoding
-        decoder = codecs.getincrementaldecoder(
+        return codecs.getincrementaldecoder(
             encoding if isinstance(encoding, str) else "utf-8")(errors="replace")
+
+    def _decode_stream(self, generator):
+        decoder = self._text_decoder()
         for chunk in generator:
             text = decoder.decode(chunk)
             if text:
@@ -688,9 +793,25 @@ class Response(object):
             yield pending
 
     def close(self):
+        """Releases the body, cancelling a live stream.
+
+        Afterwards the body is gone: ``.content`` and ``iter_content()`` raise
+        :class:`StreamConsumedError`. requests raises a bare ``RuntimeError`` for
+        the same state; that is not a ``RequestException``, so this is stricter and
+        catchable the same way as every other failure here.
+        """
         if self._body_reader is not None:
             self._body_reader.close(cancel=True)
             self._body_reader = None
+        # An ``iter_content()`` call has taken ownership of the reader, so
+        # ``_body_reader`` is already None here and the cancellation above
+        # did nothing. Measured: a 400 KB body kept arriving in full after
+        # ``close()`` returned when the caller held an iterator. Cancel the
+        # claimed reader too; the generator's own ``finally`` then finds it
+        # closed and is a no-op.
+        if self._claimed_reader is not None:
+            reader, self._claimed_reader = self._claimed_reader, None
+            reader.close(cancel=True)
         self._content_consumed = True
 
     def _release_async_body(self):
@@ -707,6 +828,38 @@ class AsyncResponse(Response):
     def __init__(self):
         Response.__init__(self)
         self._async_body_reader = None
+        #: The reader an ``aiter_content()`` call has already claimed. Same
+        #: reason as the synchronous ``_claimed_reader``: the claim moves the
+        #: reader out of ``_async_body_reader``, so every cancellation path
+        #: that only looks there silently skips a stream the caller already
+        #: started. Measured: a claimed 400 KB body kept arriving in full
+        #: after ``aclose()`` returned.
+        self._claimed_async_reader = None
+
+    def __del__(self):
+        """Releases a stream the caller never closed.
+
+        Every explicit path (``aclose()``, the ``content`` setter,
+        ``_release_async_body``) requires the caller to act. A response that is
+        simply dropped has no such hook, and its reader stays reachable from the
+        Core callback (``notify -> _AsyncState -> native request``), so neither
+        the socket nor the buffered body is ever collected.
+
+        Measured over a never-ending chunked body: 20 abandoned responses left
+        46 file descriptors and 20 server-side connections open for the life of
+        the process, while 20 properly closed ones left the count unchanged.
+
+        ``__del__`` can run on a GC thread with no running loop, which is why
+        the synchronous release is used: scheduling a coroutine on a loop that
+        will never run it would leak the very request this is releasing.
+        """
+        try:
+            self._release_async_body()
+        except Exception:
+            # A destructor that raises is reported as "Exception ignored in
+            # __del__" and the object still leaks, so failure here is swallowed
+            # deliberately rather than allowed to escape.
+            pass
 
     async def acontent(self):
         if self._async_body_reader is not None:
@@ -727,23 +880,55 @@ class AsyncResponse(Response):
         return self.json(**kwargs)
 
     async def aiter_content(self, chunk_size=None, decode_unicode=False):
+        # Same contract as the synchronous twin. Without it a negative value
+        # made the two slices below leave the pending buffer unchanged while
+        # still satisfying the loop condition, so the inner loop yielded empty
+        # blocks forever: measured 20 chunks of [95, 0, 0, 0, ...] for a
+        # 100-byte body, with no end in sight. A zero was silently rewritten
+        # to the default block size instead of being rejected.
+        if chunk_size is not None and not isinstance(chunk_size, int):
+            raise TypeError("chunk_size must be an int or None")
+        if chunk_size is not None and chunk_size <= 0:
+            raise ValueError("chunk_size must be positive")
         chunk_size = chunk_size or CONTENT_CHUNK_SIZE
         if self._async_body_reader is not None:
             reader, self._async_body_reader = self._async_body_reader, None
+            self._claimed_async_reader = reader
             self._content_consumed = True
             pending = b""
+            decoder = self._text_decoder() if decode_unicode else None
             try:
                 async for chunk in reader:
                     pending += chunk
                     while len(pending) >= chunk_size:
                         block = pending[:chunk_size]
                         pending = pending[chunk_size:]
-                        yield block.decode(self.charset, "replace") if decode_unicode \
-                            else block
+                        if decoder is None:
+                            yield block
+                        else:
+                            text = decoder.decode(block)
+                            if text:
+                                yield text
             finally:
-                await reader.aclose()
-            if pending:
-                yield pending.decode(self.charset, "replace") if decode_unicode else pending
+                # cancel=True: an abandoned generator (the caller broke out of
+                # `async for` or dropped the iterator) runs this block during
+                # GC. Without the cancel the reader only detaches its callback
+                # and the Core request keeps its socket in the engine pool.
+                # Measured: 20 abandoned streams over a never-ending body left
+                # 46 file descriptors and 20 server connections open forever.
+                await reader.aclose(cancel=True)
+                if self._claimed_async_reader is reader:
+                    self._claimed_async_reader = None
+            if decoder is None:
+                if pending:
+                    yield pending
+                return
+            text = decoder.decode(pending) if pending else ""
+            if text:
+                yield text
+            tail = decoder.decode(b"", True)
+            if tail:
+                yield tail
             return
         for chunk in self.iter_content(chunk_size, decode_unicode=decode_unicode):
             yield chunk
@@ -751,6 +936,23 @@ class AsyncResponse(Response):
     #: curl_cffi spells the byte stream ``aiter_content``; earlier releases of
     #: this package spelled it ``aiter_bytes``.  Both are kept.
     aiter_bytes = aiter_content
+
+    @Response.content.setter
+    def content(self, value):
+        # Same rule as the synchronous setter, for the asynchronous reader:
+        # leaving it alive made ``aiter_content()`` stream the discarded native
+        # body while ``.content`` reported the assigned bytes. ``aclose()`` is a
+        # coroutine and a property setter cannot await one, so the synchronous
+        # release path is used: it cancels the Core request without a loop.
+        if self._async_body_reader is not None:
+            reader, self._async_body_reader = self._async_body_reader, None
+            reader.release_without_loop(cancel=True)
+        # And the reader an ``aiter_content()`` call already claimed, for the
+        # same reason: it is no longer reachable through the field above.
+        if self._claimed_async_reader is not None:
+            reader, self._claimed_async_reader = self._claimed_async_reader, None
+            reader.release_without_loop(cancel=True)
+        Response.content.fset(self, value)
 
     async def aiter_lines(self, chunk_size=None, decode_unicode=False, delimiter=None):
         pending = None
@@ -772,10 +974,22 @@ class AsyncResponse(Response):
         if self._async_body_reader is not None:
             await self._async_body_reader.aclose(cancel=True)
             self._async_body_reader = None
+        # ``aiter_content()`` has taken ownership of the reader, so the field
+        # above is already None when the caller holds an iterator. Without
+        # this the cancellation was skipped and the body kept downloading.
+        if self._claimed_async_reader is not None:
+            reader, self._claimed_async_reader = self._claimed_async_reader, None
+            await reader.aclose(cancel=True)
         self._content_consumed = True
 
     def _release_async_body(self):
         reader, self._async_body_reader = self._async_body_reader, None
+        # The reader a started ``aiter_content()`` owns is no longer in the
+        # field above; abandoning that response leaks exactly what the
+        # comment below describes. Release both, preferring the claimed one
+        # when a caller somehow left both set.
+        if self._claimed_async_reader is not None:
+            reader, self._claimed_async_reader = self._claimed_async_reader, None
         self._content_consumed = True
         if reader is None:
             return
@@ -814,7 +1028,13 @@ class AsyncResponse(Response):
         # is never resolved, and the reader keeps its native request (and the
         # socket, and the buffered body) alive. Drive the cancellation to
         # completion here instead.
-        reader.release_without_loop()
+        #
+        # `cancel=True` is not optional here: without it the reader only detaches
+        # its callback and never cancels the Core request, so the socket stays in
+        # the engine's pool. Measured: 20 abandoned streams over a never-ending
+        # body leaked 46 file descriptors and 20 server connections with the
+        # cancel-less call, and released every one of them with `cancel=True`.
+        reader.release_without_loop(cancel=True)
 
     def close(self):
         Response.close(self)

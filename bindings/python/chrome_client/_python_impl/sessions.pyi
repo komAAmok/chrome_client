@@ -21,6 +21,7 @@ from typing import (
     AsyncIterator,
     Awaitable,
     Callable,
+    Dict,
     FrozenSet,
     Iterable,
     Iterator,
@@ -73,6 +74,11 @@ ASYNC_POLL_BATCH: int
 
 #: Bytes buffered per streaming async response before the reader is throttled.
 STREAM_BUFFER_LIMIT: int
+
+#: Redirects Chromium follows inside one ``URLRequest``, from
+#: ``net::URLRequest::kMaxRedirects``. A ``max_redirects`` at or above this
+#: raises ``UnsupportedFeature`` instead of being clamped to it.
+CHROMIUM_MAX_REDIRECTS: int
 
 #: Backoff shape accepted by :class:`RetryStrategy`.
 Backoff: TypeAlias = Literal["linear", "exponential"]
@@ -211,7 +217,7 @@ class _StreamFlag(int):
         files: FilesLike = None,
         auth: AuthLike = None,
         timeout: Timeout = None,
-        allow_redirects: bool = True,
+        allow_redirects: Optional[bool] = None,
         proxies: Optional[Proxies] = None,
         hooks: Optional[Hooks] = None,
         verify: Optional[Verify] = None,
@@ -330,7 +336,7 @@ class _AsyncStreamFlag(int):
         files: FilesLike = None,
         auth: AuthLike = None,
         timeout: Timeout = None,
-        allow_redirects: bool = True,
+        allow_redirects: Optional[bool] = None,
         proxies: Optional[Proxies] = None,
         hooks: Optional[Hooks] = None,
         verify: Optional[Verify] = None,
@@ -524,7 +530,13 @@ class BaseSession:
     verify: Verify
     cert: None
     timeout: Timeout
-    max_redirects: int
+    #: Cap on redirects, or ``None`` for Chromium's own ceiling of
+    #: ``CHROMIUM_MAX_REDIRECTS`` (20). requests defaults this to 30, but this
+    #: build cannot follow 30: Chromium stops at 20 inside one ``URLRequest``,
+    #: so accepting 30 would advertise a limit that never holds. An explicit
+    #: value at or above 20 raises ``UnsupportedFeature`` rather than being
+    #: clamped to 20.
+    max_redirects: Optional[int]
     trust_env: bool
     allow_redirects: bool
     max_response_bytes: Optional[int]
@@ -557,7 +569,7 @@ class BaseSession:
         cert: Any = None,
         stream: bool = False,
         hooks: Optional[Hooks] = None,
-        max_redirects: int = 30,
+        max_redirects: Optional[int] = None,
         trust_env: bool = True,
         allow_redirects: bool = True,
         max_response_bytes: Optional[int] = None,
@@ -826,7 +838,7 @@ class Session(BaseSession):
         files: FilesLike = None,
         auth: AuthLike = None,
         timeout: Timeout = None,
-        allow_redirects: bool = True,
+        allow_redirects: Optional[bool] = None,
         proxies: Optional[Proxies] = None,
         hooks: Optional[Hooks] = None,
         stream: Optional[bool] = None,
@@ -1033,7 +1045,7 @@ class Session(BaseSession):
         files: FilesLike = None,
         auth: AuthLike = None,
         timeout: Timeout = None,
-        allow_redirects: bool = True,
+        allow_redirects: Optional[bool] = None,
         proxies: Optional[Proxies] = None,
         hooks: Optional[Hooks] = None,
         stream: Optional[bool] = None,
@@ -1147,7 +1159,7 @@ class Session(BaseSession):
         files: FilesLike = None,
         auth: AuthLike = None,
         timeout: Timeout = None,
-        allow_redirects: bool = True,
+        allow_redirects: Optional[bool] = None,
         proxies: Optional[Proxies] = None,
         hooks: Optional[Hooks] = None,
         stream: Optional[bool] = None,
@@ -1258,7 +1270,7 @@ class Session(BaseSession):
         files: FilesLike = None,
         auth: AuthLike = None,
         timeout: Timeout = None,
-        allow_redirects: bool = False,
+        allow_redirects: Optional[bool] = False,
         proxies: Optional[Proxies] = None,
         hooks: Optional[Hooks] = None,
         stream: Optional[bool] = None,
@@ -1372,7 +1384,7 @@ class Session(BaseSession):
         files: FilesLike = None,
         auth: AuthLike = None,
         timeout: Timeout = None,
-        allow_redirects: bool = True,
+        allow_redirects: Optional[bool] = None,
         proxies: Optional[Proxies] = None,
         hooks: Optional[Hooks] = None,
         stream: Optional[bool] = None,
@@ -1486,7 +1498,7 @@ class Session(BaseSession):
         files: FilesLike = None,
         auth: AuthLike = None,
         timeout: Timeout = None,
-        allow_redirects: bool = True,
+        allow_redirects: Optional[bool] = None,
         proxies: Optional[Proxies] = None,
         hooks: Optional[Hooks] = None,
         stream: Optional[bool] = None,
@@ -1596,7 +1608,7 @@ class Session(BaseSession):
         files: FilesLike = None,
         auth: AuthLike = None,
         timeout: Timeout = None,
-        allow_redirects: bool = True,
+        allow_redirects: Optional[bool] = None,
         proxies: Optional[Proxies] = None,
         hooks: Optional[Hooks] = None,
         stream: Optional[bool] = None,
@@ -1706,7 +1718,7 @@ class Session(BaseSession):
         files: FilesLike = None,
         auth: AuthLike = None,
         timeout: Timeout = None,
-        allow_redirects: bool = True,
+        allow_redirects: Optional[bool] = None,
         proxies: Optional[Proxies] = None,
         hooks: Optional[Hooks] = None,
         stream: Optional[bool] = None,
@@ -1816,7 +1828,7 @@ class Session(BaseSession):
         files: FilesLike = None,
         auth: AuthLike = None,
         timeout: Timeout = None,
-        allow_redirects: bool = True,
+        allow_redirects: Optional[bool] = None,
         proxies: Optional[Proxies] = None,
         hooks: Optional[Hooks] = None,
         stream: Optional[bool] = None,
@@ -1926,7 +1938,7 @@ class Session(BaseSession):
         files: FilesLike = None,
         auth: AuthLike = None,
         timeout: Timeout = None,
-        allow_redirects: bool = True,
+        allow_redirects: Optional[bool] = None,
         proxies: Optional[Proxies] = None,
         hooks: Optional[Hooks] = None,
         stream: Optional[bool] = None,
@@ -2243,7 +2255,7 @@ class AsyncSession(BaseSession):
         cert: Any = None,
         stream: bool = False,
         hooks: Optional[Hooks] = None,
-        max_redirects: int = 30,
+        max_redirects: Optional[int] = None,
         trust_env: bool = True,
         allow_redirects: bool = True,
         max_response_bytes: Optional[int] = None,
@@ -2335,7 +2347,7 @@ class AsyncSession(BaseSession):
         files: FilesLike = None,
         auth: AuthLike = None,
         timeout: Timeout = None,
-        allow_redirects: bool = True,
+        allow_redirects: Optional[bool] = None,
         proxies: Optional[Proxies] = None,
         hooks: Optional[Hooks] = None,
         stream: Optional[bool] = None,
@@ -2517,7 +2529,7 @@ class AsyncSession(BaseSession):
         files: FilesLike = None,
         auth: AuthLike = None,
         timeout: Timeout = None,
-        allow_redirects: bool = True,
+        allow_redirects: Optional[bool] = None,
         proxies: Optional[Proxies] = None,
         hooks: Optional[Hooks] = None,
         stream: Optional[bool] = None,
@@ -2631,7 +2643,7 @@ class AsyncSession(BaseSession):
         files: FilesLike = None,
         auth: AuthLike = None,
         timeout: Timeout = None,
-        allow_redirects: bool = True,
+        allow_redirects: Optional[bool] = None,
         proxies: Optional[Proxies] = None,
         hooks: Optional[Hooks] = None,
         stream: Optional[bool] = None,
@@ -2741,7 +2753,7 @@ class AsyncSession(BaseSession):
         files: FilesLike = None,
         auth: AuthLike = None,
         timeout: Timeout = None,
-        allow_redirects: bool = False,
+        allow_redirects: Optional[bool] = False,
         proxies: Optional[Proxies] = None,
         hooks: Optional[Hooks] = None,
         stream: Optional[bool] = None,
@@ -2852,7 +2864,7 @@ class AsyncSession(BaseSession):
         files: FilesLike = None,
         auth: AuthLike = None,
         timeout: Timeout = None,
-        allow_redirects: bool = True,
+        allow_redirects: Optional[bool] = None,
         proxies: Optional[Proxies] = None,
         hooks: Optional[Hooks] = None,
         stream: Optional[bool] = None,
@@ -2961,7 +2973,7 @@ class AsyncSession(BaseSession):
         files: FilesLike = None,
         auth: AuthLike = None,
         timeout: Timeout = None,
-        allow_redirects: bool = True,
+        allow_redirects: Optional[bool] = None,
         proxies: Optional[Proxies] = None,
         hooks: Optional[Hooks] = None,
         stream: Optional[bool] = None,
@@ -3071,7 +3083,7 @@ class AsyncSession(BaseSession):
         files: FilesLike = None,
         auth: AuthLike = None,
         timeout: Timeout = None,
-        allow_redirects: bool = True,
+        allow_redirects: Optional[bool] = None,
         proxies: Optional[Proxies] = None,
         hooks: Optional[Hooks] = None,
         stream: Optional[bool] = None,
@@ -3181,7 +3193,7 @@ class AsyncSession(BaseSession):
         files: FilesLike = None,
         auth: AuthLike = None,
         timeout: Timeout = None,
-        allow_redirects: bool = True,
+        allow_redirects: Optional[bool] = None,
         proxies: Optional[Proxies] = None,
         hooks: Optional[Hooks] = None,
         stream: Optional[bool] = None,
@@ -3291,7 +3303,7 @@ class AsyncSession(BaseSession):
         files: FilesLike = None,
         auth: AuthLike = None,
         timeout: Timeout = None,
-        allow_redirects: bool = True,
+        allow_redirects: Optional[bool] = None,
         proxies: Optional[Proxies] = None,
         hooks: Optional[Hooks] = None,
         stream: Optional[bool] = None,
@@ -3401,7 +3413,7 @@ class AsyncSession(BaseSession):
         files: FilesLike = None,
         auth: AuthLike = None,
         timeout: Timeout = None,
-        allow_redirects: bool = True,
+        allow_redirects: Optional[bool] = None,
         proxies: Optional[Proxies] = None,
         hooks: Optional[Hooks] = None,
         stream: Optional[bool] = None,

@@ -297,7 +297,7 @@ impl PyRequest {
         let response = self
             .response_future
             .lock()
-            .unwrap()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .as_mut()
             .and_then(ResponseFuture::try_take);
         if let Some(response) = response {
@@ -331,7 +331,7 @@ impl PyRequest {
         let body = self
             .body_stream
             .lock()
-            .unwrap()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .as_mut()
             .and_then(ResponseStream::try_next);
         if let Some(body) = body {
@@ -420,8 +420,14 @@ impl PyRequest {
     #[args(timeout = "None")]
     fn wait_manual(&self, py: Python, timeout: Option<f64>) -> PyResult<PyManualWait> {
         let total = duration(timeout)?.unwrap_or_else(|| Duration::from_secs(86_400));
+        // `Instant + Duration` panics once the sum leaves the range the clock
+        // can represent, and a PanicException derives from BaseException, so it
+        // slips past every `except Exception` and kills the caller. `checked_add`
+        // keeps an unrepresentable deadline an ordinary Python error.
+        let deadline = Instant::now()
+            .checked_add(total)
+            .ok_or_else(|| error("timeout is too large for the system clock"))?;
         py.allow_threads(|| {
-            let deadline = Instant::now() + total;
             loop {
                 if let Some(hop) = self.inner.take_redirect() {
                     return Ok((Some(redirect_tuple(hop)), None));
@@ -429,7 +435,7 @@ impl PyRequest {
                 let taken = self
                     .response_future
                     .lock()
-                    .unwrap()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
                     .as_mut()
                     .and_then(ResponseFuture::try_take);
                 if let Some(result) = taken {
@@ -479,7 +485,7 @@ impl PyRequest {
         let future = self
             .response_future
             .lock()
-            .unwrap()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .take()
             .ok_or_else(|| error("request is not started"))?;
         py.allow_threads(|| {

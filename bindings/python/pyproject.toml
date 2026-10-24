@@ -6,11 +6,12 @@ build-backend = "maturin"
 name = "chrome-client"
 description = "Chromium Core HTTP/WebSocket client"
 readme = "../../README.md"
-# This wheel is cp37-abi3, the python36 wheel is cp36-abi3. Both abi3 wheels
-# declare the full supported range so the PyPI project page shows 3.6-3.13;
-# pip's tag matching still refuses this cp37 wheel on Python 3.6 and picks the
-# cp36 wheel there.
-requires-python = ">=3.6,<3.14"
+# This wheel is cp39-abi3 (pyo3 0.30.1, whose minimum supported Python is 3.9),
+# the python36 wheel is cp36-abi3 (pyo3 0.15.1). Both abi3 wheels declare the
+# full supported range so the PyPI project page shows 3.6-3.15; pip's tag
+# matching still refuses this cp39 wheel on Python 3.6-3.8 and picks the cp36
+# wheel there.
+requires-python = ">=3.6,<3.16"
 
 classifiers = [
   "Programming Language :: Python :: 3",
@@ -22,6 +23,8 @@ classifiers = [
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+  "Programming Language :: Python :: 3.15",
 ]
 
 [project.urls]

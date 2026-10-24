@@ -365,6 +365,10 @@ class WebSocket:
             code: Close code, e.g. :attr:`WsCloseCode.OK`. ``1000`` by default.
             message: Reason string; bytes are decoded as UTF-8.
 
+        Raises:
+            WebSocketError: The Core rejected the close frame, e.g. because
+                the socket already reached a terminal state.
+
         Example:
             >>> socket.close(WsCloseCode.GOING_AWAY, "shutdown")
         """
@@ -374,7 +378,13 @@ class WebSocket:
         """Cancels the socket without a close handshake.
 
         Use this when the peer is unresponsive: no close frame is sent, the
-        connection is torn down immediately.
+        connection is torn down immediately. The Core is asked first, so a
+        failure leaves :attr:`closed` reporting the state the socket is
+        really in.
+
+        Raises:
+            WebSocketError: The Core rejected the cancellation, e.g. because
+                the socket already reached a terminal state.
         """
         ...
 
@@ -606,7 +616,15 @@ class AsyncWebSocket:
         ...
 
     async def terminate(self) -> None:
-        """Cancels the socket without a close handshake."""
+        """Cancels the socket without a close handshake.
+
+        The Core is asked first, so a failure leaves :attr:`closed` reporting
+        the state the socket is really in.
+
+        Raises:
+            WebSocketError: The Core rejected the cancellation, e.g. because
+                the socket already reached a terminal state.
+        """
         ...
 
     @property

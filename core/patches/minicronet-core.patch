@@ -73,6 +73,31 @@ diff --git a/build/config/compiler/BUILD.gn b/build/config/compiler/BUILD.gn
 index c106acfca9f..c787d6600b5 100644
 --- a/build/config/compiler/BUILD.gn
 +++ b/build/config/compiler/BUILD.gn
+@@ -1280,7 +1280,21 @@ config("disallow_unstable_features") {
+ # building with ThinLTO, no optimization is performed in the link step.
+ config("thinlto_optimize_default") {
+   if (!is_debug && use_thin_lto && is_a_target_toolchain) {
+-    lto_opt_level = 0
++    # Upstream links with --lto-O0 (no optimization in the link step), which
++    # leaves the ThinLTO cross-module pass doing import/inlining only. For a
++    # library whose every byte ships in eight wheels, the link step is where
++    # cross-module devirtualization and dead-code elimination actually pay:
++    # measured on linux-x86_64, --lto-O1 is -57,456 bytes (-0.65%) after an
++    # identical strip, while --lto-O2 is +12,176 bytes (larger) because it
++    # re-enables inlining that -Oz deliberately avoided. Benchmark medians over
++    # four runs each overlap for sync/asyncio-32/asyncio-128/stream, so this is
++    # a size win with no measured throughput cost. Scoped to MiniCronet: other
++    # embedders keep upstream's -O0.
++    if (is_minicronet_build) {
++      lto_opt_level = 1
++    } else {
++      lto_opt_level = 0
++    }
+ 
+     if (is_win) {
+       ldflags = [ "/opt:lldlto=" + lto_opt_level ]
+--- a/build/config/compiler/BUILD.gn
++++ b/build/config/compiler/BUILD.gn
 @@ -2650,23 +2650,38 @@ config("default_stack_frames") {
  # [2]: https://crrev.com/c/5447532
  config("optimize") {

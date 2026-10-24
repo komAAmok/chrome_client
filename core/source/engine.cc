@@ -63,6 +63,36 @@
 namespace minicronet {
 namespace {
 
+// Applies the caller's protocol pin to the session params. Both the
+// historical-profile path and the chromium_current path need exactly this
+// mapping, and it used to be written out twice, once per path. The two copies
+// had already started to disagree: the pin was applied only inside the profile
+// branch, so http_version=v2/v3 was a silent no-op on the default profile while
+// the same pin failed closed on a historical one. One function means the two
+// paths cannot diverge again as modes are added.
+void ApplyProtocolMode(mn_protocol_mode_t mode,
+                       net::HttpNetworkSessionParams* params) {
+  switch (mode) {
+    case MN_PROTOCOL_FORCE_H1:
+      params->protocol_mode = net::HttpProtocolMode::kHttp11;
+      params->enable_http2 = false;
+      params->enable_quic = false;
+      break;
+    case MN_PROTOCOL_FORCE_H2:
+      params->protocol_mode = net::HttpProtocolMode::kHttp2;
+      params->enable_http2 = true;
+      params->enable_quic = false;
+      break;
+    case MN_PROTOCOL_FORCE_H3:
+      params->protocol_mode = net::HttpProtocolMode::kHttp3;
+      params->enable_http2 = false;
+      params->enable_quic = true;
+      break;
+    case MN_PROTOCOL_NATIVE:
+      break;
+  }
+}
+
 class InsecureCertVerifier final : public net::CertVerifier {
  public:
   int Verify(const RequestParams& params, net::CertVerifyResult* result,
@@ -553,25 +583,7 @@ void Engine::InitializeOnNetworkThread() {
     builder.set_quic_context(std::move(quic_context));
     net::HttpNetworkSessionParams session_params;
     session_params.enable_quic = profile->enable_quic;
-    switch (protocol_mode_) {
-      case MN_PROTOCOL_FORCE_H1:
-        session_params.protocol_mode = net::HttpProtocolMode::kHttp11;
-        session_params.enable_http2 = false;
-        session_params.enable_quic = false;
-        break;
-      case MN_PROTOCOL_FORCE_H2:
-        session_params.protocol_mode = net::HttpProtocolMode::kHttp2;
-        session_params.enable_http2 = true;
-        session_params.enable_quic = false;
-        break;
-      case MN_PROTOCOL_FORCE_H3:
-        session_params.protocol_mode = net::HttpProtocolMode::kHttp3;
-        session_params.enable_http2 = false;
-        session_params.enable_quic = true;
-        break;
-      case MN_PROTOCOL_NATIVE:
-        break;
-    }
+    ApplyProtocolMode(protocol_mode_, &session_params);
     session_params.enable_tls13_early_data = false;
     session_params.enable_early_data = session_params.enable_tls13_early_data;
     session_params.enable_alps_for_http2 = HasNetworkFeature(
@@ -612,10 +624,35 @@ void Engine::InitializeOnNetworkThread() {
     }
     builder.set_http_network_session_params(session_params);
   }
-  if (!profile_.data() && tls_verify_mode_ == MN_TLS_VERIFY_INSECURE) {
+  if (!profile_.data()) {
+    // The protocol pin is not profile data. chromium_current has no
+    // RuntimeProfileData, so keeping the pin inside the profile block above made
+    // http_version=v2/v3 a silent no-op on the default profile while the same
+    // pin failed closed on a historical one. The ABI documents the pin as
+    // unconditional (docs/COMPATIBILITY_BOUNDARY.md: "Forced H1/H2/H3 modes
+    // fail closed and never fall back to another version"), and
+    // HttpNetworkSessionParams is accepted by the builder whether or not a
+    // profile is present, so there is nothing here the Core cannot honour.
     net::HttpNetworkSessionParams session_params;
-    session_params.ignore_certificate_errors = true;
+    ApplyProtocolMode(protocol_mode_, &session_params);
+    // Redundant with the SetCertVerifier call at the top of this function, but
+    // keeps these session params identical to the historical-profile path.
+    session_params.ignore_certificate_errors =
+        tls_verify_mode_ == MN_TLS_VERIFY_INSECURE;
     builder.set_http_network_session_params(session_params);
+
+    // The historical-profile path also arms force_quic_everywhere for a forced
+    // H3 pin. Without it the default profile would restrict ALPN to QUIC but
+    // never actually try QUIC for a plain origin, so the same pin would behave
+    // differently depending on which profile was selected. Only FORCE_H3 gets a
+    // QuicContext here: MN_PROTOCOL_NATIVE must keep Chromium's own defaults,
+    // which is what "current" means.
+    if (protocol_mode_ == MN_PROTOCOL_FORCE_H3) {
+      auto quic_context = std::make_unique<net::QuicContext>();
+      quic_context->params()->force_quic_everywhere = true;
+      quic_context->params()->idle_connection_timeout = base::Seconds(30);
+      builder.set_quic_context(std::move(quic_context));
+    }
   }
 
   builder.set_proxy_config_service(

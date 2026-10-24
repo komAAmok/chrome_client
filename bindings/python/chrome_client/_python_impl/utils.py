@@ -83,7 +83,13 @@ def unquote_unreserved(uri):
     parts = uri.split("%")
     for index in range(1, len(parts)):
         chunk = parts[index][0:2]
-        if len(chunk) == 2:
+        # Only an alphanumeric two-character escape can be a hex pair; anything
+        # else ("%-1", "%%") is not an escape at all and stays literal. Testing
+        # just the length let "%-1" through to int("-1", 16) == -1 and then
+        # chr(-1), which raised a bare ValueError that no caller of get() can
+        # catch: measured, session.get("http://host/%-1") leaked
+        # "chr() arg not in range(0x110000)" instead of raising InvalidURL.
+        if len(chunk) == 2 and chunk.isalnum():
             try:
                 codepoint = int(chunk, 16)
             except ValueError:

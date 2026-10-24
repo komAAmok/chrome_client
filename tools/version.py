@@ -25,18 +25,32 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 CARGO_TOML = ROOT / "Cargo.toml"
 
 # [workspace.package] version = "x.y.z" -- the only carrier.
-_WORKSPACE_VERSION = re.compile(
-    r'^\[workspace\.package\]\s*$.*?^version\s*=\s*"([^"]+)"',
-    re.MULTILINE | re.DOTALL)
+#
+# The table is located first and its body bounded at the next table header, so
+# the `version = ` key cannot be picked up from a later section. Matching the
+# whole file let `[profile.release] version = "9.9.9"` stand in for a missing
+# workspace version, which turned "the source of truth is gone" into "the source
+# of truth is 9.9.9" -- the one failure this module exists to prevent.
+_SECTION = re.compile(r'^\[workspace\.package\]\s*$', re.MULTILINE)
+_NEXT_TABLE = re.compile(r'^\[', re.MULTILINE)
+_VERSION_KEY = re.compile(r'^version\s*=\s*"([^"]+)"', re.MULTILINE)
 
 
 def version() -> str:
     text = CARGO_TOML.read_text(encoding="utf-8")
-    match = _WORKSPACE_VERSION.search(text)
+    section = _SECTION.search(text)
+    if section is None:
+        raise SystemExit(
+            "version: no [workspace.package] table in %s; the release version "
+            "has no source of truth" % CARGO_TOML)
+    body_start = section.end()
+    following = _NEXT_TABLE.search(text, body_start)
+    body = text[body_start:following.start() if following else len(text)]
+    match = _VERSION_KEY.search(body)
     if match is None:
         raise SystemExit(
-            "version: no [workspace.package] version in %s; the release version "
-            "has no source of truth" % CARGO_TOML)
+            "version: [workspace.package] in %s has no version key; the release "
+            "version has no source of truth" % CARGO_TOML)
     return match.group(1)
 
 

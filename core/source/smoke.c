@@ -5,6 +5,7 @@
 #endif
 
 #include <stdatomic.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -280,6 +281,62 @@ static void test_validation(mn_engine_t *engine) {
   request = NULL;
 }
 
+// A caller built against an older, shorter header must be rejected by reading
+// only the fields that exist in its allocation. The existing size checks above
+// mutate a full-size struct, so the memory is still complete and only the
+// return value is exercised; this test allocates exactly the prefix an older
+// caller would have, so a validation that reads past it is a real out-of-bounds
+// read rather than a theoretical one.
+//
+// The offset read here is where callbacks.version lives. A struct shorter than
+// that must be rejected on size alone, before any field beyond it is touched.
+static void test_short_struct_from_an_older_caller(mn_engine_t *engine) {
+  const size_t short_size = offsetof(mn_request_config_t, callbacks);
+  CHECK(short_size > 0);
+  CHECK(short_size < sizeof(mn_request_config_t));
+
+  void *raw = calloc(1, short_size);
+  CHECK(raw != NULL);
+  // Only the leading size/version/url/method fields are addressable here.
+  mn_request_config_t *short_config = (mn_request_config_t *)raw;
+  short_config->size = (uint32_t)short_size;
+  short_config->version = MN_ABI_VERSION;
+  short_config->url = "http://127.0.0.1/";
+  short_config->url_length = strlen(short_config->url);
+  short_config->method = "GET";
+  short_config->method_length = 3;
+
+  mn_request_t *request = NULL;
+  // The size check must fire before callbacks is read, so this returns instead
+  // of reading past the allocation. Under a memory checker this is the line
+  // that would report the read; without the reordering it read callbacks.version
+  // out of bounds.
+  CHECK(mn_request_create(engine, short_config, &request) ==
+        MN_ERROR_INVALID_ARGUMENT);
+  CHECK(request == NULL);
+  free(raw);
+
+  // The same shape for WebSocket, whose callbacks sit further in.
+  const size_t ws_short_size = offsetof(mn_websocket_config_t, callbacks);
+  CHECK(ws_short_size > 0);
+  CHECK(ws_short_size < sizeof(mn_websocket_config_t));
+  void *ws_raw = calloc(1, ws_short_size);
+  CHECK(ws_raw != NULL);
+  mn_websocket_config_t *short_ws = (mn_websocket_config_t *)ws_raw;
+  short_ws->size = (uint32_t)ws_short_size;
+  short_ws->version = MN_ABI_VERSION;
+  short_ws->url = "ws://127.0.0.1/";
+  short_ws->url_length = strlen(short_ws->url);
+  short_ws->origin = "http://127.0.0.1/";
+  short_ws->origin_length = strlen(short_ws->origin);
+
+  mn_websocket_t *websocket = NULL;
+  CHECK(mn_websocket_create(engine, short_ws, &websocket) ==
+        MN_ERROR_INVALID_ARGUMENT);
+  CHECK(websocket == NULL);
+  free(ws_raw);
+}
+
 static void test_profile_gate(void) {
   mn_engine_config_t config = {0};
   config.size = sizeof(config);
@@ -478,6 +535,7 @@ int main(int argc, char **argv) {
   mn_engine_release(engine);
   mn_engine_release(NULL);
   test_validation(engine);
+  test_short_struct_from_an_older_caller(engine);
 
   if (argc > 1) {
     const char *mode = argc > 2 ? argv[1] : "success";

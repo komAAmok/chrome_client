@@ -96,16 +96,29 @@ for glob in 'core/source/*.c' 'core/source/*.cc' 'core/source/minicronet/*.h'; d
   ((matched)) || die "$glob matches nothing"
 done
 
-# The reverse of the loop above: a compilation unit that no target references is
-# shipped into the Chromium tree by tools/sync-core.sh and never compiled, so it
+# The reverse of the loop above: a file that no target references is shipped into
+# the Chromium tree by tools/sync-core.sh and never compiled or included, so it
 # rots unnoticed. This is also what makes the name extraction self-checking -- a
 # BUILD.gn reference that stopped looking like a file name leaves its source
 # unreferenced, which fails here instead of silently shrinking the checked set.
-for file in "$ROOT"/core/source/*.c "$ROOT"/core/source/*.cc; do
+#
+# Headers are included in this loop, not just compilation units. They were
+# installed by the glob at the top and then never checked in this direction, so a
+# new header that BUILD.gn does not name was copied into every synced tree with
+# the audit still reporting success -- the same one-way coverage that let the
+# version gate miss docs/PROJECT_STATUS.md. A header nothing includes is dead
+# weight at best and a sign the target list is stale at worst.
+#
+# BUILD.gn names every file by bare basename -- the resolution loop above looks it
+# up under each of SEARCH_DIRS -- so a header at core/source/minicronet/engine.h
+# appears as "engine.h", not "minicronet/engine.h". Comparing the path relative to
+# core/source/ would therefore fail on every header that is correctly listed.
+for file in "$ROOT"/core/source/*.c "$ROOT"/core/source/*.cc \
+            "$ROOT"/core/source/minicronet/*.h; do
   [[ -e $file ]] || continue
-  base=${file#"$ROOT/core/source/"}
+  base=$(basename "$file")
   grep -qx "$base" <<<"$names" \
-    || die "core/source/$base exists but no target in core/source/BUILD.gn references it"
+    || die "core/source/${file#"$ROOT/core/source/"} exists but no target in core/source/BUILD.gn references it"
 done
 
 # Installed by name rather than by glob, so they need their own entries.

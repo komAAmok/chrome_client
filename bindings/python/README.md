@@ -26,9 +26,12 @@ Rust applications.
 
 `Request.send()` releases the Python GIL while waiting for Core I/O, so other
 Python threads can continue running. The current native extension is built
-with PyO3 0.28.3 (`abi3-py37`) and therefore supports Python 3.7–3.13. Python 3.6 requires a
-separate extension built with a PyO3 release that still supports 3.6; it is
-not silently claimed by this binary.
+with PyO3 0.30.1 (`abi3-py39`) and therefore supports Python 3.9–3.15. 3.9 is
+not a packaging preference: it is the floor pyo3 0.30.1 declares
+(`MINIMUM_SUPPORTED_VERSION`), and the oldest `abi3` feature that release
+offers, so the wheel it produces is `cp39-abi3` and pip refuses it on 3.7/3.8.
+Python 3.6–3.8 is served by the separate `bindings/python36` extension (PyO3
+0.15.1, `abi3-py36`, `cp36-abi3`); this binary does not silently claim them.
 
 ```python
 import chrome_client

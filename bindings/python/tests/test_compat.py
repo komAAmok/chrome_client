@@ -2038,7 +2038,8 @@ class ProxyRegressionTests(unittest.TestCase):
         and -111/-115 were missing entirely, so callers saw "Proxy (net error
         -111)" with nothing to act on.
         """
-        from chrome_client._python_impl.exceptions import _NET_ERRORS
+        from chrome_client._python_impl.exceptions import (_NET_ERRORS, ProxyError,
+                                                           map_native_error)
         self.assertEqual(_NET_ERRORS[-111][0], "ERR_TUNNEL_CONNECTION_FAILED")
         self.assertEqual(_NET_ERRORS[-115][0], "ERR_PROXY_AUTH_UNSUPPORTED")
         self.assertEqual(_NET_ERRORS[-120][0], "ERR_SOCKS_CONNECTION_FAILED")
@@ -2047,6 +2048,26 @@ class ProxyRegressionTests(unittest.TestCase):
         self.assertEqual(_NET_ERRORS[-324][0], "ERR_EMPTY_RESPONSE")
         for code, (name, kind) in _NET_ERRORS.items():
             self.assertTrue(name.startswith("ERR_"), (code, name))
+
+        # Every proxy-class error Chromium can report must be mapped. These five
+        # were missing, so a PAC failure or a proxy-delegate cancellation
+        # surfaced as a bare RequestException carrying only "net error -N": the
+        # caller could neither catch ProxyError nor see the name.
+        for code, name in (
+            (-186, "ERR_PROXY_UNABLE_TO_CONNECT_TO_DESTINATION"),
+            (-187, "ERR_PROXY_DELEGATE_CANCELED_CONNECT_REQUEST"),
+            (-188, "ERR_PROXY_DELEGATE_CANCELED_CONNECT_RESPONSE"),
+            (-327, "ERR_PAC_SCRIPT_FAILED"),
+            (-367, "ERR_PAC_SCRIPT_TERMINATED"),
+        ):
+            self.assertIn(code, _NET_ERRORS, "%d (%s) is unmapped" % (code, name))
+            self.assertEqual(_NET_ERRORS[code][0], name)
+            self.assertIs(_NET_ERRORS[code][1], ProxyError)
+            # It must reach the caller as a ProxyError, not a bare
+            # RequestException carrying a numeric message.
+            with self.assertRaises(ProxyError) as caught:
+                raise map_native_error(RuntimeError("net error %d" % code))
+            self.assertIn(name, str(caught.exception))
 
 
 class ProxyURLNormalisationTests(unittest.TestCase):
@@ -2908,3 +2929,137 @@ class NetErrorTableShapeTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class AbandonedAsyncStreamTests(unittest.TestCase):
+    """An async stream the caller never closed must release its socket.
+
+    Every explicit path (``aclose()``, the ``content`` setter) requires the
+    caller to act. A response that is simply dropped runs the generator
+    ``finally`` during GC, and that path used to call ``aclose()`` without
+    ``cancel=True``: the reader detached its callback but never cancelled the
+    Core request, so the socket stayed in the engine pool.
+
+    Measured over a never-ending chunked body: 20 abandoned responses leaked
+    46 file descriptors and left 20 server connections open for the life of
+    the process. A finite body hides this, because the transfer completes and
+    the socket is reused before the leak can show.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.server, cls.port = _endless_chunked_server()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.server.close()
+
+    def _fds(self):
+        return len(os.listdir("/proc/self/fd"))
+
+    @unittest.skipUnless(os.path.isdir("/proc/self/fd"),
+                         "needs /proc to count descriptors")
+    def test_an_abandoned_async_stream_releases_its_socket(self):
+        url = "http://127.0.0.1:%d/" % self.port
+
+        async def abandon(count):
+            for _ in range(count):
+                session = chrome_client.AsyncSession()
+                response = await session.get(url, stream=True, timeout=10)
+                iterator = response.aiter_content(4096)
+                try:
+                    await iterator.__anext__()
+                except StopAsyncIteration:
+                    pass
+                # No aclose(): dropping everything is the case under test.
+
+        gc.collect()
+        time.sleep(0.2)
+        before = self._fds()
+        asyncio.run(abandon(20))
+        gc.collect()
+        time.sleep(1.5)
+        after = self._fds()
+        self.assertLess(
+            after - before, 10,
+            "20 abandoned async streams grew the descriptor count by %d; the "
+            "generator finally must cancel the Core request, not just detach "
+            "its callback" % (after - before))
+
+    def test_closing_properly_also_releases(self):
+        """The fix must not regress the explicit path."""
+        url = "http://127.0.0.1:%d/" % self.port
+
+        async def closed(count):
+            for _ in range(count):
+                session = chrome_client.AsyncSession()
+                response = await session.get(url, stream=True, timeout=10)
+                iterator = response.aiter_content(4096)
+                try:
+                    await iterator.__anext__()
+                except StopAsyncIteration:
+                    pass
+                await response.aclose()
+                await session.aclose()
+
+        gc.collect()
+        time.sleep(0.2)
+        before = self._fds()
+        asyncio.run(closed(10))
+        gc.collect()
+        time.sleep(1.0)
+        after = self._fds()
+        self.assertLess(after - before, 10,
+                        "closing properly grew the descriptor count by %d"
+                        % (after - before))
+
+
+def _endless_chunked_server():
+    """A server that streams chunked data forever, so an uncancelled request
+    cannot finish on its own and the leak becomes observable."""
+    listener = socket.socket()
+    listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(64)
+    port = listener.getsockname()[1]
+    stop = threading.Event()
+
+    def handle(conn):
+        try:
+            conn.settimeout(30)
+            buf = b""
+            while b"\r\n\r\n" not in buf:
+                data = conn.recv(65536)
+                if not data:
+                    return
+                buf += data
+            conn.sendall(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n")
+            while not stop.is_set():
+                conn.sendall(b"400\r\n" + b"z" * 1024 + b"\r\n")
+                time.sleep(0.001)
+        except Exception:
+            pass
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+    def serve():
+        while not stop.is_set():
+            try:
+                conn, _ = listener.accept()
+            except OSError:
+                return
+            threading.Thread(target=handle, args=(conn,), daemon=True).start()
+
+    threading.Thread(target=serve, daemon=True).start()
+
+    class _Server(object):
+        def close(self):
+            stop.set()
+            try:
+                listener.close()
+            except Exception:
+                pass
+
+    return _Server(), port

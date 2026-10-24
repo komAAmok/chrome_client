@@ -52,6 +52,26 @@ def encode_params(data, encoding="utf-8"):
     return urlencode(pairs, doseq=True)
 
 
+#: Characters a ``Content-Disposition`` parameter must not carry literally.
+#: ``"`` ends the quoted-string and CR/LF end the header line, so leaving any
+#: of them in let a caller-supplied field name or filename inject extra part
+#: headers (or a whole extra part) into the body.
+_PARAM_ESCAPES = {34: "%22", 13: "%0D", 10: "%0A"}
+
+
+def _escape_param(value, encoding="utf-8"):
+    """Percent-escapes the characters that would break a quoted parameter.
+
+    The same three replacements requests/urllib3 applies, so a caller porting
+    from ``requests`` sees byte-identical bodies. Without this, a field name
+    or filename containing a double quote or CRLF wrote raw header lines into
+    the part: a field named with an embedded CRLF plus ``X-Injected: yes``
+    emitted a real ``X-Injected: yes`` header inside the body.
+    """
+    text = value.decode(encoding) if isinstance(value, bytes) else str(value)
+    return text.translate(_PARAM_ESCAPES)
+
+
 class Part(object):
     """One multipart section."""
 
@@ -68,9 +88,9 @@ class Part(object):
         self.content_transfer_encoding = content_transfer_encoding
 
     def render(self, encoding="utf-8"):
-        disposition = 'form-data; name="%s"' % self.name
+        disposition = 'form-data; name="%s"' % _escape_param(self.name, encoding)
         if self.filename is not None:
-            disposition += '; filename="%s"' % self.filename
+            disposition += '; filename="%s"' % _escape_param(self.filename, encoding)
         lines = [b"Content-Disposition: " + _bytes(disposition, encoding)]
         if self.content_type:
             lines.append(b"Content-Type: " + _bytes(self.content_type, encoding))
@@ -158,7 +178,12 @@ def _normalize_file_entry(field, value):
             raise ValueError("files entry %r must have 2 to 4 elements" % (field,))
     else:
         handle = value
-        filename = guess_filename(handle)
+        # requests falls back to the field name when the object carries no
+        # usable .name attribute. Without that fallback the part has no
+        # filename parameter at all, so the server sees a plain form field
+        # instead of a file upload -- measured: files={"f": BytesIO(b"BODY")}
+        # rendered name="f" where requests renders name="f"; filename="f".
+        filename = guess_filename(handle) or field
     if hasattr(handle, "read"):
         if hasattr(handle, "seek") and hasattr(handle, "tell"):
             try:

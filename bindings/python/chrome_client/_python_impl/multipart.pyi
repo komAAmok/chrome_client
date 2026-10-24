@@ -64,6 +64,10 @@ class Part:
     def render(self, encoding: str = ...) -> bytes:
         """Renders the part, including its headers and trailing CRLF.
 
+        ``name`` and ``filename`` are percent-escaped for ``"``, CR and LF
+        first, so a caller-supplied value cannot close the quoted parameter and
+        inject extra headers (or an extra part) into the body.
+
         Args:
             encoding: Codec for str values.
 

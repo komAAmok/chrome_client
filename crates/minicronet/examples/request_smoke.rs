@@ -98,6 +98,35 @@ fn main() {
         println!("cache_modes=4");
         return;
     }
+    if mode == "stream-drop" {
+        // Regression: dropping the body stream while the Core had answered
+        // MN_READ_PAUSE used to strand the request forever -- the Core waits
+        // for a resume_read that only a live consumer sends. Observed against
+        // an 8 MiB body: still unfinished 6 s after the drop.
+        let request = engine
+            .request(RequestConfig::get(url))
+            .expect("stream-drop request");
+        let response = request
+            .start()
+            .expect("stream-drop start")
+            .wait()
+            .expect("stream-drop response");
+        let mut body = response.body;
+        assert!(
+            body.blocking_next().is_some(),
+            "expected at least one chunk"
+        );
+        drop(body);
+        let started = std::time::Instant::now();
+        while started.elapsed() < Duration::from_secs(10) {
+            if request.is_finished() {
+                println!("stream_drop_finished_ms={}", started.elapsed().as_millis());
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        panic!("dropping the body stream stranded the request");
+    }
     let mut request_config = RequestConfig::get(url);
     request_config.timeout = (mode == "timeout").then_some(std::time::Duration::from_millis(50));
     if mode == "redirect-manual" {

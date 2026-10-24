@@ -114,18 +114,32 @@ class HTTPDigestAuth(AuthBase):
                               os.urandom(8))).encode("utf-8")).hexdigest()[:16]
         if algorithm.endswith("-SESS"):
             ha1 = hash_utf8("%s:%s:%s" % (ha1, nonce, cnonce))
-        if qop is None:
+        # ``qop`` is a comma-separated list of what the server accepts, and
+        # only "auth" can be computed here: "auth-int" hashes the request body,
+        # which this layer does not see. Testing ``qop is None`` treated every
+        # non-empty value as "auth", so a server offering only ``qop="auth-int"``
+        # received a header labelled qop="auth" and rejected it. Measured:
+        # qop="auth-int" produced qop="auth" in the emitted header.
+        offered = [item.strip() for item in (qop or "").split(",") if item.strip()]
+        if not offered:
             response = hash_utf8("%s:%s:%s" % (ha1, nonce, ha2))
-        else:
+            use_qop = None
+        elif "auth" in offered:
             response = hash_utf8("%s:%s:%s:%s:%s" % (ha1, nonce, ncvalue, cnonce, ha2))
+            use_qop = "auth"
+        else:
+            raise UnsupportedFeature(
+                "the server offers qop=%s only; this client can compute \"auth\" "
+                "but not \"auth-int\" (it would need the request body, which the "
+                "Core does not expose to this layer)" % (qop,))
         parts = ['username="%s"' % self.username, 'realm="%s"' % realm,
                  'nonce="%s"' % nonce, 'uri="%s"' % path, 'response="%s"' % response]
         if opaque:
             parts.append('opaque="%s"' % opaque)
         if chal.get("algorithm"):
             parts.append("algorithm=%s" % chal["algorithm"])
-        if qop:
-            parts.append('qop="auth", nc=%s, cnonce="%s"' % (ncvalue, cnonce))
+        if use_qop:
+            parts.append('qop="%s", nc=%s, cnonce="%s"' % (use_qop, ncvalue, cnonce))
         return "Digest " + ", ".join(parts)
 
     def __call__(self, request):

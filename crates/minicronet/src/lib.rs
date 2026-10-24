@@ -183,7 +183,6 @@ impl Drop for EngineInner {
     }
 }
 
-#[allow(dead_code)]
 #[derive(Clone)]
 pub struct Engine(Arc<EngineInner>);
 
@@ -221,7 +220,7 @@ impl Engine {
             profile_namespace_length: profile_namespace.len(),
             protocol_mode: config.protocol.into(),
             tls_verify_mode: config.tls_verify.into(),
-            custom_ca_pem: ptr_or_null_bytes(ca),
+            custom_ca_pem: ffi_bytes(ca),
             custom_ca_pem_length: ca.len(),
         };
         let mut raw = std::ptr::null_mut();
@@ -251,7 +250,6 @@ impl Engine {
         WebSocket::new(self, config)
     }
 
-    #[allow(dead_code)]
     pub(crate) fn raw(&self) -> *mut sys::mn_engine_t {
         self.0.raw.as_ptr()
     }
@@ -269,24 +267,50 @@ fn ptr_or_null(value: &[u8]) -> *const i8 {
     }
 }
 
-fn ptr_or_null_bytes(value: &[u8]) -> *const u8 {
-    if value.is_empty() {
-        std::ptr::null()
-    } else {
-        value.as_ptr()
-    }
-}
-
 pub(crate) fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
+/// How long one blocking park lasts before the loop re-checks the state.
+///
+/// `Condvar::wait` parks the calling thread with no deadline and no escape
+/// hatch: if the Core never delivers its terminal callback, the caller blocks
+/// forever and cannot observe that nothing is coming. The Core normally does
+/// deliver one, and its own deadline timer covers the `timeout_ms_ > 0` case,
+/// but a request with no deadline has no Core-side timer at all, and a callback
+/// lost to a dropped consumer is a failure mode this project has already hit
+/// once (the abandoned-body-stream stall).
+///
+/// This is a re-check interval, not the request deadline: the deadline stays
+/// the Core's job (`timeout_ms`). Bounding one park means a lost wakeup or a
+/// Core that stopped mid-flight cannot pin the caller permanently, while a
+/// healthy request notices no difference -- the loop wakes on `notify_all`
+/// long before the slice elapses.
+pub(crate) const WAIT_SLICE: std::time::Duration = std::time::Duration::from_millis(250);
+
+/// Converts a deadline into the ABI's whole-millisecond field.
+///
+/// `0` is the ABI's "no deadline" value -- `core/source/request.cc` only arms
+/// the timer `if (timeout_ms_ > 0)` -- so a positive duration must never
+/// truncate to it. `as_millis()` truncates, which turned every sub-millisecond
+/// deadline into "wait forever": exactly the opposite of what the caller asked
+/// for. Rounding a positive duration up to 1 ms keeps the deadline a deadline
+/// and costs at most one millisecond of extra waiting.
+///
+/// Only `None` maps to 0. Every supplied deadline maps to at least 1 ms,
+/// including `Duration::ZERO`: a caller that passes a deadline wants the
+/// request to stop, and `ZERO` is the strongest form of that request, so
+/// encoding it as "no deadline" inverted its meaning. The Python facade rejects
+/// `timeout=0` for the same reason; this is the Rust-side equivalent, and it
+/// also makes the mapping monotonic -- `Some(_)` is always >= 1, `None` is 0.
 pub(crate) fn timeout_ms(timeout: Option<std::time::Duration>) -> u64 {
-    timeout
-        .map(|value| value.as_millis().min(u128::from(u64::MAX)) as u64)
-        .unwrap_or(0)
+    let Some(value) = timeout else {
+        return 0;
+    };
+    let millis = value.as_millis().min(u128::from(u64::MAX)) as u64;
+    millis.max(1)
 }
 
 pub(crate) fn ffi_bytes(data: &[u8]) -> *const u8 {
@@ -295,4 +319,29 @@ pub(crate) fn ffi_bytes(data: &[u8]) -> *const u8 {
     } else {
         data.as_ptr()
     }
+}
+
+/// Turns a Core return code into `Result`, mapping every non-OK value through
+/// `Error::from`. Both the request and WebSocket layers call this.
+pub(crate) fn result(value: sys::mn_result_t) -> Result<(), Error> {
+    if value == sys::mn_result_t::MN_OK {
+        Ok(())
+    } else {
+        Err(value.into())
+    }
+}
+
+/// Copies a Core callback buffer. A zero length is answered with an empty Vec
+/// rather than `slice::from_raw_parts`, which requires a non-null, aligned
+/// pointer even for zero elements; the Core passes null for empty payloads.
+pub(crate) fn copy_bytes(data: *const u8, length: usize) -> Vec<u8> {
+    if length == 0 {
+        Vec::new()
+    } else {
+        unsafe { std::slice::from_raw_parts(data, length) }.to_vec()
+    }
+}
+
+pub(crate) fn copy_string(data: *const i8, length: usize) -> String {
+    String::from_utf8_lossy(&copy_bytes(data.cast(), length)).into_owned()
 }

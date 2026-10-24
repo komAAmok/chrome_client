@@ -1,7 +1,7 @@
 # chrome_client
 
 [![PyPI 版本](https://img.shields.io/pypi/v/chrome-client)](https://pypi.org/project/chrome-client/)
-[![Python 版本](https://img.shields.io/badge/python-3.6%20%7C%203.7%20%7C%203.8%20%7C%203.9%20%7C%203.10%20%7C%203.11%20%7C%203.12%20%7C%203.13-blue)](https://pypi.org/project/chrome-client/)
+[![Python 版本](https://img.shields.io/badge/python-3.6%20%7C%203.7%20%7C%203.8%20%7C%203.9%20%7C%203.10%20%7C%203.11%20%7C%203.12%20%7C%203.13%20%7C%203.14%20%7C%203.15-blue)](https://pypi.org/project/chrome-client/)
 [![许可证：MIT](https://img.shields.io/pypi/l/chrome-client)](https://pypi.org/project/chrome-client/)
 
 基于 Chromium 网络栈的 HTTP/WebSocket 客户端。Core 负责 TLS、HTTP、HTTP/2、
@@ -19,7 +19,7 @@ WebSocket。无法用 Chromium 忠实实现的选项会显式报错，而不是�
 
 ### 操作系统、架构与绑定
 
-| 操作系统 | Core 目标 | Python 3.7–3.13 | Python 3.6 | Rust | 备注 |
+| 操作系统 | Core 目标 | Python 3.9–3.15 | Python 3.6–3.8 | Rust | 备注 |
 | --- | --- | --- | --- | --- | --- |
 | Linux | x86 (`i686`)、x86_64、ARM64 | ✓ | ✓（独立 abi3 扩展） | ✓ | manylinux/glibc 运行时依赖见 manifest |
 | Windows | x86、x86_64、ARM64 | ✓ | x86/x86_64 ✓ | ✓ | DLL 随 wheel；ICU 数据已编入库中 |
@@ -249,6 +249,11 @@ print(response.status_code, response.headers["Location"], response.next.url)
 session.get("https://example.com/r", max_redirects=5)   # 超限抛 TooManyRedirects
 ```
 
+`max_redirects` 必须小于 20（Chromium 在一个 `URLRequest` 内停在上限 20）；
+大于等于 20 抛 `UnsupportedFeature`，不静默钳到 20。默认值是 `None`，含义是
+「采用 Chromium 的 20」，**不是** requests 的 30——`requests.models.DEFAULT_REDIRECT_LIMIT`
+仍是 30 且仍可导入，但本包不把它当作默认值。
+
 异常层次与 `requests.exceptions` 一致（`RequestException` 继承 `IOError`），
 并补上 curl-cffi 的叶子类型。Chromium 的 net error 会映射成具体类型和可读名字：
 
@@ -464,8 +469,8 @@ Cookie 会按 URL 匹配后附加到握手上。
 | `core/abi/` | 稳定 C ABI v8 |
 | `core/binaries/` | 8 个已审计平台 Core |
 | `crates/minicronet/` | Rust 安全层、流和生命周期 |
-| `bindings/python/` | Python 3.7–3.13 绑定与共享 facade |
-| `bindings/python36/` | Python 3.6 独立 abi3 绑定（共用同一 facade） |
+| `bindings/python/` | Python 3.9–3.15 绑定与共享 facade |
+| `bindings/python36/` | Python 3.6–3.8 独立 abi3 绑定（共用同一 facade） |
 | `bindings/python/tests/` | `test_stability.py` 生命周期与并发；`test_compat.py` requests/curl-cffi 兼容面 |
 | `docs/` | 构建、平台、ABI、兼容性和审计说明 |
 
