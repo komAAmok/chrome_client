@@ -25,6 +25,12 @@ from .exceptions import ImpersonateError, UnsupportedFeature
 LATEST_CHROME = 155
 OLDEST_CHROME = 99
 
+#: First major whose requests carry an RFC 9218 priority header.  Measured
+#: against the pinned profiles: chrome_99..chrome_123 send no such header on
+#: HTTP/2 or HTTP/3, chrome_124 and later send one.  tools/generate-profile-table.py
+#: encodes the same boundary as the send_priority_header span.
+PRIORITY_HEADER_MIN_CHROME = 124
+
 _UNSUPPORTED_FAMILIES = ("edge", "safari", "firefox", "tor", "chrome_android",
                          "chrome-android", "safari_ios", "okhttp")
 
@@ -205,3 +211,27 @@ def reject_fingerprint_overrides(ja3=None, akamai=None, perk=None):
 
 def available_profiles():
     return ["chrome_%d" % major for major in range(OLDEST_CHROME, LATEST_CHROME + 1)]
+
+
+def default_priority(profile):
+    """The request priority this profile's own browser would use, or None.
+
+    ``profile`` is a normalized chrome_<major> name or None.  A Chrome 124+
+    profile returns "highest": that is the priority the browser puts on the
+    requests this library can make, and it is what makes the wire carry
+    "priority: u=0, i".  Every earlier profile returns None so the Core keeps
+    its own default, because those profiles send no priority header at all and
+    a different priority would move the HTTP/2 fingerprint they were verified
+    with.
+
+    None also comes back for an unrecognised profile string.  Callers reach
+    here before the Core validates the name, so returning a priority for
+    garbage would turn one error (ProfileUnsupported) into two.
+    """
+    if not profile:
+        return None
+    try:
+        major = int(profile.split("_", 1)[1])
+    except (IndexError, ValueError):
+        return None
+    return "highest" if major >= PRIORITY_HEADER_MIN_CHROME else None

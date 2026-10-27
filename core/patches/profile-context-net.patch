@@ -215,7 +215,7 @@ index 0097a398b6d..b2e8b5ea19e 100644
    size_t spdy_session_max_recv_window_size;
    // Maximum number of capped frames that can be queued at any time.
    int spdy_session_max_queued_capped_frames;
-@@ -109,6 +117,28 @@ struct NET_EXPORT HttpNetworkSessionParams {
+@@ -109,6 +117,33 @@ struct NET_EXPORT HttpNetworkSessionParams {
    // The same setting will be sent on every connection to prevent the retry
    // logic from hiding broken servers.
    spdy::SettingsMap http2_settings;
@@ -233,8 +233,13 @@ index 0097a398b6d..b2e8b5ea19e 100644
 +  bool randomize_proxy_socket_pool_limit = true;
 +  // Whether H2/H3 request HEADERS automatically include RFC 9218 priority.
 +  bool send_priority_header = true;
-+  // Profile-owned network behavior. These must be frozen per session rather
-+  // than selected through the process-global FeatureList.
++  // Session-frozen replacements for the process FeatureList gates. The default
++  // matches the upstream feature default at the pinned revision, so leaving a
++  // field unset preserves the behavior that gate had.
++  //
++  // These five are not profile data: no RuntimeProfileData field feeds them, so
++  // every profile keeps the default below. Do not describe them as
++  // profile-owned unless a generator and the table gain a matching field.
 +  bool enable_websocket_over_http3 = false;
 +  bool avoid_h2_reprioritization = false;
 +  bool split_cache_by_include_credentials = false;

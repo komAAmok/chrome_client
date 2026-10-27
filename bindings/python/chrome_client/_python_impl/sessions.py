@@ -34,8 +34,9 @@ from .exceptions import (InvalidProxyURL, InvalidURL, ProxyError,
                          RequestException, ResponseTooLarge, SessionClosed,
                          Timeout, TooManyRedirects, UnsupportedFeature,
                          map_native_error)
-from .impersonate import (normalize_http_version, normalize_impersonate,
-                          reject_fingerprint_overrides, validate_extra_fp)
+from .impersonate import (default_priority, normalize_http_version,
+                          normalize_impersonate, reject_fingerprint_overrides,
+                          validate_extra_fp)
 from .models import (PreparedRequest, Request, Response, AsyncResponse,
                      _negotiated_http_version, parse_raw_headers,
                      reason_from_status_line)
@@ -1509,7 +1510,23 @@ class BaseSession(object):
             "max_response_bytes": self.max_response_bytes if limit is None
             else _validate_max_response_bytes(limit),
             "cache_mode": values.get("cache_mode"),
-            "priority": values.get("priority"),
+            # A caller-supplied priority always wins.  When it does not, a
+            # Chrome 124+ profile defaults to "highest", because that is what
+            # the browser itself sends: Blink starts a navigation at
+            # ResourceLoadPriority::kVeryHigh (document_loader.cc:2142), which
+            # ConvertToNetPriority maps to net::HIGHEST
+            # (web_url_request.cc:61-62), and net turns HIGHEST into urgency 0,
+            # i.e. "priority: u=0, i".  The Core's own default is LOWEST, which
+            # serialises as "priority: i" -- urgency omitted means "3", a
+            # subresource hint on a header set that claims to be a browser
+            # navigation.  Profiles before 124 send no priority header at all,
+            # so their default is left untouched: there is no measured defect
+            # to fix there and changing it would move their H2 fingerprint.
+            "priority": values.get("priority")
+            if values.get("priority") is not None
+            else default_priority(values.get("impersonate")
+                                  if values.get("impersonate") is not None
+                                  else self.impersonate),
             "native_redirects": bool(allow_redirects) and not python_redirects,
             "python_redirects": python_redirects,
             "max_redirects": effective_max,

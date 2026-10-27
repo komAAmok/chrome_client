@@ -297,13 +297,18 @@ ClientHello，等于谎报保真度。`extra_fp` 中 facade 能真正实现的�
 
 **默认请求头不是 profile 数据。** `impersonate` 只把 `User-Agent` 的版本串换成
 对应 Chrome 版本，它**不会**补上 Chrome 实际发送的
-`sec-ch-ua`/`sec-ch-ua-mobile`/`sec-ch-ua-platform`、`Sec-Fetch-*`、`Accept` 或
-`Priority`。那些头由 Chrome 的 `services/network` URLLoader 工厂层注入，而
+`sec-ch-ua`/`sec-ch-ua-mobile`/`sec-ch-ua-platform`、`Sec-Fetch-*` 或 `Accept`。
+那些头由 Chrome 的 `services/network` URLLoader 工厂层注入，而
 `net::URLRequestContextBuilder` 只暴露 `set_user_agent` / `set_accept_language`
 （两者落到只提供 `GetUserAgent()`/`GetAcceptLanguage()` 的
-`StaticHttpUserAgentSettings`），没有对应入口，因此当前**不可得**。默认请求头
-实测只有 `Host`、`Connection`、`User-Agent`、`Accept-Encoding` 四个。补齐需要
+`StaticHttpUserAgentSettings`），没有对应入口，因此当前**不可得**。补齐需要
 ABI v9，见 [`docs/NEXT_STEPS.md`](https://github.com/komAAmok/chrome_client/blob/main/docs/NEXT_STEPS.md) 的 client hints 条目。
+
+`Priority` 是这条规则的例外：RFC 9218 的 `priority` 请求头由 `net` 层自己序列化
+（`net/spdy/spdy_http_utils.cc` 的 `CreateSpdyHeadersFromHttpRequest`），不经
+URLLoader。因此 chrome_124 起的 profile 会自动带上它，取值由请求优先级决定——
+这些 profile 的默认优先级是 `highest`，发出的正是真实 Chrome 导航的
+`priority: u=0, i`；chrome_99–123 不发这个头，与它们的抓包一致。HTTP/1.1 上不发。
 
 不受支持而显式报错的还有：`cert=`（客户端证书）、`interface=`、`doh_url=`、
 `curl_options=`、`max_recv_speed=`、`referer=`。`referer` 尤其容易误判：Chromium

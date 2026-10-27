@@ -1766,6 +1766,51 @@ class SilentLossRegressionTests(unittest.TestCase):
             with self.assertRaises(TypeError):
                 session.get(self.base + "/", priority=5)
 
+    def test_default_priority_follows_the_profile_version(self):
+        """Chrome 124+ must ask for "highest", earlier profiles for nothing.
+
+        The wire value is what matters: net::LOWEST (the Core default)
+        serialises as "priority: i" because urgency 3 is the protocol default
+        and gets omitted, so a navigation-claiming header set would advertise
+        a subresource hint.  Chrome itself sends "u=0, i" from 124 on, and no
+        priority header at all before that.
+        """
+        from chrome_client._python_impl.impersonate import default_priority
+
+        for major, expected in ((99, None), (123, None), (124, "highest"),
+                                (155, "highest")):
+            profile = "chrome_%d" % major
+            self.assertEqual(default_priority(profile), expected, profile)
+        self.assertIsNone(default_priority(None))
+        # An unparseable name must not be pre-empted here: the Core owns that
+        # rejection, and returning a priority first would mask it.
+        for bogus in ("garbage", "chrome_x", "chrome_"):
+            self.assertIsNone(default_priority(bogus), bogus)
+
+    def test_explicit_priority_still_wins_over_the_profile_default(self):
+        """A caller asking for "low" must not be upgraded to "highest"."""
+        with chrome_client.Session(impersonate="chrome_155") as session:
+            request, options = session._prepare_call({
+                "method": "GET", "url": "https://example.com/",
+                "impersonate": None, "priority": "low",
+            })
+        self.assertEqual(options["priority"], "low")
+
+    def test_profile_default_priority_reaches_the_transport(self):
+        """The resolved default has to be what the Core is asked to send."""
+        with chrome_client.Session(impersonate="chrome_155") as session:
+            request, options = session._prepare_call({
+                "method": "GET", "url": "https://example.com/",
+                "impersonate": None,
+            })
+        self.assertEqual(options["priority"], "highest")
+        with chrome_client.Session(impersonate="chrome_123") as session:
+            request, options = session._prepare_call({
+                "method": "GET", "url": "https://example.com/",
+                "impersonate": None,
+            })
+        self.assertIsNone(options["priority"])
+
 
 class RefererEchoHandler(BaseHTTPRequestHandler):
     """Echoes the Referer the request actually carried.

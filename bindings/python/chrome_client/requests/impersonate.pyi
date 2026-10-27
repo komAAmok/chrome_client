@@ -21,5 +21,6 @@ from .._python_impl.impersonate import (
     validate_extra_fp as validate_extra_fp,
     reject_fingerprint_overrides as reject_fingerprint_overrides,
     available_profiles as available_profiles,
+    default_priority as default_priority,
     ExtraFingerprints as ExtraFingerprints,
 )

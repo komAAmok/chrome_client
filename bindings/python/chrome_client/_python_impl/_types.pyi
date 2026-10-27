@@ -71,6 +71,7 @@ __all__ = [
     "ParamsLike",
     "Proxies",
     "RequestOptions",
+    "RequestPriority",
     "ResponseClass",
     "Retry",
     "SessionOptions",

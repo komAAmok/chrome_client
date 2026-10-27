@@ -95,8 +95,14 @@ is re-sent to the new Engine.
 
 ### Fingerprints are a profile choice, not a set of knobs
 
-The pinned profile owns the TLS ClientHello, ALPN, HTTP/2 SETTINGS and priority
-frames, HTTP/3 transport parameters, and the default header set with its order.
+The pinned profile owns the TLS ClientHello, ALPN, HTTP/2 SETTINGS and the
+priority signalling that goes with them, HTTP/3 transport parameters, and the
+default header set with its order. That priority signalling has two halves,
+and which one a profile gets is a measured version boundary: chrome_99-123
+send the HEADERS dependency/weight fields and no RFC 9218 header, chrome_124
+and later additionally send a `priority` request header. Neither half is a
+knob -- `priority=` selects the request priority that feeds both, exactly as
+it does in Chromium.
 `ja3=`, `akamai=`, `perk=` and the TLS/HTTP2 fields of `extra_fp` raise. Only
 `extra_fp.header_order` and `extra_fp.form_boundary` are honoured, because the
 facade implements both itself.
@@ -246,6 +252,25 @@ that configures neither has nothing to scope against, and the per-request
 proxy is then the only candidate. Credentials written into the proxy URL
 always win over `proxy_auth`.
 
+**TLS 0-RTT is off over TCP and on over QUIC.** These are two different
+switches, and only the first one is closed here:
+
+- TCP: `engine.cc` sets `enable_tls13_early_data = false`, matching the
+  upstream default at the pinned revision, so no early data is sent on a
+  resumed TLS connection.
+- QUIC: `disable_tls_zero_rtt` keeps its default `false`
+  (`net/quic/quic_context.h`), and the QUICHE flag behind it
+  (`quic_disable_client_tls_zero_rtt`) also defaults to `false`, so a QUIC
+  connection to a previously visited origin can send 0-RTT early data.
+
+RFC 9001 recommends restricting 0-RTT to safe methods because early data can
+be replayed, and nothing in `net/` gates it by HTTP method: searching for a
+method check around early data finds none. The exposure is therefore the same
+one Chrome has, which is why it is left alone -- turning 0-RTT off would make
+the QUIC handshake differ from the browser the profile claims to be. A caller
+who cannot accept replay risk on a non-idempotent request should pin
+`http_version="v2"` (or `"v1"`) so the request cannot reach QUIC at all.
+
 **One Engine per distinct proxy.** The proxy is an Engine-level setting
 (`engine.py`, `EngineConfig`), and an Engine is a whole Chromium
 `URLRequestContext` with its own threads, socket pools, DNS cache and TLS session
@@ -263,6 +288,24 @@ Set `max_engines` to at least the pool size. The connection-per-request pattern
 is what turns a pool into `ERR_PROXY_CONNECTION_FAILED` (-130) after a while:
 each abandoned connection leaves a `TIME_WAIT` entry, and once the ephemeral
 port range is consumed a `connect()` to the proxy cannot get a source port.
+
+**`discard_cookies=True` costs one connection per request.** That option has to
+reach a cookie store with nothing in it, and ABI v8 exposes no way to clear one,
+so the facade builds a throwaway Engine for the call and drops it afterwards
+(`sessions.py`, `_one_shot_slot`). A new Engine is a new
+`URLRequestContext`: no TLS session cache, no socket pool, no HTTP/2 session.
+Measured over 20 requests to one origin:
+
+| call shape | TCP connections |
+| --- | --- |
+| plain `get()` | 1 |
+| `discard_cookies=True` on every request | 20 |
+
+Editing the session cookie jar between requests does **not** have this cost. It
+rebuilds the Engine once, on the first request whose jar disagrees with what the
+Core store holds; afterwards the replacement Engine mirror is empty, so the
+facade takes the "the Core has nothing to override" path and reuses it. Measured:
+20 requests with a jar edit before each one used 2 connections, not 20.
 Resource exhaustion of any kind surfaces as -130 on the proxy path -- a process
 that has run out of file descriptors reports `ERR_PROXY_CONNECTION_FAILED` for
 proxied requests while direct requests report a different code.

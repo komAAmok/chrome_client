@@ -277,6 +277,26 @@ def available_profiles() -> List[str]:
     ...
 
 
+def default_priority(profile: Optional[str]) -> Optional[str]:
+    """The request priority this profile's own browser would use.
+
+    Args:
+        profile: A canonical ``chrome_<major>`` name, or ``None``.
+
+    Returns:
+        ``"highest"`` for Chrome 124 and later, which is what makes the wire
+        carry ``priority: u=0, i`` the way the browser does. ``None`` for
+        every earlier profile -- those send no priority header at all, so the
+        Core default is left alone -- and for any name that does not parse,
+        so the Core keeps ownership of rejecting it.
+
+    Example:
+        >>> default_priority("chrome_155"), default_priority("chrome_99")
+        ('highest', None)
+    """
+    ...
+
+
 class ExtraFingerprints:
     """curl_cffi-shaped fingerprint overrides, most of which are rejected.
 

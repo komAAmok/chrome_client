@@ -650,7 +650,21 @@ pinned profile」改为**抛 `ImpersonateError`**，必须给出精确的 `chrom
 - `discard_cookies=True` 仍会发出 Core 存储里的 cookie：改为切换到空 cookie store 的
   同配置 Engine，并在请求后丢弃被取代的 slot（同时修掉 engine 缓存抖动）。
 - `send()` 忽略 session 默认值（含 `max_response_bytes`）：现在补齐会话级默认。
-- `priority=` 的 stub 写 `int` 而运行时只接受字符串：stub 改为 Literal 枚举值。
+- `priority=` 的 stub 写 `int` 而运行时只接受字符串：`_types.pyi` 早已定义
+  `RequestPriority: TypeAlias = Optional[Literal["default", "highest", "medium",
+  "low", "lowest", "idle"]]`，但 `api.pyi` 的 10 处与 `sessions.pyi` 的 24 处签名
+  仍在写 `Optional[int]`，该别名被引用 0 次、也不在 `_types.pyi` 的 `__all__` 里。
+  stub 门禁只校验参数名存在、不校验注解类型，所以这 34 处一直「通过」。现已全部
+  换成 `RequestPriority` 并补进 `__all__`（变异测试：把其中一处改回 `Optional[int]`
+  → `audit-python-stubs.py` 报 verb 签名不一致）。
+- 默认请求在 chrome_124+ 上发出 `priority: i` 而非真实 Chrome 的 `u=0, i`：ABI 的
+  `MN_REQUEST_PRIORITY_DEFAULT` 与 `LOWEST` 同落 `net::LOWEST`（`request.cc:198-201`），
+  urgency 算成 3（`quic_http_utils.cc:16`），而 3 是 RFC 9218 的默认值、序列化时被
+  省略（`quic_stream_priority.cc:19-27`），只剩一个 `i`。真实 Chrome 导航走
+  `kVeryHigh`→`net::HIGHEST`（`document_loader.cc:2142`、`web_url_request.cc:61-62`），
+  urgency 0 → `u=0, i`。修法在 facade：`impersonate.default_priority()` 让 124+ 默认
+  `highest`，99–123 保持不发该头（它们本来就不发，动它会改指纹）。实测 124/140/155
+  现发 `u=0, i`+weight 256，99/123 仍为 absent+147；显式 `priority=` 依旧优先。
 - `AsyncResponse.close()` 对异步响应是空操作并泄漏原生请求：现在会取消并摘除。
 - 32 位 ABI 布局测试的三个结构体尺寸写错（88/28/76 → 84/32/80）：按头文件实测值修正。
 - `[workspace.lints]` 因为成员没有 `[lints] workspace = true` 而从未生效：四个
