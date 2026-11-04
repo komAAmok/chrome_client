@@ -1,0 +1,36 @@
+diff --git a/third_party/boringssl/BUILD.gn b/third_party/boringssl/BUILD.gn
+index f4e51bfcfc4..38505ed65f7 100644
+--- a/third_party/boringssl/BUILD.gn
++++ b/third_party/boringssl/BUILD.gn
+@@ -4,6 +4,9 @@
+ 
+ import("//build/config/arm.gni")
+ import("//build/config/compiler/compiler.gni")
++# is_minicronet_build lives in Cronet's config.gni; third_party/icu/BUILD.gn and
++# third_party/simdutf/BUILD.gn import it the same way for the same reason.
++import("//build/config/cronet/config.gni")
+ import("//build/config/rust.gni")
+ import("//build/config/sanitizers/sanitizers.gni")
+ import("//build_overrides/build.gni")
+@@ -175,7 +178,20 @@ component("boringssl") {
+   configs -= [ "//build/config/compiler:chromium_code" ]
+   configs += [ "//build/config/compiler:no_chromium_code" ]
+ 
+-  if (!is_debug && !(is_fuchsia && optimize_for_size)) {
++  # Upstream builds BoringSSL at optimize_max (-O2) unconditionally, which
++  # overrides the Core's optimize_for_size; that is deliberate there (crypto is
++  # a throughput path) and is left alone for every other embedder. For the Core
++  # it is the same class of finding as simdutf and the Windows -O2 branch: a
++  # target that silently pins the speed level while the rest of the library is
++  # at -Oz. Measured on linux-x86_64 after an identical strip: 8,805,936 ->
++  # 8,363,568 bytes (-442,368, -5.02%), all of it .text; the ClientHello of
++  # chrome_99/120/140/155 is byte-identical before and after, so nothing the
++  # wire can observe changes.
++  #
++  # Applies to every platform the Core ships: all eight targets had the same
++  # /O2 / -O2 here while the rest of their library was at -Oz, so scoping this
++  # to one platform would leave the other seven quietly inconsistent.
++  if (!is_debug && !(is_fuchsia && optimize_for_size) && !is_minicronet_build) {
+     configs -= [ "//build/config/compiler:default_optimization" ]
+     configs += [ "//build/config/compiler:optimize_max" ]
+   }

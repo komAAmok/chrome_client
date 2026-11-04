@@ -22,12 +22,12 @@ CHROMIUM_SRC=$(resolve_chromium_src)
 #
 # Re-baselined for the 153 -> 156.0.8078.31 upgrade and again after the size
 # pass. The rule has not changed: the largest artifact plus 2%, rounded up to
-# 10,000. The three committed artifacts are now 8,805,936 (x86_64) / 8,446,248
-# (x86) / 8,273,120 (arm64), so 8,805,936 * 1.02 = 8,982,054 rounds up to the
-# 8,990,000 below. Quote the artifacts, not an earlier build: the number is
+# 10,000. The three committed artifacts are now 8,363,568 (x86_64) / 8,059,480
+# (x86) / 8,006,752 (arm64), so 8,363,568 * 1.02 = 8,530,839 rounds up to the
+# 8,540,000 below. Quote the artifacts, not an earlier build: the number is
 # derived from them, and a comment naming a superseded size reads as if the
 # ceiling had drifted from its own rule.
-MAX_BYTES=${MAX_BYTES:-8990000}
+MAX_BYTES=${MAX_BYTES:-8540000}
 LIB=$OUT_DIR/libminicronet.so
 READELF=$CHROMIUM_SRC/third_party/llvm-build/Release+Asserts/bin/llvm-readelf
 NM=$CHROMIUM_SRC/third_party/llvm-build/Release+Asserts/bin/llvm-nm

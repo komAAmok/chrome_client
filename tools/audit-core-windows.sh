@@ -16,11 +16,12 @@ CHROMIUM_SRC=$(resolve_chromium_src)
 # (-12.36%), x86_64 -1,203,200 (-10.56%), arm64 -630,272 (-6.71%).
 #
 # Re-baselined for the 153 -> 156.0.8078.31 upgrade and again after the size
-# pass. The three committed artifacts are now 10,073,600 (x86_64) / 8,489,472
-# (arm64) / 8,075,776 (x86), so 10,073,600 * 1.02 = 10,275,072 rounds up to the
-# 10,280,000 below. The rule is unchanged: the largest artifact plus 2%, rounded
-# up to 10,000.
-MAX_BYTES=${MAX_BYTES:-10280000}
+# pass. Re-baselined again after BoringSSL stopped being the one target still
+# built at /O2 while the rest of the DLL was at -Oz. The three committed
+# artifacts are now 9,411,584 (x86_64) / 8,114,176 (arm64) / 7,498,752 (x86), so
+# 9,411,584 * 1.02 = 9,599,816 rounds up to the 9,600,000 below. The rule is
+# unchanged: the largest artifact plus 2%, rounded up to 10,000.
+MAX_BYTES=${MAX_BYTES:-9600000}
 ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 # require_rg also installs the rg() wrapper, which turns a ripgrep *error*
 # (status 2: unreadable path, bad pattern) into a failure instead of the "no

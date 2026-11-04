@@ -531,3 +531,134 @@ simdutf 本来就没什么向量化可关。ARM64 的 0.2% 同理。
 
 升级刚完成时 Windows 只剩 3,328 字节余量（0.03%），**任何新增 profile 都会顶破门禁**——
 这正是 1.4-1 记录、6.6 节要消除的「贴线」状态。本轮把三档的最小余量都拉回 2% 以上。
+
+## 八、执行结果（2026-11，BoringSSL 尺寸档）
+
+### 8.1 P2-5 `//third_party/boringssl` 被上游钉在 `-O2` —— 实测 −442,368（Linux）
+
+**发现**：符号级史无前例地干净之后，剩下的体积大头只能在**编译档位**上找。逐个核对
+链接进来的每个 target 的真实编译命令（`ninja -t commands <obj>`），发现全部 317 个
+BoringSSL C++ TU 的编译行都是 `-O2`，而同一产物里 `net/`、`base/`、`perfetto`、
+`abseil-cpp`、`minicronet` 都是 `-Oz`。来源是 `third_party/boringssl/BUILD.gn`：
+
+```gn
+  if (!is_debug && !(is_fuchsia && optimize_for_size)) {
+    configs -= [ "//build/config/compiler:default_optimization" ]
+    configs += [ "//build/config/compiler:optimize_max" ]
+  }
+```
+
+**这是第三例同一类缺陷**，前两例是 simdutf（7.1）和 Windows 的 `optimize` 分支（6.8）：
+不是漏配，而是某个 target 明确把尺寸档换成了速度档，而只量总字节数的门禁看不出来。
+上游这么做是有理由的（crypto 是吞吐路径），所以这一项**必须实测判定**，不能靠推断。
+
+**做法**：`core/patches/minicronet-boringssl-size.patch`，条件加上
+`!is_minicronet_build`，对 MiniCronet 的**全部 8 个平台**生效。
+
+起先这一项只以 `is_linux` 为门限，因为当时只打算重建 Linux。复核其余 5 个平台的
+真实编译命令后改变了判断：win-x86_64 / win-x86 / win-arm64 的 BoringSSL 在 `/O2`，
+macos 两档在 `-O2`，全都是 317 个 TU——**这是 8 个平台的同一个缺陷，不是 Linux 独有**。
+只限 Linux 就去重建其余平台，等于花一次全量构建换来「重建了但体积没变」，还让补丁的
+注释与事实不符。因此门限放开到全部平台，8 目标同批重建。
+
+### 8.2 一个必须先纠正的方法论错误
+
+本轮最初用「编译前后 `.o` 文件字节数」估算收益，得到 BoringSSL `-O2 → -Oz` **+4.55%**
+的结论。那是错的：本构建开了 `-flto=thin`，`obj/**/*.o` 是 **LLVM IR bitcode**（`file` 报
+`LLVM IR bitcode`，magic `BC c0 de`），其体积与最终机器码没有对应关系——同一轮探针里
+`path_builder.o` 在 `-Oz` 下反而 +93.8%，正是该指标失真的证据。**体积结论只能来自
+真实链接 + strip 后的产物**。
+
+### 8.3 验收（4.1 节的固定顺序）
+
+1. **真实构建**：`tools/build-core-linux-x86_64.sh`，strip 参数与该脚本逐字一致
+2. **体积**：8,805,936 → **8,363,568**（−442,368，−5.02%）。段级对照（改前取
+   `git show HEAD:core/binaries/linux-x86_64/libminicronet.so`，改前与改后文件字节数
+   分别为 8,805,936 / 8,363,568）：
+
+   | 段 | 改前 | 改后 | Δ |
+   | --- | --- | --- | --- |
+   | `.text` | 5,645,536 | 5,202,528 | **−443,008（−7.85%）** |
+   | `.eh_frame` | 31,364 | 29,724 | −1,640 |
+   | `.rodata` | 2,339,006 | 2,338,814 | −192 |
+   | `.data.rel.ro` | 237,352 | 237,400 | +48 |
+   | `.rela.dyn` | 445,656 | 445,752 | +96 |
+   | `.data` | 62,792 | 62,792 | 0 |
+
+   净收益几乎全部来自 `.text`，其余是噪声级；`-Oz` 只改代码生成，没有触碰任何数据表，
+   这也与「指纹逐字段不变」的结论互相印证。
+3. **ABI**：`nm -D` 仍是 20 个导出符号；`audit-abi.sh`、`audit-abi-layout.py` 通过
+4. **smoke**：`minicronet_smoke`（request timeout / request cancel）与
+   `tools/run-http-smoke.py` 通过
+5. **Python 套件**：260 用例 OK（2 skip）
+6. **指纹红线**：`tools/inspect-client-hello.py --repeat 2`，chrome_99/120/140/155 四档，
+   改动前后导出的 JSON **逐字段相同**（`identical: True`）；chrome_155 的 28 条
+   trust-anchor ID 与 16 个稳定扩展不变
+7. **性能红线**：4 轮交替 A/B（`--requests 300 --skip-isolation`），同步吞吐 /
+   并发 32 / 并发 128 / 流式 64 MiB / p50 **五项区间全部重叠**
+8. **Rust**：`cargo fmt --check`、`cargo check`、`cargo clippy -D warnings`、
+   `cargo test --workspace` 全部通过
+
+| 平台 | 改前 | 改后 | Δ | % |
+| --- | --- | --- | --- | --- |
+| linux-x86_64 | 8,805,936 | 8,363,568 | **−442,368** | −5.02% |
+| linux-x86 | 8,446,536 | 8,059,480 | −387,056 | −4.58% |
+| linux-arm64 | 8,273,312 | 8,006,752 | −266,560 | −3.22% |
+| windows-x86 | 8,076,288 | 7,498,752 | −577,536 | −7.15% |
+| windows-x86_64 | 10,074,112 | 9,411,584 | **−662,528** | −6.58% |
+| windows-arm64 | 8,489,472 | 8,114,176 | −375,296 | −4.42% |
+| macos-x86_64 | 8,397,232 | 7,954,872 | −442,360 | −5.27% |
+| macos-arm64 | 7,608,096 | 7,310,880 | −297,216 | −3.91% |
+| **合计** | 68,170,984 | **64,720,064** | **−3,450,920** | **−5.06%** |
+
+8 平台全部同批重建（`tools/install-core-binaries.py` 安装，manifest 已刷新）。
+三个 Windows 目标合计 −1,615,360，是单项最大的一组：它们的 BoringSSL 原本在
+clang-cl 的 `/O2` 上，改动后落到 `/O1 + /clang:-Oz`，跨度比其余平台的 `-O2 → -Oz` 更大。
+
+### 8.4 同批次复核后**确认无可捡收益**的范围
+
+以同样的「读真实编译命令」方法复核了其余链接进来的 target，仍然只有两个在速度档：
+
+| target | 档位 | 结论 |
+| --- | --- | --- |
+| `third_party/zstd` | `-O3` | 不采纳，7.2 节已实测改 `-Oz` **反而变大 +69,632** |
+| `third_party/zlib` | `-O3` | 不采纳，在链接里只有 443 字节，改了也量不出来 |
+
+其余 15 个 target 均已是 `-Oz`。**在「零行为差异」约束下，编译档位这一类候选到此穷尽。**
+
+### 8.5 本次审计的边界（未做的部分与原因）
+
+按「保证现有功能」的约束，以下项目本轮**明确不做**，理由与量级见 6.7 节与 7.2 节：
+
+| 项 | 量级 | 为什么不纳入 |
+| --- | --- | --- |
+| HSTS 预载表 | 曾实测 −786,432 | 去掉后预载域名真的以明文 http 发出，是安全回退 + 可观测行为差异 |
+| `enable_safe_libcxx = false` | −73,728 | 丢掉 libc++ 的边界与生命周期断言 |
+| `use_partition_alloc_as_malloc = false` | 上限约 336,559 | 丢掉 BackupRefPtr 的 UAF 缓解 |
+| DT_RELR 压 `.rela.dyn`（445,656） | −390,000 量级 | 产物最高符号版本是 `GLIBC_2.17`，CI 用 manylinux2014；DT_RELR 需 glibc 2.36 |
+
+其中 DT_RELR 一项本轮补了证据：`readelf -V` 显示所需最高版本为 `GLIBC_2.17`，
+`.rela.dyn` 里 18,545 条 `R_X86_64_RELATIVE` 正是它的目标。将来如果放弃 manylinux2014
+下限，这一项是单项收益最大的一块。
+
+### 8.6 复现命令
+
+```bash
+# 1. 确认 BoringSSL 原本编译在 -O2（改前）
+cd $CHROMIUM_SRC/out/MiniCronet-linux-x86_64
+$CHROMIUM_SRC/third_party/ninja/ninja -t commands \
+  obj/third_party/boringssl/boringssl/ssl_x509.o | tail -1 | tr ' ' '\n' | grep -E '^-O'
+
+# 2. 应用补丁并重建（sync-core 会按 apply_patch 列表打补丁）
+cd <repo> && tools/sync-core.sh && JOBS=2 tools/build-core-linux-x86_64.sh
+
+# 3. 体积与段级对照
+stat -c%s core/binaries/linux-x86_64/libminicronet.so
+readelf -S -W <lib> | grep -E '\.text|\.rodata'
+
+# 4. 指纹对照（改前用 core/binaries/，改后用 out/ 的 LD_LIBRARY_PATH）
+LD_LIBRARY_PATH=<dir> PYTHONPATH=bindings/python:target/release \
+  tools/inspect-client-hello.py --profile chrome_99 --profile chrome_120 \
+  --profile chrome_140 --profile chrome_155 --repeat 2 --out /tmp/fp.json
+```
+

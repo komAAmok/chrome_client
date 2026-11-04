@@ -130,6 +130,14 @@ apply_patch minicronet-icu-propname-trim.patch third_party/icu \
 apply_patch minicronet-simdutf-size.patch third_party/simdutf \
   'BUILD.gn:is_minicronet_build'
 
+# BoringSSL is built at optimize_max (/O2 and -O2) by upstream on every platform,
+# which overrides the Core's optimize_for_size. It is the third instance of the
+# same defect class after simdutf and the Windows optimize branch, and it was
+# present on all eight targets at once: -442,368 bytes on linux-x86_64,
+# ClientHello byte-identical.
+apply_patch minicronet-boringssl-size.patch third_party/boringssl \
+  'BUILD.gn:is_minicronet_build)'
+
 # The IDNA-only ICU dataset is embedded into the library, so it has to be in the
 # Chromium checkout before gn runs. Without it the build falls back to nothing
 # and every internationalized hostname aborts the process.
