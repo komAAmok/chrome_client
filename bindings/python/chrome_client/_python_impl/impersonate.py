@@ -1,7 +1,7 @@
 """Impersonation and protocol selection.
 
 The Core registers one profile per pinned Chromium major (``chrome_99`` through
-``chrome_156``).  Everything about the TLS ClientHello, the HTTP/2 SETTINGS and
+``chrome_157``).  Everything about the TLS ClientHello, the HTTP/2 SETTINGS and
 priority frames, and the HTTP/3 transport parameters lives inside that profile;
 there is no knob to bend one profile into another.
 
@@ -22,7 +22,7 @@ from .exceptions import ImpersonateError, UnsupportedFeature
 #: name the exact major, because "whatever is newest" silently re-points at a
 #: different TLS/H2 fingerprint the moment a profile is added, and a fingerprint
 #: that drifts without the caller asking is worse than one that is missing.
-LATEST_CHROME = 156
+LATEST_CHROME = 157
 OLDEST_CHROME = 99
 
 #: First major whose requests carry an RFC 9218 priority header.  Measured

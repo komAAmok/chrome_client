@@ -1,6 +1,6 @@
 {
-  "connections": 6,
-  "independent_source_ports": 6,
+  "connections": 5,
+  "independent_source_ports": 5,
   "matches": {
     "ciphers": true,
     "extension_set": true,
@@ -78,12 +78,12 @@
     "minimum_required": 3,
     "multi_connection_randomness_verified": true,
     "unique_counts": {
-      "client_random": 6,
-      "ech_digest": 6,
-      "extension_ids": 6,
-      "grease_values": 6,
-      "key_share_digest": 6,
-      "session_id": 6
+      "client_random": 5,
+      "ech_digest": 5,
+      "extension_ids": 5,
+      "grease_values": 5,
+      "key_share_digest": 5,
+      "session_id": 5
     }
   },
   "wire_verified": true

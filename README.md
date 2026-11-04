@@ -52,7 +52,7 @@ Core 体积在 7.7–10.2 MB 之间（macOS ARM64 最小，Windows x86_64 最大
 `chrome<major>` 别名）。**不接受**裸的 `chrome`/`chromium`：那会解析到本构建恰好
 最后收录的 profile，一旦新增 profile，调用方的指纹就会在无人要求的情况下改变，
 因此抛 `ImpersonateError` 并要求写明确切版本。当前支持
-Chrome 99–155，共 57 个 profile；范围外的版本抛 `ImpersonateError`，不会静默降级。
+Chrome 99–157，共 59 个 profile；范围外的版本抛 `ImpersonateError`，不会静默降级。
 `available_profiles()` 返回完整列表。Edge、Safari、Firefox、Tor 等非 Chromium 目标
 同样显式报错，而不是当作 Chrome 处理。
 
@@ -65,7 +65,7 @@ Chrome 99–155，共 57 个 profile；范围外的版本抛 `ImpersonateError`�
 | 127–133 | `chrome_127` … `chrome_133` |
 | 134–140 | `chrome_134` … `chrome_140` |
 | 141–147 | `chrome_141` … `chrome_147` |
-| 148–156 | `chrome_148` … `chrome_156`（`chrome_154`、`chrome_155` 为 156 内核重建时加入；`chrome_156` 由 156 抓包与源码证据加入） |
+| 148–157 | `chrome_148` … `chrome_157`（`chrome_154`–`chrome_157` 用基于 156 内核的 Core，指纹分别按各自 tag 审计） |
 
 Profile 影响 TLS ClientHello、ALPN、HTTP/2 设置、QUIC/H3 和相关 Chromium 网络
 参数；它不是完整 Chrome 浏览器，也不包含 Blink、扩展、Service Worker 或持久化

@@ -1,18 +1,20 @@
 {
-  "schema": "chrome_client.profile_evidence.v1",
-  "notes": "The wire captures only reveal the major version, because Chrome's reduced User-Agent reports 156.0.0.0. Attribution to a patch build is therefore not possible from the wire. The audited source files are taken from 156.0.8078.31, which is the revision this repository compiles (CHROMIUM_REVISION 58bcc148f76b8975bbe59f1a6012d4ae409d62a9).",
+  "schema": 1,
+  "notes": "Wire captures come from this exact patch release (156.0.8078.80), because the supplied captures carry a full version string rather than the reduced UA. The audited source files are therefore taken from the same tag. NOTE: the Core this repository compiles is built from 58bcc148f76b8975bbe59f1a6012d4ae409d62a9 (156.0.8078.31), not from this tag; see profiles/chrome-156/README.md for why that split is intentional and what it does and does not affect.",
   "pinned_release": {
-    "chrome_version": "156.0.8078.31",
-    "chromium_tag": "156.0.8078.31",
-    "chromium_commit": "58bcc148f76b8975bbe59f1a6012d4ae409d62a9",
+    "chrome_version": "156.0.8078.80",
+    "chromium_tag": "156.0.8078.80",
+    "chromium_commit": "fb096c0011f9d50f0a264a9376420cdea9c421e3",
     "boringssl_revision": "2ea3200c3a3ec176613ab7a0b9a4ffc6db846120",
-    "quiche_revision": "a1628192cf32ba40d21e0dd80f485d68c24ff87a"
+    "quiche_revision": "a1628192cf32ba40d21e0dd80f485d68c24ff87a",
+    "compiled_core_chromium_commit": "58bcc148f76b8975bbe59f1a6012d4ae409d62a9",
+    "compiled_core_chromium_tag": "156.0.8078.31"
   },
   "releases": {
-    "156.0.8078.31": {
+    "156.0.8078.80": {
       "boringssl_revision": "2ea3200c3a3ec176613ab7a0b9a4ffc6db846120",
-      "chrome_version": "156.0.8078.31",
-      "chromium_tag": "156.0.8078.31",
+      "chrome_version": "156.0.8078.80",
+      "chromium_tag": "156.0.8078.80",
       "quiche_revision": "a1628192cf32ba40d21e0dd80f485d68c24ff87a",
       "source_files": {
         "alpn": {
@@ -1081,9 +1083,9 @@
   },
   "patch_release_comparison": {
     "audited_versions": [
-      "156.0.8078.31"
+      "156.0.8078.80"
     ],
     "identical_across_patch_releases": null,
-    "note": "Only one 156 build was available for source audit; the captures cannot distinguish patch releases, so branch stability is not asserted for 156 the way it is for 155."
+    "note": "Only one build of this branch was captured and audited, so branch stability across patch releases is not asserted."
   }
 }

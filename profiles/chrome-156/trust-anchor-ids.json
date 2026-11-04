@@ -1,7 +1,7 @@
 {
   "schema": "chrome_client.trust_anchor_ids.v1",
   "profile_id": "chrome_156",
-  "source": "wire capture, tls.peet.ws /api/all, 6 independent connections",
+  "source": "wire capture, tls.peet.ws /api/all, 5 independent connections",
   "extension": {
     "id": 51764,
     "hex": "0xca34",

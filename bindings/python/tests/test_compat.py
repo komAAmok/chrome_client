@@ -679,7 +679,9 @@ class CurlCffiSurfaceTests(Base):
         # The newest majors are asserted explicitly so a profile that stops
         # resolving is caught; the older aliases stay pinned to a fixed version
         # so they do not drift every time the newest major moves.
-        for target, expected in (("chrome_156", "chrome_156"),
+        for target, expected in (("chrome_157", "chrome_157"),
+                                 ("chrome157", "chrome_157"),
+                                 ("chrome_156", "chrome_156"),
                                  ("chrome156", "chrome_156"),
                                  ("chrome_155", "chrome_155"),
                                  ("chrome155", "chrome_155"),
@@ -691,7 +693,7 @@ class CurlCffiSurfaceTests(Base):
                 self.assertEqual(session.get(self.url).status_code, 200)
         self.assertEqual(chrome_client.normalize_impersonate("chrome136"), "chrome_136")
         self.assertEqual(chrome_client.normalize_impersonate("chrome_136"), "chrome_136")
-        self.assertEqual(chrome_client.available_profiles()[-1], "chrome_156")
+        self.assertEqual(chrome_client.available_profiles()[-1], "chrome_157")
 
     def test_bare_family_names_are_rejected(self):
         # A family name would resolve to whatever profile ships last, so the
@@ -709,8 +711,8 @@ class CurlCffiSurfaceTests(Base):
     def test_available_profiles_has_no_family_names(self):
         profiles = chrome_client.available_profiles()
         self.assertEqual(profiles[0], "chrome_99")
-        self.assertEqual(profiles[-1], "chrome_156")
-        self.assertEqual(len(profiles), 156 - 99 + 1)
+        self.assertEqual(profiles[-1], "chrome_157")
+        self.assertEqual(len(profiles), 157 - 99 + 1)
         for name in profiles:
             self.assertRegex(name, r"^chrome_\d+$")
 
