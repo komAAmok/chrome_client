@@ -65,7 +65,7 @@ Chrome 99–155，共 57 个 profile；范围外的版本抛 `ImpersonateError`�
 | 127–133 | `chrome_127` … `chrome_133` |
 | 134–140 | `chrome_134` … `chrome_140` |
 | 141–147 | `chrome_141` … `chrome_147` |
-| 148–155 | `chrome_148` … `chrome_155`（`chrome_154`、`chrome_155` 为 156 内核重建时加入） |
+| 148–156 | `chrome_148` … `chrome_156`（`chrome_154`、`chrome_155` 为 156 内核重建时加入；`chrome_156` 由 156 抓包与源码证据加入） |
 
 Profile 影响 TLS ClientHello、ALPN、HTTP/2 设置、QUIC/H3 和相关 Chromium 网络
 参数；它不是完整 Chrome 浏览器，也不包含 Blink、扩展、Service Worker 或持久化

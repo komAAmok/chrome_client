@@ -14,7 +14,7 @@
 - Chromium revision：`58bcc148f76b8975bbe59f1a6012d4ae409d62a9`（Chrome 156.0.8078.31 stable）
 - Python 发布版本与 crate 版本同号（不再有四段版本号映射）；具体版本号只在根
   `Cargo.toml` 的 `workspace.package.version` 里，本文件不再复述，以免再次漂移
-- Chrome profile：`chrome_99` — `chrome_155`，57 个
+- Chrome profile：`chrome_99` — `chrome_156`，58 个
 
 ## 已完成
 
@@ -140,6 +140,30 @@ macOS 8,710,000，**最小余量从 0.03% 回到 2.0%**。
 （356.3/326.0 → 344.8/338.0 req/s，区间重叠）。同批次实测后**否决**了 zstd 的同类改动
 （`-Oz` 反而 +69,632，解压是真实热路径）与关闭 libc++ hardening（省 73,728 但属安全
 取舍）。详见 `docs/CORE_BINARY_SIZE_PLAN.md` 第七节。
+
+### chrome_156 已加入（58 个 profile）
+
+抓包来自 6 条独立的 Chrome 156 连接（UA `156.0.0.0`），源码证据取自 tag
+`156.0.8078.31`——该 tag 的 commit 正是本仓库编译的 `58bcc148f76b`，因此审计源码与
+链接进 Core 的树是同一棵，这比 152–155 的归属更强。
+
+wire gate 通过：6 条连接、6 个源端口，全部稳定字段一致。与 chrome_155 相比，
+**de-GREASEd cipher、supported groups、signature_algorithms、扩展集合、HTTP/2 指纹
+与 28 个 trust-anchor ID（186 字节 wire contents）全部不变**，唯一 wire 差异是 UA 主版本。
+生成条目的 `tls`/`http2`/`http3`/`alpn`/`websocket` 五组与 155 逐字节相同；不同的是
+BoringSSL revision、`features.cc` 尺寸与各审计行号。
+
+两点必须说明的限制：
+1. **这份抓包里没有完整握手样本**——6 条连接全部带 `pre_shared_key (41)`，而 155 有
+   1 条完整握手。因此 `captures.json` 是原始抓包去掉 `pre_shared_key` 后的版本，
+   未改动任何其它字节；原始文件保留为 `captures.server-observed.json` 以便核对。
+   删除前已验证：排除该扩展后，6 条连接的扩展名集合完全一致（18 个），且与 155 的
+   完整握手集合**完全相同**（无增无减）；唯一的内容差异是各连接的 GREASE 随机码点。
+2. **未断言分支稳定**：只有 `156.0.8078.31` 一个 156 构建可审计，做不到 155 那样的
+   首尾 tag 比对，因此 `patch_release_comparison.identical_across_patch_releases` 记
+   `null` 而非编造结果。
+
+证据与复现命令见 [`profiles/chrome-156/`](../profiles/chrome-156/README.md)。
 
 ### chrome_154 与 chrome_155 已加入（57 个 profile）
 

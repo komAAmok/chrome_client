@@ -15,8 +15,8 @@ FEATURES = ROOT / "profiles" / "network_feature_snapshots.json"
 OUTPUT = ROOT / "core" / "source" / "minicronet" / "profile_table_generated.h"
 
 # Highest profile in the table. Bumping it requires a wire-verified capture set
-# and a source-evidence entry for that release; see profiles/chrome-155/.
-LAST_PROFILE_MAJOR = 155
+# and a source-evidence entry for that release; see profiles/chrome-156/.
+LAST_PROFILE_MAJOR = 156
 
 FEATURE_BITS = {
     "alps_for_http2": 1 << 0,
@@ -148,16 +148,16 @@ def main():
     # kSocketPoolLimitRandomizationForProxy / the hardened socket pool made size
     # randomization unconditional in 147; the proxy variant follows in 151.
     assert_span("randomize_socket_pool_limit",
-                [(99, 146, False), (147, 155, True)])
+                [(99, 146, False), (147, 156, True)])
     assert_span("randomize_proxy_socket_pool_limit",
-                [(99, 150, False), (151, 155, True)])
+                [(99, 150, False), (151, 156, True)])
     # The HTTP/2 priority header appears in 124 and stays.
-    assert_span("send_priority_header", [(99, 123, False), (124, 155, True)])
+    assert_span("send_priority_header", [(99, 123, False), (124, 156, True)])
     # QUIC ORIG (RFC 9287) is sent from 149.
-    assert_span("send_quic_orig", [(99, 148, False), (149, 155, True)])
+    assert_span("send_quic_orig", [(99, 148, False), (149, 156, True)])
     # Legacy QUIC version information was briefly on for 144-145 only.
     assert_span("send_quic_legacy_version_information",
-                [(99, 143, False), (144, 145, True), (146, 155, False)],
+                [(99, 143, False), (144, 145, True), (146, 156, False)],
                 default=False)
 
     # Capability and default-attempt policy are independent. Chromium's

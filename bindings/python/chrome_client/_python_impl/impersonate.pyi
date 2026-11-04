@@ -1,6 +1,6 @@
 """Type surface of :mod:`chrome_client.impersonate`.
 
-The Core pins one Chromium major per profile (``chrome_99`` .. ``chrome_155``).
+The Core pins one Chromium major per profile (``chrome_99`` .. ``chrome_156``).
 Everything about the TLS ClientHello, the HTTP/2 SETTINGS and priority frames,
 and the HTTP/3 transport parameters comes from that profile; there is no knob
 that bends one profile into another.
@@ -31,7 +31,7 @@ LATEST_CHROME: Final[int]
 OLDEST_CHROME: Final[int]
 #: curl_cffi accepts bare family names; only the Chrome family exists here.
 
-#: Canonical profile identifiers, ``chrome_99`` .. ``chrome_155``.
+#: Canonical profile identifiers, ``chrome_99`` .. ``chrome_156``.
 #:
 #: This is the spelling to prefer: it names the exact Chromium major whose
 #: wire behaviour was captured and verified.
@@ -50,7 +50,7 @@ ChromeProfileName: TypeAlias = Literal[
     "chrome_143", "chrome_144", "chrome_145", "chrome_146",
     "chrome_147", "chrome_148", "chrome_149", "chrome_150",
     "chrome_151", "chrome_152", "chrome_153", "chrome_154",
-    "chrome_155",
+    "chrome_155", "chrome_156",
 ]
 
 #: curl-cffi's spelling of the same profiles, without the underscore
@@ -71,7 +71,7 @@ ChromeProfileAlias: TypeAlias = Literal[
     "chrome143", "chrome144", "chrome145", "chrome146",
     "chrome147", "chrome148", "chrome149", "chrome150",
     "chrome151", "chrome152", "chrome153", "chrome154",
-    "chrome155",
+    "chrome155", "chrome156",
 ]
 
 #: Everything ``impersonate=`` accepts. ``None`` means "send Chromium's own
@@ -267,7 +267,7 @@ def available_profiles() -> List[str]:
 
     Returns:
         The canonical names in ascending Chromium-major order, e.g.
-        ``["chrome_99", "chrome_100", ..., "chrome_155"]``. The aliases are not
+        ``["chrome_99", "chrome_100", ..., "chrome_156"]``. The aliases are not
         repeated here; they are accepted by :func:`normalize_impersonate`.
 
     Example:

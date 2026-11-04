@@ -600,8 +600,8 @@ class BaseSession:
         Args:
             impersonate: The pinned Chromium profile that owns the TLS
                 ClientHello, ALPN, HTTP/2 SETTINGS and HTTP/3 transport
-                parameters. Accepts ``chrome_99``..``chrome_155``, the curl_cffi
-                spelling ``chrome99``..``chrome155``. The bare family names
+                parameters. Accepts ``chrome_99``..``chrome_156``, the curl_cffi
+                spelling ``chrome99``..``chrome156``. The bare family names
                 ``chrome``/``chromium`` are rejected.
             proxy: A single proxy URL for every request, e.g.
                 ``"http://user:pass@127.0.0.1:8080"`` or
