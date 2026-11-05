@@ -41,6 +41,16 @@ jobs:
       # files sync-core.sh installs or applies are tracked, so it needs no
       # Chromium checkout and belongs in the structure job.
       - run: tools/audit-core-inputs.sh
+      # profiles/ is the entire basis for the per-release tables, and every
+      # entry records the sha256 of the upstream file it was audited against.
+      # Nothing re-checked those digests, so a stale record and a correct one
+      # looked identical: a profile could keep claiming "audited from tag X"
+      # after X's real file changed. This re-downloads each recorded file from
+      # the tag/revision named in the profile and compares the digest. It needs
+      # no Chromium checkout, only network access to googlesource, which the
+      # runner has. Bodies are cached in ~/.cache between runs but CI starts
+      # cold, so expect this step to download the full evidence set.
+      - run: python3 tools/audit-profile-evidence.py --jobs 4
       # The ERR_* names in exceptions.py tell a caller what a proxy or TLS
       # failure actually was. They had drifted badly (eight codes carried a
       # different error's name and the codes a proxy failure produces were

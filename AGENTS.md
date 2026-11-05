@@ -72,6 +72,7 @@ python3 tools/audit-python-stubs.py
 python3 tools/audit-python-typing.py
 tools/audit-core-binaries.sh
 tools/audit-core-inputs.sh
+python3 tools/audit-profile-evidence.py # needs network (googlesource); --offline for a local-only check
 python3 tools/audit-net-error-names.py   # needs a Chromium checkout (CHROMIUM_SRC)
 cargo fmt --all -- --check
 cargo check --workspace --all-targets
