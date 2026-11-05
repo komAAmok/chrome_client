@@ -98,6 +98,12 @@ expected=$(printf '%s\n' \
   mn_websocket_start | sort)
 diff -u <(printf '%s\n' "$expected") <(printf '%s\n' "$exports")
 
+# The frozen-feature-list scan used to run on Linux only, because it hard-coded
+# the `.o` suffix and silently read zero sources anywhere else. It is fixed now
+# and each platform family has its own baseline, so run it here too: a Windows
+# build that starts reading a new global feature is exactly what this catches.
+"$ROOT_DIR/tools/audit-network-featurelist.sh" "$OUT_DIR"
+
 bytes=$(stat -c %s "$LIB")
 if ((bytes > MAX_BYTES)); then
   printf 'DLL size %s exceeds %s budget %s bytes\n' \

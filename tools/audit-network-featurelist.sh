@@ -23,10 +23,14 @@ ninja = out_dir / "obj/net/net.ninja"
 if not ninja.is_file():
     raise SystemExit(f"missing release net graph: {ninja}")
 
+# The object suffix is the platform's: Linux/macOS emit `.o`, Windows emits
+# `.obj`. Hard-coding `.o` made this scan match nothing on Windows, and the
+# "unknown release-graph" error then blamed the source tree rather than the
+# miss. Both spellings are accepted here.
 sources = []
 for line in ninja.read_text().splitlines():
     match = re.match(
-        r"build obj/net/\S+\.o: \S+ ../../(net/\S+\.(?:cc|c|mm))(?: |$)",
+        r"build obj/net/\S+\.(?:o|obj): \S+ ../../(net/\S+\.(?:cc|c|mm))(?: |$)",
         line,
     )
     if match:
@@ -94,8 +98,32 @@ for source in sources:
 
 inventory = "".join("\t".join(entry) + "\n" for entry in sorted(entries))
 digest = hashlib.sha256(inventory.encode()).hexdigest()
-expected_digest = "e93647bc802ff3bffcb0e364eb4e7fdd1389a910b3e1b860b8daf34c9ba259ad"
-if len(sources) != 534 or len(entries) != 175 or digest != expected_digest:
+
+# net/BUILD.gn selects platform sources, so each platform family compiles a
+# different set and freezes a different number of reads. A single baseline
+# could only ever be correct for one of them: pinning Linux's 534/175 made the
+# other families unverifiable, and the failure looked like source-tree drift
+# rather than "this platform was never baselined". The three families below are
+# exactly what their committed artifacts are built from; adding a platform means
+# measuring it once and adding a row here.
+BASELINES = {
+    "linux": (534, 175, "e93647bc802ff3bffcb0e364eb4e7fdd1389a910b3e1b860b8daf34c9ba259ad"),
+    "win":   (530, 180, "8069cc09714029d9ca9da23ad0be3287ca053d2fa77ed5281b835580261c08ae"),
+    "macos": (542, 178, "12b48c7ef887233c591e19cee4de82ee18aad7afbad8b7b6ce10b4fa780b9188"),
+}
+family = next((name for name in BASELINES if name in out_dir.name.lower()), None)
+if family is None:
+    raise SystemExit(
+        "audit-network-featurelist: cannot tell which platform baseline to use from "
+        f"{out_dir.name}; expected linux/win/macos in the build directory name"
+    )
+expected_sources, expected_reads, expected_digest = BASELINES[family]
+
+if (
+    len(sources) != expected_sources
+    or len(entries) != expected_reads
+    or digest != expected_digest
+):
     print(inventory, file=sys.stderr, end="")
     raise SystemExit(
         "unknown release-graph FeatureList/FeatureParam/field-trial read: "
@@ -130,7 +158,10 @@ for marker in (
         raise SystemExit("socket-pool profile randomization is not frozen")
 
 # Prove the MiniCronet preprocessor branch removed the global feature lookup.
+# Same suffix problem as the source scan above: Windows names this .obj.
 obj = out_dir / "obj/net/net/socket_pool_additional_capacity.o"
+if not obj.is_file():
+    obj = out_dir / "obj/net/net/socket_pool_additional_capacity.obj"
 nm = chromium / "third_party/llvm-build/Release+Asserts/bin/llvm-nm"
 if not obj.is_file():
     raise SystemExit(f"missing audited object: {obj}")
@@ -141,7 +172,7 @@ if "base::FeatureList::IsEnabled" in undefined:
     raise SystemExit("socket-pool object still reads the process FeatureList")
 
 print(
-    f"Audited {len(sources)} release net sources and {len(entries)} frozen "
-    f"global feature reads ({digest[:12]})."
+    f"Audited {len(sources)} release net sources ({family}) and {len(entries)} "
+    f"frozen global feature reads ({digest[:12]})."
 )
 PY

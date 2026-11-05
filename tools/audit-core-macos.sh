@@ -93,6 +93,11 @@ if $OTOOL -l "$LIB" | grep -q 'LC_RPATH'; then
   exit 1
 fi
 
+# Same reason as the Windows target: this scan used to be Linux-only because it
+# hard-coded `.o` and had a single baseline. It is fixed and baselined per
+# platform family now, so macOS runs it too.
+"$ROOT_DIR/tools/audit-network-featurelist.sh" "$OUT_DIR"
+
 bytes=$(stat -c %s "$LIB")
 if ((bytes > MAX_BYTES)); then
   printf 'Library size %s exceeds %s budget %s bytes\n' \
