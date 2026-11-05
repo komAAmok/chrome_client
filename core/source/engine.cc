@@ -564,7 +564,14 @@ void Engine::InitializeOnNetworkThread() {
     if (protocol_mode_ == MN_PROTOCOL_FORCE_H3) {
       quic_context->params()->force_quic_everywhere = true;
     }
-    quic_context->params()->maintain_ipv6_temp_addr = false;
+    // Upstream feature kMaintainConnectionsOnIpv6TempAddrChange only exists
+    // from 142: it landed DISABLED and flipped to ENABLED at 148, where it
+    // stays through the pinned revision. Verified per release against
+    // net/base/features.cc at each tag. The profile table carries the
+    // per-release value so a pinned older profile keeps the behaviour that
+    // release actually had instead of inheriting today's default.
+    quic_context->params()->maintain_ipv6_temp_addr =
+        profile->maintain_ipv6_temp_addr;
     quic_context->params()->send_legacy_version_information =
         profile->send_quic_legacy_version_information;
     if (profile->send_quic_orig) {

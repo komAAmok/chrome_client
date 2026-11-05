@@ -155,6 +155,25 @@ def main():
     assert_span("send_priority_header", [(99, 123, False), (124, 157, True)])
     # QUIC ORIG (RFC 9287) is sent from 149.
     assert_span("send_quic_orig", [(99, 148, False), (149, 157, True)])
+    # kMaintainConnectionsOnIpv6TempAddrChange does not exist before 142; when
+    # upstream added it in 142 it defaulted DISABLED, and 148 flipped it to
+    # ENABLED where it stays through 156 (the pinned revision). Verified per
+    # tag against raw.githubusercontent.com/chromium/chromium/<tag>/net/base/
+    # features.cc. Pre-142 profiles get false because the code path predating
+    # the feature does not special-case IPv6 temporary addresses either.
+    #
+    # This value is derived from the major version below rather than stored in
+    # effective_protocol_params.json, so the check reads the derivation instead
+    # of the JSON: asserting on JSON here would only re-state that the key is
+    # absent.
+    expected_maintain_ipv6 = {
+        major: major >= 148 for major in range(99, LAST_PROFILE_MAJOR + 1)
+    }
+    if sorted(expected_maintain_ipv6) != list(range(99, LAST_PROFILE_MAJOR + 1)):
+        raise SystemExit("maintain_ipv6_temp_addr spans miss a profile major")
+    if expected_maintain_ipv6[147] or not expected_maintain_ipv6[148]:
+        raise SystemExit(
+            "maintain_ipv6_temp_addr boundary is wrong: upstream flips it at 148")
     # Legacy QUIC version information was briefly on for 144-145 only.
     assert_span("send_quic_legacy_version_information",
                 [(99, 143, False), (144, 145, True), (146, 157, False)],
@@ -253,6 +272,11 @@ def main():
         "  bool send_quic_legacy_version_information;",
         "  bool enable_quic;",
         "  bool try_quic_by_default;",
+        "  // net::features::kMaintainConnectionsOnIpv6TempAddrChange. The feature",
+        "  // itself only exists from 142; upstream defaults it DISABLED for",
+        "  // 142-147 and ENABLED from 148. Profiles before 142 have no such",
+        "  // behaviour at all, so they use the same false upstream would.",
+        "  bool maintain_ipv6_temp_addr;",
         "  bool client_hello_padding_enabled;",
         "  uint16_t client_hello_padding_length;",
         "  uint8_t network_feature_flags;",
@@ -448,6 +472,10 @@ def main():
             f"    {'true' if protocol.get('send_quic_legacy_version_information', False) else 'false'},",
             f"    {'true' if protocol['enable_quic'] else 'false'},",
             f"    {'true' if protocol['try_quic_by_default'] else 'false'},",
+            # Derived from the version rather than read from JSON: this is
+            # upstream behaviour that changed at 148, and assert_span above
+            # proves the whole 99..157 range against it.
+            f"    {'true' if major >= 148 else 'false'},",
             # Chrome 119+ uses BoringSSL's length-dependent RFC 7685
             # padding. Do not freeze the observed 28-byte result: ECH GREASE
             # payload rotation can make the extension appear or disappear.

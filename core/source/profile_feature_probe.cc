@@ -19,6 +19,23 @@ int main() {
       !Create("chrome_123", &chrome123)) {
     return 1;
   }
+  // kMaintainConnectionsOnIpv6TempAddrChange: upstream added the feature in
+  // 142 (DISABLED) and flipped it to ENABLED at 148. Assert on the profiles
+  // either side of that boundary so the table cannot drift silently.
+  {
+    minicronet::ProfileContext c147;
+    minicronet::ProfileContext c148;
+    minicronet::ProfileContext c157;
+    if (!Create("chrome_147", &c147) || !Create("chrome_148", &c148) ||
+        !Create("chrome_157", &c157)) {
+      return 5;
+    }
+    if (c147.data()->maintain_ipv6_temp_addr ||
+        !c148.data()->maintain_ipv6_temp_addr ||
+        !c157.data()->maintain_ipv6_temp_addr) {
+      return 6;
+    }
+  }
   if (!chrome122.has_feature(minicronet::NetworkFeature::kAlpsForHttp2) ||
       chrome122.has_feature(minicronet::NetworkFeature::kTryQuicByDefault) ||
       !chrome123.has_feature(minicronet::NetworkFeature::kTryQuicByDefault) ||
