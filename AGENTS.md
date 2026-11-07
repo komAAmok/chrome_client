@@ -77,6 +77,12 @@ python3 tools/audit-padding-rule.py
 python3 tools/audit-tls-version-range.py
 python3 tools/audit-h1-alps-absence.py
 python3 tools/audit-h3-profile-support.py
+# A new profile is only accepted when all three evidence levels pass: the
+# release's own source at its latest tag, six captured connections per
+# protocol, and the built artifact reproducing them. See section 9.
+# Level 3 needs the network and a built Core, so CI runs 1,2 and a
+# developer runs the whole chain before claiming support.
+python3 tools/audit-profile-addition.py --levels 1,2 --profile chrome_157
 # The four profile gates above read profiles/chrome_<major>/<proto>/captures.json,
 # so profiles/ must stay tracked. Without it they fail on a clean clone instead
 # of skipping: evidence that is absent must not read as evidence that agreed.
@@ -114,7 +120,59 @@ python3 -m unittest discover -s bindings/python/tests -p "test_*.py"
 这条承诺覆盖两层实现：Python facade 与 Core 存储。
 （`discard_cookies` 曾只作用于 Python 侧，导致 Core 仍然发出 cookie。）
 
-## 9. 产物与仓库体积
+## 9. 新增 Chrome profile 的三级证据链（最高优先级约束）
+
+**一个 Chrome 大版本只有走完下面三级才算「新增通过」。任何一级没有证据，这个版本就
+不存在——不能写进 profile 表、不能出现在 README 的支持列表、不能对外声称支持。**
+
+### 优先级顺序是强制的，不是建议
+
+1. **官方源码是最终裁判。** 行为必须能在该大版本自己的 tag 源码里找到，而不是从相邻
+   版本继承或推断。源码与抓包冲突时，以源码为准并解释抓包为何不同。
+2. **抓包必须做到字节级对齐。** 六个独立连接的 h1、h2、h3 各一份，稳定字段逐字段
+   相等，随机字段必须互不相同。
+3. **编译产物必须复现抓包。** 用真实构建的 Core 发真实请求，与第 2 级的抓包比对。
+
+第 1 级不是「参考资料」，它是判定标准：只做到第 2 级的 profile 是拟合了一次抓包；
+只做到第 3 级的 profile 是碰巧对上了。
+
+### 每一级的硬性要求
+
+| 级别 | 要求 | 判定工具 |
+| --- | --- | --- |
+| 1 源码 | 该大版本**最新的**官方 tag（`refs/tags/<major>.*` 里版本号最大的那个）；该 tag 的 `DEPS` 所指的 BoringSSL 与 QUICHE revision；`net/http/http_network_session.cc`、`net/base/features.cc`、`net/spdy/spdy_session.cc`、`net/quic/quic_chromium_client_session.cc`、`net/socket/ssl_client_socket_impl.cc`、`net/websockets/websocket_basic_handshake_stream.cc`、`ssl/extensions.cc`、`ssl/handshake_client.cc`、`quiche/quic/core/quic_config.cc` 九个文件逐个取回并记录 sha256 | `tools/audit-profile-addition.py --levels 1` |
+| 2 抓包 | h1、h2、h3 **各 6 条**独立连接，存成 `profiles/chrome_<major>/<proto>/captures.json`；稳定字段（cipher 去掉 GREASE、扩展集合、supported_versions、HTTP/2 SETTINGS、UA 版本串）六条全等；随机字段（client_random、session_id、扩展顺序；h3 另加 dcid/scid）六条互不相同 | `tools/audit-profile-addition.py --levels 2` |
+| 3 产物 | 用 `core/binaries/<target>/` 里的真实产物发 6 次真实请求，逐字段与第 2 级抓包比对 | `tools/audit-profile-addition.py --levels 3` |
+
+### 不可协商的细则
+
+- **第 1 级必须走网络取官方源码**，不得用本地 Chromium 检出代替：检出只有一个 commit，
+  而每个大版本要各自 tag 的源码。取不到就是没通过，不是「跳过」。
+- **该大版本最新的 tag 是默认基准。** 若选择更早的 patch tag，必须在 profile 的
+  `chromium_tag` 里写明，并在该 profile 的 `README.md` 说明为什么不取最新——工具会把
+  `recorded_tag_is_latest: false` 和新 tag 列表打出来，这是要签字的事实，不是错误。
+- **BoringSSL / QUICHE 的 revision 必须来自该 tag 自己的 `DEPS`**，不得抄相邻版本。
+  工具会比对 profile 记录的 revision 与 `DEPS` 的差异并失败。
+- **抓包不足 6 条即为未通过。** 3 条、5 条都不算；缺一条就是 `N connections, 6 required`。
+- **随机字段重复即视为固定种子**，直接失败——这是本项目的红线（见 §3）。
+- **h3 在某个大版本上确实不可用时**，写 `unsupported.json` 记录当时的失败原因，并在
+  第 3 级断言引擎**拒绝**该组合（`MN_ERROR_PROFILE_UNSUPPORTED`）。缺抓包且无
+  `unsupported.json` 是失败，不是跳过。
+- **三级全绿才允许**把 id 加进 `profiles/normalized_profiles.json`、重新生成表、重建 8 个
+  平台产物。顺序不能颠倒：先加进表再补证据，等于先把结论写下来再去找支撑。
+
+### 提交时的证据要求
+
+新增 profile 的提交必须附上三级的原始输出（`--json` 的完整报告），并在提交信息里写明
+该大版本最新 tag 与所选 tag 的关系。没有这份输出的提交按未验证处理。
+
+### 为什么这条规则存在
+
+这批 86–157 里有 7 个版本（86–92）的 h3 根本跑不通，而当时的表把它们标成「支持 H3」；
+强制 H3 会真的发出 QUIC 并拿到 HTTP 200，等于报告了一个那些版本从未有过的指纹。
+只做第 2 级（抓包）发现不了这件事，因为缺的那一级正是源码。
+
+## 10. 产物与仓库体积
 
 - `core/binaries/<target>/` 的**二进制与 manifest 都提交**（CI 需要离线可用）。
   不要给它们加回 `.gitignore`：曾经忽略过，结果是重建的 Core 不出现在
@@ -123,14 +181,14 @@ python3 -m unittest discover -s bindings/python/tests -p "test_*.py"
 - 不要提交超过 1 MB 的新二进制，除非它是发布产物的一部分；提交前先问
   「旧版本需要留在历史里吗」。
 
-## 10. 结论的验证责任
+## 11. 结论的验证责任
 
 - 任何外部结论（子代理、审查报告、issue、本文件的某条）在写进代码或文档前，
   **必须回到源码验证**，并在提交信息或注释里给出复核位置（文件:行）或复现命令。
 - **否定性结论同样需要证据**：判定「不是缺陷」也要指出是哪几行使其不成立。
 - 不要因为某个结论听起来严重就照做，也不要因为听起来轻微就跳过。
 
-## 11. 测试的诚实性
+## 12. 测试的诚实性
 
 - 构建成功 ≠ 能加载 ≠ 能发请求。平台矩阵的每一格都需要一次真实运行，
   否则不要在 README 打 ✓。

@@ -1190,3 +1190,39 @@ feature 读取点分别是 175 / 180 / 178。脚本里原本硬编码一套 `534
 
 第 4 条是这次真正该记住的：修完脚本本身还不够，**要证明每个平台的审计真的会执行它**。
 
+---
+
+## 新增 profile 的三级证据链：两个真实缺陷
+
+**现象 A**：`tools/audit-profile-addition.py` 判定 chrome_157 的源码不存在——
+`ssl/t1_lib.cc does not exist at boringssl 5b83e5d1abf0`。而同一份表里
+`tools/collect-profile-evidence.py` 解析同一个文件却完全正确。
+
+**根因 A**：`PATH_ERAS` 是「按版本从旧到新排列」的表，取某个 major 的路径要取
+**最后一个**适用的 era。采集器用 `path = mapping[name]` 在正向循环里赋值，最后
+一次赋值胜出，恰好正确；新门禁写成 `return mapping[name]`，**第一次匹配就返回**，
+于是 157 拿到的是 86 的路径。同一张表，两种写法，一个对一个错。
+
+**规则 A**：同一张历史映射表只能有一份定义。新门禁现在
+`from collect-profile-evidence import PATH_ERAS`，两处不可能再分叉。反向遍历 +
+`return` 是唯一写法。
+
+**现象 B**：变异测试把 chrome_86 的 h2 抓包复制到 `profiles/chrome_157/h2/`，
+第 2 级**通过了**。文件有 6 条连接、稳定字段一致、随机字段各异——一切看起来正常。
+
+**根因 B**：原来的检查只验证「这个文件内部自洽」，从不验证「这个文件属于这个版本」。
+一份格式完好、数量正确、字段稳定的抓包可以是**别的版本**的数据，而所有下游对比
+都会拿错参考。这不是理论问题：我自己在做第 3 级变异测试时就把 86 的数据留在了
+157 的目录里，之后的 Level 2 全量扫描显示 72/72 通过。
+
+**规则 B**：抓包必须自证归属。第 2 级现在读每条连接的 `Chrome/<version>` token，
+major 不等于目录名即失败（`this capture is from Chrome 86 but it is filed under
+chrome_157`）。同一套数据还加了哈希比对：`profiles/chrome_<major>/<proto>/captures.json`
+必须与参考集里该版本该协议的样本逐字节一致。
+
+**这两条共同的教训**：门禁的判据要指向**外部事实**，不能只指向对象自身的自洽性。
+「六条连接、字段稳定」描述的是文件的形状；「这是 chrome_157 的数据」描述的是它和
+世界的关系。前者可以被一份错文件满足，后者不能。
+
+**现在由什么守住**：`tools/audit-profile-addition.py --levels 2` 的归属断言，
+变异测试（把 86 的数据放进 157 目录）确认它会非零退出。

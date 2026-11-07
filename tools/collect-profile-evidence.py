@@ -66,6 +66,24 @@ FILES = {
 #   93..98   BoringSSL  ssl/extensions.cc exists, ssl/t1_lib.cc no longer does
 #   99..151  QUICHE     quic/... still
 #   152..    QUICHE     quiche/... prefix
+# Boundaries re-measured against the tags themselves, not inherited: each row
+# below was confirmed by fetching both candidate paths at that release's own
+# DEPS revisions and keeping the one that exists.
+#
+#   boringssl_extensions  ssl/t1_lib.cc          86..92   (extensions.cc absent)
+#                         ssl/extensions.cc     93..
+#   boringssl_random      crypto/fipsmodule/rand/rand.c      86..129
+#                         crypto/rand_extra/rand_extra.c    130..132
+#                         crypto/rand/rand.cc               133..
+#   quiche_h3             quic/core/quic_config.cc          86..101
+#                         quiche/quic/core/quic_config.cc   102..
+#   quiche_random         quic/core/crypto/quic_random.h    86..101
+#                         quiche/common/quiche_random.cc    102..
+#
+# The quiche/ rename landed at 102, not 152 as this table previously claimed --
+# the old value was wrong for 102..151 and level 1 of
+# tools/audit-profile-addition.py caught it by reporting quic/core/quic_config.cc
+# as missing at those releases' QUICHE revisions.
 PATH_ERAS = [
     (86, {
         "boringssl_extensions": "ssl/t1_lib.cc",
@@ -79,7 +97,19 @@ PATH_ERAS = [
         "quiche_h3": "quic/core/quic_config.cc",
         "quiche_random": "quic/core/crypto/quic_random.h",
     }),
-    (152, {
+    (102, {
+        "boringssl_extensions": "ssl/extensions.cc",
+        "boringssl_random": "crypto/fipsmodule/rand/rand.c",
+        "quiche_h3": "quiche/quic/core/quic_config.cc",
+        "quiche_random": "quiche/common/quiche_random.cc",
+    }),
+    (130, {
+        "boringssl_extensions": "ssl/extensions.cc",
+        "boringssl_random": "crypto/rand_extra/rand_extra.c",
+        "quiche_h3": "quiche/quic/core/quic_config.cc",
+        "quiche_random": "quiche/common/quiche_random.cc",
+    }),
+    (133, {
         "boringssl_extensions": "ssl/extensions.cc",
         "boringssl_random": "crypto/rand/rand.cc",
         "quiche_h3": "quiche/quic/core/quic_config.cc",
@@ -93,12 +123,20 @@ def profile_major(tag):
 
 
 def resolve_path(tag, name):
-    """Returns the upstream path this release actually has for `name`."""
+    """Returns the upstream path this release actually has for `name`.
+
+    PATH_ERAS is ordered oldest first. This used to assign in a forward loop,
+    which happens to be correct -- the newest applicable era wins because it is
+    assigned last -- but it is the same shape as the bug that made
+    tools/audit-profile-addition.py resolve chrome_157 to the pre-93 path: that
+    copy returned on the first match instead of the last. Both now iterate in
+    reverse and return, so there is one rule to get wrong rather than two.
+    """
     major = profile_major(tag)
     path = FILES[name][1]
-    for first, mapping in PATH_ERAS:
+    for first, mapping in reversed(PATH_ERAS):
         if major >= first and name in mapping:
-            path = mapping[name]
+            return mapping[name]
     return path
 
 

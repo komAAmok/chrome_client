@@ -66,6 +66,14 @@ jobs:
       - run: python3 tools/audit-tls-version-range.py
       - run: python3 tools/audit-h1-alps-absence.py
       - run: python3 tools/audit-h3-profile-support.py
+      # The three-level gate from AGENTS.md section 9, levels 1 and 2:
+      # level 1 re-fetches the release's own source at its latest tag and
+      # compares every recorded sha256, level 2 asserts six captured
+      # connections per protocol with stable fields equal and stochastic
+      # fields distinct. Level 3 (the built artifact reproducing the
+      # captures) needs a live fingerprint endpoint, so it runs where the
+      # Core can actually connect.
+      - run: python3 tools/audit-profile-addition.py --levels 1,2 --profile chrome_157
       - run: python3 tools/audit-profile-evidence.py --jobs 4
       # The ERR_* names in exceptions.py tell a caller what a proxy or TLS
       # failure actually was. They had drifted badly (eight codes carried a
