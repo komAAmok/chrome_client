@@ -262,6 +262,44 @@ DoH / nameserver 字段**，DNS 行为完全由 Chromium 内部默认值决定�
 - 回归用例覆盖：默认路径（不传 DNS 参数）行为不变；非法 nameserver 报
   `InvalidArgument` 而非崩溃；DNS 配置不同的两个 Session 不串用解析结果。
 
+## 待办：H3 全量强制测试会被端点限流
+
+`tools/audit-profile-addition.py --levels 3 --protocol h3` 会为每个版本发 6 条真实 QUIC
+请求到 `quic.tools.scrapfly.io`。对 93–157 全部 65 个版本连跑（390 次请求）时，端点会
+开始拒绝部分连接：
+
+```
+response: RequestError { error: Protocol, net_error: -356 }
+  即 ERR_QUIC_PROTOCOL_ERROR
+live_connections: 5 / 1 / 4   （凑不满 6 条，无法比对）
+```
+
+**实测 2026-11**：全量 65 个版本跑下来 `passed 62, failed 3 [105, 106, 109]`，3 个失败
+**全部**是这个 -356，且 `grep 'but the captures say'` 为 0 条——即**没有任何一条是字段
+不符**。这 3 个版本单独重跑全部 PASS。同一版本连跑 6 次也全 PASS，说明触发条件是
+**跨版本连续请求的总量**，不是单版本重复。
+
+这不是指纹缺陷，但会让「全量 H3 验收」这条命令的结果不可信：一次全量扫描的 PASS/FAIL
+里混着端点限流，而 FAIL 看起来和真缺陷一模一样。
+
+**当前做法**：抽样跑。跨 era 边界取样（93/100/110/119/120/124/130/140/150/157），
+覆盖 h3_text 的两个形态（93–119 无 SETTINGS_H3_DATAGRAM、120+ 有）与 ja4 的三个值。
+
+**已做（2026-11）**：
+
+- `--delay SECONDS`：每条连接之间等待，默认 0。
+- `--retry N`：对 `-356` 重试 N 次（只重试这一个码；其他退出码不重试，因为那更可能是
+  真的构建问题）。
+- FAIL 分类：连不上 6 条时 `facts.verdict_kind = COULD_NOT_CONNECT`，文本输出显示为
+  `3_binary: FAIL [COULD_NOT_CONNECT]`，与「字段不符」明确区分。连不上意味着这次运行
+  **没有证明任何关于指纹的事**，不该和「这个字段错了」混在同一个失败列表里。
+
+实测：之前失败的 `chrome_105 / 106 / 109` 在 `--delay 1 --retry 3` 下全部 PASS。
+
+**仍待补**：全量 65 个版本在带延时的情况下跑一遍并记录结果（本次只验证了修复本身）。
+判定条件：全量 65 个版本 0 个字段不符，且任何 COULD_NOT_CONNECT 都被如实标出而不是
+当成 PASS。
+
 ## 待办：32 位 ABI 布局没有执行路径
 
 `crates/minicronet-sys` 的布局测试已有 32 位分支（数值已按头文件修正为

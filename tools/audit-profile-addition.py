@@ -87,6 +87,22 @@ REQUIRED_SOURCES = {name: _collector.FILES[name][0:2]
 
 MIN_CONNECTIONS = 6
 
+# The capture file name and the protocol pin are not the same thing.
+#
+# The h2 reference is a NATIVE capture: its ClientHello offers ALPN
+# [h2, http/1.1], so the pin that reproduces it is native, not ForceH2.
+# Forcing h2 narrows ALPN to [h2] and moves the padding total as well.
+# h1 and h3 ARE forced captures. Same mapping as
+# tools/align-live-fingerprint.py.
+PROBE_PROTOCOL = {"h2": "native", "h1": "h1", "h3": "h3"}
+
+# Each protocol was captured against its own endpoint.
+DEFAULT_URL = {
+    "h2": "https://tls.peet.ws/api/all",
+    "h1": "https://tls.peet.ws/api/all",
+    "h3": "https://quic.tools.scrapfly.io/api/fp/quic",
+}
+
 # 119..123 pad the ClientHello conditionally; see level_wire().
 CONDITIONAL_PADDING_ERA = range(119, 124)
 
@@ -471,6 +487,31 @@ def degrease(values):
     return [v for v in values if not is_grease(v)]
 
 
+def h3_settings(record):
+    """The H3 SETTINGS frame with GREASE entries removed.
+
+    Chrome sends one GREASE setting with a per-connection id AND value, so the
+    raw settings list differs on every connection. What is stable -- and what a
+    fingerprinter reads -- is the real settings, in order. h3_text already
+    renders that as "id:value;...;GREASE", and this is the structured form of
+    the same fact, kept so a change in one is caught even if the other is
+    regenerated wrongly.
+    """
+    for frame in record.get("http3") or []:
+        if frame.get("name") != "SETTINGS":
+            continue
+        kept = []
+        for setting in frame.get("settings") or []:
+            name = str(setting.get("name") or "")
+            if "GREASE" in name.upper() or is_grease(name):
+                continue
+            if is_grease(setting.get("id")):
+                continue
+            kept.append([setting.get("id"), setting.get("value")])
+        return kept
+    return None
+
+
 def _stable_view(record, protocol):
     if protocol == "h3":
         tls = record.get("tls") or {}
@@ -482,6 +523,14 @@ def _stable_view(record, protocol):
             "quic_version": quic.get("version"),
             "transport_parameters": quic.get("transport_parameters"),
             "h3_text": record.get("h3_text"),
+            # ja4 and h3_hash are the published fingerprint digests; both are
+            # stable across the six reference connections and differ between
+            # releases (93/120/157 have three distinct ja4 values), so they are
+            # fingerprint data rather than incidental.
+            "ja4": record.get("ja4"),
+            "h3_hash": record.get("h3_hash"),
+            # H3 SETTINGS without the GREASE entry.
+            "h3_settings": h3_settings(record),
         }
     tls = record.get("tls") or {}
     return {
@@ -525,10 +574,11 @@ def _http2_settings(record):
     return None
 
 
-def level_binary(major, profile, protocol):
+def level_binary(major, profile, protocol, delay=0.0, retry=0):
     """LEVEL 3: the built artifact reproduces the captures when it connects."""
     import subprocess
     import os
+    import time
 
     failures = []
     facts = {}
@@ -547,34 +597,91 @@ def level_binary(major, profile, protocol):
     profile_id = f"chrome_{major}"
     reference = pc.load_protocol(major, protocol)
     if reference is None:
+        # No captures for this release and protocol. That is only acceptable if
+        # the Core refuses the combination -- a release whose HTTP/3 behaviour
+        # cannot be reproduced must fail closed rather than send a QUIC
+        # ClientHello it never sent. Reporting "no captures" here would make a
+        # deliberate contract look like missing evidence, and would pass just as
+        # happily for a release that wrongly accepts the pin.
+        unsupported = pc.profile_dir(major) / protocol / "unsupported.json"
+        if not unsupported.is_file():
+            return {
+                "status": "FAIL",
+                "failures": [f"{protocol}: no captures and no unsupported.json; "
+                             f"a missing capture is not evidence of anything"],
+                "facts": facts,
+            }
+        recorded = json.loads(unsupported.read_text(encoding="utf-8"))
+        facts["unsupported_reason"] = recorded.get("reason")
+        env = dict(os.environ)
+        env["LD_LIBRARY_PATH"] = str(library)
+        env["MINICRONET_PROTOCOL"] = PROBE_PROTOCOL[protocol]
+        completed = subprocess.run(
+            [str(probe), profile_id, DEFAULT_URL[protocol]],
+            capture_output=True, text=True, env=env, timeout=120)
+        text = (completed.stderr or "") + (completed.stdout or "")
+        if completed.returncode != 0 and "ProfileUnsupported" in text:
+            facts["engine_refusal"] = "MN_ERROR_PROFILE_UNSUPPORTED"
+            return {"status": "PASS", "failures": [], "facts": facts}
         return {
             "status": "FAIL",
-            "failures": [f"{protocol}: no captures to compare against"],
+            "failures": [
+                f"{protocol}: no captures (unsupported.json records "
+                f"{recorded.get('reason')!r}) but the Core did NOT refuse this "
+                f"profile: exit {completed.returncode}. A release that cannot do "
+                f"this protocol must fail closed, not send a ClientHello it never "
+                f"sent."],
             "facts": facts,
         }
 
     env = dict(os.environ)
     env["LD_LIBRARY_PATH"] = str(library)
     env["MINICRONET_PROTOCOL"] = {"h2": "native", "h1": "h1", "h3": "h3"}[protocol]
-    url = {"h1": "https://tls.peet.ws/api/all",
-           "h2": "https://tls.peet.ws/api/all",
-           "h3": "https://quic.tools.scrapfly.io/api/fp/quic"}[protocol]
+    # DEFAULT_URL is the single definition; a second copy here meant the module
+    # constant could be changed without affecting the probe, which is how a test
+    # that pointed h3 at an unresolvable host still reported PASS.
+    url = DEFAULT_URL[protocol]
 
     live = []
+    connection_errors = []
     for index in range(1, MIN_CONNECTIONS + 1):
-        completed = subprocess.run([str(probe), profile_id, url],
-                                   capture_output=True, text=True, env=env,
-                                   timeout=120)
+        if index > 1 and delay:
+            time.sleep(delay)
+        attempt = 0
+        while True:
+            attempt += 1
+            completed = subprocess.run([str(probe), profile_id, url],
+                                       capture_output=True, text=True, env=env,
+                                       timeout=120)
+            if completed.returncode == 0:
+                break
+            detail = (completed.stderr or completed.stdout).strip()
+            # -356 is ERR_QUIC_PROTOCOL_ERROR: the endpoint refused the QUIC
+            # handshake. Under a full sweep that is rate limiting, not a
+            # fingerprint difference, and retrying with a delay is the right
+            # response. Any other exit code is not retried.
+            if retry and "-356" in detail and attempt <= retry:
+                time.sleep(delay or 5)
+                continue
+            connection_errors.append(
+                f"connection {index} failed (exit {completed.returncode}): "
+                f"{detail[:200]}")
+            break
         if completed.returncode != 0:
-            failures.append(
-                f"{protocol}: connection {index} failed (exit "
-                f"{completed.returncode}): "
-                f"{(completed.stderr or completed.stdout).strip()[:200]}")
             break
         body = completed.stdout
         start = body.find("{")
         live.append(json.loads(body[start:]))
     facts["live_connections"] = len(live)
+    if connection_errors:
+        # Kept separate from field mismatches: a run that could not connect six
+        # times has proved nothing about the fingerprint, and reporting it in the
+        # same list as "this field differs" made a rate-limited sweep look like a
+        # build defect.
+        facts["connection_errors"] = connection_errors
+        failures.extend(f"{protocol}: {error}" for error in connection_errors)
+        facts["verdict_kind"] = "COULD_NOT_CONNECT"
+        return {"status": "FAIL", "failures": failures, "facts": facts}
 
     if len(live) == MIN_CONNECTIONS:
         expected = _stable_view(reference[0], protocol)
@@ -609,7 +716,8 @@ def check_one(entry, levels, args):
         report["levels"]["2_wire"] = result
         failed = failed or result["status"] != "PASS"
     if "3" in levels:
-        result = level_binary(major, entry, args.protocol)
+        result = level_binary(major, entry, args.protocol,
+                              args.delay, args.retry)
         report["levels"]["3_binary"] = result
         failed = failed or result["status"] != "PASS"
     report["result"] = "FAIL" if failed else "PASS"
@@ -660,6 +768,13 @@ def main(argv):
                         help="comma separated subset of 1,2,3")
     parser.add_argument("--protocol", default="h2", choices=("h1", "h2", "h3"),
                         help="which protocol level 3 drives")
+    parser.add_argument("--delay", type=float, default=0.0,
+                        help="seconds between level-3 connections; a full h3 "
+                             "sweep gets rate limited without it")
+    parser.add_argument("--retry", type=int, default=0,
+                        help="retries for a connection that fails with "
+                             "ERR_QUIC_PROTOCOL_ERROR (-356), which under a "
+                             "sweep is rate limiting rather than a mismatch")
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
 
@@ -687,7 +802,9 @@ def main(argv):
 
     print(f"{args.profile}  ({report['result']})")
     for name, result in report["levels"].items():
-        print(f"  {name}: {result['status']}")
+        kind = (result.get("facts") or {}).get("verdict_kind")
+        suffix = f" [{kind}]" if kind else ""
+        print(f"  {name}: {result['status']}{suffix}")
         for failure in result["failures"]:
             print(f"    - {failure}")
         for key, value in (result.get("facts") or {}).items():
