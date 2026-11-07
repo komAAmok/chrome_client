@@ -419,6 +419,31 @@ chrome_86..chrome_98 加入 profile 表之后，8 个平台**再次同批重建*
 | macos-x86_64 | 7,958,968 | `9d4e872f0b4940bb` |
 | macos-arm64 | 7,310,880 | `6e69ad70bf355923` |
 
+### 跨平台一致性：能证明到哪一步
+
+只有 linux-x86_64 能在构建机上执行（无 qemu、无 wine、无 32 位运行时）。另外 7 个平台
+**没有一次真实运行**，所以「行为一致」不能声称。能证明的是下面这些，逐条都有命令：
+
+| 结论 | 怎么证明 | 强度 |
+| --- | --- | --- |
+| 8 个产物都由同一份 `core/source/` 编译 | 六个源文件与 Chromium 树里的安装副本 `cmp` 逐字节相同 | 强 |
+| 8 个产物都含全部 72 个 profile id，缺失 0、多余 0、无重复 | `tools/audit-core-binaries.sh` 逐个 grep 首尾 id | 强 |
+| 8 个产物嵌入的 profile 载荷**逐字节相同** | `tools/audit-core-payloads.py`：从生成头取 `trust_anchor_ids_*` 数组，要求每个产物都含这段字节 | 强 |
+| 载荷与 `profiles/normalized_profiles.json` 一致 | 同一个门禁先比对头与输入，头陈旧即失败 | 强 |
+| trust anchor 代码路径没有平台分支 | 所有相关文件里 `trust_anchor` 与 `BUILDFLAG(IS_*)`/`ARCH_CPU_*` 同窗口出现 0 次 | 强 |
+| `SelectAllTrustAnchorIDs()` 不读系统根库 | 上游 `net/ssl/ssl_config_service.cc:78` 直接返回 `trust_anchor_ids`，唯一赋值点是 `profile_ssl_config_service.cc:63` | 强 |
+| 7 个平台**能加载** | — | **无证据** |
+| 7 个平台**能发请求** | — | **无证据** |
+| 7 个平台发出的 trust anchor 是 32 个 | — | **无证据**（只能由上面几条推断） |
+
+最后三行是这条链的边界。按 AGENTS §12，构建成功 ≠ 能加载 ≠ 能发请求，所以这 7 个平台的
+状态记为「已构建、载荷静态一致、未运行」，不能写成「已验证」。
+
+`tools/audit-core-payloads.py` 的存在理由就是这条边界：既然跑不了，就把「产物里装的是不是
+同一份数据」变成机器可判的。变异测试两条：换入旧表编译的 linux-x86 产物 → 报
+`does not embed trust_anchor_ids_0 (204 bytes)`；把生成头改一个字节 → 报 `the generated
+table is stale`。
+
 ### 本轮 C++ 修复的平台覆盖
 
 `core/source/` 的四处修改（长度字段上限、close code 1014、`protocol_mode`
@@ -783,6 +808,7 @@ Core 的 `Request::OnAuthRequired` 一次都不执行。逐层证据与调用点
 | `tools/audit-abi.sh` | 20 个符号，header / FFI / Core / 三份导出表一致；注释掉的声明不算声明 | 是 |
 | `tools/audit-abi-layout.py` | 7 个结构体、70 个字段：用 C 编译器取头文件真实的 `offsetof`/`sizeof`，与 Rust `#[repr(C)]` 声明逐字段比对 | 是 |
 | `tools/audit-core-binaries.sh` | 8 个平台通过；比对 manifest 的 `chromium_revision` 与 `CHROMIUM_REVISION`，并**从产物字节里断言含 `chrome_86` 与 `chrome_157`**，所以「只重建了一个平台」不再通过 | 是 |
+| `tools/audit-core-payloads.py` | 8 个平台产物必须逐字节嵌入生成头里的 profile 载荷 |
 | `tools/audit-core-size-ceilings.py` | 三档 `MAX_BYTES` 必须等于「该平台最大产物 × 1.02，向上取整到 1 万」。实测 Linux 8,540,000 / Windows 9,610,000 / macOS 8,120,000 全部满足；**新增 profile 使产物变大时，上限必须同批重算**，否则这里失败 | 是 |
 | `tools/audit-net-error-names.py` | `_NET_ERRORS` 的 69 行逐条与 `net_error_list.h` 比对：0 处错标、0 处陈旧、**0 个未映射的代理类错误**。注释掉的 `// NET_ERROR(...)` 不算定义（17 个已移除码因此不会被误认为当前码） | 否，需 Chromium 树 |
 | `tools/audit-readme.sh` | 通过 | 是 |

@@ -48,6 +48,12 @@ jobs:
       # nothing noticed, because the only thing checking the ceiling was the
       # ceiling. This compares the rule against the committed artifacts.
       - run: python3 tools/audit-core-size-ceilings.py
+      # Every artifact must embed the profile payloads from the generated
+      # header byte for byte. A build from a stale table has a consistent
+      # manifest, so the SHA-256 and size checks cannot see it; and seven of
+      # the eight targets cannot be executed on any build host, so nothing
+      # else compares their payload bytes.
+      - run: python3 tools/audit-core-payloads.py
       # profiles/ is the entire basis for the per-release tables, and every
       # entry records the sha256 of the upstream file it was audited against.
       # Nothing re-checked those digests, so a stale record and a correct one

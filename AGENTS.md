@@ -73,6 +73,12 @@ python3 tools/audit-python-typing.py
 tools/audit-core-binaries.sh
 tools/audit-core-inputs.sh
 python3 tools/audit-core-size-ceilings.py
+python3 tools/audit-core-payloads.py
+# The line above is the only cross-platform behavioural claim this
+# repository can make without running anything: every artifact must
+# embed the profile payloads from the generated header byte for byte.
+# Seven of the eight targets cannot be loaded on a build host, so a
+# stale or divergent build is otherwise invisible.
 python3 tools/audit-padding-rule.py
 python3 tools/audit-tls-version-range.py
 python3 tools/audit-h1-alps-absence.py
