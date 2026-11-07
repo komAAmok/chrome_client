@@ -14,8 +14,13 @@ EFFECTIVE = ROOT / "profiles" / "effective_protocol_params.json"
 FEATURES = ROOT / "profiles" / "network_feature_snapshots.json"
 OUTPUT = ROOT / "core" / "source" / "minicronet" / "profile_table_generated.h"
 
-# Highest profile in the table. Bumping it requires a wire-verified capture set
-# and a source-evidence entry for that release; see profiles/chrome-157/.
+# The table's span. Both ends name their evidence: FIRST_PROFILE_MAJOR is
+# chrome_86, the oldest release the reference capture set covers, and its
+# profiles were derived from that release's own capture and tag source by
+# tools/derive-profile-from-capture.py (see docs/CHROME_86_98_SUPPORT.md), not
+# inherited from chrome_99. Widening either end requires a wire-verified capture
+# set and a source-evidence entry for the release being added.
+FIRST_PROFILE_MAJOR = 86
 LAST_PROFILE_MAJOR = 157
 
 FEATURE_BITS = {
@@ -44,6 +49,35 @@ def load_feature_flags():
 
 def c(s):
     return json.dumps(s, ensure_ascii=True)
+
+
+# ClientHello padding override, per release era.
+#
+# Every era is 0, and 0 means "no override": BoringSSL applies Chrome's one rule
+# for all of them (pad the ClientHello to a 512-byte total while it sits in the
+# 256..511 window, RFC 7685). The per-release widths the captures report are
+# the OUTPUT of that rule, not an input to it:
+#
+#   86..90   h2 418  h1 424
+#   91..97   h2 400  h1 424
+#   98..118  h2 408  h1 432
+#   119..123 conditional (ECH GREASE payload decides whether the window is hit)
+#   124+     never (X25519Kyber768 key share pushes the ClientHello past 511)
+#
+# The h1/h2 difference is the ALPS extension h1 does not send; the 86..97 vs
+# 98..118 difference is the 10 bytes of TLS 1.0/1.1 in supported_versions.
+# Freezing any of those numbers here would pin a payload constant that cannot
+# hold for both protocols at once, and would hide a real ClientHello size bug
+# behind a padding override. tools/audit-padding-rule.py asserts the OUTPUT;
+# this table is asserted to stay 0 by the same gate.
+PADDING_LENGTH_ERAS = ((86, 90, 0), (91, 97, 0), (98, 118, 0), (119, 157, 0))
+
+
+def padding_length_for(major):
+    for first, last, length in PADDING_LENGTH_ERAS:
+        if first <= major <= last:
+            return length
+    raise SystemExit(f'no padding length era covers chrome_{major}')
 
 
 CODEBOOKS = {
@@ -114,18 +148,21 @@ def main():
     effective = json.loads(EFFECTIVE.read_text())["profiles"]
     _, feature_flags = load_feature_flags()
     if [p["profile_id"] for p in profiles] != [
-            f"chrome_{n}" for n in range(99, LAST_PROFILE_MAJOR + 1)]:
+            f"chrome_{n}" for n in range(FIRST_PROFILE_MAJOR,
+                                          LAST_PROFILE_MAJOR + 1)]:
         raise SystemExit(
-            f"profile table must contain chrome_99..chrome_{LAST_PROFILE_MAJOR} in order")
+            f"profile table must contain chrome_{FIRST_PROFILE_MAJOR}.."
+            f"chrome_{LAST_PROFILE_MAJOR} in order")
     if set(feature_flags) != {p["profile_id"] for p in profiles}:
         raise SystemExit(
-            f"network feature snapshot must cover chrome_99..chrome_{LAST_PROFILE_MAJOR}")
+            f"network feature snapshot must cover chrome_{FIRST_PROFILE_MAJOR}.."
+            f"chrome_{LAST_PROFILE_MAJOR}")
     # Boundary assertions are spans, not hand-listed profiles. The previous
     # per-profile dictionaries stopped at chrome_151 while the table grew to
     # chrome_155, so four profiles (and the whole 99..121 span) were never
     # checked at all -- the gate silently covered less as the table grew. A
     # span names its endpoints, and `assert_span` refuses to accept a span that
-    # does not tile 99..LAST_PROFILE_MAJOR exactly, so a gap is a failure here
+    # does not tile FIRST_PROFILE_MAJOR..LAST_PROFILE_MAJOR exactly, so a gap is a failure here
     # rather than a missing check.
     def assert_span(field, spans, default=None):
         covered = []
@@ -138,23 +175,23 @@ def main():
                         f"unexpected {field} for {profile_id}: {actual} "
                         f"(span {first}..{last} expects {expected})")
                 covered.append(major)
-        expected_majors = list(range(99, LAST_PROFILE_MAJOR + 1))
+        expected_majors = list(range(FIRST_PROFILE_MAJOR, LAST_PROFILE_MAJOR + 1))
         if sorted(covered) != expected_majors:
             missing = sorted(set(expected_majors) - set(covered))
             raise SystemExit(
-                f"{field}: spans do not cover chrome_99..chrome_{LAST_PROFILE_MAJOR}; "
-                f"uncovered majors: {missing}")
+                f"{field}: spans do not cover chrome_{FIRST_PROFILE_MAJOR}.."
+                f"chrome_{LAST_PROFILE_MAJOR}; uncovered majors: {missing}")
 
     # kSocketPoolLimitRandomizationForProxy / the hardened socket pool made size
     # randomization unconditional in 147; the proxy variant follows in 151.
     assert_span("randomize_socket_pool_limit",
-                [(99, 146, False), (147, 157, True)])
+                [(FIRST_PROFILE_MAJOR, 146, False), (147, 157, True)])
     assert_span("randomize_proxy_socket_pool_limit",
-                [(99, 150, False), (151, 157, True)])
+                [(FIRST_PROFILE_MAJOR, 150, False), (151, 157, True)])
     # The HTTP/2 priority header appears in 124 and stays.
-    assert_span("send_priority_header", [(99, 123, False), (124, 157, True)])
+    assert_span("send_priority_header", [(FIRST_PROFILE_MAJOR, 123, False), (124, 157, True)])
     # QUIC ORIG (RFC 9287) is sent from 149.
-    assert_span("send_quic_orig", [(99, 148, False), (149, 157, True)])
+    assert_span("send_quic_orig", [(FIRST_PROFILE_MAJOR, 148, False), (149, 157, True)])
     # kMaintainConnectionsOnIpv6TempAddrChange does not exist before 142; when
     # upstream added it in 142 it defaulted DISABLED, and 148 flipped it to
     # ENABLED where it stays through 156 (the pinned revision). Verified per
@@ -167,16 +204,33 @@ def main():
     # of the JSON: asserting on JSON here would only re-state that the key is
     # absent.
     expected_maintain_ipv6 = {
-        major: major >= 148 for major in range(99, LAST_PROFILE_MAJOR + 1)
+        major: major >= 148
+        for major in range(FIRST_PROFILE_MAJOR, LAST_PROFILE_MAJOR + 1)
     }
-    if sorted(expected_maintain_ipv6) != list(range(99, LAST_PROFILE_MAJOR + 1)):
+    if sorted(expected_maintain_ipv6) != list(range(FIRST_PROFILE_MAJOR,
+                                                    LAST_PROFILE_MAJOR + 1)):
         raise SystemExit("maintain_ipv6_temp_addr spans miss a profile major")
     if expected_maintain_ipv6[147] or not expected_maintain_ipv6[148]:
         raise SystemExit(
             "maintain_ipv6_temp_addr boundary is wrong: upstream flips it at 148")
+    # HTTP/3 SETTINGS_H3_DATAGRAM (51). The reference captures show it absent on
+    # 93-119 and present from 120, which is the boundary encoded here. Nothing
+    # before 93 has an H3 capture, so the span starts at FIRST_PROFILE_MAJOR
+    # with the same value 93 carries; that is a stated extrapolation for 86-92,
+    # not an observation.
+    assert_span("advertise_h3_datagram",
+                [(FIRST_PROFILE_MAJOR, 119, False), (120, 157, True)],
+                default=True)
+    # Padding length eras must tile the whole table. A gap here silently
+    # produces a release whose padding value belongs to no capture.
+    covered = []
+    for first, last, _length in PADDING_LENGTH_ERAS:
+        covered.extend(range(first, last + 1))
+    if sorted(covered) != list(range(FIRST_PROFILE_MAJOR, LAST_PROFILE_MAJOR + 1)):
+        raise SystemExit("padding length eras do not tile the profile range")
     # Legacy QUIC version information was briefly on for 144-145 only.
     assert_span("send_quic_legacy_version_information",
-                [(99, 143, False), (144, 145, True), (146, 157, False)],
+                [(FIRST_PROFILE_MAJOR, 143, False), (144, 145, True), (146, 157, False)],
                 default=False)
 
     # Capability and default-attempt policy are independent. Chromium's
@@ -270,6 +324,24 @@ def main():
         "  bool send_priority_header;",
         "  bool send_quic_orig;",
         "  bool send_quic_legacy_version_information;",
+        "  // HTTP/3 SETTINGS_H3_DATAGRAM (51). Captured: chrome_93..chrome_119 do not",
+        "  // advertise it, chrome_120 and later do.",
+        "  bool advertise_h3_datagram;",
+        "  // False for a release whose HTTP/3 behaviour cannot be reproduced from the",
+        "  // reference evidence. A forced H3 request against such a profile must fail",
+        "  // closed instead of sending a QUIC ClientHello the release never sent.",
+        "  bool h3_supported;",
+        "  // TLS version range this release advertised, and what the Core applies",
+        "  // to the socket. Chrome 86..97 set kDefaultSSLVersionMin = TLS1, so their",
+        "  // supported_versions lists 1.3/1.2/1.1/1.0; 98 raised the floor to TLS1_2",
+        "  // and the two legacy entries disappeared. Upstream",
+        "  // ssl_client_socket_impl.cc rejects a floor below TLS1_2 with",
+        "  // ERR_UNEXPECTED; core/patches/profile-tls-net.patch relaxes that only when",
+        "  // ProfileSSLConfigService sets profile_allows_legacy_tls_versions, which it",
+        "  // derives from version_min < TLS1_2. Without that patch the 0x0301 below",
+        "  // would break the handshake instead of reproducing the older list.",
+        "  uint16_t tls_version_min;",
+        "  uint16_t tls_version_max;",
         "  bool enable_quic;",
         "  bool try_quic_by_default;",
         "  // net::features::kMaintainConnectionsOnIpv6TempAddrChange. The feature",
@@ -464,23 +536,40 @@ def main():
             f"    {'true' if 'application_settings' in tls['extensions'] else 'false'},",
             f"    {'true' if protocol['h2_enable_push'] else 'false'},",
             f"    {'true' if protocol['h2_max_concurrent_streams'] else 'false'},",
-        "    0,",
+            # h2_params_index: every profile currently shares one HTTP/2 params
+            # object, so the index is a constant. It stays a field so a future
+            # release with different SETTINGS values does not need a schema change.
+            "    0,",
             f"    {'true' if protocol['randomize_socket_pool_limit'] else 'false'},",
             f"    {'true' if protocol['randomize_proxy_socket_pool_limit'] else 'false'},",
             f"    {'true' if protocol['send_priority_header'] else 'false'},",
             f"    {'true' if protocol['send_quic_orig'] else 'false'},",
             f"    {'true' if protocol.get('send_quic_legacy_version_information', False) else 'false'},",
+            f"    {'true' if major >= 120 else 'false'},",
+            # Two different facts, deliberately kept apart:
+            #   activation.h3_disabled     "Chromium does not attempt QUIC by
+            #                              default here" (== !try_quic_by_default,
+            #                              true for 86..122)
+            #   activation.h3_unsupported  "this release cannot do HTTP/3 at all;
+            #                              a forced H3 engine must be refused"
+            # Collapsing them made chrome_93..122 look incapable of H3 although
+            # each has six passing H3 captures.
+            f"    {'false' if p.get('activation', {}).get('h3_unsupported') else 'true'},",
+            # TLS1_0 = 0x0301, TLS1_2 = 0x0303, TLS1_3 = 0x0304. The floor moved at
+            # 98, which is exactly where supported_versions loses 1.1 and 1.0.
+            f"    0x{0x0301 if major <= 97 else 0x0303:04x},",
+            "    0x0304,",
             f"    {'true' if protocol['enable_quic'] else 'false'},",
             f"    {'true' if protocol['try_quic_by_default'] else 'false'},",
             # Derived from the version rather than read from JSON: this is
             # upstream behaviour that changed at 148, and assert_span above
-            # proves the whole 99..157 range against it.
+            # proves the whole 86..157 range against it.
             f"    {'true' if major >= 148 else 'false'},",
             # Chrome 119+ uses BoringSSL's length-dependent RFC 7685
             # padding. Do not freeze the observed 28-byte result: ECH GREASE
             # payload rotation can make the extension appear or disappear.
             "    true,",
-            f"    {408 if major <= 118 else 0},",
+            f"    {padding_length_for(major)},",
             f"    0x{flags:04x},",
             f"    {anchor_span(p)},",
             f"    {'true' if p['evidence']['wire_verified'] else 'false'},",

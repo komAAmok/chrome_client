@@ -29,17 +29,38 @@ GATE = ROOT / "tools" / "validate-wire-profile.py"
 RAW_ROOT = ROOT / "profiles"
 
 
+# profiles/ carries two spellings for a release directory: chrome-<major> for
+# the 99..157 batch and chrome_<major> for the 86..98 batch that was audited
+# later. Both are evidence for the same thing, so resolution has to try both:
+# a dash-only lookup silently returned [] for 86..98, and this wrapper then
+# reported "majors without browserleaks captures" while the captures sat on
+# disk under the other spelling. A gate that cannot see its input is worse than
+# no gate, because the summary line still looks like a pass.
+PROFILE_DIR_SPELLINGS = ("chrome-{major}", "chrome_{major}")
+
+
+def profile_dirs(major: int):
+    """Every profiles/ directory that could hold evidence for one major."""
+    found = []
+    for spelling in PROFILE_DIR_SPELLINGS:
+        candidate = RAW_ROOT / spelling.format(major=major)
+        if candidate.is_dir():
+            found.append(candidate)
+    return found
+
+
 def capture_dirs(major: int):
     """The raw/ subdirectories that hold browserleaks responses for one major."""
-    raw = RAW_ROOT / f"chrome-{major}" / "raw"
-    if not raw.is_dir():
-        return []
     out = []
-    for directory in sorted(raw.iterdir()):
-        if not directory.is_dir():
+    for profile_dir in profile_dirs(major):
+        raw = profile_dir / "raw"
+        if not raw.is_dir():
             continue
-        if list(directory.glob("response-*.json")):
-            out.append(directory)
+        for directory in sorted(raw.iterdir()):
+            if not directory.is_dir():
+                continue
+            if list(directory.glob("response-*.json")):
+                out.append(directory)
     return sorted(out, key=lambda p: (("h3" in p.name), p.name))
 
 
@@ -141,9 +162,18 @@ def main():
                         help="only this Chrome major; repeatable")
     args = parser.parse_args()
 
-    majors = args.major or sorted(
-        int(p.name.split("-")[1]) for p in RAW_ROOT.glob("chrome-*")
-        if p.is_dir() and p.name.split("-")[1].isdigit())
+    if args.major:
+        majors = args.major
+    else:
+        discovered = set()
+        for pattern in ("chrome-*", "chrome_*"):
+            for path in RAW_ROOT.glob(pattern):
+                if not path.is_dir():
+                    continue
+                _, _, suffix = path.name.partition("-" if "-" in path.name else "_")
+                if suffix.isdigit():
+                    discovered.add(int(suffix))
+        majors = sorted(discovered)
 
     checked = failures = skipped = unverifiable = 0
     for major in majors:

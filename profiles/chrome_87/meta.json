@@ -1,0 +1,90 @@
+{
+  "schema": "chrome_client.profile_captures.v1",
+  "profile_id": "chrome_87",
+  "major": 87,
+  "version": "87.0.4280.141",
+  "reference": {
+    "protocols": {
+      "h2": {
+        "source_file": "tls-results.json",
+        "target": "https://tls.peet.ws/api/all",
+        "executablePath": "downloads\\87.0.4280.141\\87.0.4280.141\\chrome.exe",
+        "folderVersion": "87.0.4280.141",
+        "status": {
+          "collected": 6,
+          "total": 6,
+          "complete": true,
+          "distinctSessions": 6,
+          "freshSessions": true
+        }
+      },
+      "h1": {
+        "source_file": "tls-results-h1.json",
+        "target": "https://tls.peet.ws/api/all",
+        "executablePath": "downloads\\87.0.4280.141\\87.0.4280.141\\chrome.exe",
+        "folderVersion": "87.0.4280.141",
+        "status": {
+          "collected": 6,
+          "total": 6,
+          "complete": true,
+          "distinctSessions": 6,
+          "freshSessions": true
+        }
+      },
+      "h3": {
+        "source_file": "tls-results-h3.json",
+        "target": "https://quic.tools.scrapfly.io/api/fp/quic",
+        "executablePath": "downloads\\87.0.4280.141\\87.0.4280.141\\chrome.exe",
+        "folderVersion": "87.0.4280.141",
+        "status": {
+          "collected": 0,
+          "total": 6,
+          "complete": false,
+          "distinctSessions": 0,
+          "freshSessions": false,
+          "unsupported": {
+            "reason": "page.goto: net::ERR_QUIC_PROTOCOL_ERROR at https://quic.tools.scrapfly.io/api/fp/quic",
+            "detectedAt": "2026-11-06T13:10:25.761Z"
+          }
+        }
+      }
+    }
+  },
+  "protocols": {
+    "h2": {
+      "captured": 6,
+      "status": {
+        "collected": 6,
+        "total": 6,
+        "complete": true,
+        "distinctSessions": 6,
+        "freshSessions": true
+      }
+    },
+    "h1": {
+      "captured": 6,
+      "status": {
+        "collected": 6,
+        "total": 6,
+        "complete": true,
+        "distinctSessions": 6,
+        "freshSessions": true
+      }
+    },
+    "h3": {
+      "captured": 0,
+      "status": {
+        "collected": 0,
+        "total": 6,
+        "complete": false,
+        "distinctSessions": 0,
+        "freshSessions": false,
+        "unsupported": {
+          "reason": "page.goto: net::ERR_QUIC_PROTOCOL_ERROR at https://quic.tools.scrapfly.io/api/fp/quic",
+          "detectedAt": "2026-11-06T13:10:25.761Z"
+        }
+      },
+      "unsupported": "page.goto: net::ERR_QUIC_PROTOCOL_ERROR at https://quic.tools.scrapfly.io/api/fp/quic"
+    }
+  }
+}

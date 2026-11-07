@@ -63,11 +63,11 @@ docstring（Args/Returns/Yields/Raises/Example）。剩下 14 个是**故意**�
 
 `impersonate=` 的类型是三个 `Literal` 的并集：
 
-- `ChromeProfileName`：`chrome_99` … `chrome_155`，共 57 个规范名；
-- `ChromeProfileAlias`：curl_cffi 拼法 `chrome99` … `chrome155`，共 57 个；
+- `ChromeProfileName`：`chrome_86` … `chrome_157`，共 72 个规范名；
+- `ChromeProfileAlias`：curl_cffi 拼法 `chrome86` … `chrome157`，共 72 个；
 - `ChromeFamilyAlias`：`chrome`、`chromium`，解析到最新 pinned 版本。
 
-悬停即能看到全部 112 个值，且 `impersonate="chrome_200"`、`impersonate="edge99"` 这类
+悬停即能看到全部 146 个值，且 `impersonate="chrome_200"`、`impersonate="edge99"` 这类
 运行期才会抛 `ImpersonateError` 的写法在写代码时就被标红。`http_version` 同理列出了
 `v1`/`v2`/`v3`、数字与 `http/2` 等全部拼法。
 

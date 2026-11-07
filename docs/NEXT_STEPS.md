@@ -79,7 +79,7 @@
   `effective_protocol_params.json`、`network_feature_snapshots.json`，以及每个发布
   版本一个证据目录 `profiles/chrome-152/`、`profiles/chrome-153/`）；运行时只编译
   精简只读表，不把源码证据文本编入二进制。
-- [ ] 验证 `chrome_99`--`chrome_155` 的 TLS/ALPN、H2 SETTINGS、QUIC/H3、WS
+- [ ] 验证 `chrome_86`--`chrome_157` 的 TLS/ALPN、H2 SETTINGS、QUIC/H3、WS
   和关键 FeatureList 差异；未验证版本保持拒绝或明确降级状态。
 - [ ] 确认 ProfileContext 在 Engine 创建时冻结，profile namespace 进入连接池、
   TLS/QUIC session、Alt-Svc、HTTP cache、Cookie 和代理复用键。
@@ -116,6 +116,18 @@
 6. Python/Go/Node 薄绑定
 7. CI 和发布包验收
 ```
+
+## 待办：profile_state_isolation_probe 缺测试服务器
+
+`core/source/profile_state_isolation_probe.cc` 断言两个 Engine 之间的 cache、cookie、
+连接池与 TLS session cache 完全隔离，但它驱动 `/cache`、`/etag`、`/cookie-redirect`、
+`/connection/*`、`/tls-close/*` 这些路径，需要一个专门的 HTTP + HTTPS 服务器。那个
+服务器不在本仓库里，所以 `tools/audit-profile-probes.sh` 把它记为**显式跳过**
+（打印 `SKIP ... needs HTTP_BASE and HTTPS_BASE`），不是静默跳过。
+
+补法：把那个 harness 加进 `tools/`（一个自签 CA 加固定响应体的小服务即可），然后让
+`audit-profile-probes.sh` 自己起它并把两个 base 传进去。在补上之前，这一格行为验证是
+**未执行**状态，不要在任何文档里把它记成通过。
 
 Python 资源生命周期、流式响应、WebSocket 有界队列、Core 回调隔离以及 ABI v8
 pause/resume 的详细设计和验收门槛见

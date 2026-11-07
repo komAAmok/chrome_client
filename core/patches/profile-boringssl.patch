@@ -79,10 +79,18 @@ index 0d8241c..c4abc65 100644
  // permute extensions. For now, this is only implemented for the ClientHello.
  OPENSSL_EXPORT void SSL_CTX_set_permute_extensions(SSL_CTX *ctx, int enabled);
 diff --git a/ssl/extensions.cc b/ssl/extensions.cc
-index ab32bb9..066693a 100644
+index ab32bb9..0c0777d 100644
 --- a/ssl/extensions.cc
 +++ b/ssl/extensions.cc
-@@ -107,7 +107,8 @@ static bool tls1_check_duplicate_extensions(const CBS *cbs) {
+@@ -47,7 +47,6 @@
+ #include "../crypto/spake2plus/internal.h"
+ #include "internal.h"
+ 
+-
+ BSSL_NAMESPACE_BEGIN
+ 
+ static bool ssl_check_clienthello_tlsext(SSL_HANDSHAKE *hs);
+@@ -107,7 +106,8 @@ static bool tls1_check_duplicate_extensions(const CBS *cbs) {
  }
  
  static bool is_post_quantum_group(uint16_t id) {
@@ -92,7 +100,7 @@ index ab32bb9..066693a 100644
  }
  
  bool ssl_parse_client_hello_with_trailing_data(const SSLImpl *ssl, CBS *cbs,
-@@ -1029,7 +1030,7 @@ static bool ext_sigalgs_add_clienthello(const SSL_HANDSHAKE *hs, CBB *out,
+@@ -1029,7 +1029,7 @@ static bool ext_sigalgs_add_clienthello(const SSL_HANDSHAKE *hs, CBB *out,
      return false;
    }
    // Add a fake signature algorithm. See RFC 8701.
@@ -101,7 +109,7 @@ index ab32bb9..066693a 100644
        !CBB_add_u16(&sigalgs_cbb,
                     ssl_get_grease_value(hs, ssl_grease_signature_algorithm))) {
      return false;
-@@ -2468,7 +2469,7 @@ bool ssl_setup_key_shares(SSL_HANDSHAKE *hs, uint16_t override_group_id) {
+@@ -2468,7 +2468,7 @@ bool ssl_setup_key_shares(SSL_HANDSHAKE *hs, uint16_t override_group_id) {
      return false;
    }
  
@@ -110,7 +118,7 @@ index ab32bb9..066693a 100644
      // Add a fake group. See RFC 8701.
      if (!CBB_add_u16(cbb.get(), ssl_get_grease_value(hs, ssl_grease_group)) ||
          !CBB_add_u16(cbb.get(), 1 /* length */) ||
-@@ -2675,7 +2676,7 @@ static bool ext_supported_versions_add_clienthello(
+@@ -2675,7 +2675,7 @@ static bool ext_supported_versions_add_clienthello(
    }
  
    // Add a fake version. See RFC 8701.
@@ -119,7 +127,7 @@ index ab32bb9..066693a 100644
        !CBB_add_u16(&versions, ssl_get_grease_value(hs, ssl_grease_version))) {
      return false;
    }
-@@ -2739,7 +2740,7 @@ static bool ext_supported_groups_add_clienthello(const SSL_HANDSHAKE *hs,
+@@ -2739,7 +2739,7 @@ static bool ext_supported_groups_add_clienthello(const SSL_HANDSHAKE *hs,
    }
  
    // Add a fake group. See RFC 8701.
@@ -128,7 +136,7 @@ index ab32bb9..066693a 100644
        !CBB_add_u16(&groups_bytes, ssl_get_grease_value(hs, ssl_grease_group))) {
      return false;
    }
-@@ -4391,7 +4392,7 @@ static bool ssl_add_clienthello_tlsext_inner(SSL_HANDSHAKE *hs, CBB *out,
+@@ -4391,7 +4391,7 @@ static bool ssl_add_clienthello_tlsext_inner(SSL_HANDSHAKE *hs, CBB *out,
  
    hs->inner_extensions_sent = 0;
  
@@ -137,7 +145,7 @@ index ab32bb9..066693a 100644
      // Add a fake empty extension. See RFC 8701. This always matches
      // `ssl_add_clienthello_tlsext`, so compress it.
      uint16_t grease_ext = ssl_get_grease_value(hs, ssl_grease_extension1);
-@@ -4429,7 +4430,7 @@ static bool ssl_add_clienthello_tlsext_inner(SSL_HANDSHAKE *hs, CBB *out,
+@@ -4429,7 +4429,7 @@ static bool ssl_add_clienthello_tlsext_inner(SSL_HANDSHAKE *hs, CBB *out,
      }
    }
  
@@ -146,7 +154,7 @@ index ab32bb9..066693a 100644
      // Add a fake non-empty extension. See RFC 8701. This always matches
      // `ssl_add_clienthello_tlsext`, so compress it.
      uint16_t grease_ext = ssl_get_grease_value(hs, ssl_grease_extension2);
-@@ -4504,7 +4505,7 @@ bool ssl_add_clienthello_tlsext(SSL_HANDSHAKE *hs, CBB *out, CBB *out_encoded,
+@@ -4504,7 +4504,7 @@ bool ssl_add_clienthello_tlsext(SSL_HANDSHAKE *hs, CBB *out, CBB *out_encoded,
    hs->extensions.sent = 0;
  
    // Add a fake empty extension. See RFC 8701.
@@ -155,7 +163,7 @@ index ab32bb9..066693a 100644
        !add_padding_extension(
            &extensions, ssl_get_grease_value(hs, ssl_grease_extension1), 0)) {
      return false;
-@@ -4531,7 +4532,7 @@ bool ssl_add_clienthello_tlsext(SSL_HANDSHAKE *hs, CBB *out, CBB *out_encoded,
+@@ -4531,7 +4531,7 @@ bool ssl_add_clienthello_tlsext(SSL_HANDSHAKE *hs, CBB *out, CBB *out_encoded,
      last_was_empty = (bytes_written == 4);
    }
  
@@ -164,30 +172,76 @@ index ab32bb9..066693a 100644
      // Add a fake non-empty extension. See RFC 8701.
      if (!add_padding_extension(
              &extensions, ssl_get_grease_value(hs, ssl_grease_extension2), 1)) {
-@@ -4544,9 +4545,25 @@ bool ssl_add_clienthello_tlsext(SSL_HANDSHAKE *hs, CBB *out, CBB *out_encoded,
+@@ -4544,9 +4544,71 @@ bool ssl_add_clienthello_tlsext(SSL_HANDSHAKE *hs, CBB *out, CBB *out_encoded,
    // intolerant to the last extension being zero-length. See
    // https://crbug.com/363583.
    bool offering_psk = should_offer_psk(hs, type);
 -  if (!offering_psk && last_was_empty && !SSL_is_dtls(ssl) &&
 -      !SSL_is_quic(ssl) && !ssl->s3->used_hello_retry_request) {
 -    if (!add_padding_extension(&extensions, TLSEXT_TYPE_padding, 1)) {
-+  size_t padding_len = ssl->config->client_hello_padding_length;
++  // Upstream rule, unchanged in shape: pad so the ClientHello occupies 512 bytes
++  // while it is currently in the 256..511 window. Only the measurement differs --
++  // \`CBB_len(out)\` is unusable here because with ECH enabled the buffer also
++  // holds compression scratch space and reports roughly double the real size, so
++  // the body is walked explicitly instead.
++  //
++  // \`client_hello_padding_length\` is not a payload length. When a profile sets
++  // it, it forces this exact ClientHello total, which is how a pinned release can
++  // reproduce a size its own code would no longer produce; zero means "use the
++  // standard 512-byte rule".
++  size_t padding_len = 0;
 +  if (!SSL_is_dtls(ssl) && !SSL_is_quic(ssl) &&
-+      !ssl->s3->used_hello_retry_request &&
-+      (ssl->config->client_hello_padding_enabled || padding_len != 0)) {
-+    if (padding_len == 0 && !offering_psk && last_was_empty) {
-+      padding_len = 1;
++      !ssl->s3->used_hello_retry_request) {
++    const uint8_t *body = CBB_data(out);
++    const size_t body_cap = CBB_len(out);
++    size_t body_len = 0;
++    if (body != nullptr && body_cap > 35) {
++      const size_t session_id_len = body[34];
++      const size_t cipher_off = 35 + session_id_len;
++      if (cipher_off + 2 <= body_cap) {
++        const size_t cipher_len =
++            (static_cast<size_t>(body[cipher_off]) << 8) | body[cipher_off + 1];
++        const size_t compression_off = cipher_off + 2 + cipher_len;
++        if (compression_off + 1 <= body_cap) {
++          const size_t compression_len = body[compression_off];
++          const size_t end_off = compression_off + 1 + compression_len;
++          if (end_off <= body_cap) {
++            body_len = end_off;
++          }
++        }
++      }
 +    }
-+    const size_t msg_len = 2 /* version */ + CBB_len(out) + 2 /* extensions */ +
-+                           CBB_len(&extensions);
-+    if (padding_len == 0 && msg_len > 0xff && msg_len < 0x200) {
-+      padding_len = 0x200 - msg_len;
-+      if (padding_len >= 5) {
++    // Handshake header (4) + body + extension-list length (2) + extension block.
++    size_t header_len = 4 + body_len + 2 + CBB_len(&extensions);
++    if (getenv("MN_PAD_TRACE")) {
++      fprintf(stderr, "[t] body=%zu ext=%zu header=%zu last_empty=%d psk=%d\n",
++              body_len, (size_t)CBB_len(&extensions), header_len,
++              (int)last_was_empty, (int)offering_psk);
++    }
++
++    // The target is 512 by default; a profile may pin a different total, which is
++    // what lets a historical release reproduce a size its own code no longer
++    // produces. Everything else is the upstream rule verbatim.
++    const size_t target = ssl->config->client_hello_padding_length != 0
++                              ? static_cast<size_t>(
++                                    ssl->config->client_hello_padding_length)
++                              : 0x200;
++    if (last_was_empty && !offering_psk) {
++      padding_len = 1;
++      header_len += 4 + padding_len;
++    }
++    if (header_len > 0xff && header_len < target) {
++      if (padding_len != 0) {
++        header_len -= 4 + padding_len;
++      }
++      padding_len = target - header_len;
++      if (padding_len >= 4 + 1) {
 +        padding_len -= 4;
 +      } else {
 +        padding_len = 1;
 +      }
 +    }
++
 +    if (padding_len != 0 &&
 +        !add_padding_extension(&extensions, TLSEXT_TYPE_padding, padding_len)) {
        return false;

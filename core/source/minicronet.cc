@@ -68,9 +68,39 @@ constexpr size_t kMaxUploadBodyLength = 256u * 1024u * 1024u;
 constexpr size_t kMaxWebSocketProtocolCount = 64u;
 
 std::string HistoricalUserAgent(const minicronet::ProfileContext& profile) {
+  // Chrome 86-104 and Chrome >=105 send structurally different User-Agent
+  // strings, and the difference is the browser's own behaviour, not a capture
+  // artefact:
+  //
+  //   86-104   full version, e.g. Chrome/99.0.4844.84
+  //   >=105    User-Agent Reduction: Chrome/<major>.0.0.0
+  //
+  // Both halves are read from the reference captures for the matching major,
+  // which is why the reduction boundary lives at 105 here rather than at some
+  // rounder number. The previous table covered 99-104 only and returned an
+  // empty string below 99, so chrome_86..chrome_98 sent `minicronet/<version>`.
+  //
+  // Indexed by major - kFirstProfileMajor for the unreduced range only.
   static constexpr const char* kFullVersions[] = {
-      "99.0.4844.84", "100.0.4896.127", "101.0.4951.64",
-      "102.0.5005.115", "103.0.5060.134", "104.0.5112.101",
+      "86.0.4240.198",
+      "87.0.4280.141",
+      "88.0.4324.190",
+      "89.0.4389.128",
+      "90.0.4430.212",
+      "91.0.4472.164",
+      "92.0.4515.159",
+      "93.0.4577.82",
+      "94.0.4606.81",
+      "95.0.4638.69",
+      "96.0.4664.110",
+      "97.0.4692.99",
+      "98.0.4758.102",
+      "99.0.4844.84",
+      "100.0.4896.127",
+      "101.0.4951.67",
+      "102.0.5005.115",
+      "103.0.5060.134",
+      "104.0.5112.102",
   };
   // profile.id() is "chrome_<major>", already checked against the generated
   // table by ProfileContext::Create. This stays defence in depth so an
@@ -89,12 +119,21 @@ std::string HistoricalUserAgent(const minicronet::ProfileContext& profile) {
       return std::string();
     }
   }
-  if (major < 99) {
+  constexpr int kFirstProfileMajor = 86;
+  constexpr int kLastProfileMajor = 157;
+  // User-Agent Reduction: from this major Chrome sends <major>.0.0.0.
+  constexpr int kReducedUserAgentFirstMajor = 105;
+  static_assert(std::size(kFullVersions) ==
+                    static_cast<size_t>(kReducedUserAgentFirstMajor -
+                                        kFirstProfileMajor),
+                "one full version string per profile before the reduction");
+  if (major < kFirstProfileMajor || major > kLastProfileMajor) {
     return std::string();
   }
   const std::string version =
-      major <= 104 ? base::span(kFullVersions)[major - 99]
-                   : std::to_string(major) + ".0.0.0";
+      major < kReducedUserAgentFirstMajor
+          ? base::span(kFullVersions)[major - kFirstProfileMajor]
+          : std::to_string(major) + ".0.0.0";
   // The wire evidence in profiles/chrome-<major>/captures.json was captured
   // from a Windows desktop client, but a profile cannot claim a platform the
   // socket is not on: the token follows the host this Core is running on, the
@@ -302,6 +341,16 @@ mn_result_t MN_CALL mn_engine_create(const mn_engine_config_t *config,
   if (!minicronet::ProfileContext::Create(std::move(profile_id),
                                           std::move(profile_namespace),
                                           &profile)) {
+    return MN_ERROR_PROFILE_UNSUPPORTED;
+  }
+  // A profile records what its release could actually do. chrome_86..chrome_92
+  // have no HTTP/3 behaviour that can be reproduced from the reference
+  // evidence, so asking for a forced H3 request is answered with an error
+  // instead of silently sending a QUIC ClientHello those releases never sent.
+  // The alternative -- falling back to H2 -- would report a fidelity this build
+  // does not have; see docs/COMPATIBILITY_BOUNDARY.md.
+  if (config->protocol_mode == MN_PROTOCOL_FORCE_H3 && profile.data() &&
+      !profile.data()->h3_supported) {
     return MN_ERROR_PROFILE_UNSUPPORTED;
   }
   if (!profile.is_current()) {

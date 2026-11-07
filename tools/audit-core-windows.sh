@@ -18,10 +18,13 @@ CHROMIUM_SRC=$(resolve_chromium_src)
 # Re-baselined for the 153 -> 156.0.8078.31 upgrade and again after the size
 # pass. Re-baselined again after BoringSSL stopped being the one target still
 # built at /O2 while the rest of the DLL was at -Oz. The three committed
-# artifacts are now 9,411,584 (x86_64) / 8,114,176 (arm64) / 7,498,752 (x86), so
-# 9,411,584 * 1.02 = 9,599,816 rounds up to the 9,600,000 below. The rule is
-# unchanged: the largest artifact plus 2%, rounded up to 10,000.
-MAX_BYTES=${MAX_BYTES:-9600000}
+# artifacts are now 9,416,192 (x86_64) / 8,118,272 (arm64) / 7,501,312 (x86), so
+# 9,416,192 * 1.02 = 9,604,516 rounds up to the 9,610,000 below. The rule is
+# unchanged: the largest artifact plus 2%, rounded up to 10,000. Note that
+# 9,600,000 was already too low for this rule once the chrome_86..chrome_98
+# profiles were compiled in -- headroom had fallen to 1.91% -- which is what the
+# re-quote caught.
+MAX_BYTES=${MAX_BYTES:-9610000}
 ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 # require_rg also installs the rg() wrapper, which turns a ripgrep *error*
 # (status 2: unreadable path, bad pattern) into a failure instead of the "no

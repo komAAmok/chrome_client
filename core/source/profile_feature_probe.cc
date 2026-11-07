@@ -36,6 +36,20 @@ int main() {
       return 6;
     }
   }
+  // HTTP/3 support is a per-release fact, not a capability of this build:
+  // chrome_92 has no reference H3 capture and chrome_93 does. Asserting the
+  // boundary here is what keeps a future table edit from quietly advertising
+  // QUIC for a release that never sent it.
+  {
+    minicronet::ProfileContext c92;
+    minicronet::ProfileContext c93;
+    if (!Create("chrome_92", &c92) || !Create("chrome_93", &c93)) {
+      return 7;
+    }
+    if (c92.data()->h3_supported || !c93.data()->h3_supported) {
+      return 8;
+    }
+  }
   if (!chrome122.has_feature(minicronet::NetworkFeature::kAlpsForHttp2) ||
       chrome122.has_feature(minicronet::NetworkFeature::kTryQuicByDefault) ||
       !chrome123.has_feature(minicronet::NetworkFeature::kTryQuicByDefault) ||

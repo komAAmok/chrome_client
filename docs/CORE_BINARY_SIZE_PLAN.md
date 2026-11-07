@@ -218,17 +218,22 @@ Top 符号：
 
 1. **上限随精简收紧**（已有机制，执行纪律问题）：每完成一项，三档 MAX_BYTES
    同步下调到「新体积 + 2%」，结束「贴线 4 KB」状态。
-2. **段级漂移监控（新增）**：`tools/audit-core-linux.sh` 增加段级断言——
+2. **段级漂移监控（计划，未实现）**：`tools/audit-core-linux.sh` 增加段级断言——
    `.text`/`.rodata` 超过基线 +1% 即失败，比总字节数更早发现代码膨胀。
-3. **profile 表增量门禁（新增）**：当前 34 KB / 57 个 profile（trust anchor 数组
-   占 186 B×N）。每个新 profile 的合理增量 < 1 KB（共享去重已生效）；把
-   「单 profile 增量」写进 audit，防止未来 profile 泛滥。
+   **现状：没有这段断言**（`grep -n 'rodata' tools/audit-core-linux.sh` 无结果），
+   所以这里记的是待办，不是已完成项。
+3. **profile 表增量门禁（计划，未实现）**：写这条时的表是 34 KB / 57 个 profile
+   （trust anchor 数组占 186 B×N）；现在是 46,764 字节 / 72 个 profile，平均每个
+   profile 约 650 字节。把「单 profile 增量 < 1 KB」写进 audit 可以防止未来 profile
+   泛滥——**现状：没有这条门禁**。已有的四条 profile 门禁（`audit-padding-rule`、
+   `audit-tls-version-range`、`audit-h1-alps-absence`、`audit-h3-profile-support`）
+   断的是内容正确性，不是体积增量。
 
 ### 4.3 收益汇总（linux-x86_64，按采纳组合）
 
 | 组合 | 预期体积 | 相对当前 |
 | --- | --- | --- |
-| 当前 | 9,045,864 | — |
+| 当前 | 8,367,664 | — |
 | P1（padding + -Oz 达下限） | ≈ 8,955,000 | −1.0% |
 | P1 + P2 全部（不含 HSTS） | ≈ 8,505,000 | −6.0% |
 | 全部含 HSTS | ≈ 7,720,000 | **−14.7%** |
@@ -531,6 +536,11 @@ simdutf 本来就没什么向量化可关。ARM64 的 0.2% 同理。
 
 升级刚完成时 Windows 只剩 3,328 字节余量（0.03%），**任何新增 profile 都会顶破门禁**——
 这正是 1.4-1 记录、6.6 节要消除的「贴线」状态。本轮把三档的最小余量都拉回 2% 以上。
+
+**这张表是那一轮的历史记录，不是当前值。** 之后又重建了三轮（BoringSSL 尺寸档、156 内核、
+chrome_86..chrome_98 加入 profile 表），当前上限是 Linux 8,540,000 / Windows 9,610,000 /
+macOS 8,120,000，见 `docs/BASELINE_LINUX_X86_64.md` 与 `docs/PROJECT_STATUS.md` 的「当前默认上限」。
+要查当前值，直接读 `tools/audit-core-*.sh` 的 `MAX_BYTES`：那三行是唯一权威。
 
 ## 八、执行结果（2026-11，BoringSSL 尺寸档）
 

@@ -23,6 +23,7 @@ import base64
 import hashlib
 import http.client
 import json
+import pathlib
 import re
 import ssl
 import sys
@@ -50,6 +51,56 @@ FILES = {
     "tls": ("chromium", "net/socket/ssl_client_socket_impl.cc"),
     "websocket": ("chromium", "net/websockets/websocket_basic_handshake_stream.cc"),
 }
+
+# Historical path eras. The audited surface moved inside BoringSSL and
+# QUICHE, so a single path table can only describe one release. Each entry names
+# the first major that uses the paths below it; resolution picks the newest entry
+# whose major is <= the profile's. Without this, chrome_86..chrome_92 resolve
+# `ssl/extensions.cc` to a 404 and the collector cannot tell "that file did not
+# exist yet" apart from "the fetch failed".
+#
+# Verified against the tags themselves:
+#   86..92   BoringSSL  ssl/extensions.cc absent, TLS extension code in ssl/t1_lib.cc
+#            QUICHE     quic/... (the quiche/ rename had not happened)
+#            BoringSSL random  crypto/fipsmodule/rand/rand.c
+#   93..98   BoringSSL  ssl/extensions.cc exists, ssl/t1_lib.cc no longer does
+#   99..151  QUICHE     quic/... still
+#   152..    QUICHE     quiche/... prefix
+PATH_ERAS = [
+    (86, {
+        "boringssl_extensions": "ssl/t1_lib.cc",
+        "boringssl_random": "crypto/fipsmodule/rand/rand.c",
+        "quiche_h3": "quic/core/quic_config.cc",
+        "quiche_random": "quic/core/crypto/quic_random.h",
+    }),
+    (93, {
+        "boringssl_extensions": "ssl/extensions.cc",
+        "boringssl_random": "crypto/fipsmodule/rand/rand.c",
+        "quiche_h3": "quic/core/quic_config.cc",
+        "quiche_random": "quic/core/crypto/quic_random.h",
+    }),
+    (152, {
+        "boringssl_extensions": "ssl/extensions.cc",
+        "boringssl_random": "crypto/rand/rand.cc",
+        "quiche_h3": "quiche/quic/core/quic_config.cc",
+        "quiche_random": "quiche/common/quiche_random.cc",
+    }),
+]
+
+
+def profile_major(tag):
+    return int(tag.split(".", 1)[0])
+
+
+def resolve_path(tag, name):
+    """Returns the upstream path this release actually has for `name`."""
+    major = profile_major(tag)
+    path = FILES[name][1]
+    for first, mapping in PATH_ERAS:
+        if major >= first and name in mapping:
+            path = mapping[name]
+    return path
+
 
 # Signal name -> regex, per category. These are the patterns the original
 # pipeline used (new/tools/extract-historical-random-strategies.py and
@@ -188,7 +239,7 @@ def signal_lines(text, markers):
     return out
 
 
-def collect(tag):
+def collect(tag, sources_out=None):
     revisions = deps_revisions(tag)
     refs = {
         "chromium": (CHROMIUM, f"refs/tags/{tag}"),
@@ -196,7 +247,8 @@ def collect(tag):
         "quiche": (QUICHE, revisions["quiche_revision"]),
     }
     source_files = {}
-    for name, (repo, path) in FILES.items():
+    for name, (repo, _default_path) in FILES.items():
+        path = resolve_path(tag, name)
         base, ref = refs[repo]
         blob = fetch(base, ref, path)
         text = blob.decode("utf-8", "replace")
@@ -207,6 +259,12 @@ def collect(tag):
             "sha256": hashlib.sha256(blob).hexdigest(),
             "signals": signal_lines(text, MARKERS_FOR_FILE[name]),
         }
+        if sources_out:
+            # Flattened name, matching what build-profile-entry.py's
+            # source_values_and_markers() reads.
+            target = pathlib.Path(sources_out) / tag
+            target.mkdir(parents=True, exist_ok=True)
+            (target / name).write_bytes(blob)
         print(f"  {name:28} {len(blob):>8} bytes  {source_files[name]['sha256'][:16]}",
               file=sys.stderr, flush=True)
     return {
@@ -223,13 +281,17 @@ def main():
     parser.add_argument("--version", action="append", required=True,
                         help="release tag, e.g. 152.0.7977.83; repeatable")
     parser.add_argument("--out")
+    parser.add_argument("--sources-out",
+                        help="directory to write each release's raw audited files "
+                             "into (one subdirectory per tag), so "
+                             "build-profile-entry.py can recompute their markers")
     args = parser.parse_args()
 
     collected = {}
     for tag in args.version:
         print(f"{tag}:", file=sys.stderr, flush=True)
         try:
-            collected[tag] = collect(tag)
+            collected[tag] = collect(tag, sources_out=args.sources_out)
         except (urllib.error.HTTPError, urllib.error.URLError) as error:
             raise SystemExit(f"{tag}: fetch failed: {error}")
 

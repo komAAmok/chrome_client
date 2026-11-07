@@ -1,0 +1,135 @@
+{
+  "schema": "chrome_client.profile_samples.v1",
+  "profile_id": "chrome_151",
+  "protocol": "h3",
+  "target": "https://quic.tools.scrapfly.io/api/fp/quic",
+  "version": "151.0.7922.174",
+  "samples": [
+    {
+      "index": 1,
+      "capturedAt": "2026-11-06T13:05:26.780Z",
+      "durationMs": 3532,
+      "status": 200,
+      "checks": {
+        "ja4": "q13d0311h3_55b375c5d22e_653d80c3fe9d",
+        "ja4Hash": "60a690bee826",
+        "h3Hash": "049704d97f9b",
+        "h3Text": "1:65536;6:262144;7:100;51:1;GREASE",
+        "quicVersion": "QUICv1",
+        "tlsVersion": "TLS 1.3",
+        "cipher": "TLS_AES_128_GCM_SHA256",
+        "clientRandom": "235585cf89d0b98dfa0e424c7658baf6cc5427f098e0755e42f9f6ee8cec7ccc",
+        "sourceConnectionId": "b3d410aa",
+        "destinationConnectionId": "5bef2584c570a33b",
+        "zeroRtt": false,
+        "resumed": false,
+        "fallback": false
+      }
+    },
+    {
+      "index": 2,
+      "capturedAt": "2026-11-06T13:05:25.171Z",
+      "durationMs": 1747,
+      "status": 200,
+      "checks": {
+        "ja4": "q13d0311h3_55b375c5d22e_653d80c3fe9d",
+        "ja4Hash": "60a690bee826",
+        "h3Hash": "049704d97f9b",
+        "h3Text": "1:65536;6:262144;7:100;51:1;GREASE",
+        "quicVersion": "QUICv1",
+        "tlsVersion": "TLS 1.3",
+        "cipher": "TLS_AES_128_GCM_SHA256",
+        "clientRandom": "1f14a75c17253cb253fc9e4371ea5d9c77ab1cf02348f0160e7ab6c35f35ed32",
+        "sourceConnectionId": "66507b8a",
+        "destinationConnectionId": "6eddabd665fd9765",
+        "zeroRtt": false,
+        "resumed": false,
+        "fallback": false
+      }
+    },
+    {
+      "index": 3,
+      "capturedAt": "2026-11-06T13:05:25.402Z",
+      "durationMs": 1651,
+      "status": 200,
+      "checks": {
+        "ja4": "q13d0311h3_55b375c5d22e_653d80c3fe9d",
+        "ja4Hash": "60a690bee826",
+        "h3Hash": "049704d97f9b",
+        "h3Text": "1:65536;6:262144;7:100;51:1;GREASE",
+        "quicVersion": "QUICv1",
+        "tlsVersion": "TLS 1.3",
+        "cipher": "TLS_AES_128_GCM_SHA256",
+        "clientRandom": "92d5d1ea4a372f33ca002ecbfab20394f3cea9b28349747a9fcf5f6a550bcc28",
+        "sourceConnectionId": "9cbaf0b9",
+        "destinationConnectionId": "4c2807c282825dec",
+        "zeroRtt": false,
+        "resumed": false,
+        "fallback": false
+      }
+    },
+    {
+      "index": 4,
+      "capturedAt": "2026-11-06T13:05:26.872Z",
+      "durationMs": 1767,
+      "status": 200,
+      "checks": {
+        "ja4": "q13d0311h3_55b375c5d22e_653d80c3fe9d",
+        "ja4Hash": "60a690bee826",
+        "h3Hash": "049704d97f9b",
+        "h3Text": "1:65536;6:262144;7:100;51:1;GREASE",
+        "quicVersion": "QUICv1",
+        "tlsVersion": "TLS 1.3",
+        "cipher": "TLS_AES_128_GCM_SHA256",
+        "clientRandom": "dd7372ddc0b5fc38d021f7e7d7571bfde385e24333da4d3b1c909f284a99061d",
+        "sourceConnectionId": "fec395b9",
+        "destinationConnectionId": "afe720ba95c56ce3",
+        "zeroRtt": false,
+        "resumed": false,
+        "fallback": false
+      }
+    },
+    {
+      "index": 5,
+      "capturedAt": "2026-11-06T13:05:26.792Z",
+      "durationMs": 1284,
+      "status": 200,
+      "checks": {
+        "ja4": "q13d0311h3_55b375c5d22e_653d80c3fe9d",
+        "ja4Hash": "60a690bee826",
+        "h3Hash": "049704d97f9b",
+        "h3Text": "1:65536;6:262144;7:100;51:1;GREASE",
+        "quicVersion": "QUICv1",
+        "tlsVersion": "TLS 1.3",
+        "cipher": "TLS_AES_128_GCM_SHA256",
+        "clientRandom": "0cabe1746e9de142cc4168f112eb0d525a59c29306855249949e9c771de4c5ab",
+        "sourceConnectionId": "32f6ec67",
+        "destinationConnectionId": "a54de1b787db08de",
+        "zeroRtt": false,
+        "resumed": false,
+        "fallback": false
+      }
+    },
+    {
+      "index": 6,
+      "capturedAt": "2026-11-06T13:05:27.365Z",
+      "durationMs": 1566,
+      "status": 200,
+      "checks": {
+        "ja4": "q13d0311h3_55b375c5d22e_653d80c3fe9d",
+        "ja4Hash": "60a690bee826",
+        "h3Hash": "049704d97f9b",
+        "h3Text": "1:65536;6:262144;7:100;51:1;GREASE",
+        "quicVersion": "QUICv1",
+        "tlsVersion": "TLS 1.3",
+        "cipher": "TLS_AES_128_GCM_SHA256",
+        "clientRandom": "4293e4e49489d29a19e80385463381f84894a9cc64c7cea6ddac3a33b84f851e",
+        "sourceConnectionId": "4446988c",
+        "destinationConnectionId": "0fed55f8005f5ad5",
+        "zeroRtt": false,
+        "resumed": false,
+        "fallback": false
+      }
+    }
+  ]
+}

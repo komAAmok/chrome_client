@@ -1,3 +1,19 @@
+# Legacy: the browserleaks capture pipeline (pre-migration)
+
+> **This file describes a pipeline this repository no longer runs.** It
+> documents the `raw/` directory layout of the browserleaks captures that used
+> to live under `profiles/chrome-<major>/raw/`, and how
+> `tools/validate-wire-profile.py` verified them. Those directories are gone:
+> `profiles/` now holds the reference captures imported by
+> `tools/import-reference-captures.py`, one directory per release, three
+> protocols each -- see [`README.md`](README.md).
+>
+> Kept because `profiles/wire_expectations.json` and
+> `tools/validate-wire-profile.py` still exist and this explains what they
+> were for. Nothing below is a description of the current tree.
+
+---
+
 # profiles/chrome-<major>/raw/
 
 The original wire captures behind each profile's `wire_verified`, committed so a
@@ -52,9 +68,17 @@ The wrapper walks `profiles/chrome-<major>/raw/`, pairs each `response-N.json`
 with its `session-N.pcap`/`run-N.pcap`, and runs
 `tools/validate-wire-profile.py` (the original browserleaks gate, migrated from
 the pre-migration tree) against
-`profiles/wire_expectations.json`. It exits non-zero unless every major has at
-least one capture directory that reports `stable_match: true` with the
+`profiles/wire_expectations.json`. For every major it can see, it exits non-zero
+unless at least one capture directory reports `stable_match: true` with the
 randomness checks passing.
+
+**Coverage, stated honestly**: it can see 53 of the 72 profiles -- `chrome_99`
+through `chrome-151`. The other 19 have no `raw/` directory holding
+`response-*.json`, so this wrapper cannot verify them at all: `chrome_86`..
+`chrome_98` keep their captures as a single `captures.json` (verified by
+`tools/verify-wire-capture.py`, not by this wrapper), and `chrome-152`..`chrome-157`
+likewise ship `captures.json` without `raw/`. A major with no capture directory
+is counted as skipped, not as verified -- check the summary line for the split.
 
 `tools/validate-wire-profile.py` and `profiles/wire_expectations.json` are
 committed for exactly this reason: without them the captures would be an archive

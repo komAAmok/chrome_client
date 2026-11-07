@@ -412,7 +412,7 @@ index fb68e214d6d..a38f4f6bed4 100644
    return base::Seconds(30);
  }
  
-@@ -141,6 +138,15 @@ struct NET_EXPORT QuicParams {
+@@ -141,6 +138,20 @@ struct NET_EXPORT QuicParams {
    // Set of QUIC tags to send in the handshake's connection options that only
    // affect the client.
    quic::QuicTagVector client_connection_options;
@@ -425,6 +425,11 @@ index fb68e214d6d..a38f4f6bed4 100644
 +  // Chrome 145 also sent Google's legacy version-information transport
 +  // parameter alongside RFC 9368 version_information.
 +  bool send_legacy_version_information = false;
++  // Which HTTP/3 datagram extension the profile advertises in SETTINGS. The
++  // extension is SETTINGS_H3_DATAGRAM (51). Captured boundaries: chrome_93..
++  // chrome_119 do not send it, chrome_120 and later do, so this is per-release
++  // state and cannot follow the process FeatureList. kNone keeps it off.
++  bool advertise_h3_datagram = true;
    // Enables experimental optimization for receiving data in UDPSocket.
    bool enable_socket_recv_optimization = false;
  
@@ -878,3 +883,72 @@ index 842c8b06333..117d4596035 100644
  
    // If set, sessions will be marked as going away upon relevant network changes
    // (instead of being closed).
+diff --git a/net/quic/quic_chromium_client_session.cc b/net/quic/quic_chromium_client_session.cc
+index 6dc27c56233..4bbe39631f2 100644
+--- a/net/quic/quic_chromium_client_session.cc
++++ b/net/quic/quic_chromium_client_session.cc
+@@ -1034,6 +1034,7 @@ QuicChromiumClientSession::QuicChromiumClientSession(
+     std::unique_ptr<SocketPerformanceWatcher> socket_performance_watcher,
+     const ConnectionEndpointMetadata& metadata,
+     bool enable_origin_frame,
++    bool advertise_h3_datagram,
+     bool allow_server_preferred_address,
+     MultiplexedSessionCreationInitiator session_creation_initiator,
+     const NetLogWithSource& net_log,
+@@ -1081,6 +1082,7 @@ QuicChromiumClientSession::QuicChromiumClientSession(
+       ssl_config_service_(ssl_config_service),
+       server_info_(std::move(server_info)),
+       enable_origin_frame_(enable_origin_frame),
++      advertise_h3_datagram_(advertise_h3_datagram),
+       task_runner_(task_runner),
+       net_log_(NetLogWithSource::Make(net_log.net_log(),
+                                       NetLogSourceType::QUIC_SESSION)),
+@@ -1343,6 +1345,12 @@ void QuicChromiumClientSession::RemoveConnectivityObserver(
+ 
+ // TODO(zhongyi): replace migration_session_* booleans with
+ // ConnectionMigrationMode.
++quic::HttpDatagramSupport
++QuicChromiumClientSession::LocalHttpDatagramSupport() {
++  return advertise_h3_datagram_ ? quic::HttpDatagramSupport::kRfc
++                                : quic::HttpDatagramSupport::kNone;
++}
++
+ ConnectionMigrationMode QuicChromiumClientSession::connection_migration_mode()
+     const {
+   if (migrate_session_early_v2_) {
+diff --git a/net/quic/quic_chromium_client_session.h b/net/quic/quic_chromium_client_session.h
+index b8d60c58ea7..7526de6526a 100644
+--- a/net/quic/quic_chromium_client_session.h
++++ b/net/quic/quic_chromium_client_session.h
+@@ -672,6 +672,7 @@ class NET_EXPORT_PRIVATE QuicChromiumClientSession
+       std::unique_ptr<SocketPerformanceWatcher> socket_performance_watcher,
+       const ConnectionEndpointMetadata& metadata,
+       bool enable_origin_frame,
++      bool advertise_h3_datagram,
+       bool allow_server_preferred_address,
+       MultiplexedSessionCreationInitiator session_creation_initiator,
+       const NetLogWithSource& net_log,
+@@ -694,6 +695,12 @@ class NET_EXPORT_PRIVATE QuicChromiumClientSession
+   // Returns the session's connection migration mode.
+   ConnectionMigrationMode connection_migration_mode() const;
+ 
++  // quic::QuicSpdySession override. This is the single place the SETTINGS 51
++  // (H3_DATAGRAM) value is decided: FillSettingsFrame() switches on it, so a
++  // release that never advertised the extension must report kNone rather than
++  // inheriting today's kRfc.
++  quic::HttpDatagramSupport LocalHttpDatagramSupport() override;
++
+   // Returns true if the connection was ever used to create a stream,
+   // including cases where the stream creation failed.
+   bool was_ever_used_to_create_streams() const;
+@@ -1247,6 +1254,10 @@ class NET_EXPORT_PRIVATE QuicChromiumClientSession
+   bool pkp_bypassed_ = false;
+   bool is_fatal_cert_error_ = false;
+   const bool enable_origin_frame_;
++
++  // Replaces quic::QuicSpdySession's default for this connection. See
++  // QuicParams::advertise_h3_datagram.
++  const bool advertise_h3_datagram_;
+   HandleSet handles_;
+   StreamRequestQueue stream_requests_;
+   std::vector<CompletionOnceCallback> waiting_for_confirmation_callbacks_;

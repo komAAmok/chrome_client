@@ -26,6 +26,17 @@ symbols=(
   mn_websocket_cancel
 )
 
+# The first and last profile the compiled table carries. Derived from the
+# generated header rather than written here, so adding a profile cannot leave
+# this audit asserting an old range.
+profile_table="$ROOT/core/source/minicronet/profile_table_generated.h"
+[[ -f "$profile_table" ]] \
+  || die "missing $profile_table; the compiled profile table is the source of truth for the supported range"
+mapfile -t profile_ids < <(grep -oE '"chrome_[0-9]+"' "$profile_table" | tr -d '"')
+[[ ${#profile_ids[@]} -gt 0 ]] \
+  || die "no profile ids in $profile_table"
+profile_span=("${profile_ids[0]}" "${profile_ids[-1]}")
+
 die() { printf 'audit: %s\n' "$*" >&2; exit 1; }
 
 tmpdir="$(mktemp -d)"
@@ -157,6 +168,25 @@ PY
   # HTTP Basic and Digest decode a challenge's realm with
   # base::ConvertToUtf8AndNormalize(..., kCharsetLatin1, ...), which resolves
   # "ISO-8859-1" to the windows-1252-html converter table. When the ICU dataset
+
+  # Every artifact must have been built from the profile table this repository
+  # currently ships. Nothing checked that before, and the result was a release
+  # where one platform was rebuilt with chrome_86..chrome_98 and the other seven
+  # still carried the older table: the manifests matched, the SHA-256s matched,
+  # every other line of this audit was green, and impersonate="chrome_86"
+  # raised ImpersonateError on seven of eight platforms while the Python facade
+  # advertised the 86..157 range to all of them.
+  #
+  # The profile ids are string literals in the artifact, so the two ends of the
+  # range are a direct witness to which table was compiled in. Both ends are
+  # checked, because widening backwards (86) and forwards (157) fail
+  # independently, and a stale artifact can miss either one. Size ceilings and
+  # SHA-256 cannot see this: a rebuild with the old table is a perfectly
+  # consistent artifact.
+  for profile_id in "${profile_span[@]}"; do
+    grep -aq "$profile_id" "$path" \
+      || die "$target: artifact does not contain profile $profile_id; it was built from an older profile table than core/source/minicronet/profile_table_generated.h, so the range this build advertises differs from what it serves"
+  done
   # left conversion_mappings out, ucnv_open failed, no auth handler was created,
   # and every realm-carrying 407/401 was silently dropped -- the credentials
   # were never sent and nothing was logged. The resource name is the one string

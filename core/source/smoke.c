@@ -341,9 +341,12 @@ static void test_profile_gate(void) {
   mn_engine_config_t config = {0};
   config.size = sizeof(config);
   config.version = MN_ABI_VERSION;
-  config.profile_id = "chrome_98";
+  // A major that no compiled profile covers. chrome_98 used to serve here and
+  // stopped being "unknown" the moment the table grew back to 86; the gate is
+  // about ids the build cannot serve, so pick one outside the range.
+  config.profile_id = "chrome_85";
   config.profile_id_length = strlen(config.profile_id);
-  config.profile_namespace = "minicronet/chrome_98";
+  config.profile_namespace = "minicronet/chrome_85";
   config.profile_namespace_length = strlen(config.profile_namespace);
 
   mn_engine_t *engine = NULL;
@@ -355,6 +358,22 @@ int main(int argc, char **argv) {
   CHECK(mn_abi_version() == MN_ABI_VERSION);
   CHECK(strlen(mn_version_string()) > 0);
   test_profile_gate();
+
+  // The oldest profile the table carries. Moving the lower bound back to 86 was
+  // a real change -- chrome_86 used to fall through to "unknown id" -- and
+  // nothing asserted the new bound, so a table that lost the 86..98 range again
+  // would still have passed this smoke.
+  mn_engine_config_t oldest = {0};
+  oldest.size = sizeof(oldest);
+  oldest.version = MN_ABI_VERSION;
+  oldest.profile_id = "chrome_86";
+  oldest.profile_id_length = strlen(oldest.profile_id);
+  oldest.profile_namespace = "minicronet/chrome_86";
+  oldest.profile_namespace_length = strlen(oldest.profile_namespace);
+  mn_engine_t *oldest_engine = NULL;
+  CHECK(mn_engine_create(&oldest, &oldest_engine) == MN_OK);
+  CHECK(oldest_engine != NULL);
+  mn_engine_release(oldest_engine);
 
   mn_engine_config_t historical = {0};
   historical.size = sizeof(historical);

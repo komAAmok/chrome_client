@@ -1,0 +1,81 @@
+{
+  "schema": "chrome_client.profile_captures.v1",
+  "profile_id": "chrome_111",
+  "major": 111,
+  "version": "111.0.5563.147",
+  "reference": {
+    "protocols": {
+      "h2": {
+        "source_file": "tls-results.json",
+        "target": "https://tls.peet.ws/api/all",
+        "executablePath": "downloads\\111.0.5563.147\\111.0.5563.147\\chrome.exe",
+        "folderVersion": "111.0.5563.147",
+        "status": {
+          "collected": 6,
+          "total": 6,
+          "complete": true,
+          "distinctSessions": 6,
+          "freshSessions": true
+        }
+      },
+      "h1": {
+        "source_file": "tls-results-h1.json",
+        "target": "https://tls.peet.ws/api/all",
+        "executablePath": "downloads\\111.0.5563.147\\111.0.5563.147\\chrome.exe",
+        "folderVersion": "111.0.5563.147",
+        "status": {
+          "collected": 6,
+          "total": 6,
+          "complete": true,
+          "distinctSessions": 6,
+          "freshSessions": true
+        }
+      },
+      "h3": {
+        "source_file": "tls-results-h3.json",
+        "target": "https://quic.tools.scrapfly.io/api/fp/quic",
+        "executablePath": "downloads\\111.0.5563.147\\111.0.5563.147\\chrome.exe",
+        "folderVersion": "111.0.5563.147",
+        "status": {
+          "collected": 6,
+          "total": 6,
+          "complete": true,
+          "distinctSessions": 6,
+          "freshSessions": true
+        }
+      }
+    }
+  },
+  "protocols": {
+    "h2": {
+      "captured": 6,
+      "status": {
+        "collected": 6,
+        "total": 6,
+        "complete": true,
+        "distinctSessions": 6,
+        "freshSessions": true
+      }
+    },
+    "h1": {
+      "captured": 6,
+      "status": {
+        "collected": 6,
+        "total": 6,
+        "complete": true,
+        "distinctSessions": 6,
+        "freshSessions": true
+      }
+    },
+    "h3": {
+      "captured": 6,
+      "status": {
+        "collected": 6,
+        "total": 6,
+        "complete": true,
+        "distinctSessions": 6,
+        "freshSessions": true
+      }
+    }
+  }
+}

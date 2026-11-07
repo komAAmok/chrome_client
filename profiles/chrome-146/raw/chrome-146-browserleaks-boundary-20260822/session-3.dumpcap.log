@@ -1,5 +1,0 @@
-Capturing on 'ens33'
-File: captures/chrome-146-browserleaks-boundary-20260822/session-3.pcap
-
-Packets captured: 45
-Packets received/dropped on interface 'ens33': 45/0 (pcap:0/dumpcap:0/flushed:0/ps_ifdrop:0) (100.0%)

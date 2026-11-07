@@ -710,9 +710,9 @@ class CurlCffiSurfaceTests(Base):
 
     def test_available_profiles_has_no_family_names(self):
         profiles = chrome_client.available_profiles()
-        self.assertEqual(profiles[0], "chrome_99")
+        self.assertEqual(profiles[0], "chrome_86")
         self.assertEqual(profiles[-1], "chrome_157")
-        self.assertEqual(len(profiles), 157 - 99 + 1)
+        self.assertEqual(len(profiles), 157 - 86 + 1)
         for name in profiles:
             self.assertRegex(name, r"^chrome_\d+$")
 

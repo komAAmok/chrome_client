@@ -90,7 +90,8 @@ apply_patch minicronet-core.patch . \
 apply_patch profile-context-net.patch . \
   'net/http/http_network_session.h:send_http2_enable_push_setting' \
   'net/socket/ssl_client_socket_impl.cc:const bool has_profile =' \
-  'net/socket/socket_pool_additional_capacity.cc:#if BUILDFLAG(MINICRONET_BUILD)'
+  'net/socket/socket_pool_additional_capacity.cc:#if BUILDFLAG(MINICRONET_BUILD)' \
+  'net/quic/quic_chromium_client_session.h:advertise_h3_datagram'
 apply_patch profile-priority-header-net.patch . \
   'net/http/http_network_session.h:send_priority_header'
 apply_patch profile-tls-net.patch . \
@@ -114,6 +115,7 @@ apply_patch profile-boringssl.patch third_party/boringssl/src \
   'include/openssl/ssl.h:SSL_set_grease_sigalgs_enabled' \
   'include/openssl/ssl.h:SSL_set_client_hello_padding_length' \
   'include/openssl/ssl.h:SSL_GROUP_X25519_KYBER768' \
+  'ssl/extensions.cc:body_len' \
   'ssl/ssl_key_share.cc:SSL_GROUP_X25519_KYBER768'
 apply_patch icu-minicronet-data.patch third_party/icu \
   'BUILD.gn:data_dir = "minicronet"'

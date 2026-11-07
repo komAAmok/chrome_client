@@ -30,7 +30,7 @@ WebSocket。无法用 Chromium 忠实实现的选项会显式报错，而不是�
 SHA-256 和依赖清单。ABI 当前为 v8。Go 和 Node.js 目录目前是绑定设计说明，
 不是已发布的可安装包。
 
-Core 体积在 7.7–10.2 MB 之间（macOS ARM64 最小，Windows x86_64 最大，静态 MSVC/UCRT
+Core 体积在 7.3–9.4 MB 之间（macOS ARM64 最小，Windows x86_64 最大，静态 MSVC/UCRT
 多出约 2 MB）。IDNA-only 的 ICU 数据已编入库中，所以不需要外挂 `icudtl.dat`；用不到的
 磁盘缓存后端不进链接产物。各平台的体积上限由 `tools/audit-core-*.sh` 把关，超了直接
 构建失败。
@@ -52,12 +52,14 @@ Core 体积在 7.7–10.2 MB 之间（macOS ARM64 最小，Windows x86_64 最大
 `chrome<major>` 别名）。**不接受**裸的 `chrome`/`chromium`：那会解析到本构建恰好
 最后收录的 profile，一旦新增 profile，调用方的指纹就会在无人要求的情况下改变，
 因此抛 `ImpersonateError` 并要求写明确切版本。当前支持
-Chrome 99–157，共 59 个 profile；范围外的版本抛 `ImpersonateError`，不会静默降级。
+Chrome 86–157，共 72 个 profile；范围外的版本抛 `ImpersonateError`，不会静默降级。
 `available_profiles()` 返回完整列表。Edge、Safari、Firefox、Tor 等非 Chromium 目标
 同样显式报错，而不是当作 Chrome 处理。
 
 | Chrome 主版本 | 可用 profile |
 | --- | --- |
+| 86–92 | `chrome_86` … `chrome_92`（各自 tag 独立审计；无 ALPS 扩展，H3 基准缺失，见 `docs/CHROME_86_98_SUPPORT.md`） |
+| 93–98 | `chrome_93` … `chrome_98` |
 | 99–105 | `chrome_99` … `chrome_105` |
 | 106–112 | `chrome_106` … `chrome_112` |
 | 113–119 | `chrome_113` … `chrome_119` |
@@ -116,7 +118,7 @@ from chrome_client import Session
 
 with Session(impersonate="chrome_155") as session:
     session.get(url, timeout=(5, 15))
-    # 悬停 impersonate= 会列出 chrome_99 … chrome_155，以及 curl-cffi 的
+    # 悬停 impersonate= 会列出 chrome_86 … chrome_157，以及 curl-cffi 的
     # chrome<major> 别名；裸 chrome/chromium 会被拒绝
     # session.get(...) 会补全 headers/cookies/data/json/timeout/proxies/verify/...
 ```
@@ -295,6 +297,15 @@ profile：这也是 `ja3=`、`akamai=`、`perk=` 和大部分 `extra_fp` 字段�
 ClientHello，等于谎报保真度。`extra_fp` 中 facade 能真正实现的两项会被采纳：
 `header_order` 和 `form_boundary`。
 
+**`http_version=v1` 的 ALPN 与 ALPS 是有意的差异，不是指纹缺陷。** 强制 HTTP/1.1 时
+ALPN 只发 `http/1.1`；ALPS（扩展 17613）也随之为空——Chromium 只对 `alpn_protos`
+里存在的协议声明 ALPS，而 `application_settings` 表只装了 h2 的条目
+（`net/socket/ssl_client_socket_impl.cc` 的 `alpn_protos` 循环）。真实 Chrome 走同一路径，
+基准里的 h1 抓包同样没有该扩展。因此用 peetprint 对照时，**`v1` 要对 h1 抓包，
+normal/H2 才对 h2 抓包**；拿 `v1` 去对 h2 抓包必然只报这两处。`trust_anchors`（0xca34）
+与协议无关，h1 下照常发送，不要把它一并当成"h1 本该没有"。
+门禁见 `tools/audit-h1-alps-absence.py`。
+
 **默认请求头不是 profile 数据。** `impersonate` 只把 `User-Agent` 的版本串换成
 对应 Chrome 版本，它**不会**补上 Chrome 实际发送的
 `sec-ch-ua`/`sec-ch-ua-mobile`/`sec-ch-ua-platform`、`Sec-Fetch-*` 或 `Accept`。
@@ -308,7 +319,7 @@ ABI v9，见 [`docs/NEXT_STEPS.md`](https://github.com/komAAmok/chrome_client/bl
 （`net/spdy/spdy_http_utils.cc` 的 `CreateSpdyHeadersFromHttpRequest`），不经
 URLLoader。因此 chrome_124 起的 profile 会自动带上它，取值由请求优先级决定——
 这些 profile 的默认优先级是 `highest`，发出的正是真实 Chrome 导航的
-`priority: u=0, i`；chrome_99–123 不发这个头，与它们的抓包一致。HTTP/1.1 上不发。
+`priority: u=0, i`；chrome_86–123 不发这个头，与它们的抓包一致。HTTP/1.1 上不发。
 
 不受支持而显式报错的还有：`cert=`（客户端证书）、`interface=`、`doh_url=`、
 `curl_options=`、`max_recv_speed=`、`referer=`。`referer` 尤其容易误判：Chromium

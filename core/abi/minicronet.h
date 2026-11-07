@@ -83,6 +83,13 @@ typedef enum mn_http_cache_mode {
   MN_HTTP_CACHE_DISABLED = 1,
 } mn_http_cache_mode_t;
 
+/* A profile records what its release could actually do, and HTTP/3 is not
+   uniform across them. MN_PROTOCOL_FORCE_H3 with a profile whose release has no
+   HTTP/3 behaviour to reproduce (chrome_86..chrome_92) is rejected with
+   MN_ERROR_PROFILE_UNSUPPORTED at engine creation. The Core does not fall back
+   to another protocol and does not send a QUIC ClientHello that release never
+   sent: an error is the only answer that does not misreport the fingerprint.
+   MN_PROTOCOL_NATIVE and the H1/H2 pins are unaffected. */
 typedef enum mn_protocol_mode {
   /* Chromium chooses the protocol and may use its normal fallback policy. */
   MN_PROTOCOL_NATIVE = 0,

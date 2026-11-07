@@ -1,0 +1,923 @@
+{
+  "schema": "chrome_client.profile_source_evidence.v1",
+  "profile_id": "chrome_93",
+  "chrome_version": "93.0.4577.82",
+  "chromium_tag": "93.0.4577.82",
+  "chromium_commit": "f2d6656bdf16198c04b70efd1952dace3ed7dd8f",
+  "boringssl_revision": "a10017c548b0805eb98e7847c37370dbd37cd8d6",
+  "quiche_revision": "80f93811e1e6b737feb1324eddbe0ef8e435b78d",
+  "source": "extracted from profiles/normalized_profiles.json",
+  "source_files": {
+    "alpn": {
+      "bytes": 20046,
+      "path": "net/http/http_network_session.cc",
+      "sha256": "e85be9e7292806216bb95d4855d391ca7a1a2dea9fd8d63e54b8542a48def462",
+      "signals": {
+        "alpn": {
+          "count": 1,
+          "lines": [
+            368
+          ]
+        },
+        "h1": {
+          "count": 1,
+          "lines": [
+            216
+          ]
+        },
+        "h2": {
+          "count": 31,
+          "lines": [
+            46,
+            52,
+            54,
+            55,
+            56,
+            58,
+            59,
+            60,
+            62,
+            63,
+            64,
+            67,
+            68,
+            69,
+            72,
+            73,
+            74,
+            77,
+            89,
+            92,
+            94,
+            95,
+            181,
+            185,
+            186,
+            187,
+            208,
+            209,
+            210,
+            211,
+            212
+          ]
+        },
+        "h3": {
+          "count": 0,
+          "lines": []
+        }
+      }
+    },
+    "boringssl_extensions": {
+      "bytes": 141308,
+      "path": "ssl/extensions.cc",
+      "sha256": "9dcf831612f157f0a4385f01225865ea6eb8891d4c16533006f9656031c4921a",
+      "signals": {
+        "csprng": {
+          "count": 1,
+          "lines": [
+            3284
+          ]
+        },
+        "extension_permutation": {
+          "count": 9,
+          "lines": [
+            3275,
+            3276,
+            3295,
+            3356,
+            3357,
+            3359,
+            3493,
+            3494,
+            3496
+          ]
+        },
+        "grease": {
+          "count": 19,
+          "lines": [
+            658,
+            2276,
+            2278,
+            2476,
+            2477,
+            2535,
+            2537,
+            3346,
+            3349,
+            3350,
+            3351,
+            3384,
+            3387,
+            3388,
+            3389,
+            3486,
+            3488,
+            3519,
+            3522
+          ]
+        },
+        "key_share": {
+          "count": 50,
+          "lines": [
+            315,
+            2257,
+            2261,
+            2263,
+            2264,
+            2265,
+            2280,
+            2298,
+            2306,
+            2307,
+            2310,
+            2315,
+            2316,
+            2319,
+            2324,
+            2327,
+            2334,
+            2336,
+            2339,
+            2340,
+            2348,
+            2361,
+            2362,
+            2363,
+            2368,
+            2371,
+            2377,
+            2378,
+            2382,
+            2389,
+            2390,
+            2395
+          ]
+        },
+        "quic_random": {
+          "count": 0,
+          "lines": []
+        }
+      }
+    },
+    "boringssl_handshake_client": {
+      "bytes": 69609,
+      "path": "ssl/handshake_client.cc",
+      "sha256": "9b199f84a7603c9fae667c870185ea60afd7435f84c901625caeab8e61cf7914",
+      "signals": {
+        "csprng": {
+          "count": 4,
+          "lines": [
+            500,
+            504,
+            524,
+            1454
+          ]
+        },
+        "extension_permutation": {
+          "count": 1,
+          "lines": [
+            538
+          ]
+        },
+        "grease": {
+          "count": 2,
+          "lines": [
+            230,
+            231
+          ]
+        },
+        "key_share": {
+          "count": 9,
+          "lines": [
+            450,
+            537,
+            715,
+            716,
+            1137,
+            1138,
+            1478,
+            1487,
+            1488
+          ]
+        },
+        "quic_random": {
+          "count": 0,
+          "lines": []
+        }
+      }
+    },
+    "boringssl_random": {
+      "bytes": 16026,
+      "path": "crypto/fipsmodule/rand/rand.c",
+      "sha256": "58e44679e1e241671734512413f993df04174d9ab368f5f1b4187826cc68f946",
+      "signals": {
+        "csprng": {
+          "count": 6,
+          "lines": [
+            97,
+            302,
+            320,
+            449,
+            451,
+            456
+          ]
+        },
+        "extension_permutation": {
+          "count": 0,
+          "lines": []
+        },
+        "grease": {
+          "count": 0,
+          "lines": []
+        },
+        "key_share": {
+          "count": 0,
+          "lines": []
+        },
+        "quic_random": {
+          "count": 0,
+          "lines": []
+        }
+      }
+    },
+    "chromium_base_random": {
+      "bytes": 3540,
+      "path": "base/rand_util.cc",
+      "sha256": "c278020e79d2f9ee40512388669aa43cb8c85b5fb8520a4bb8986149302c22fa",
+      "signals": {
+        "csprng": {
+          "count": 0,
+          "lines": []
+        },
+        "extension_permutation": {
+          "count": 0,
+          "lines": []
+        },
+        "grease": {
+          "count": 0,
+          "lines": []
+        },
+        "key_share": {
+          "count": 0,
+          "lines": []
+        },
+        "quic_random": {
+          "count": 9,
+          "lines": [
+            19,
+            39,
+            69,
+            83,
+            84,
+            94,
+            111,
+            117,
+            121
+          ]
+        }
+      }
+    },
+    "features": {
+      "bytes": 11060,
+      "path": "net/base/features.cc",
+      "sha256": "c668c3118bfe76b1b2eb3a42ac999f9f8bc95cd1c410e93b60f09a1ffdbd9ef0",
+      "signals": {
+        "base_feature": {
+          "count": 0,
+          "lines": []
+        },
+        "http2": {
+          "count": 1,
+          "lines": [
+            17
+          ]
+        },
+        "quic": {
+          "count": 0,
+          "lines": []
+        },
+        "tls": {
+          "count": 9,
+          "lines": [
+            17,
+            88,
+            138,
+            175,
+            193,
+            199,
+            200,
+            246,
+            247
+          ]
+        },
+        "variation": {
+          "count": 0,
+          "lines": []
+        },
+        "websocket": {
+          "count": 0,
+          "lines": []
+        }
+      }
+    },
+    "http2": {
+      "bytes": 139271,
+      "path": "net/spdy/spdy_session.cc",
+      "sha256": "3affd5d4a697d4ea69bcbb03651f7972fe4c2ae9893953f89a77cfaf1c57f57e",
+      "signals": {
+        "connect": {
+          "count": 63,
+          "lines": [
+            60,
+            84,
+            94,
+            215,
+            688,
+            689,
+            880,
+            886,
+            887,
+            933,
+            1000,
+            1001,
+            1006,
+            1007,
+            1035,
+            1038,
+            1057,
+            1102,
+            1115,
+            1125,
+            1126,
+            1261,
+            1661,
+            1670,
+            1675,
+            1679,
+            1683,
+            1694,
+            1701,
+            1717,
+            1718,
+            1723
+          ]
+        },
+        "priority": {
+          "count": 125,
+          "lines": [
+            240,
+            243,
+            251,
+            252,
+            255,
+            435,
+            438,
+            443,
+            451,
+            457,
+            733,
+            747,
+            800,
+            801,
+            805,
+            807,
+            808,
+            809,
+            839,
+            942,
+            970,
+            1047,
+            1076,
+            1078,
+            1217,
+            1233,
+            1237,
+            1244,
+            1245,
+            1248,
+            1249,
+            1278
+          ]
+        },
+        "pseudo_headers": {
+          "count": 4,
+          "lines": [
+            3078,
+            3549,
+            3566,
+            3576
+          ]
+        },
+        "settings": {
+          "count": 82,
+          "lines": [
+            88,
+            101,
+            198,
+            201,
+            203,
+            205,
+            208,
+            210,
+            212,
+            215,
+            223,
+            224,
+            227,
+            300,
+            302,
+            303,
+            304,
+            306,
+            308,
+            310,
+            314,
+            319,
+            676,
+            677,
+            938,
+            967,
+            972,
+            976,
+            993,
+            995,
+            1004,
+            1015
+          ]
+        },
+        "window": {
+          "count": 177,
+          "lines": [
+            104,
+            208,
+            209,
+            324,
+            332,
+            333,
+            336,
+            936,
+            986,
+            987,
+            989,
+            990,
+            991,
+            994,
+            995,
+            1018,
+            1344,
+            1370,
+            1377,
+            1382,
+            1384,
+            1389,
+            1394,
+            1417,
+            1420,
+            1534,
+            1535,
+            1539,
+            1648,
+            1649,
+            1650,
+            1651
+          ]
+        }
+      }
+    },
+    "http3": {
+      "bytes": 145915,
+      "path": "net/quic/quic_chromium_client_session.cc",
+      "sha256": "e349ae78860562321ccaf14e9aec5467b5d9cddf27e2019c5f39de9fda010c0c",
+      "signals": {
+        "connection_id": {
+          "count": 44,
+          "lines": [
+            192,
+            195,
+            201,
+            203,
+            284,
+            285,
+            298,
+            299,
+            300,
+            1034,
+            1713,
+            2196,
+            2246,
+            2261,
+            2271,
+            2425,
+            2488,
+            2669,
+            2692,
+            2706,
+            2716,
+            2966,
+            2989,
+            2998,
+            3007,
+            3020,
+            3044,
+            3062,
+            3092,
+            3231,
+            3346,
+            3354
+          ]
+        },
+        "flow_control": {
+          "count": 1,
+          "lines": [
+            1526
+          ]
+        },
+        "grease": {
+          "count": 0,
+          "lines": []
+        },
+        "settings": {
+          "count": 2,
+          "lines": [
+            1616,
+            1644
+          ]
+        },
+        "transport": {
+          "count": 15,
+          "lines": [
+            35,
+            170,
+            171,
+            912,
+            974,
+            986,
+            1027,
+            1203,
+            1207,
+            1561,
+            1581,
+            1685,
+            2116,
+            3711,
+            3722
+          ]
+        },
+        "websocket": {
+          "count": 433,
+          "lines": [
+            40,
+            42,
+            50,
+            69,
+            74,
+            117,
+            145,
+            146,
+            150,
+            152,
+            153,
+            156,
+            164,
+            166,
+            170,
+            172,
+            176,
+            179,
+            181,
+            185,
+            192,
+            195,
+            201,
+            203,
+            229,
+            259,
+            260,
+            261,
+            262,
+            273,
+            274,
+            284
+          ]
+        }
+      }
+    },
+    "quiche_h3": {
+      "bytes": 51437,
+      "path": "quic/core/quic_config.cc",
+      "sha256": "f99a2e87b8cdc07f01891071cd0a3b701b87962a7e1c6d06689af42a4b81e44d",
+      "signals": {
+        "connection_id": {
+          "count": 97,
+          "lines": [
+            17,
+            449,
+            469,
+            685,
+            686,
+            687,
+            690,
+            691,
+            694,
+            695,
+            698,
+            699,
+            702,
+            703,
+            706,
+            707,
+            710,
+            711,
+            714,
+            715,
+            895,
+            904,
+            905,
+            930,
+            939,
+            940,
+            952,
+            955,
+            958,
+            959,
+            960,
+            961
+          ]
+        },
+        "flow_control": {
+          "count": 45,
+          "lines": [
+            456,
+            457,
+            738,
+            739,
+            740,
+            742,
+            744,
+            745,
+            747,
+            750,
+            751,
+            754,
+            755,
+            758,
+            759,
+            763,
+            765,
+            773,
+            789,
+            791,
+            799,
+            815,
+            816,
+            823,
+            834,
+            835,
+            836,
+            838,
+            840,
+            841,
+            843,
+            846
+          ]
+        },
+        "grease": {
+          "count": 0,
+          "lines": []
+        },
+        "settings": {
+          "count": 0,
+          "lines": []
+        },
+        "transport": {
+          "count": 35,
+          "lines": [
+            446,
+            559,
+            566,
+            567,
+            569,
+            1067,
+            1068,
+            1069,
+            1070,
+            1071,
+            1072,
+            1073,
+            1075,
+            1076,
+            1119,
+            1120,
+            1123,
+            1124,
+            1133,
+            1134,
+            1203,
+            1209,
+            1210,
+            1253,
+            1272,
+            1304,
+            1309,
+            1310,
+            1318,
+            1319,
+            1320,
+            1324
+          ]
+        }
+      }
+    },
+    "quiche_random": {
+      "bytes": 1336,
+      "path": "quic/core/crypto/quic_random.h",
+      "sha256": "a873f91465c34efa5d3536cd71f69053545e0b94a31091ae311e514355d5161b",
+      "signals": {
+        "csprng": {
+          "count": 0,
+          "lines": []
+        },
+        "extension_permutation": {
+          "count": 0,
+          "lines": []
+        },
+        "grease": {
+          "count": 0,
+          "lines": []
+        },
+        "key_share": {
+          "count": 0,
+          "lines": []
+        },
+        "quic_random": {
+          "count": 7,
+          "lines": [
+            16,
+            18,
+            22,
+            24,
+            28,
+            30,
+            36
+          ]
+        }
+      }
+    },
+    "tls": {
+      "bytes": 68778,
+      "path": "net/socket/ssl_client_socket_impl.cc",
+      "sha256": "1d51df6abb96b87f75bcc5a268857aa770fb49b1f1bef8e8c74cdec9e0539f4a",
+      "signals": {
+        "alpn": {
+          "count": 11,
+          "lines": [
+            554,
+            890,
+            892,
+            893,
+            1000,
+            1001,
+            1002,
+            1003,
+            1004,
+            1005,
+            1848
+          ]
+        },
+        "alps": {
+          "count": 6,
+          "lines": [
+            564,
+            570,
+            896,
+            897,
+            898,
+            899
+          ]
+        },
+        "compression": {
+          "count": 3,
+          "lines": [
+            57,
+            312,
+            833
+          ]
+        },
+        "ech": {
+          "count": 0,
+          "lines": []
+        },
+        "grease": {
+          "count": 1,
+          "lines": [
+            305
+          ]
+        },
+        "groups": {
+          "count": 0,
+          "lines": []
+        },
+        "ticket": {
+          "count": 2,
+          "lines": [
+            1081,
+            1083
+          ]
+        }
+      }
+    },
+    "websocket": {
+      "bytes": 19821,
+      "path": "net/websockets/websocket_basic_handshake_stream.cc",
+      "sha256": "252f5b205aa11305e6fa09c062efdac3077326b0f9e303d2de6aa32dd477f784",
+      "signals": {
+        "connect": {
+          "count": 46,
+          "lines": [
+            55,
+            147,
+            149,
+            150,
+            151,
+            154,
+            156,
+            165,
+            166,
+            173,
+            174,
+            180,
+            186,
+            225,
+            254,
+            258,
+            292,
+            294,
+            295,
+            302,
+            303,
+            306,
+            307,
+            310,
+            311,
+            312,
+            330,
+            335,
+            344,
+            352,
+            355,
+            377
+          ]
+        },
+        "extensions": {
+          "count": 14,
+          "lines": [
+            169,
+            177,
+            222,
+            244,
+            245,
+            384,
+            411,
+            412,
+            413,
+            415,
+            504,
+            516,
+            517,
+            518
+          ]
+        },
+        "origin": {
+          "count": 1,
+          "lines": [
+            223
+          ]
+        },
+        "sec_headers": {
+          "count": 1,
+          "lines": [
+            141
+          ]
+        },
+        "upgrade": {
+          "count": 13,
+          "lines": [
+            109,
+            113,
+            115,
+            122,
+            155,
+            156,
+            224,
+            401,
+            449,
+            487,
+            502,
+            506,
+            507
+          ]
+        }
+      }
+    }
+  }
+}

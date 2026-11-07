@@ -1,6 +1,7 @@
 {
   "profiles": {
     "chrome_100": {
+      "advertise_h3_datagram": false,
       "alpn_source_order": [
         "kProtoHTTP2",
         "kProtoHTTP11"
@@ -30,6 +31,7 @@
       "try_quic_by_default": false
     },
     "chrome_101": {
+      "advertise_h3_datagram": false,
       "alpn_source_order": [
         "kProtoHTTP2",
         "kProtoHTTP11"
@@ -59,6 +61,7 @@
       "try_quic_by_default": false
     },
     "chrome_102": {
+      "advertise_h3_datagram": false,
       "alpn_source_order": [
         "kProtoHTTP2",
         "kProtoHTTP11"
@@ -88,6 +91,7 @@
       "try_quic_by_default": false
     },
     "chrome_103": {
+      "advertise_h3_datagram": false,
       "alpn_source_order": [
         "kProtoHTTP2",
         "kProtoHTTP11"
@@ -117,6 +121,7 @@
       "try_quic_by_default": false
     },
     "chrome_104": {
+      "advertise_h3_datagram": false,
       "alpn_source_order": [
         "kProtoHTTP2",
         "kProtoHTTP11"
@@ -146,6 +151,7 @@
       "try_quic_by_default": false
     },
     "chrome_105": {
+      "advertise_h3_datagram": false,
       "alpn_source_order": [
         "kProtoHTTP2",
         "kProtoHTTP11"
@@ -175,6 +181,7 @@
       "try_quic_by_default": false
     },
     "chrome_106": {
+      "advertise_h3_datagram": false,
       "alpn_source_order": [
         "kProtoHTTP2",
         "kProtoHTTP11"
@@ -204,6 +211,7 @@
       "try_quic_by_default": false
     },
     "chrome_107": {
+      "advertise_h3_datagram": false,
       "alpn_source_order": [
         "kProtoHTTP2",
         "kProtoHTTP11"
@@ -233,6 +241,7 @@
       "try_quic_by_default": false
     },
     "chrome_108": {
+      "advertise_h3_datagram": false,
       "alpn_source_order": [
         "kProtoHTTP2",
         "kProtoHTTP11"
@@ -262,6 +271,7 @@
       "try_quic_by_default": false
     },
     "chrome_109": {
+      "advertise_h3_datagram": false,
       "alpn_source_order": [
         "kProtoHTTP2",
         "kProtoHTTP11"
@@ -291,6 +301,7 @@
       "try_quic_by_default": false
     },
     "chrome_110": {
+      "advertise_h3_datagram": false,
       "alpn_source_order": [
         "kProtoHTTP2",
         "kProtoHTTP11"
@@ -320,6 +331,7 @@
       "try_quic_by_default": false
     },
     "chrome_111": {
+      "advertise_h3_datagram": false,
       "alpn_source_order": [
         "kProtoHTTP2",
         "kProtoHTTP11"
@@ -349,6 +361,7 @@
       "try_quic_by_default": false
     },
     "chrome_112": {
+      "advertise_h3_datagram": false,
       "alpn_source_order": [
         "kProtoHTTP2",
         "kProtoHTTP11"
@@ -378,6 +391,7 @@
       "try_quic_by_default": false
     },
     "chrome_113": {
+      "advertise_h3_datagram": false,
       "alpn_source_order": [
         "kProtoHTTP2",
         "kProtoHTTP11"
@@ -407,6 +421,7 @@
       "try_quic_by_default": false
     },
     "chrome_114": {
+      "advertise_h3_datagram": false,
       "alpn_source_order": [
         "kProtoHTTP2",
         "kProtoHTTP11"
@@ -436,6 +451,7 @@
       "try_quic_by_default": false
     },
     "chrome_115": {
+      "advertise_h3_datagram": false,
       "alpn_source_order": [
         "kProtoHTTP2",
         "kProtoHTTP11"
@@ -465,6 +481,7 @@
       "try_quic_by_default": false
     },
     "chrome_116": {
+      "advertise_h3_datagram": false,
       "alpn_source_order": [
         "kProtoHTTP2",
         "kProtoHTTP11"
@@ -494,6 +511,7 @@
       "try_quic_by_default": false
     },
     "chrome_117": {
+      "advertise_h3_datagram": false,
       "alpn_source_order": [
         "kProtoHTTP2",
         "kProtoHTTP11"
@@ -523,6 +541,7 @@
       "try_quic_by_default": false
     },
     "chrome_118": {
+      "advertise_h3_datagram": false,
       "alpn_source_order": [
         "kProtoHTTP2",
         "kProtoHTTP11"
@@ -552,6 +571,7 @@
       "try_quic_by_default": false
     },
     "chrome_119": {
+      "advertise_h3_datagram": false,
       "alpn_source_order": [
         "kProtoHTTP2",
         "kProtoHTTP11"
@@ -581,6 +601,7 @@
       "try_quic_by_default": false
     },
     "chrome_120": {
+      "advertise_h3_datagram": true,
       "alpn_source_order": [
         "kProtoHTTP2",
         "kProtoHTTP11"
@@ -610,6 +631,7 @@
       "try_quic_by_default": false
     },
     "chrome_121": {
+      "advertise_h3_datagram": true,
       "alpn_source_order": [
         "kProtoHTTP2",
         "kProtoHTTP11"
@@ -639,6 +661,7 @@
       "try_quic_by_default": false
     },
     "chrome_122": {
+      "advertise_h3_datagram": true,
       "alpn_source_order": [
         "kProtoHTTP2",
         "kProtoHTTP11"
@@ -668,6 +691,7 @@
       "try_quic_by_default": false
     },
     "chrome_123": {
+      "advertise_h3_datagram": true,
       "alpn_source_order": [
         "kProtoHTTP2",
         "kProtoHTTP11"
@@ -697,6 +721,7 @@
       "try_quic_by_default": true
     },
     "chrome_124": {
+      "advertise_h3_datagram": true,
       "alpn_source_order": [
         "kProtoHTTP2",
         "kProtoHTTP11"
@@ -726,6 +751,7 @@
       "try_quic_by_default": true
     },
     "chrome_125": {
+      "advertise_h3_datagram": true,
       "alpn_source_order": [
         "kProtoHTTP2",
         "kProtoHTTP11"
@@ -755,6 +781,7 @@
       "try_quic_by_default": true
     },
     "chrome_126": {
+      "advertise_h3_datagram": true,
       "alpn_source_order": [
         "kProtoHTTP2",
         "kProtoHTTP11"
@@ -784,6 +811,7 @@
       "try_quic_by_default": true
     },
     "chrome_127": {
+      "advertise_h3_datagram": true,
       "alpn_source_order": [
         "kProtoHTTP2",
         "kProtoHTTP11"
@@ -813,6 +841,7 @@
       "try_quic_by_default": true
     },
     "chrome_128": {
+      "advertise_h3_datagram": true,
       "alpn_source_order": [
         "kProtoHTTP2",
         "kProtoHTTP11"
@@ -842,6 +871,7 @@
       "try_quic_by_default": true
     },
     "chrome_129": {
+      "advertise_h3_datagram": true,
       "alpn_source_order": [
         "kProtoHTTP2",
         "kProtoHTTP11"
@@ -871,6 +901,7 @@
       "try_quic_by_default": true
     },
     "chrome_130": {
+      "advertise_h3_datagram": true,
       "alpn_source_order": [
         "kProtoHTTP2",
         "kProtoHTTP11"
@@ -900,6 +931,7 @@
       "try_quic_by_default": true
     },
     "chrome_131": {
+      "advertise_h3_datagram": true,
       "alpn_source_order": [
         "kProtoHTTP2",
         "kProtoHTTP11"
@@ -929,6 +961,7 @@
       "try_quic_by_default": true
     },
     "chrome_132": {
+      "advertise_h3_datagram": true,
       "alpn_source_order": [
         "kProtoHTTP2",
         "kProtoHTTP11"
@@ -958,6 +991,7 @@
       "try_quic_by_default": true
     },
     "chrome_133": {
+      "advertise_h3_datagram": true,
       "alpn_source_order": [],
       "enable_quic": true,
       "enable_quic_source": "net/http/http_network_session.h member default",
@@ -984,6 +1018,7 @@
       "try_quic_by_default": true
     },
     "chrome_134": {
+      "advertise_h3_datagram": true,
       "alpn_source_order": [],
       "enable_quic": true,
       "enable_quic_source": "net/http/http_network_session.h member default",
@@ -1010,6 +1045,7 @@
       "try_quic_by_default": true
     },
     "chrome_135": {
+      "advertise_h3_datagram": true,
       "alpn_source_order": [],
       "enable_quic": true,
       "enable_quic_source": "net/http/http_network_session.h member default",
@@ -1036,6 +1072,7 @@
       "try_quic_by_default": true
     },
     "chrome_136": {
+      "advertise_h3_datagram": true,
       "alpn_source_order": [],
       "enable_quic": true,
       "enable_quic_source": "net/http/http_network_session.h member default",
@@ -1062,6 +1099,7 @@
       "try_quic_by_default": true
     },
     "chrome_137": {
+      "advertise_h3_datagram": true,
       "alpn_source_order": [],
       "enable_quic": true,
       "enable_quic_source": "net/http/http_network_session.h member default",
@@ -1088,6 +1126,7 @@
       "try_quic_by_default": true
     },
     "chrome_138": {
+      "advertise_h3_datagram": true,
       "alpn_source_order": [],
       "enable_quic": true,
       "enable_quic_source": "net/http/http_network_session.h member default",
@@ -1114,6 +1153,7 @@
       "try_quic_by_default": true
     },
     "chrome_139": {
+      "advertise_h3_datagram": true,
       "alpn_source_order": [],
       "enable_quic": true,
       "enable_quic_source": "net/http/http_network_session.h member default",
@@ -1140,6 +1180,7 @@
       "try_quic_by_default": true
     },
     "chrome_140": {
+      "advertise_h3_datagram": true,
       "alpn_source_order": [],
       "enable_quic": true,
       "enable_quic_source": "net/http/http_network_session.h member default",
@@ -1166,6 +1207,7 @@
       "try_quic_by_default": true
     },
     "chrome_141": {
+      "advertise_h3_datagram": true,
       "alpn_source_order": [],
       "enable_quic": true,
       "enable_quic_source": "net/http/http_network_session.h member default",
@@ -1192,6 +1234,7 @@
       "try_quic_by_default": true
     },
     "chrome_142": {
+      "advertise_h3_datagram": true,
       "alpn_source_order": [],
       "enable_quic": true,
       "enable_quic_source": "net/http/http_network_session.h member default",
@@ -1218,6 +1261,7 @@
       "try_quic_by_default": true
     },
     "chrome_143": {
+      "advertise_h3_datagram": true,
       "alpn_source_order": [],
       "enable_quic": true,
       "enable_quic_source": "net/http/http_network_session.h member default",
@@ -1244,6 +1288,7 @@
       "try_quic_by_default": true
     },
     "chrome_144": {
+      "advertise_h3_datagram": true,
       "alpn_source_order": [],
       "enable_quic": true,
       "enable_quic_source": "net/http/http_network_session.h member default",
@@ -1270,6 +1315,7 @@
       "try_quic_by_default": true
     },
     "chrome_145": {
+      "advertise_h3_datagram": true,
       "alpn_source_order": [],
       "enable_quic": true,
       "enable_quic_source": "net/http/http_network_session.h member default",
@@ -1296,6 +1342,7 @@
       "try_quic_by_default": true
     },
     "chrome_146": {
+      "advertise_h3_datagram": true,
       "alpn_source_order": [],
       "enable_quic": true,
       "enable_quic_source": "net/http/http_network_session.h member default",
@@ -1322,6 +1369,7 @@
       "try_quic_by_default": true
     },
     "chrome_147": {
+      "advertise_h3_datagram": true,
       "alpn_source_order": [],
       "enable_quic": true,
       "enable_quic_source": "net/http/http_network_session.h member default",
@@ -1348,6 +1396,7 @@
       "try_quic_by_default": true
     },
     "chrome_148": {
+      "advertise_h3_datagram": true,
       "alpn_source_order": [],
       "enable_quic": true,
       "enable_quic_source": "net/http/http_network_session.h member default",
@@ -1374,6 +1423,7 @@
       "try_quic_by_default": true
     },
     "chrome_149": {
+      "advertise_h3_datagram": true,
       "alpn_source_order": [],
       "enable_quic": true,
       "enable_quic_source": "net/http/http_network_session.h member default",
@@ -1400,6 +1450,7 @@
       "try_quic_by_default": true
     },
     "chrome_150": {
+      "advertise_h3_datagram": true,
       "alpn_source_order": [],
       "enable_quic": true,
       "enable_quic_source": "net/http/http_network_session.h member default",
@@ -1426,6 +1477,7 @@
       "try_quic_by_default": true
     },
     "chrome_151": {
+      "advertise_h3_datagram": true,
       "alpn_source_order": [],
       "enable_quic": true,
       "enable_quic_source": "net/http/http_network_session.h member default",
@@ -1452,6 +1504,7 @@
       "try_quic_by_default": true
     },
     "chrome_152": {
+      "advertise_h3_datagram": true,
       "alpn_source_order": [],
       "enable_quic": true,
       "enable_quic_source": "http_network_session.h",
@@ -1479,6 +1532,7 @@
       "try_quic_by_default": true
     },
     "chrome_153": {
+      "advertise_h3_datagram": true,
       "alpn_source_order": [],
       "enable_quic": true,
       "enable_quic_source": "http_network_session.h",
@@ -1506,6 +1560,7 @@
       "try_quic_by_default": true
     },
     "chrome_154": {
+      "advertise_h3_datagram": true,
       "alpn_source_order": [],
       "enable_quic": true,
       "enable_quic_source": "http_network_session.h",
@@ -1533,6 +1588,7 @@
       "try_quic_by_default": true
     },
     "chrome_155": {
+      "advertise_h3_datagram": true,
       "alpn_source_order": [],
       "enable_quic": true,
       "enable_quic_source": "http_network_session.h",
@@ -1559,36 +1615,8 @@
       "send_quic_orig": true,
       "try_quic_by_default": true
     },
-    "chrome_99": {
-      "alpn_source_order": [
-        "kProtoHTTP2",
-        "kProtoHTTP11"
-      ],
-      "enable_quic": true,
-      "enable_quic_source": "net/http/http_network_session.cc constructor",
-      "h2_enable_push": false,
-      "h2_header_table_size": 65536,
-      "h2_initial_window_size": 6291456,
-      "h2_max_concurrent_streams": true,
-      "h2_max_frame_size": 16384,
-      "h2_max_header_list_size": 262144,
-      "h2_session_recv_window_size": 15728640,
-      "h2_settings_order": [
-        1,
-        2,
-        3,
-        4,
-        5,
-        6
-      ],
-      "randomize_proxy_socket_pool_limit": false,
-      "randomize_socket_pool_limit": false,
-      "send_priority_header": false,
-      "send_quic_legacy_version_information": false,
-      "send_quic_orig": false,
-      "try_quic_by_default": false
-    },
     "chrome_156": {
+      "advertise_h3_datagram": true,
       "alpn_source_order": [],
       "enable_quic": true,
       "enable_quic_source": "http_network_session.h",
@@ -1616,6 +1644,7 @@
       "try_quic_by_default": true
     },
     "chrome_157": {
+      "advertise_h3_datagram": true,
       "alpn_source_order": [],
       "enable_quic": true,
       "enable_quic_source": "http_network_session.h",
@@ -1641,6 +1670,439 @@
       "send_quic_legacy_version_information": false,
       "send_quic_orig": true,
       "try_quic_by_default": true
+    },
+    "chrome_86": {
+      "advertise_h3_datagram": false,
+      "alpn_source_order": [
+        "kProtoHTTP2",
+        "kProtoHTTP11"
+      ],
+      "enable_quic": true,
+      "enable_quic_source": "net/http/http_network_session.cc constructor",
+      "h2_enable_push": false,
+      "h2_header_table_size": 65536,
+      "h2_initial_window_size": 6291456,
+      "h2_max_concurrent_streams": true,
+      "h2_max_frame_size": 16384,
+      "h2_max_header_list_size": 262144,
+      "h2_session_recv_window_size": 15728640,
+      "h2_settings_order": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "randomize_proxy_socket_pool_limit": false,
+      "randomize_socket_pool_limit": false,
+      "send_priority_header": false,
+      "send_quic_legacy_version_information": false,
+      "send_quic_orig": false,
+      "source_note": "derived from the release's own capture and tag source",
+      "try_quic_by_default": false
+    },
+    "chrome_87": {
+      "advertise_h3_datagram": false,
+      "alpn_source_order": [
+        "kProtoHTTP2",
+        "kProtoHTTP11"
+      ],
+      "enable_quic": true,
+      "enable_quic_source": "net/http/http_network_session.cc constructor",
+      "h2_enable_push": false,
+      "h2_header_table_size": 65536,
+      "h2_initial_window_size": 6291456,
+      "h2_max_concurrent_streams": true,
+      "h2_max_frame_size": 16384,
+      "h2_max_header_list_size": 262144,
+      "h2_session_recv_window_size": 15728640,
+      "h2_settings_order": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "randomize_proxy_socket_pool_limit": false,
+      "randomize_socket_pool_limit": false,
+      "send_priority_header": false,
+      "send_quic_legacy_version_information": false,
+      "send_quic_orig": false,
+      "source_note": "derived from the release's own capture and tag source",
+      "try_quic_by_default": false
+    },
+    "chrome_88": {
+      "advertise_h3_datagram": false,
+      "alpn_source_order": [
+        "kProtoHTTP2",
+        "kProtoHTTP11"
+      ],
+      "enable_quic": true,
+      "enable_quic_source": "net/http/http_network_session.cc constructor",
+      "h2_enable_push": false,
+      "h2_header_table_size": 65536,
+      "h2_initial_window_size": 6291456,
+      "h2_max_concurrent_streams": true,
+      "h2_max_frame_size": 16384,
+      "h2_max_header_list_size": 262144,
+      "h2_session_recv_window_size": 15728640,
+      "h2_settings_order": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "randomize_proxy_socket_pool_limit": false,
+      "randomize_socket_pool_limit": false,
+      "send_priority_header": false,
+      "send_quic_legacy_version_information": false,
+      "send_quic_orig": false,
+      "source_note": "derived from the release's own capture and tag source",
+      "try_quic_by_default": false
+    },
+    "chrome_89": {
+      "advertise_h3_datagram": false,
+      "alpn_source_order": [
+        "kProtoHTTP2",
+        "kProtoHTTP11"
+      ],
+      "enable_quic": true,
+      "enable_quic_source": "net/http/http_network_session.cc constructor",
+      "h2_enable_push": false,
+      "h2_header_table_size": 65536,
+      "h2_initial_window_size": 6291456,
+      "h2_max_concurrent_streams": true,
+      "h2_max_frame_size": 16384,
+      "h2_max_header_list_size": 262144,
+      "h2_session_recv_window_size": 15728640,
+      "h2_settings_order": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "randomize_proxy_socket_pool_limit": false,
+      "randomize_socket_pool_limit": false,
+      "send_priority_header": false,
+      "send_quic_legacy_version_information": false,
+      "send_quic_orig": false,
+      "source_note": "derived from the release's own capture and tag source",
+      "try_quic_by_default": false
+    },
+    "chrome_90": {
+      "advertise_h3_datagram": false,
+      "alpn_source_order": [
+        "kProtoHTTP2",
+        "kProtoHTTP11"
+      ],
+      "enable_quic": true,
+      "enable_quic_source": "net/http/http_network_session.cc constructor",
+      "h2_enable_push": false,
+      "h2_header_table_size": 65536,
+      "h2_initial_window_size": 6291456,
+      "h2_max_concurrent_streams": true,
+      "h2_max_frame_size": 16384,
+      "h2_max_header_list_size": 262144,
+      "h2_session_recv_window_size": 15728640,
+      "h2_settings_order": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "randomize_proxy_socket_pool_limit": false,
+      "randomize_socket_pool_limit": false,
+      "send_priority_header": false,
+      "send_quic_legacy_version_information": false,
+      "send_quic_orig": false,
+      "source_note": "derived from the release's own capture and tag source",
+      "try_quic_by_default": false
+    },
+    "chrome_91": {
+      "advertise_h3_datagram": false,
+      "alpn_source_order": [
+        "kProtoHTTP2",
+        "kProtoHTTP11"
+      ],
+      "enable_quic": true,
+      "enable_quic_source": "net/http/http_network_session.cc constructor",
+      "h2_enable_push": false,
+      "h2_header_table_size": 65536,
+      "h2_initial_window_size": 6291456,
+      "h2_max_concurrent_streams": true,
+      "h2_max_frame_size": 16384,
+      "h2_max_header_list_size": 262144,
+      "h2_session_recv_window_size": 15728640,
+      "h2_settings_order": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "randomize_proxy_socket_pool_limit": false,
+      "randomize_socket_pool_limit": false,
+      "send_priority_header": false,
+      "send_quic_legacy_version_information": false,
+      "send_quic_orig": false,
+      "source_note": "derived from the release's own capture and tag source",
+      "try_quic_by_default": false
+    },
+    "chrome_92": {
+      "advertise_h3_datagram": false,
+      "alpn_source_order": [
+        "kProtoHTTP2",
+        "kProtoHTTP11"
+      ],
+      "enable_quic": true,
+      "enable_quic_source": "net/http/http_network_session.cc constructor",
+      "h2_enable_push": false,
+      "h2_header_table_size": 65536,
+      "h2_initial_window_size": 6291456,
+      "h2_max_concurrent_streams": true,
+      "h2_max_frame_size": 16384,
+      "h2_max_header_list_size": 262144,
+      "h2_session_recv_window_size": 15728640,
+      "h2_settings_order": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "randomize_proxy_socket_pool_limit": false,
+      "randomize_socket_pool_limit": false,
+      "send_priority_header": false,
+      "send_quic_legacy_version_information": false,
+      "send_quic_orig": false,
+      "source_note": "derived from the release's own capture and tag source",
+      "try_quic_by_default": false
+    },
+    "chrome_93": {
+      "advertise_h3_datagram": false,
+      "alpn_source_order": [
+        "kProtoHTTP2",
+        "kProtoHTTP11"
+      ],
+      "enable_quic": true,
+      "enable_quic_source": "net/http/http_network_session.cc constructor",
+      "h2_enable_push": false,
+      "h2_header_table_size": 65536,
+      "h2_initial_window_size": 6291456,
+      "h2_max_concurrent_streams": true,
+      "h2_max_frame_size": 16384,
+      "h2_max_header_list_size": 262144,
+      "h2_session_recv_window_size": 15728640,
+      "h2_settings_order": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "randomize_proxy_socket_pool_limit": false,
+      "randomize_socket_pool_limit": false,
+      "send_priority_header": false,
+      "send_quic_legacy_version_information": false,
+      "send_quic_orig": false,
+      "source_note": "derived from the release's own capture and tag source",
+      "try_quic_by_default": false
+    },
+    "chrome_94": {
+      "advertise_h3_datagram": false,
+      "alpn_source_order": [
+        "kProtoHTTP2",
+        "kProtoHTTP11"
+      ],
+      "enable_quic": true,
+      "enable_quic_source": "net/http/http_network_session.cc constructor",
+      "h2_enable_push": false,
+      "h2_header_table_size": 65536,
+      "h2_initial_window_size": 6291456,
+      "h2_max_concurrent_streams": true,
+      "h2_max_frame_size": 16384,
+      "h2_max_header_list_size": 262144,
+      "h2_session_recv_window_size": 15728640,
+      "h2_settings_order": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "randomize_proxy_socket_pool_limit": false,
+      "randomize_socket_pool_limit": false,
+      "send_priority_header": false,
+      "send_quic_legacy_version_information": false,
+      "send_quic_orig": false,
+      "source_note": "derived from the release's own capture and tag source",
+      "try_quic_by_default": false
+    },
+    "chrome_95": {
+      "advertise_h3_datagram": false,
+      "alpn_source_order": [
+        "kProtoHTTP2",
+        "kProtoHTTP11"
+      ],
+      "enable_quic": true,
+      "enable_quic_source": "net/http/http_network_session.cc constructor",
+      "h2_enable_push": false,
+      "h2_header_table_size": 65536,
+      "h2_initial_window_size": 6291456,
+      "h2_max_concurrent_streams": true,
+      "h2_max_frame_size": 16384,
+      "h2_max_header_list_size": 262144,
+      "h2_session_recv_window_size": 15728640,
+      "h2_settings_order": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "randomize_proxy_socket_pool_limit": false,
+      "randomize_socket_pool_limit": false,
+      "send_priority_header": false,
+      "send_quic_legacy_version_information": false,
+      "send_quic_orig": false,
+      "source_note": "derived from the release's own capture and tag source",
+      "try_quic_by_default": false
+    },
+    "chrome_96": {
+      "advertise_h3_datagram": false,
+      "alpn_source_order": [
+        "kProtoHTTP2",
+        "kProtoHTTP11"
+      ],
+      "enable_quic": true,
+      "enable_quic_source": "net/http/http_network_session.cc constructor",
+      "h2_enable_push": false,
+      "h2_header_table_size": 65536,
+      "h2_initial_window_size": 6291456,
+      "h2_max_concurrent_streams": true,
+      "h2_max_frame_size": 16384,
+      "h2_max_header_list_size": 262144,
+      "h2_session_recv_window_size": 15728640,
+      "h2_settings_order": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "randomize_proxy_socket_pool_limit": false,
+      "randomize_socket_pool_limit": false,
+      "send_priority_header": false,
+      "send_quic_legacy_version_information": false,
+      "send_quic_orig": false,
+      "source_note": "derived from the release's own capture and tag source",
+      "try_quic_by_default": false
+    },
+    "chrome_97": {
+      "advertise_h3_datagram": false,
+      "alpn_source_order": [
+        "kProtoHTTP2",
+        "kProtoHTTP11"
+      ],
+      "enable_quic": true,
+      "enable_quic_source": "net/http/http_network_session.cc constructor",
+      "h2_enable_push": false,
+      "h2_header_table_size": 65536,
+      "h2_initial_window_size": 6291456,
+      "h2_max_concurrent_streams": true,
+      "h2_max_frame_size": 16384,
+      "h2_max_header_list_size": 262144,
+      "h2_session_recv_window_size": 15728640,
+      "h2_settings_order": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "randomize_proxy_socket_pool_limit": false,
+      "randomize_socket_pool_limit": false,
+      "send_priority_header": false,
+      "send_quic_legacy_version_information": false,
+      "send_quic_orig": false,
+      "source_note": "derived from the release's own capture and tag source",
+      "try_quic_by_default": false
+    },
+    "chrome_98": {
+      "advertise_h3_datagram": false,
+      "alpn_source_order": [
+        "kProtoHTTP2",
+        "kProtoHTTP11"
+      ],
+      "enable_quic": true,
+      "enable_quic_source": "net/http/http_network_session.cc constructor",
+      "h2_enable_push": false,
+      "h2_header_table_size": 65536,
+      "h2_initial_window_size": 6291456,
+      "h2_max_concurrent_streams": true,
+      "h2_max_frame_size": 16384,
+      "h2_max_header_list_size": 262144,
+      "h2_session_recv_window_size": 15728640,
+      "h2_settings_order": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "randomize_proxy_socket_pool_limit": false,
+      "randomize_socket_pool_limit": false,
+      "send_priority_header": false,
+      "send_quic_legacy_version_information": false,
+      "send_quic_orig": false,
+      "source_note": "derived from the release's own capture and tag source",
+      "try_quic_by_default": false
+    },
+    "chrome_99": {
+      "advertise_h3_datagram": false,
+      "alpn_source_order": [
+        "kProtoHTTP2",
+        "kProtoHTTP11"
+      ],
+      "enable_quic": true,
+      "enable_quic_source": "net/http/http_network_session.cc constructor",
+      "h2_enable_push": false,
+      "h2_header_table_size": 65536,
+      "h2_initial_window_size": 6291456,
+      "h2_max_concurrent_streams": true,
+      "h2_max_frame_size": 16384,
+      "h2_max_header_list_size": 262144,
+      "h2_session_recv_window_size": 15728640,
+      "h2_settings_order": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "randomize_proxy_socket_pool_limit": false,
+      "randomize_socket_pool_limit": false,
+      "send_priority_header": false,
+      "send_quic_legacy_version_information": false,
+      "send_quic_orig": false,
+      "try_quic_by_default": false
     }
   },
   "schema": 1

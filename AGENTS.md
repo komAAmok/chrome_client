@@ -72,6 +72,15 @@ python3 tools/audit-python-stubs.py
 python3 tools/audit-python-typing.py
 tools/audit-core-binaries.sh
 tools/audit-core-inputs.sh
+python3 tools/audit-core-size-ceilings.py
+python3 tools/audit-padding-rule.py
+python3 tools/audit-tls-version-range.py
+python3 tools/audit-h1-alps-absence.py
+python3 tools/audit-h3-profile-support.py
+# The four profile gates above read profiles/chrome_<major>/<proto>/captures.json,
+# so profiles/ must stay tracked. Without it they fail on a clean clone instead
+# of skipping: evidence that is absent must not read as evidence that agreed.
+tools/audit-profile-probes.sh # needs a Chromium checkout + gn/ninja
 python3 tools/audit-profile-evidence.py # needs network (googlesource); --offline for a local-only check
 python3 tools/audit-net-error-names.py   # needs a Chromium checkout (CHROMIUM_SRC)
 cargo fmt --all -- --check

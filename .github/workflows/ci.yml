@@ -41,6 +41,13 @@ jobs:
       # files sync-core.sh installs or applies are tracked, so it needs no
       # Chromium checkout and belongs in the structure job.
       - run: tools/audit-core-inputs.sh
+      # Each audit-core-*.sh derives its size ceiling as "largest artifact
+      # x 1.02, rounded up to 10,000". Adding profiles grows the artifacts, and a
+      # ceiling that was correct last release is then below what its own rule
+      # demands -- Windows sat at 9,600,000 against a required 9,610,000 and
+      # nothing noticed, because the only thing checking the ceiling was the
+      # ceiling. This compares the rule against the committed artifacts.
+      - run: python3 tools/audit-core-size-ceilings.py
       # profiles/ is the entire basis for the per-release tables, and every
       # entry records the sha256 of the upstream file it was audited against.
       # Nothing re-checked those digests, so a stale record and a correct one
@@ -50,6 +57,15 @@ jobs:
       # no Chromium checkout, only network access to googlesource, which the
       # runner has. Bodies are cached in ~/.cache between runs but CI starts
       # cold, so expect this step to download the full evidence set.
+      # The four per-release wire gates. Each pins a behaviour a profile-table
+      # edit can silently break, and each reads either the generated header the
+      # Core compiles (so a stale JSON input cannot make it pass) or the recorded
+      # alignment evidence (so the header alone cannot vouch for itself). Pure
+      # stdlib: no Chromium checkout and no network.
+      - run: python3 tools/audit-padding-rule.py
+      - run: python3 tools/audit-tls-version-range.py
+      - run: python3 tools/audit-h1-alps-absence.py
+      - run: python3 tools/audit-h3-profile-support.py
       - run: python3 tools/audit-profile-evidence.py --jobs 4
       # The ERR_* names in exceptions.py tell a caller what a proxy or TLS
       # failure actually was. They had drifted badly (eight codes carried a

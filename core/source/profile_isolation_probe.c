@@ -28,8 +28,13 @@ static mn_engine_t *create_engine(const char *profile_id) {
 }
 
 int main(void) {
+  // The full range the compiled table carries. It used to stop at 151 because
+  // that was the newest profile then, and the loop bounds were the only place
+  // the range was written down -- so the probe kept passing while claiming a
+  // span the table no longer had. Both ends now match the table, which
+  // tools/audit-h3-profile-support.py and audit-padding-rule.py read directly.
   struct engine_node *head = NULL;
-  for (int major = 99; major <= 151; ++major) {
+  for (int major = 86; major <= 157; ++major) {
     char profile_id[16];
     snprintf(profile_id, sizeof(profile_id), "chrome_%d", major);
     mn_engine_t *engine = create_engine(profile_id);
@@ -63,6 +68,6 @@ int main(void) {
     mn_engine_release(node->engine);
     free(node);
   }
-  puts("Chrome 99-151 profile isolation passed");
+  puts("Chrome 86-157 profile isolation passed");
   return 0;
 }

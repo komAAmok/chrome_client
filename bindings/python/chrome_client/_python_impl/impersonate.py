@@ -1,6 +1,6 @@
 """Impersonation and protocol selection.
 
-The Core registers one profile per pinned Chromium major (``chrome_99`` through
+The Core registers one profile per pinned Chromium major (``chrome_86`` through
 ``chrome_157``).  Everything about the TLS ClientHello, the HTTP/2 SETTINGS and
 priority frames, and the HTTP/3 transport parameters lives inside that profile;
 there is no knob to bend one profile into another.
@@ -23,10 +23,10 @@ from .exceptions import ImpersonateError, UnsupportedFeature
 #: different TLS/H2 fingerprint the moment a profile is added, and a fingerprint
 #: that drifts without the caller asking is worse than one that is missing.
 LATEST_CHROME = 157
-OLDEST_CHROME = 99
+OLDEST_CHROME = 86
 
 #: First major whose requests carry an RFC 9218 priority header.  Measured
-#: against the pinned profiles: chrome_99..chrome_123 send no such header on
+#: against the pinned profiles: chrome_86..chrome_123 send no such header on
 #: HTTP/2 or HTTP/3, chrome_124 and later send one.  tools/generate-profile-table.py
 #: encodes the same boundary as the send_priority_header span.
 PRIORITY_HEADER_MIN_CHROME = 124

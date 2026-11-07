@@ -11,10 +11,15 @@
   },
   "ranges": [
     {
+      "enabled": [],
+      "first": 86,
+      "last": 90
+    },
+    {
       "enabled": [
         "alps_for_http2"
       ],
-      "first": 99,
+      "first": 91,
       "last": 122
     },
     {
@@ -28,5 +33,10 @@
   ],
   "schema": 1,
   "scope": "network-core-only",
-  "source": "net/base/features.cc and matching revision audits"
+  "source": "net/base/features.cc and matching revision audits",
+  "era_notes": {
+    "86-90": "net/base/features.cc defines no kAlpsForHttp2 in these releases, and net/http/http_network_session.cc contains no application_settings_[kProtoHTTP2] assignment. The capture agrees: no ALPS extension on the wire.",
+    "91-122": "kAlpsForHttp2 introduced in 91 as FEATURE_ENABLED_BY_DEFAULT together with the application_settings_ assignment. The capture shows extension 17513 (old codepoint) from 91.",
+    "123-157": "kTryQuicByDefault enabled by default from 123."
+  }
 }

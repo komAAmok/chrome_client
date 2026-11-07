@@ -16,8 +16,8 @@ CHROMIUM_SRC=$(resolve_chromium_src)
 # Re-baselined for the 153 -> 156.0.8078.31 upgrade and again after the size
 # pass. Re-baselined again after BoringSSL stopped being the one target still
 # built at -O2 while the rest of the dylib was at -Oz. The two committed
-# artifacts are now 7,954,872 (x86_64) and 7,310,880 (arm64), so
-# 7,954,872 * 1.02 = 8,113,969 rounds up to the 8,120,000 below. The rule is
+# artifacts are now 7,958,968 (x86_64) and 7,310,880 (arm64), so
+# 7,958,968 * 1.02 = 8,118,147 rounds up to the 8,120,000 below. The rule is
 # unchanged: the larger architecture plus 2%, rounded up to 10,000.
 MAX_BYTES=${MAX_BYTES:-8120000}
 ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)

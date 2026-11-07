@@ -33,7 +33,7 @@ version, Chromium revision, SHA-256 and runtime dependencies. The current ABI is
 v8. Go and Node directories currently contain binding design notes, not released
 installable packages.
 
-Cores range from 7.7 MB to 10.2 MB (macOS ARM64 smallest, Windows x86_64 largest,
+Cores range from 7.3 MB to 9.4 MB (macOS ARM64 smallest, Windows x86_64 largest,
 where static MSVC/UCRT adds about 2 MB). The IDNA-only ICU dataset is linked in,
 so no external `icudtl.dat` travels with the library, and the unused disk cache
 backends are not linked at all. `tools/audit-core-*.sh` enforces a per-platform
@@ -57,13 +57,15 @@ Pass an exact `chrome_<major>` string through `impersonate` (the curl-cffi-style
 accepted: it would resolve to whichever profile this build happens to ship last,
 so a caller's fingerprint would change whenever a profile is added, silently and
 without the caller asking -- it raises `ImpersonateError` and asks for the exact
-major instead. Chrome 99 through 155 are supported (57 profiles); a version
+major instead. Chrome 86 through 157 are supported (72 profiles); a version
 outside that range raises `ImpersonateError` rather than being downgraded, and
 `available_profiles()` returns the full list. Non-Chromium targets such as Edge,
 Safari, Firefox and Tor also raise rather than being treated as Chrome.
 
 | Chrome major | Profile IDs |
 | --- | --- |
+| 86–92 | `chrome_86` … `chrome_92` (audited per tag: no ALPS extension, no H3 baseline) |
+| 93–98 | `chrome_93` … `chrome_98` |
 | 99–105 | `chrome_99` … `chrome_105` |
 | 106–112 | `chrome_106` … `chrome_112` |
 | 113–119 | `chrome_113` … `chrome_119` |
@@ -71,7 +73,7 @@ Safari, Firefox and Tor also raise rather than being treated as Chrome.
 | 127–133 | `chrome_127` … `chrome_133` |
 | 134–140 | `chrome_134` … `chrome_140` |
 | 141–147 | `chrome_141` … `chrome_147` |
-| 148–155 | `chrome_148` … `chrome_155` (`chrome_154` and `chrome_155` arrived with the 156 Core rebuild) |
+| 148–157 | `chrome_148` … `chrome_157` (`chrome_154`–`chrome_157` use the 156-kernel Core; each is audited against its own tag) |
 
 Profiles control TLS ClientHello, ALPN, HTTP/2 settings, QUIC/H3 and related
 Chromium network parameters. This is not a full browser: Blink, extensions,
@@ -124,7 +126,7 @@ from chrome_client import Session
 
 with Session(impersonate="chrome_155") as session:
     session.get(url, timeout=(5, 15))
-    # hovering impersonate= lists chrome_99 ... chrome_155 and the curl-cffi
+    # hovering impersonate= lists chrome_86 ... chrome_157 and the curl-cffi
     # chrome<major> aliases; bare chrome/chromium is rejected
     # session.get(...) completes headers/cookies/data/json/timeout/proxies/verify/...
 ```

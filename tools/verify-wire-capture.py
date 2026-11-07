@@ -102,7 +102,11 @@ def describe(record):
         "client_random": tls.get("client_random"),
         "session_id": tls.get("session_id"),
         "key_share_digest": digest(extension(record, 51).get("shared_keys")),
-        "ech_digest": digest(extension(record, 65037).get("data")),
+        # None, not a digest of None: "this release does not send the
+        # extension" and "this release sent a fixed payload" must not hash to
+        # the same value, or a release without ECH looks seeded.
+        "ech_digest": (digest(extension(record, 65037).get("data"))
+                       if extension(record, 65037) else None),
         "trust_anchors_payload": extension(record, 51764).get("data"),
         "http2_fingerprint": record.get("http2", {}).get("akamai_fingerprint"),
         "user_agent": record.get("user_agent"),
@@ -110,10 +114,28 @@ def describe(record):
     }
 
 
+# First release whose ClientHello carries ECH GREASE. Mirrors ech_enabled in
+# core/source/minicronet/profile_table_generated.h, which is false for every
+# profile before it; tools/audit-padding-rule.py and the alignment evidence
+# assert the wire side of the same boundary.
+ECH_FIRST_MAJOR = 119
+
+
+def profile_major(profile_id):
+    """The Chromium major a chrome_<major> id names, or -1 if it does not."""
+    _, _, suffix = profile_id.partition('_')
+    return int(suffix) if suffix.isdigit() else -1
+
+
 STABLE_FIELDS = ["ciphers", "groups", "signature_algorithms",
                  "http2_fingerprint", "trust_anchors_payload", "user_agent"]
+# ech_digest is deliberately absent from this list: ECH GREASE only rides the
+# wire from the release that first sent it, and treating "this release has no
+# ECH extension" as "this release seeded its ECH payload" made every profile
+# before that release unwireable. It is checked only when the extension is
+# actually present, below.
 STOCHASTIC_FIELDS = ["client_random", "session_id", "extension_ids",
-                     "grease_values", "key_share_digest", "ech_digest"]
+                     "grease_values", "key_share_digest"]
 
 
 def verify(profile_id, records):
@@ -155,18 +177,49 @@ def verify(profile_id, records):
     }
     report["matches"] = stable
     report["mismatches"] = mismatches
+    # ECH randomness is only a claim this gate can make for releases that
+    # actually emit the extension. When they do, the payload must vary like any
+    # other stochastic field; when they do not, the check is not applicable.
+    #
+    # "Not applicable" is only honest for a release that never sent ECH. The
+    # first release that does is fixed in the profile table (ech_enabled is
+    # false for every profile before chrome_119 and true from chrome_119), so a
+    # later profile that stops emitting the extension is a failure, not an
+    # absence: making the check conditional on presence alone would let a
+    # regression hide as "not applicable" and still report wire_verified.
+    ech_present_count = sum(1 for view in views if view["ech_digest"] is not None)
+    ech_present = ech_present_count > 0
+    expected_ech = profile_major(profile_id) >= ECH_FIRST_MAJOR
+    if expected_ech and not ech_present:
+        mismatches["ech_present"] = {
+            "expected": f"extension 0xfe0d on every connection from chrome_{ECH_FIRST_MAJOR}",
+            "actual": "absent on all connections",
+        }
+    elif ech_present:
+        ech_unique = len({view["ech_digest"] for view in views})
+        unique["ech_digest"] = ech_unique
+        if ech_unique < len(views):
+            mismatches["ech_digest"] = {
+                "expected": f"{len(views)} distinct payloads across connections",
+                "actual": f"{ech_unique} distinct",
+            }
     report["stochastic"] = {
         "unique_counts": unique,
         "minimum_required": MIN_CONNECTIONS,
         "fixed_seed_allowed": False,
+        "ech_extension_present": ech_present,
         "multi_connection_randomness_verified":
             all(count >= MIN_CONNECTIONS for count in unique.values()),
         "grease_present": all(v["grease_values"] for v in views),
     }
+    # mismatches is part of this condition, not just a report field: the ECH
+    # boundary lands there without going through `stable`, so leaving it out
+    # would let a profile that lost its ECH extension keep wire_verified True.
     report["wire_verified"] = bool(
         len(views) >= MIN_CONNECTIONS
         and report["independent_source_ports"] == len(views)
         and all(stable.values())
+        and not mismatches
         and report["stochastic"]["multi_connection_randomness_verified"]
         and report["stochastic"]["grease_present"])
     return report

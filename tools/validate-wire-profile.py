@@ -422,6 +422,17 @@ def expected_for_url(expected, url):
     return expected
 
 
+def _major_span(profiles):
+    """The numeric profile range of an expectations file, e.g. "99..151".
+
+    min()/max() on the ids themselves compares them as strings, which puts
+    chrome_100 before chrome_99 and makes the reported range nonsense.
+    """
+    majors = sorted(int(str(key).split('_')[-1]) for key in profiles
+                    if str(key).split('_')[-1].isdigit())
+    return f"{majors[0]}..{majors[-1]}" if majors else "empty"
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("profile_id")
@@ -434,6 +445,18 @@ def main():
     args = parser.parse_args()
 
     profiles = json.loads(args.expectations.read_text())["profiles"]
+    # KeyError on an unknown id reads as a crash rather than as "this release has
+    # no recorded expectations". The file covers 53 of the 72 profiles (99..151);
+    # 86..98 and 152..157 are verified by tools/verify-wire-capture.py against
+    # their own captures.json instead, so reaching this branch means the caller
+    # picked the wrong tool for that release.
+    if args.profile_id not in profiles:
+        raise SystemExit(
+            f"{args.expectations} has no entry for {args.profile_id}; it covers "
+            f"{len(profiles)} profiles "
+            f"(chrome_{_major_span(profiles)}). Releases outside that range are "
+            "verified by tools/verify-wire-capture.py against their captures.json, "
+            "not by this gate.")
     if args.profile_id not in profiles:
         raise SystemExit(f"unknown profile: {args.profile_id}")
     expected = expected_for_url(

@@ -1,0 +1,21 @@
+{
+  "schema": "chrome_client.profile_unsupported.v1",
+  "profile_id": "chrome_90",
+  "protocol": "h3",
+  "target": "https://quic.tools.scrapfly.io/api/fp/quic",
+  "version": "90.0.4430.212",
+  "status": {
+    "collected": 0,
+    "total": 6,
+    "complete": false,
+    "distinctSessions": 0,
+    "freshSessions": false,
+    "unsupported": {
+      "reason": "page.goto: net::ERR_QUIC_PROTOCOL_ERROR at https://quic.tools.scrapfly.io/api/fp/quic",
+      "detectedAt": "2026-11-06T13:10:04.926Z"
+    }
+  },
+  "reason": "page.goto: net::ERR_QUIC_PROTOCOL_ERROR at https://quic.tools.scrapfly.io/api/fp/quic",
+  "detectedAt": "2026-11-06T13:10:04.926Z",
+  "quicFailures": 9
+}

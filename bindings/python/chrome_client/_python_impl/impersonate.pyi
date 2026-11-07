@@ -1,6 +1,6 @@
 """Type surface of :mod:`chrome_client.impersonate`.
 
-The Core pins one Chromium major per profile (``chrome_99`` .. ``chrome_157``).
+The Core pins one Chromium major per profile (``chrome_86`` .. ``chrome_157``).
 Everything about the TLS ClientHello, the HTTP/2 SETTINGS and priority frames,
 and the HTTP/3 transport parameters comes from that profile; there is no knob
 that bends one profile into another.
@@ -31,47 +31,53 @@ LATEST_CHROME: Final[int]
 OLDEST_CHROME: Final[int]
 #: curl_cffi accepts bare family names; only the Chrome family exists here.
 
-#: Canonical profile identifiers, ``chrome_99`` .. ``chrome_157``.
+#: Canonical profile identifiers, ``chrome_86`` .. ``chrome_157``.
 #:
 #: This is the spelling to prefer: it names the exact Chromium major whose
 #: wire behaviour was captured and verified.
 ChromeProfileName: TypeAlias = Literal[
-    "chrome_99", "chrome_100", "chrome_101", "chrome_102",
-    "chrome_103", "chrome_104", "chrome_105", "chrome_106",
-    "chrome_107", "chrome_108", "chrome_109", "chrome_110",
-    "chrome_111", "chrome_112", "chrome_113", "chrome_114",
-    "chrome_115", "chrome_116", "chrome_117", "chrome_118",
-    "chrome_119", "chrome_120", "chrome_121", "chrome_122",
-    "chrome_123", "chrome_124", "chrome_125", "chrome_126",
-    "chrome_127", "chrome_128", "chrome_129", "chrome_130",
-    "chrome_131", "chrome_132", "chrome_133", "chrome_134",
-    "chrome_135", "chrome_136", "chrome_137", "chrome_138",
-    "chrome_139", "chrome_140", "chrome_141", "chrome_142",
-    "chrome_143", "chrome_144", "chrome_145", "chrome_146",
-    "chrome_147", "chrome_148", "chrome_149", "chrome_150",
-    "chrome_151", "chrome_152", "chrome_153", "chrome_154",
-    "chrome_155", "chrome_156", "chrome_157",
+    "chrome_86", "chrome_87", "chrome_88", "chrome_89",
+    "chrome_90", "chrome_91", "chrome_92", "chrome_93",
+    "chrome_94", "chrome_95", "chrome_96", "chrome_97",
+    "chrome_98", "chrome_99", "chrome_100", "chrome_101",
+    "chrome_102", "chrome_103", "chrome_104", "chrome_105",
+    "chrome_106", "chrome_107", "chrome_108", "chrome_109",
+    "chrome_110", "chrome_111", "chrome_112", "chrome_113",
+    "chrome_114", "chrome_115", "chrome_116", "chrome_117",
+    "chrome_118", "chrome_119", "chrome_120", "chrome_121",
+    "chrome_122", "chrome_123", "chrome_124", "chrome_125",
+    "chrome_126", "chrome_127", "chrome_128", "chrome_129",
+    "chrome_130", "chrome_131", "chrome_132", "chrome_133",
+    "chrome_134", "chrome_135", "chrome_136", "chrome_137",
+    "chrome_138", "chrome_139", "chrome_140", "chrome_141",
+    "chrome_142", "chrome_143", "chrome_144", "chrome_145",
+    "chrome_146", "chrome_147", "chrome_148", "chrome_149",
+    "chrome_150", "chrome_151", "chrome_152", "chrome_153",
+    "chrome_154", "chrome_155", "chrome_156", "chrome_157",
 ]
 
 #: curl-cffi's spelling of the same profiles, without the underscore
 #: (``chrome110``). Accepted as an alias so ports of curl_cffi code run
 #: unchanged; ``normalize_impersonate()`` maps it onto the canonical name.
 ChromeProfileAlias: TypeAlias = Literal[
-    "chrome99", "chrome100", "chrome101", "chrome102",
-    "chrome103", "chrome104", "chrome105", "chrome106",
-    "chrome107", "chrome108", "chrome109", "chrome110",
-    "chrome111", "chrome112", "chrome113", "chrome114",
-    "chrome115", "chrome116", "chrome117", "chrome118",
-    "chrome119", "chrome120", "chrome121", "chrome122",
-    "chrome123", "chrome124", "chrome125", "chrome126",
-    "chrome127", "chrome128", "chrome129", "chrome130",
-    "chrome131", "chrome132", "chrome133", "chrome134",
-    "chrome135", "chrome136", "chrome137", "chrome138",
-    "chrome139", "chrome140", "chrome141", "chrome142",
-    "chrome143", "chrome144", "chrome145", "chrome146",
-    "chrome147", "chrome148", "chrome149", "chrome150",
-    "chrome151", "chrome152", "chrome153", "chrome154",
-    "chrome155", "chrome156", "chrome157",
+    "chrome86", "chrome87", "chrome88", "chrome89",
+    "chrome90", "chrome91", "chrome92", "chrome93",
+    "chrome94", "chrome95", "chrome96", "chrome97",
+    "chrome98", "chrome99", "chrome100", "chrome101",
+    "chrome102", "chrome103", "chrome104", "chrome105",
+    "chrome106", "chrome107", "chrome108", "chrome109",
+    "chrome110", "chrome111", "chrome112", "chrome113",
+    "chrome114", "chrome115", "chrome116", "chrome117",
+    "chrome118", "chrome119", "chrome120", "chrome121",
+    "chrome122", "chrome123", "chrome124", "chrome125",
+    "chrome126", "chrome127", "chrome128", "chrome129",
+    "chrome130", "chrome131", "chrome132", "chrome133",
+    "chrome134", "chrome135", "chrome136", "chrome137",
+    "chrome138", "chrome139", "chrome140", "chrome141",
+    "chrome142", "chrome143", "chrome144", "chrome145",
+    "chrome146", "chrome147", "chrome148", "chrome149",
+    "chrome150", "chrome151", "chrome152", "chrome153",
+    "chrome154", "chrome155", "chrome156", "chrome157",
 ]
 
 #: Everything ``impersonate=`` accepts. ``None`` means "send Chromium's own
@@ -267,12 +273,12 @@ def available_profiles() -> List[str]:
 
     Returns:
         The canonical names in ascending Chromium-major order, e.g.
-        ``["chrome_99", "chrome_100", ..., "chrome_157"]``. The aliases are not
+        ``["chrome_86", "chrome_87", ..., "chrome_157"]``. The aliases are not
         repeated here; they are accepted by :func:`normalize_impersonate`.
 
     Example:
         >>> available_profiles()[0], available_profiles()[-1]
-        ('chrome_99', 'chrome_155')
+        ('chrome_86', 'chrome_157')
     """
     ...
 
@@ -291,7 +297,7 @@ def default_priority(profile: Optional[str]) -> Optional[str]:
         so the Core keeps ownership of rejecting it.
 
     Example:
-        >>> default_priority("chrome_155"), default_priority("chrome_99")
+        >>> default_priority("chrome_155"), default_priority("chrome_86")
         ('highest', None)
     """
     ...

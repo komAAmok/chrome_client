@@ -1,5 +1,5 @@
 diff --git a/net/socket/ssl_client_socket_impl.cc b/net/socket/ssl_client_socket_impl.cc
-index daf2491519..538ecedb5e 100644
+index f586acfe0f0..ea95ec7753f 100644
 --- a/net/socket/ssl_client_socket_impl.cc
 +++ b/net/socket/ssl_client_socket_impl.cc
 @@ -687,6 +687,26 @@ int SSLClientSocketImpl::Init() {
@@ -29,7 +29,32 @@ index daf2491519..538ecedb5e 100644
  
    const bool host_is_ip_address =
        HostIsIPAddressNoBrackets(host_and_port_.host());
-@@ -772,7 +792,25 @@ int SSLClientSocketImpl::Init() {
+@@ -751,9 +771,22 @@ int SSLClientSocketImpl::Init() {
+       ssl_config_.version_min_override.value_or(context_->config().version_min);
+   uint16_t version_max =
+       ssl_config_.version_max_override.value_or(context_->config().version_max);
++  // A pinned historical profile may advertise a floor below TLS 1.2: Chrome
++  // still listed TLS 1.0 and 1.1 in supported_versions up to 97, because
++  // kDefaultSSLVersionMin was TLS1 there. Honour that only when the profile says
++  // so; the build default (and therefore every ordinary connection) keeps the
++  // TLS 1.2 floor, and anything genuinely unrepresentable is still rejected.
++  bool profile_lowers_floor =
++      context_->config().profile_allows_legacy_tls_versions;
+   if (version_min < TLS1_2_VERSION || version_max < TLS1_2_VERSION) {
+-    // TLS versions before TLS 1.2 are no longer supported.
+-    return ERR_UNEXPECTED;
++    if (!profile_lowers_floor) {
++      // TLS versions before TLS 1.2 are no longer supported.
++      return ERR_UNEXPECTED;
++    }
++    if (version_max < TLS1_2_VERSION) {
++      // A profile may lower the floor, never the ceiling.
++      return ERR_UNEXPECTED;
++    }
+   }
+ 
+   if (!SSL_set_min_proto_version(ssl_.get(), version_min) ||
+@@ -772,7 +805,25 @@ int SSLClientSocketImpl::Init() {
  
    // Use BoringSSL defaults, but disable 3DES and HMAC-SHA1 ciphers in ECDSA.
    // These are the remaining CBC-mode ECDSA ciphers.
@@ -56,7 +81,7 @@ index daf2491519..538ecedb5e 100644
  
    if (ssl_config_.require_ecdhe)
      command.append(":!kRSA");
-@@ -807,14 +845,23 @@ int SSLClientSocketImpl::Init() {
+@@ -807,14 +858,23 @@ int SSLClientSocketImpl::Init() {
        SSL_SIGN_RSA_PSS_RSAE_SHA512,
        SSL_SIGN_RSA_PKCS1_SHA512,
    };
@@ -83,7 +108,7 @@ index daf2491519..538ecedb5e 100644
  
    if (!ssl_config_.alpn_protos.empty()) {
      std::vector<uint8_t> wire_protos =
-@@ -861,7 +908,10 @@ int SSLClientSocketImpl::Init() {
+@@ -861,7 +921,10 @@ int SSLClientSocketImpl::Init() {
      return rv;
    }
  
@@ -95,11 +120,27 @@ index daf2491519..538ecedb5e 100644
  
    // Configure BoringSSL to send Trust Anchor IDs, if provided.
    if (ssl_config_.trust_anchor_ids.has_value()) {
+diff --git a/net/ssl/ssl_config.h b/net/ssl/ssl_config.h
+index 91a9be22563..d6d3c750bec 100644
+--- a/net/ssl/ssl_config.h
++++ b/net/ssl/ssl_config.h
+@@ -24,6 +24,11 @@ namespace net {
+ 
+ // Supported TLS ProtocolVersion values encoded as uint16_t.
+ enum {
++  // Named for the historical range a pinned profile may advertise. They are not
++  // reachable through the default configuration: kDefaultSSLVersionMin stays
++  // TLS1_2, and only a profile that explicitly records a lower floor uses them.
++  SSL_PROTOCOL_VERSION_TLS1 = 0x0301,
++  SSL_PROTOCOL_VERSION_TLS1_1 = 0x0302,
+   SSL_PROTOCOL_VERSION_TLS1_2 = 0x0303,
+   SSL_PROTOCOL_VERSION_TLS1_3 = 0x0304,
+ };
 diff --git a/net/ssl/ssl_config_service.h b/net/ssl/ssl_config_service.h
-index 8329b02b85..e581778a8a 100644
+index 56f2ceb6463..a8639fd88da 100644
 --- a/net/ssl/ssl_config_service.h
 +++ b/net/ssl/ssl_config_service.h
-@@ -83,6 +83,32 @@ struct NET_EXPORT SSLContextConfig {
+@@ -92,6 +92,38 @@ struct NET_EXPORT SSLContextConfig {
    // disable TLS_ECDH_ECDSA_WITH_RC4_128_SHA, specify 0xC002.
    std::vector<uint16_t> disabled_cipher_suites;
  
@@ -128,6 +169,12 @@ index 8329b02b85..e581778a8a 100644
 +
 +  // Whether the profile offers the new ALPS extension codepoint.
 +  bool profile_use_new_alps_codepoint = true;
++
++  // Whether a pinned profile is allowed to advertise a TLS version floor below
++  // TLS 1.2. Chrome set kDefaultSSLVersionMin = TLS1 up to 97, so those releases
++  // list TLS 1.0 and 1.1 in supported_versions. This is an explicit opt-in per
++  // profile and never affects an ordinary connection.
++  bool profile_allows_legacy_tls_versions = false;
 +
    // This configures a compliance policy that sets the cipher order for
    // TLS 1.3 to prefer AES-256-GCM over AES-128-GCM over ChaCha20-Poly1305.

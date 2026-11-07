@@ -49,6 +49,37 @@ behavior fails closed instead of silently using current Chromium defaults.
   TLS verification policy.
 - `MN_PROTOCOL_NATIVE` preserves Chromium protocol selection. Forced H1/H2/H3
   modes fail closed and never fall back to another version.
+- Forcing HTTP/1.1 (`http_version=v1`) changes the ClientHello in exactly two
+  ways, both of them what Chrome does, and comparing such a request against an
+  **h2** capture will always report those two as differences:
+
+  | 位置 | h2 capture | our `v1` request | 为什么 |
+  | --- | --- | --- | --- |
+  | ALPN | `h2, http/1.1` | `http/1.1` | the pin forces a single protocol |
+  | extension 17613 (ALPS) | present | absent | ALPS is only offered per protocol in `alpn_protos` |
+
+  ALPS is not dropped by choice: `net/socket/ssl_client_socket_impl.cc` walks
+  `ssl_config_.alpn_protos` and calls `SSL_add_application_settings` only when the
+  same protocol has an `application_settings` entry, and
+  `net/http/http_network_session.cc` installs that entry for `kProtoHTTP2` alone.
+  With `alpn_protos` reduced to `http/1.1` there is nothing to match, so no ALPS
+  extension is emitted. Chrome runs the same code and behaves the same way — the
+  reference **h1** capture carries no ALPS extension for any release, while its
+  **h2** capture does from 91 onward.
+
+  `trust_anchors` (0xca34) is *not* in this set: it is protocol-independent and
+  the reference h1 capture carries it from 152, as does this Core.
+  `tools/audit-h1-alps-absence.py` pins all of it down.
+
+- `MN_PROTOCOL_FORCE_H3` on a profile whose release has no reproducible HTTP/3
+  behaviour (`chrome_86`–`chrome_92`: the reference capture set contains zero
+  usable H3 samples for those majors) returns `MN_ERROR_PROFILE_UNSUPPORTED` at
+  engine creation. Measured before the guard existed: a chrome_86 engine forced
+  to H3 sent a QUIC ClientHello and got HTTP 200 back, i.e. it produced a
+  fingerprint that release never had. Profile support is therefore two separate
+  facts — `activation.h3_disabled` ("this release does not attempt QUIC by
+  default", true for 86–122) and `activation.h3_unsupported` ("this release
+  cannot do HTTP/3 at all", true for 86–92 only).
 - Handles use balanced, thread-safe retain/release ownership. A successful
   start owns one internal reference until its single terminal callback.
 - Engine-level cache and TLS settings are immutable; request cache modes only
@@ -98,7 +129,7 @@ is re-sent to the new Engine.
 The pinned profile owns the TLS ClientHello, ALPN, HTTP/2 SETTINGS and the
 priority signalling that goes with them, HTTP/3 transport parameters, and the
 default header set with its order. That priority signalling has two halves,
-and which one a profile gets is a measured version boundary: chrome_99-123
+and which one a profile gets is a measured version boundary: chrome_86-123
 send the HEADERS dependency/weight fields and no RFC 9218 header, chrome_124
 and later additionally send a `priority` request header. Neither half is a
 knob -- `priority=` selects the request priority that feeds both, exactly as
@@ -123,7 +154,7 @@ is visible to a fingerprinter.
 | `curl_options` | No libcurl handle exists |
 | `max_recv_speed` | Chromium owns transfer pacing |
 | `referer=` or a `Referer` header | Routed to `URLRequest::SetReferrer`, so it is sent like a real Chrome's |
-| `impersonate` outside `chrome_99`–`chrome_155`, or a non-Chromium family | The Core registers Chromium desktop profiles only |
+| `impersonate` outside `chrome_86`–`chrome_157`, or a non-Chromium family | The Core registers Chromium desktop profiles only |
 
 ### Certificate errors
 

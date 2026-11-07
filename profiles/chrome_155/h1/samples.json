@@ -1,0 +1,111 @@
+{
+  "schema": "chrome_client.profile_samples.v1",
+  "profile_id": "chrome_155",
+  "protocol": "h1",
+  "target": "https://tls.peet.ws/api/all",
+  "version": "155.0.8059.85",
+  "samples": [
+    {
+      "index": 1,
+      "capturedAt": "2026-11-06T12:38:56.484Z",
+      "durationMs": 2380,
+      "status": 200,
+      "checks": {
+        "ja3Hash": "b3d40b73be57c71331d3e92716960a33",
+        "ja4": "t13d1516h1_8daaf6152771_5b37b36a67c0",
+        "peetprintHash": "ef6ad80369e05eafc24ad4e83ac0e28d",
+        "httpVersion": "HTTP/1.1",
+        "sessionId": "ab094921a576b775fdcff0a64e8440e90f91b359b70b5306c2d0e4b71f195c0f",
+        "clientRandom": "d3e52806d612052274909070ebb87ba08a5d23b8447a78eefa2a3016d784dfe7",
+        "resumed": false,
+        "headerCount": 14,
+        "authHeaders": false
+      }
+    },
+    {
+      "index": 2,
+      "capturedAt": "2026-11-06T12:38:56.345Z",
+      "durationMs": 2074,
+      "status": 200,
+      "checks": {
+        "ja3Hash": "46e784b6b5527f16c3f3a4103fb09959",
+        "ja4": "t13d1516h1_8daaf6152771_5b37b36a67c0",
+        "peetprintHash": "ef6ad80369e05eafc24ad4e83ac0e28d",
+        "httpVersion": "HTTP/1.1",
+        "sessionId": "38b7ab907a0b9371ce4b29c8bdbf3db9adcff807eed0706f79f4d0ab5f07bd9b",
+        "clientRandom": "637d4a6188fe80d50b2593307cb66129f67bd2589b8d8aaca12010e7a472c966",
+        "resumed": false,
+        "headerCount": 14,
+        "authHeaders": false
+      }
+    },
+    {
+      "index": 3,
+      "capturedAt": "2026-11-06T12:38:57.669Z",
+      "durationMs": 2604,
+      "status": 200,
+      "checks": {
+        "ja3Hash": "b7e1efc34c6e4ec5679233da6e7843e4",
+        "ja4": "t13d1516h1_8daaf6152771_5b37b36a67c0",
+        "peetprintHash": "ef6ad80369e05eafc24ad4e83ac0e28d",
+        "httpVersion": "HTTP/1.1",
+        "sessionId": "522112a6d628981f0828e11f0d0d69d2f554c2710a425c997acc7e0da974ce3f",
+        "clientRandom": "b354e9a3a394ca54cf6f3bf49f1a3ce5b85a0bdc3af29728aabec4477ac1d8a0",
+        "resumed": false,
+        "headerCount": 14,
+        "authHeaders": false
+      }
+    },
+    {
+      "index": 4,
+      "capturedAt": "2026-11-06T12:38:57.671Z",
+      "durationMs": 2510,
+      "status": 200,
+      "checks": {
+        "ja3Hash": "e2010a4ecc9459f35821b3015546ed60",
+        "ja4": "t13d1516h1_8daaf6152771_5b37b36a67c0",
+        "peetprintHash": "ef6ad80369e05eafc24ad4e83ac0e28d",
+        "httpVersion": "HTTP/1.1",
+        "sessionId": "ee22b81190a2a2d0250f76f99f92718d1d45becf73a36979b50ba8fab0d73658",
+        "clientRandom": "80f45fe3e35af24e1d1005b5126fcd1c8f7c91e7877da5f3a0728daf2f04339d",
+        "resumed": false,
+        "headerCount": 14,
+        "authHeaders": false
+      }
+    },
+    {
+      "index": 5,
+      "capturedAt": "2026-11-06T12:38:58.716Z",
+      "durationMs": 2009,
+      "status": 200,
+      "checks": {
+        "ja3Hash": "910628b0d3539c7ef66d9f830c47cca5",
+        "ja4": "t13d1516h1_8daaf6152771_5b37b36a67c0",
+        "peetprintHash": "ef6ad80369e05eafc24ad4e83ac0e28d",
+        "httpVersion": "HTTP/1.1",
+        "sessionId": "7d664b93da04afe23549b9ce56bdfae193dcb38e943d54d1117d70a59a05a8a8",
+        "clientRandom": "5ba4d028a9f422cdbda373aaa12c8d49ce80b3d6aab3b0b2c234dd20e7905f9a",
+        "resumed": false,
+        "headerCount": 14,
+        "authHeaders": false
+      }
+    },
+    {
+      "index": 6,
+      "capturedAt": "2026-11-06T12:38:58.766Z",
+      "durationMs": 1947,
+      "status": 200,
+      "checks": {
+        "ja3Hash": "9169b53c445099d17715c13e811c59db",
+        "ja4": "t13d1516h1_8daaf6152771_5b37b36a67c0",
+        "peetprintHash": "ef6ad80369e05eafc24ad4e83ac0e28d",
+        "httpVersion": "HTTP/1.1",
+        "sessionId": "95292f05d562c6d87186200842782489ce6d30893e41a6af49779a9637f51afa",
+        "clientRandom": "4a4d8e2c51597c9f61548c79b721164539871c604df0a4c5e496e44e7e83bc0a",
+        "resumed": false,
+        "headerCount": 14,
+        "authHeaders": false
+      }
+    }
+  ]
+}

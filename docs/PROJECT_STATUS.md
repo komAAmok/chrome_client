@@ -14,13 +14,13 @@
 - Chromium revision：`58bcc148f76b8975bbe59f1a6012d4ae409d62a9`（Chrome 156.0.8078.31 stable）
 - Python 发布版本与 crate 版本同号（不再有四段版本号映射）；具体版本号只在根
   `Cargo.toml` 的 `workspace.package.version` 里，本文件不再复述，以免再次漂移
-- Chrome profile：`chrome_99` — `chrome_157`，59 个
+- Chrome profile：`chrome_86` — `chrome_157`，72 个
 
 ## 已完成
 
 ### 阶段 0：可复现构建与基线
 
-- 从 `new/` 迁入 12 个 Chromium 补丁（`core/patches/`）、8 个平台构建脚本、
+- 从 `new/` 迁入 12 个 Chromium 补丁（`core/patches/`，现为 14 个）、8 个平台构建脚本、
   3 个平台审计脚本、FeatureList 审计、profile 表生成器
 - `sync-core.sh` 重写为本仓库布局，逐个校验补丁已应用，半应用状态直接失败
 - **可复现性成立**：用 08-23 版源码重建得到与已发布 wheel 逐字节一致的产物；
@@ -133,13 +133,36 @@ Request 与 WebSocket 在 ABI v8 里各自建独立 sequenced runner，`Engine` 
 
 实测 8 平台合计 **−376,896（−0.53%）**，linux-x86_64 −102,400、macos-x86_64 −106,496、
 windows-x86_64 −97,280。三档上限按既有规则收敛到 Linux 9,050,000 / Windows 10,510,000 /
-macOS 8,710,000，**最小余量从 0.03% 回到 2.0%**。
+macOS 8,710,000，**最小余量从 0.03% 回到约 2%**（规则是「最大产物 × 1.02 向上取整到 1 万」，
+换算成占上限的百分比会因取整略低于 2%）。（这一轮之后的三次重建——BoringSSL 尺寸档、
+156 内核、chrome_86..chrome_98——又按同一条规则把三档收到 Linux 8,540,000 /
+Windows 9,610,000 / macOS 8,120,000，见下文「当前默认上限」。）
 
 验收：smoke、125 个 Python 测试、base64 专项（本地服务端逐字节比对 Basic 凭据）、
 指纹（JA4 / peetprint / Akamai 与改动前逐字节相同）、以及 base64 路径的 A/B
 （356.3/326.0 → 344.8/338.0 req/s，区间重叠）。同批次实测后**否决**了 zstd 的同类改动
 （`-Oz` 反而 +69,632，解压是真实热路径）与关闭 libc++ hardening（省 73,728 但属安全
 取舍）。详见 `docs/CORE_BINARY_SIZE_PLAN.md` 第七节。
+
+### chrome_86 – chrome_98 已加入（72 个 profile）
+
+原有范围是 `chrome_99`–`chrome_157`。本次把基线往前推到 86，**每个版本用自己的 tag
+源码与自己的抓包推导**，没有从 99 继承常量：
+
+- `tools/collect-profile-evidence.py` 增加 `PATH_ERAS`：86–92 的 BoringSSL 扩展实现在
+  `ssl/t1_lib.cc`（当时还没有 `extensions.cc`），QUICHE 在 152 之前用 `quic/` 前缀。
+  没有这张表时这些文件 404，采集器会把「该文件当时不存在」和「抓取失败」混为一谈。
+- 新增 `tools/derive-profile-from-capture.py`：只读该版本自己的抓包与源码行，写出前做
+  双向交叉校验（wire↔source、wire↔wire）。用同一工具重推 `chrome_99` 与仓库已提交条目
+  逐字段一致，作为方法校准。
+- 实测边界（全部双向确认）：ALPS 从 91 起（86–90 的 `features.cc` 没有该 feature，
+  `http_network_session.cc` 也没有 `application_settings_` 赋值）；padding 扩展长度
+  在线缆上稳定为 h2 86–90=418、91–97=400、98–118=408（h1 分别 424/424/432）。
+  **这组数字是 BoringSSL 那条 512-total 规则的输出，不是配置值**：profile 表的
+  `client_hello_padding_length` 对全部 72 个 profile 都是 0，由
+  `tools/audit-padding-rule.py` 的两半断言（表侧必须为 0，线缆侧必须是上述宽度）。
+  86–97 比 98–118 宽 10 字节，来源是 `supported_versions` 里多出的 TLS 1.0/1.1 两个字。
+- 验收证据见 [`CHROME_86_157_SUPPORT_MATRIX.md`](CHROME_86_157_SUPPORT_MATRIX.md)。
 
 ### chrome_156 与 chrome_157 已加入（59 个 profile）
 
@@ -343,8 +366,11 @@ Core smoke、三个平台审计、103 个 Python 用例全过；**TLS 指纹未�
 三个体积上限随之收紧：Linux 9,250,000 → 9,050,000、Windows 12,000,000 → 11,400,000、
 macOS 12,000,000 → 8,750,000。macOS 那一档原来虚高 3 MB 以上，等于没有门禁。`-Oz`
 那轮之后三档又收到 Linux 8,940,000、Windows 10,400,000、macOS 8,620,000。
-156.0.8078.31 升级后按同一条规则重算两次（上游增长，随后 simdutf 尺寸档修复），
-当前默认上限是 Linux **9,050,000**、Windows **10,510,000**、macOS **8,710,000**。
+156.0.8078.31 升级后按同一条规则重算两次（上游增长，随后 simdutf 尺寸档修复）。
+chrome_86..chrome_98 加入 profile 表后又重算一次（8 平台同批重建，合计 +28,624 字节）。
+**当前默认上限是 Linux 8,540,000、Windows 9,610,000、macOS 8,120,000**，对应最大的产物
+8,367,664 / 9,416,192 / 7,958,968 各加 2% 向上取整到 1 万。Windows 那一档在加入新 profile 后
+曾只剩 1.91%，低于这条规则本身要求的 2%，所以从 9,600,000 提到 9,610,000。
 
 **已测量但未采纳：HSTS 预载表（−786,432 字节，−8.57%）。** 这是剩下唯一的大头，与上面
 那项叠加可再省到 −10.98%。没做，因为它用保真度换体积：Chrome 会在发出任何字节之前把
@@ -366,18 +392,23 @@ macOS 12,000,000 → 8,750,000。macOS 那一档原来虚高 3 MB 以上，等�
 
 8 个平台在 2026-11 的 BoringSSL 尺寸档精简之后**同批重建**（见
 [CORE_BINARY_SIZE_PLAN.md](CORE_BINARY_SIZE_PLAN.md) 第八节），合计
-68,170,984 → **64,720,064 字节（−3,450,920，−5.06%）**：
+68,170,984 → **64,720,064 字节（−3,450,920，−5.06%）**。
+
+chrome_86..chrome_98 加入 profile 表之后，8 个平台**再次同批重建**，合计
+**64,748,688 字节**（+28,624，+0.04%：多出的 13 个 profile 条目与 `HistoricalUserAgent`
+的版本串）。下表是这次重建后的产物值；`tools/audit-core-binaries.sh` 会逐个断言
+产物里含 `chrome_86` 与 `chrome_157`，所以「只重建了一个平台」不会再通过门禁：
 
 | 目标 | 大小（字节） | SHA-256 前缀 |
 | --- | --- | --- |
-| linux-x86_64 | 8,363,568 | `07a29c3a544c7419` |
-| linux-x86 | 8,059,480 | `8cdd80ca554b5d1f` |
-| linux-arm64 | 8,006,752 | `1b7760489ac73d4b` |
-| windows-x86 | 7,498,752 | `55d3abfb581bcf63` |
-| windows-x86_64 | 9,411,584 | `62f2ea673e20bbfb` |
-| windows-arm64 | 8,114,176 | `fa0b2934701ec83d` |
-| macos-x86_64 | 7,954,872 | `3524970903eb604c` |
-| macos-arm64 | 7,310,880 | `b9d5841039606711` |
+| linux-x86_64 | 8,367,664 | `38e49c9e3e065539` |
+| linux-x86 | 8,062,952 | `b977a206714b445b` |
+| linux-arm64 | 8,012,448 | `348c66c08ab69c8e` |
+| windows-x86 | 7,501,312 | `220749d5ac507d7d` |
+| windows-x86_64 | 9,416,192 | `7e07526a8efe53e3` |
+| windows-arm64 | 8,118,272 | `d2e52049fcb30914` |
+| macos-x86_64 | 7,958,968 | `9d4e872f0b4940bb` |
+| macos-arm64 | 7,310,880 | `6e69ad70bf355923` |
 
 ### 本轮 C++ 修复的平台覆盖
 
@@ -742,21 +773,27 @@ Core 的 `Request::OnAuthRequired` 一次都不执行。逐层证据与调用点
 | --- | --- | --- |
 | `tools/audit-abi.sh` | 20 个符号，header / FFI / Core / 三份导出表一致；注释掉的声明不算声明 | 是 |
 | `tools/audit-abi-layout.py` | 7 个结构体、70 个字段：用 C 编译器取头文件真实的 `offsetof`/`sizeof`，与 Rust `#[repr(C)]` 声明逐字段比对 | 是 |
-| `tools/audit-core-binaries.sh` | 8 个平台通过；同时比对每个 manifest 的 `chromium_revision` 与 `CHROMIUM_REVISION` | 是 |
+| `tools/audit-core-binaries.sh` | 8 个平台通过；比对 manifest 的 `chromium_revision` 与 `CHROMIUM_REVISION`，并**从产物字节里断言含 `chrome_86` 与 `chrome_157`**，所以「只重建了一个平台」不再通过 | 是 |
+| `tools/audit-core-size-ceilings.py` | 三档 `MAX_BYTES` 必须等于「该平台最大产物 × 1.02，向上取整到 1 万」。实测 Linux 8,540,000 / Windows 9,610,000 / macOS 8,120,000 全部满足；**新增 profile 使产物变大时，上限必须同批重算**，否则这里失败 | 是 |
 | `tools/audit-net-error-names.py` | `_NET_ERRORS` 的 69 行逐条与 `net_error_list.h` 比对：0 处错标、0 处陈旧、**0 个未映射的代理类错误**。注释掉的 `// NET_ERROR(...)` 不算定义（17 个已移除码因此不会被误认为当前码） | 否，需 Chromium 树 |
 | `tools/audit-readme.sh` | 通过 | 是 |
 | `cargo fmt` / `clippy -D warnings` | 通过 | 是 |
-| `cargo test --workspace` | 14 个单元测试通过（`request.rs` 11、`websocket.rs` 1、`minicronet-sys/lib.rs` 2）；含 panic 不穿越 FFI 边界、丢弃 body stream 不搁死请求、`Some(Duration::ZERO)` 仍是真实 deadline 三项 | 是 |
-| Python 套件 | 252 个用例通过，2 个 skip（未设 `MINICRONET_WS_URL`/`MINICRONET_WSS_URL`，无真实 WS/WSS 端点） | 是 |
+| `cargo test --workspace` | 18 个单元测试通过（`request.rs` 16、`minicronet-sys/lib.rs` 2）；含 panic 不穿越 FFI 边界、丢弃 body stream 不搁死请求、`Some(Duration::ZERO)` 仍是真实 deadline 三项 | 是 |
+| Python 套件 | 260 个用例通过，2 个 skip（未设 `MINICRONET_WS_URL`/`MINICRONET_WSS_URL`，无真实 WS/WSS 端点） | 是 |
 | `tools/audit-python-stubs.py` | 17 个 stub 模块，0 错；含 prose 版本区间与裸交叉引用两项扫描（都有空转守卫） | 是 |
 | `tools/audit-python-typing.py` | mypy 检查存根与消费者，两者都干净；**缺 mypy 时非零退出**（`--optional` 是显式逃生门，CI 与门禁清单都不传），不再静默跳过 | 是 |
 | Core manifest 与 `CHROMIUM_REVISION` 一致 | 8 个平台通过 | 是 |
 | `tools/audit-pypi-metadata.sh` 的扩展分界断言 | `abi3-py3N`（N=9）== facade 的 `(3, M)`（M=9），另断言 py36 仍 `=0.15.1`+`abi3-py36`、现代 crate 不得用 `abi3-py37/38`、pyo3 必须 `=` pin | 是 |
 | 真 Python 3.9 上安装并实发一次请求 | `build-wheels.yml` 的 `python39-smoke`；已进 `publish.needs`，装不上的轮子无法发布 | 是（需要构建产物） |
 | 扩展可 import 且能发一次真实请求 | 通过 | 是 |
-| `tools/audit-core-linux.sh` | 通过（体积上限 9,050,000） | 否，需 Chromium 树 |
+| `tools/audit-core-linux.sh` | 通过（体积上限 8,540,000；Linux 三目标最大 8,367,664） | 否，需 Chromium 树 |
 | 8 个平台构建 | 全部通过 | 否，需 Chromium 树与交叉工具链 |
 | `tools/generate-profile-table.py` | 重新生成与已提交表逐字节一致 | 否，未接入 |
+| `tools/audit-padding-rule.py` | 144 组 profile/协议：86–118 固定宽度、119–123 条件、124+ 永不；**并断言编译进 Core 的表里 `client_hello_padding_length` 全为 0**（宽度是规则的输出，不是配置值） | 是 |
+| `tools/audit-tls-version-range.py` | 86–97 下限 TLS1、98+ TLS1_2，读生成表而非 JSON 输入 | 是 |
+| `tools/audit-h1-alps-absence.py` | 72 个 profile：h1 从不发 ALPS、h2 从 91 起发；参考抓包集存在时额外做 wire 对比，缺失时打印 SKIP | 是 |
+| `tools/audit-h3-profile-support.py` | 72 个 profile，86–92 标为不支持 H3，其余支持 | 是 |
+| `tools/audit-profile-probes.sh` | `profile_feature_probe`（含 chrome_92/93 的 H3 边界）与 `profile_isolation_probe`（86–157 全区间）真实运行通过；`profile_state_isolation_probe` 因缺 HTTP/HTTPS harness 显式 SKIP | 否，需 Chromium 树 |
 | `tools/verify-wire-capture.py` | chrome_152 `wire_verified: true` | 否，需抓包 |
 | `tools/inspect-client-hello.py` | 11 个 profile 改动前后指纹一致 | 否，需已构建扩展 |
 

@@ -574,6 +574,12 @@ void Engine::InitializeOnNetworkThread() {
         profile->maintain_ipv6_temp_addr;
     quic_context->params()->send_legacy_version_information =
         profile->send_quic_legacy_version_information;
+    // HTTP/3 SETTINGS_H3_DATAGRAM (51). Captured boundary: absent on
+    // chrome_93..chrome_119, present from chrome_120. The value is profile data,
+    // never a FeatureList read, so a pinned older profile cannot inherit
+    // today's default.
+    quic_context->params()->advertise_h3_datagram =
+        profile->advertise_h3_datagram;
     if (profile->send_quic_orig) {
       quic_context->params()->connection_options.push_back(quic::kORIG);
     }

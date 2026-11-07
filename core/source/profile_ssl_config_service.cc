@@ -34,6 +34,20 @@ net::SSLContextConfig ProfileSSLConfigService::GetSSLContextConfig() {
                                i < profile_.key_share_count});
   }
   config.profile_use_new_alps_codepoint = profile_.use_new_alps_codepoint;
+  // Chrome 86..97 set kDefaultSSLVersionMin = TLS1, so their supported_versions
+  // extension lists 1.3/1.2/1.1/1.0; 98 raised the floor to TLS1_2 and the two
+  // legacy entries disappeared. The range is per-profile data and IS applied
+  // here: a pinned historical profile reproduces the older list verbatim, while
+  // an ordinary connection keeps the build default.
+  //
+  // Upstream ssl_client_socket_impl.cc returns ERR_UNEXPECTED for any floor
+  // below TLS1_2, so profile-tls-net.patch relaxes that check behind
+  // profile_allows_legacy_tls_versions. The opt-in is derived from the same
+  // value below, which is why the flag and the floor cannot disagree.
+  config.version_min = profile_.tls_version_min;
+  config.version_max = profile_.tls_version_max;
+  config.profile_allows_legacy_tls_versions =
+      profile_.tls_version_min < 0x0303;
   // net::SSLContextConfig::trust_anchor_ids is the encoded
   // RequestedTrustAnchorList itself (a series of non-empty 8-bit
   // length-prefixed IDs, without the outer 16-bit length), which is exactly the
