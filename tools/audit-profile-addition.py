@@ -240,7 +240,48 @@ def level_source(major, profile):
     }
 
 
-def level_wire(major):
+def decode_trust_anchors(payload_hex):
+    """The IDs inside a trust_anchors (0xca34) extension payload.
+
+    The wire form is a u16 total length followed by one-byte-length-prefixed
+    IDs. The profile table stores the INNER sequence only, because that is what
+    SSL_set1_requested_trust_anchors receives -- so a comparison has to decode
+    the wire form rather than compare bytes.
+    """
+    if not payload_hex:
+        return []
+    raw = bytes.fromhex(payload_hex)
+    if len(raw) < 2:
+        return []
+    total = int.from_bytes(raw[0:2], 'big')
+    body = raw[2:2 + total] if total <= len(raw) - 2 else raw[2:]
+    ids, index = [], 0
+    while index < len(body):
+        length = body[index]
+        if length == 0 or index + 1 + length > len(body):
+            break
+        ids.append(body[index + 1:index + 1 + length].hex())
+        index += 1 + length
+    return ids
+
+
+def table_trust_anchors(entry):
+    """The IDs the profile table stores for this release, in stored order."""
+    encoded = (entry.get("tls") or {}).get("trust_anchor_ids_encoded")
+    if not encoded:
+        return []
+    raw = bytes.fromhex(encoded)
+    ids, index = [], 0
+    while index < len(raw):
+        length = raw[index]
+        if length == 0 or index + 1 + length > len(raw):
+            break
+        ids.append(raw[index + 1:index + 1 + length].hex())
+        index += 1 + length
+    return ids
+
+
+def level_wire(major, entry=None):
     """LEVEL 2: six captured connections per protocol, aligned and stochastic."""
     failures = []
     facts = {}
@@ -333,6 +374,64 @@ def level_wire(major):
             failures.append(
                 f"{protocol}: stochastic fields do not vary as they must, which "
                 f"means a seeded RNG: {sorted(fixed)}")
+
+        # trust_anchors (0xca34) is profile data: the ID SET must match what the
+        # captures advertise, exactly. chrome_152 shipped 28 IDs while real
+        # Chrome 152 sends 32, because the original capture machine's root store
+        # had been altered by a PKI metadata component and the subset was frozen
+        # as if it were the release's behaviour. A count comparison would have
+        # caught it; a set comparison also catches a swap that keeps the count.
+        if entry is not None:
+            wire_sets = []
+            for record in records:
+                extension = pc.extension(record, 51764)
+                if extension is None:
+                    wire_sets.append(None)
+                else:
+                    wire_sets.append(frozenset(decode_trust_anchors(extension.get("data"))))
+            present = [s for s in wire_sets if s is not None]
+            table_ids = frozenset(table_trust_anchors(entry))
+            if present:
+                if len(set(present)) != 1:
+                    failures.append(
+                        f"{protocol}: trust_anchors differs across the six "
+                        f"connections ({[len(s) for s in present]} IDs); the set is "
+                        f"profile data and must be identical")
+                else:
+                    wire_ids = present[0]
+                    if len(present) != len(records):
+                        failures.append(
+                            f"{protocol}: trust_anchors is present on only "
+                            f"{len(present)}/{len(records)} connections")
+                    if table_ids != wire_ids:
+                        failures.append(
+                            f"{protocol}: the table stores {len(table_ids)} "
+                            f"trust_anchor IDs but the captures advertise "
+                            f"{len(wire_ids)}; missing from table: "
+                            f"{sorted(wire_ids - table_ids)}, extra in table: "
+                            f"{sorted(table_ids - wire_ids)}")
+                    facts.setdefault("trust_anchors", {})[protocol] = {
+                        "wire_ids": len(wire_ids),
+                        "table_ids": len(table_ids),
+                        "match": table_ids == wire_ids,
+                    }
+            elif table_ids:
+                # h3 captures record extension names and ids only, with no
+                # payload, so the ID set cannot be checked there. That is a
+                # limit of the h3 capture, not a pass: the assertion runs on
+                # h1/h2, which do carry the payload, and this is recorded as
+                # unchecked rather than silently counted as agreement.
+                if protocol == 'h3':
+                    facts.setdefault('trust_anchors', {})[protocol] = {
+                        'wire_ids': None,
+                        'table_ids': len(table_ids),
+                        'match': None,
+                        'note': 'h3 captures carry no extension payload',
+                    }
+                else:
+                    failures.append(
+                        f"{protocol}: the table stores {len(table_ids)} trust_anchor "
+                        f"IDs but no capture advertises the extension at all")
 
         facts[protocol] = {
             "captures": len(records),
@@ -506,7 +605,7 @@ def check_one(entry, levels, args):
         report["levels"]["1_source"] = result
         failed = failed or result["status"] != "PASS"
     if "2" in levels:
-        result = level_wire(major)
+        result = level_wire(major, entry)
         report["levels"]["2_wire"] = result
         failed = failed or result["status"] != "PASS"
     if "3" in levels:

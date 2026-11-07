@@ -176,7 +176,7 @@ pyproject，**漏掉了 Core 自己这一份**。
 ## 11. 平台相关的常量不能硬编码
 
 **现象**：所有 profile 的 User-Agent 都是 `(X11; Linux x86_64)`，包括在 Windows 上跑的
-Core；而 `profiles/chrome-153/captures.json` 记录的抓包是
+Core；而 `profiles/chrome_153/h2/captures.json` 记录的抓包是
 `(Windows NT 10.0; Win64; x64)`。
 
 **根因**：`HistoricalUserAgent()` 里写死了平台令牌，而 profile schema 里**没有**
@@ -1226,3 +1226,37 @@ chrome_157`）。同一套数据还加了哈希比对：`profiles/chrome_<major>
 
 **现在由什么守住**：`tools/audit-profile-addition.py --levels 2` 的归属断言，
 变异测试（把 86 的数据放进 157 目录）确认它会非零退出。
+
+---
+
+## chrome_152 的 trust_anchors：28 是被污染的观测，不是版本行为
+
+**现象**：Core 发出的 chrome_152 ClientHello 带 28 个 trust anchor ID，真 Chrome 152
+带 32 个。文档把这件事写成「编译期根库 32 个、抓包 28 个是子集」，读起来像「28 才是
+对的、32 是根库的完整状态」——方向反了。
+
+**根因**：早先那次抓包只采到 28 个，据此推断「抓包机的根库被 PKI Metadata 组件更新过，
+任何源码树里都没有这个状态」。这个推断本身没错，但那台机器的根库被动过，意味着 **28 是
+被污染的观测**，不能当 Chrome 152 的行为冻结进 profile 表。当时的 README 甚至点名了缺的
+4 个（`d6790902`、`d6790903`、`d6790909`、`d679090e`，都是 11129.9.x），却在下一句把它们
+当成「按观测冻结」的正当理由。
+
+**新证据**：新的参考抓包集里 chrome_152 的六条连接**全部是 32 个**（`common=32
+union=32`），且严格包含旧的 28 个，多出的正好是那 4 个。153–157 仍是 28 个，与表逐字节
+一致。
+
+**规则**：抓包里出现的「本机状态」不等于「版本行为」。当观测值与编译期常量不一致时，
+默认假设是**观测被污染**，而不是「Chrome 用了子集」。要冻结一个子集，必须能指出上游代码
+里**为什么会少**——这里指不出来，因为 `SelectAllTrustAnchorIDs()` 无条件发全部。
+
+**修复**：`profiles/normalized_profiles.json` 的 152 `trust_anchor_ids_encoded` 从 184
+字节 / 28 个改成 204 字节 / 32 个；重新生成表；8 个平台同批重建（linux-arm64 +64 字节，
+其余不变，因为数组共用对齐）。实测 Core 现在发 32 个，与真 Chrome 一致。
+
+**现在由什么守住**：`tools/audit-profile-addition.py --levels 2` 按参考抓包核对 trust
+anchor 的 **ID 集合**（不只是数量）。变异测试：把 152 改回 28 个，门禁报 `the table
+stores 28 trust_anchor IDs but the captures advertise 32; missing from table:
+[d6790902, d6790903, d6790909, d679090e]`。
+
+h3 抓包只记录扩展名与 id、不含载荷，所以 h3 一侧记为 `match: null`（未核对），不记为
+通过——数据能力不足不能冒充证据。

@@ -189,8 +189,7 @@ wire gate：各 5 条连接、5 个源端口，全部稳定字段一致，`wire_
 一处限制：两个 profile 各自只有一个构建可审计，做不到 155 那样的首尾 tag 比对，因此
 `patch_release_comparison.identical_across_patch_releases` 记 `null` 而非编造结果。
 
-证据与复现命令见 [`profiles/chrome-156/`](../profiles/chrome-156/README.md) 与
-[`profiles/chrome-157/`](../profiles/chrome-157/README.md)。
+证据与复现命令见 `profiles/chrome_156/README.md` 与 `profiles/chrome_157/README.md`。
 
 ### chrome_154 与 chrome_155 已加入（57 个 profile）
 
@@ -203,24 +202,23 @@ wire gate 都通过：154 用 6 条独立连接、155 用 5 条，全部稳定�
 字段每条连接都不同。与 chrome_153 相比，**de-GREASEd cipher 列表、supported groups、
 signature_algorithms、扩展集合、HTTP/2 指纹与 28 个 trust-anchor ID 集合都不变**，
 唯一差异是 UA 主版本；28 条 ID 的顺序不同，那是 absl::flat_hash_set 的进程内属性，
-不是版本差异（见 `profiles/chrome-152/README.md` 的机制说明）。因此两个 profile 复用
+不是版本差异（机制见本节「trust_anchors 载荷」一段）。因此两个 profile 复用
 chrome_153 的 `tls` 语义常量，只 pin 各自的版本与 BoringSSL/QUICHE revision。
 
 154 与 155 的 `net/base/features.cc` 里 `kAlpsForHttp2`、`kTryQuicByDefault`、
 `kTLSTrustAnchorIDs`、`kNonMtcTrustAnchorIDs`、`kTlsGreaseSigalgs` 仍为
 `FEATURE_ENABLED_BY_DEFAULT`，`kEnableTLS13EarlyData` 仍为 disabled，网络特性快照
 区间（123–155）与 chrome_153 相同。证据与复现命令见
-[`profiles/chrome-154/`](../profiles/chrome-154/README.md) 与
-[`profiles/chrome-155/`](../profiles/chrome-155/README.md)。
+`profiles/chrome_154/README.md` 与 `profiles/chrome_155/README.md`。
 
 ### chrome_153 已加入（历史记录）
 
 官方 stable 分支首尾 tag `153.0.8010.12` 与 `153.0.8010.37` 的 12 份审计源码
 逐字节一致。5 条独立 Chrome 153 连接通过 wire gate：5 个源端口，所有稳定字段一致，
 Client random、session ID、扩展顺序、GREASE、key share 与 ECH 均至少 5 个不同值。
-与 chrome_152 相比，TLS/H2 wire 指纹及 28 个 trust-anchor ID 集合不变，变化是 UA 主版本
+与 chrome_152 相比，TLS/H2 wire 指纹不变，trust-anchor ID 集合从 32 个收到 28 个，变化是 UA 主版本
 与对应的 Chromium/BoringSSL/QUICHE source pin。证据与复现命令见
-[`profiles/chrome-153/`](../profiles/chrome-153/README.md)。
+`profiles/chrome_153/README.md`。
 
 ### chrome_152 已加入（历史记录）
 
@@ -246,9 +244,20 @@ JA4 从 `t13d1516h2_8daaf6152771_806a8c22fdea` 变成
 `kTcpSocketPoolLimitRandomizationForProxy` 涉及 profile 字段，而它 gate 的行为在 152
 里变成无条件开启，所以 `randomize_proxy_socket_pool_limit` 仍为 true。
 
-**trust_anchors 载荷：集合是 profile 数据，顺序不是。** 28 个 ID 按观测冻结——编译期
-根库在 152 tag 和固定树里都是 32 个，抓包那 28 个是子集，机器的根库被 PKI Metadata
-组件更新过，任何源码树里都没有这个状态。但顺序**故意不冻结**：
+**trust_anchors 载荷：集合是 profile 数据，顺序不是。** ID 集合按观测冻结。
+
+**2026-11 修正：152 的集合是 32 个，不是 28 个。** 早先那一轮只采到 28，据此判断
+「编译期根库是 32、抓包 28 是子集，抓包机的根库被 PKI Metadata 组件更新过」。新的参考
+抓包集里 chrome_152 的**六条连接全部是 32 个 ID**（`common=32 union=32`），且严格包含
+旧的 28 个，多出的正好是旧 README 点名缺失的 `d6790902`、`d6790903`、`d6790909`、
+`d679090e`（11129.9.x）。也就是说：旧抓包那台机器的根库确实被动过，但 28 是**被污染
+后的观测**，不是 Chrome 152 的行为。153–157 仍是 28 个，且与表逐字节一致。
+
+这个偏差真实存在过：Core 发出的 152 指纹比真 Chrome 少 4 个 trust anchor ID。现在
+`profiles/normalized_profiles.json` 的 `trust_anchor_ids_encoded` 是 204 字节 / 32 个 ID，
+`tools/audit-profile-addition.py --levels 2` 会按参考抓包核对这个集合。
+
+顺序**故意不冻结**：
 `SSLContextConfig::trust_anchor_ids` 是 `absl::flat_hash_set`，absl 给每个表实例单独
 撒种（`raw_hash_set.h`：*"Per table hash salt … randomize iteration order
 per-table"*），所以顺序是表实例的属性而非版本的属性。Chrome 每个浏览器进程建一次表，
@@ -269,7 +278,7 @@ profile 表重新生成的可信度也先证明过：迁入 `profiles/` 三份�
 表**逐字节一致**；加入 chrome_152 后 diff 是纯增量——**删除 0 行**，53 个旧 profile 各
 多一个空 `{}` 字段。
 
-证据与复现命令见 [`profiles/chrome-152/`](../profiles/chrome-152/README.md)。
+证据与复现命令见 `profiles/chrome_152/README.md`。
 
 ### 其它已修复
 

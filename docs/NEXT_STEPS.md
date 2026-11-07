@@ -77,7 +77,7 @@
 
 - 历史证据和规范化参数已迁入 `profiles/`（`normalized_profiles.json`、
   `effective_protocol_params.json`、`network_feature_snapshots.json`，以及每个发布
-  版本一个证据目录 `profiles/chrome-152/`、`profiles/chrome-153/`）；运行时只编译
+  版本一个证据目录 `profiles/chrome_152/`、`profiles/chrome_153/`）；运行时只编译
   精简只读表，不把源码证据文本编入二进制。
 - [ ] 验证 `chrome_86`--`chrome_157` 的 TLS/ALPN、H2 SETTINGS、QUIC/H3、WS
   和关键 FeatureList 差异；未验证版本保持拒绝或明确降级状态。
