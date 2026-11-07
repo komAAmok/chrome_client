@@ -27,6 +27,13 @@ jobs:
       # signature, default, docstring and facade re-export still matches
       # them. Pure stdlib, no Core needed.
       - run: python3 tools/audit-python-stubs.py
+      # Every curl_cffi extra_fp field must have a recorded verdict.
+      # curl_cffi simulates Chrome, Firefox and Safari, so several of its
+      # knobs (delegated credentials, record_size_limit, split_cookies) have
+      # no counterpart here; accepting them silently would tell a caller
+      # they changed a degree of freedom that does not exist. A new knob
+      # without a verdict fails this gate.
+      - run: python3 tools/audit-extra-fp.py
       # Pure static audit of the committed Core artifacts: manifest fields,
       # SHA-256, size, the twenty ABI exports per platform, the presence of the
       # ICU ISO-8859-1 converter table that HTTP Basic/Digest realms need, and

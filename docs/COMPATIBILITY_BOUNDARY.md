@@ -124,6 +124,51 @@ carries domain, path, secure and expiry metadata and `get_dict(domain=...)`
 answers from it. Cookie state survives a proxy or profile change because the jar
 is re-sent to the new Engine.
 
+### curl_cffi 参数审计：哪些在本项目里结构上无意义
+
+curl_cffi 同时模拟 Chrome / Firefox / Safari，所以它的 `extra_fp` 里有些旋钮是为**别的浏览器**
+或为**非 Chromium 的 TLS 栈**准备的。本项目只做 Chrome、且协议栈就是 Chromium 本身，
+于是这些旋钮在这里没有对应物。下表逐项给出判定和依据。
+
+判定分三类：
+
+- **无意义**：Chrome 自己就这么做，或本项目根本没有那个机制。接受它只会让调用方以为
+  自己改变了一个并不存在的自由度。
+- **已由 profile 决定**：值真实存在，但由 `impersonate=` 选定的 profile 逐版本冻结，
+  按请求覆盖必然破坏指纹一致性。
+- **有意义**：facade 自己能实现，且不影响指纹。
+
+| curl_cffi 参数 | 判定 | 依据 |
+| --- | --- | --- |
+| `tls_delegated_credential` | **无意义** | Delegated Credentials 是 Firefox/Safari 的机制，Chrome 不发；Core 里 `grep delegated` 零命中。默认值 `""` 表示「关」，而这个「关」是唯一状态。 |
+| `http3_sig_hash_algs` | **无意义** | H3 的 signature_algorithms 与 TLS 层同一份（`profile_table_generated.h` 的 `signature_algorithms` span），不存在独立的 H3 集合。 |
+| `http3_tls_extension_order` | **无意义** | H3 的扩展顺序由 profile 的 `tls_extension_order_policy` 决定（`boringssl_random_fisher_yates`），Chrome 每连接重排；没有「H3 专用顺序」这回事。 |
+| `tls_record_size_limit` | **无意义** | Chrome 不发 record_size_limit 扩展。默认值 `0` 表示「不发」，也是唯一状态。 |
+| `split_cookies` | **无意义** | 这是 curl 的 cookie 引擎概念（把 Set-Cookie 拆开解析）。本项目用 Chromium 的 `CookieStore`，拆分语义由它自己决定，facade 里 `split_cookies` 只出现在字段声明，无任何实现。 |
+| `http2_no_priority` | **无意义** | 实测全部 72 个版本的 HEADERS 帧 priority 恒为 `(weight=256, depends_on=0, exclusive=1)`，Chrome 从不发「无 priority」。默认 `False` 表示「按 Chrome 发」，也是唯一状态。 |
+| `http2_stream_weight` | **已由 profile 决定** | 同上：值恒为 256。要改就得改 HEADERS 帧，那是指纹的一部分。 |
+| `http2_stream_exclusive` | **已由 profile 决定** | 同上：值恒为 1（exclusive）。 |
+| `tls_grease` | **已由 profile 决定** | Chrome 自己发 GREASE，实测 6 条连接出现 8–9 个不同值，由 BoringSSL CSPRNG 每连接抽取。固定它会立刻变成「固定种子」，违反 §3。 |
+| `tls_permute_extensions` | **已由 profile 决定** | Chrome 自己每连接重排扩展，实测 6 条连接 6 种顺序。固定顺序同样是固定种子。 |
+| `tls_min_version` | **已由 profile 决定** | 由 `profile_.tls_version_min` 决定（86–97 是 `0x0301`，98+ 是 `0x0303`），`audit-tls-version-range.py` 断言表与线缆两侧。 |
+| `tls_cert_compression` | **已由 profile 决定** | 实测全部版本的 compress_certificate 都是 `['brotli (2)']`，无版本差异。 |
+| `tls_signature_algorithms` | **已由 profile 决定** | profile 的 `signature_algorithms` span，逐版本审计。 |
+| `header_order` | **有意义** | facade 自己按给定顺序发头，不碰 TLS/H2 指纹。 |
+| `form_boundary` | **有意义** | multipart boundary 由 Python 侧生成。 |
+
+**净结论**：15 个字段里 **6 个无意义**（`tls_delegated_credential`、`http3_sig_hash_algs`、
+`http3_tls_extension_order`、`tls_record_size_limit`、`split_cookies`、`http2_no_priority`）、
+**7 个已由 profile 决定**、**2 个有意义**。
+
+### 为什么保留这些字段而不是删掉
+
+保留的理由是迁移成本，不是语义：curl_cffi 的调用方会把这些参数原样传过来，删掉字段会让
+`ExtraFingerprints(...)` 直接抛 `TypeError`，而迁移者拿到的错误信息是「没有这个参数」，
+而不是「这个参数在这里没有意义」。当前实现让它们**接受中性值、拒绝任何实际设置**，
+并在拒绝时说清原因（`the Chromium profile owns the TLS and HTTP/2 fingerprint`）。
+
+这符合 §8 的 fail-closed 承诺：无法忠实实现的选项必须抛错，不得静默忽略。
+
 ### Fingerprints are a profile choice, not a set of knobs
 
 The pinned profile owns the TLS ClientHello, ALPN, HTTP/2 SETTINGS and the

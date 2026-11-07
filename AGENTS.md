@@ -69,6 +69,10 @@ python3 tools/audit-abi-layout.py
 tools/audit-readme.sh
 tools/audit-pypi-metadata.sh
 python3 tools/audit-python-stubs.py
+python3 tools/audit-extra-fp.py
+# Every curl_cffi extra_fp knob must carry an explicit verdict: curl_cffi
+# simulates Firefox and Safari too, so some knobs have no counterpart in a
+# Chrome-only, Chromium-backed client. A new knob without a verdict fails.
 python3 tools/audit-python-typing.py
 tools/audit-core-binaries.sh
 tools/audit-core-inputs.sh
