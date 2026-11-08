@@ -25,6 +25,7 @@ import os
 import pathlib
 import re
 import shutil
+import struct
 import sys
 import tempfile
 import zipfile
@@ -44,6 +45,15 @@ PLATFORM_RE = re.compile(r"^macosx_(\d+)_(\d+)_([a-z0-9_]+)$")
 #: The extension module maturin puts at the root of every wheel.
 NATIVE_SUFFIX = ".so"
 
+#: Mach-O load commands that carry a minimum-OS version.
+LC_VERSION_MIN_MACOSX = 0x24
+LC_BUILD_VERSION = 0x32
+MACHO_HEADER_64 = 32
+
+
+def decode_version(value):
+    return (value >> 16, (value >> 8) & 0xFF, value & 0xFF)
+
 
 def split_wheel_name(path):
     """Returns (stem, python tag, abi tag, platform tag) for a wheel filename."""
@@ -53,6 +63,49 @@ def split_wheel_name(path):
     stem = "-".join(parts[:-3])
     python_tag, abi_tag, platform_tag = parts[-3:]
     return stem, python_tag, abi_tag, platform_tag
+
+
+def macho_min_os(path):
+    """Returns the highest minimum macOS version declared by a Mach-O file.
+
+    A universal wheel's platform tag is a promise about the whole file, and the
+    promise is only as low as its worst slice. The extension module and the Core
+    dylib inside the same wheel are built by two different toolchains with two
+    different deployment targets -- today the extension says 10.12/11.0 and the
+    Core says 13.0 -- so the tag has to be at least 13.0 or pip installs the
+    wheel on macOS 12 and dlopen fails at import time. delocate reports this as
+    a warning; a warning is not a gate.
+    """
+    data = path.read_bytes()
+    # The fat magic is big-endian in the file; reading it little-endian would
+    # make every universal file look thin and skip the per-slice check.
+    magic = struct.unpack_from(">I", data, 0)[0]
+    floors = []
+    if magic == 0xCAFEBABE:
+        # Already universal: check every slice it carries.
+        count = struct.unpack_from(">I", data, 4)[0]
+        for index in range(count):
+            offset = struct.unpack_from(">I", data, 8 + index * 20 + 8)[0]
+            floors.append(_thin_min_os(data[offset:]))
+    else:
+        floors.append(_thin_min_os(data))
+    return max(floors)
+
+
+def _thin_min_os(data):
+    ncmds = struct.unpack_from("<I", data, 16)[0]
+    offset = MACHO_HEADER_64
+    floors = []
+    for _ in range(ncmds):
+        cmd, size = struct.unpack_from("<II", data, offset)
+        if cmd == LC_BUILD_VERSION:
+            floors.append(decode_version(struct.unpack_from("<I", data, offset + 12)[0]))
+        elif cmd == LC_VERSION_MIN_MACOSX:
+            floors.append(decode_version(struct.unpack_from("<I", data, offset + 8)[0]))
+        offset += size
+    if not floors:
+        raise SystemExit("Mach-O file declares no minimum macOS version")
+    return max(floors)
 
 
 def record_hash(data):
@@ -120,7 +173,7 @@ def rewrite_record(members):
                             + "\n").encode("utf-8")
 
 
-def fuse(inputs, output_dir):
+def fuse(inputs, output_dir, bundled=()):
     if len(inputs) != 2:
         raise SystemExit("expected exactly two wheels, got %d" % len(inputs))
     wheels = []
@@ -160,6 +213,28 @@ def fuse(inputs, output_dir):
     # Lexicographic, not element-wise: 11.0 is newer than 10.12, but an
     # element-wise max would produce the non-existent 11.12.
     floor = max(first["version"], second["version"])
+
+    # The wheel's tag must also be at least as high as what the native payloads
+    # declare, not just what the wheel filenames declare. See macho_min_os.
+    payload_floor = (0, 0)
+    for wheel in wheels:
+        for name in wheel["natives"]:
+            with tempfile.NamedTemporaryFile(suffix=".bin") as scratch_file:
+                scratch_file.write(wheel["members"][name])
+                scratch_file.flush()
+                found = macho_min_os(pathlib.Path(scratch_file.name))
+            payload_floor = max(payload_floor, found[:2])
+            if found[:2] > floor[:2]:
+                print("payload %s declares macOS %d.%d, above the wheel tag %d.%d"
+                      % (name, found[0], found[1], floor[0], floor[1]))
+    for path in bundled:
+        found = macho_min_os(path)
+        payload_floor = max(payload_floor, found[:2])
+        if found[:2] > floor[:2]:
+            print("bundled %s declares macOS %d.%d, above the wheel tag %d.%d"
+                  % (path.name, found[0], found[1], floor[0], floor[1]))
+    if payload_floor[:2] > floor[:2]:
+        floor = payload_floor[:2]
     if first["version"] != second["version"]:
         print("deployment target: %d.%d and %d.%d -> %d.%d" % (
             first["version"][0], first["version"][1],
@@ -186,7 +261,7 @@ def fuse(inputs, output_dir):
             unified_members[name] = output.read_bytes()
             fused_bytes += len(unified_members[name])
 
-    universal = "macosx_%d_%d_universal2" % floor
+    universal = "macosx_%d_%d_universal2" % (floor[0], floor[1])
     rewrite_wheel_metadata(unified_members, universal)
     rewrite_record(unified_members)
 
@@ -210,8 +285,14 @@ def main(argv):
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("wheels", nargs="+", type=pathlib.Path)
     parser.add_argument("--out", required=True, type=pathlib.Path)
+    # Files that will travel next to the extension but are not in either input
+    # wheel yet -- today the Core dylib, which delocate adds afterwards. Their
+    # minimum macOS version has to bound the tag too, or the wheel installs on a
+    # system where the Core cannot be mapped.
+    parser.add_argument("--bundled", nargs="*", type=pathlib.Path, default=[],
+                        help="extra Mach-O files the repaired wheel will carry")
     args = parser.parse_args(argv)
-    return fuse(args.wheels, args.out)
+    return fuse(args.wheels, args.out, args.bundled)
 
 
 if __name__ == "__main__":

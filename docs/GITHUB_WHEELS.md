@@ -28,8 +28,17 @@ dylib，没有 universal 产物，而 `rustc --print target-list` 里也没有 `
 artifact 名字是 `per-arch-*`，`publish` 的 `pattern: wheel-*` 不会收集，避免同一个
 平台同时有分架构与 universal2 两个候选让 pip 去挑。
 
-两个 dylib 的 macOS 部署目标不同（当前 x86_64 是 10.12，arm64 是 11.0），融合后的 tag
-取两者中更新的那个，并在日志里打印这条改写。
+部署目标由三处共同决定，融合后的 tag 取三者中最高的那个，并在日志里打印每次抬升：
+
+| 来源 | 当前值 |
+| --- | --- |
+| wheel 文件名的平台标签 | x86_64 `10.12`，arm64 `11.0` |
+| wheel 内的扩展模块（`LC_BUILD_VERSION` / `LC_VERSION_MIN_MACOSX`） | `11.0` |
+| 将被 delocate 打进 wheel 的 Core dylib（`--bundled`） | **`13.0`** |
+
+第三行是最容易漏掉的一条：Core 的 `minos` 是 13.0，而 tag 若停在 11.0，pip 会在 macOS
+11/12 上装好这个 wheel，然后在 `import` 时 dlopen 失败。`delocate` 对这件事只打印一句
+warning，所以 `--bundled` 与 `tools/audit-macos-wheel.py` 是把它变成门禁的那一步。
 
 主绑定使用 `cp39-abi3`，Python 3.6–3.8 使用独立的 `bindings/python36`、PyO3 0.15.1 和 `cp36-abi3`。
 
