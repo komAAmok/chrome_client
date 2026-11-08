@@ -12,7 +12,24 @@ Linux 使用 `manylinux2014` 容器。该容器以 glibc 2.17 为基线，因此
 
 Windows 构建前由 `tools/stage-windows-wheel.ps1` 把匹配架构的 `minicronet.dll` 放到 `chrome_client` 包目录中。ABI v8 起 ICU 数据已编入库中，不再携带 `icudtl.dat`（每个 Windows wheel 因此少 10.8 MB），Windows 系统 DLL 同样不随 wheel 携带。
 
-macOS 构建后使用 `delocate-wheel` 收集并修复匹配架构的 `libminicronet.dylib`。
+macOS 发布物是 **universal2** wheel，由 `macos-universal` job 生成。Chromium 是按单一
+架构交叉构建的，所以 `core/binaries/` 里只有 `macos-x86_64/` 与 `macos-arm64/` 两个
+dylib，没有 universal 产物，而 `rustc --print target-list` 里也没有 `universal2-apple-darwin`
+（1.98.0 实测，`cargo build --target universal2-apple-darwin` 直接失败）。因此流程是：
+
+1. `tools/lipo-dylib.py` 先把两个 Core dylib 合成 `universal-core/libminicronet.dylib`；
+2. 两个 Rust triple 各出一个 wheel（`--target x86_64-apple-darwin` / `aarch64-apple-darwin`）；
+3. `tools/fuse-macos-wheels.py` 把两个 wheel 的原生扩展 lipo 成 universal2，并把
+   `WHEEL` 的 `Tag:` 与文件名一起改到 `macosx_<floor>_universal2`；
+4. `delocate-wheel` 在 `DYLD_LIBRARY_PATH=universal-core` 下收依赖，确保打进 wheel 的
+   是合成后的那份 dylib，而不是先找到的分架构那一个。
+
+`macos` job 仍然按架构各构建一次并 delocate，这是证明两半各自可加载的那一步；它的
+artifact 名字是 `per-arch-*`，`publish` 的 `pattern: wheel-*` 不会收集，避免同一个
+平台同时有分架构与 universal2 两个候选让 pip 去挑。
+
+两个 dylib 的 macOS 部署目标不同（当前 x86_64 是 10.12，arm64 是 11.0），融合后的 tag
+取两者中更新的那个，并在日志里打印这条改写。
 
 主绑定使用 `cp39-abi3`，Python 3.6–3.8 使用独立的 `bindings/python36`、PyO3 0.15.1 和 `cp36-abi3`。
 
