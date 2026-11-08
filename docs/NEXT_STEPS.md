@@ -155,9 +155,27 @@ QUIC 标记 / ALPN）填写。这需要 ABI v8 → v9：头文件、`crates/mini
 测试、三份导出表、8 个平台产物与 manifest 全部同步，并走一次完整发布验收。
 在此之前绑定层必须继续返回 `None`——错报的指纹比缺失的指纹更糟。
 
-## 待办：默认请求头不是 Chrome 的（client hints / Sec-Fetch，ABI v9）
+## 已完成（facade 层）：默认请求头 = profile 抓包；Core 注入仍属 ABI v9
 
-**现状（实测，非推断）**：`Session(impersonate="chrome_155")` 发出的请求头只有
+**现状（2026-11 落地）**：`impersonate=` 现在发出该 profile 自己的 h1 抓包头集合，
+逐字节且顺序一致，72 个 profile 全部通过。表由 `tools/generate-client-hints.py` 从
+`profiles/chrome_<major>/h1/captures.json` 生成，`tools/audit-client-hints.py` 每次
+提交前重新推导；门禁见 AGENTS.md 第 5 节。平台跟随宿主（与 Core 的 UA 推导一致），
+`Sec-Fetch-*` 取导航语义，两者都可被调用方按字段覆盖，`default_headers=False` 可整体关闭。
+
+**仍未做的部分（ABI v9）**：让 Core 自己注入，而不是 facade 拼 extra headers。
+facade 注入的代价是这些头不经过 `net` 层的 URLLoader 工厂，因此 Chromium 自己的
+`Sec-Fetch` 策略与 client-hint 协商（响应头 `Accept-CH` 决定服务器想要哪些 hint）
+都不作用于它们——一个只靠 `Accept-CH` 才该发 hint 的服务器，这里仍然每次都发。
+下面的原始分析保留，作为 v9 的输入。
+
+### 原始分析（v9 的背景）
+
+> **以下为 2026-11 之前的观测，保留作历史记录。** 当时 `Session(impersonate="chrome_155")`
+> 只发 `Host`、`Connection`、`User-Agent`、`Accept-Encoding` 四个头。facade 层已修，
+> 见上一节。
+
+**当时的现状（实测，非推断）**：`Session(impersonate="chrome_155")` 发出的请求头只有
 `Host`、`Connection`、`User-Agent`、`Accept-Encoding` 四个；`impersonate` 只把
 `User-Agent` 的版本串换成 `Chrome/155.0.0.0`，**默认头集合一个都不变**。
 
@@ -175,7 +193,7 @@ QUIC 标记 / ALPN）填写。这需要 ABI v8 → v9：头文件、`crates/mini
 `GetUserAgent()`——没有产出 client hints 或 Sec-Fetch 的入口。仓库内零处
 `user_agent_metadata` / `UserAgentMetadata`。
 
-**修法（ABI v9）**：
+**当时的修法设想（ABI v9，仍是 Core 侧注入的正确做法）**：
 
 1. Core 侧为每个 profile 携带 `UserAgentMetadata`（品牌列表、full version、
    platform、mobile 标志）与 UA 品牌 GREASE 顺序。Chrome 的 client hints 由
@@ -188,7 +206,7 @@ QUIC 标记 / ALPN）填写。这需要 ABI v8 → v9：头文件、`crates/mini
    Chrome** 抓包，逐版本确认取值与**顺序**后再冻结。按 AGENTS.md §7，不得把
    当前猜测值写成期望值。
 
-**验收**：新增一个本地 echo 服务器用例，断言 `impersonate="chrome_155"` 时请求头
+**验收（已由 facade 层实现）**：新增一个本地 echo 服务器用例，断言 `impersonate="chrome_155"` 时请求头
 集合与真实 Chrome 155 抓包一致（含顺序），且 `impersonate=None` 时**不**注入任何
 client hint——默认路径不能因为补 profile 而被污染。
 

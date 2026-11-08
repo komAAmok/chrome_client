@@ -61,6 +61,7 @@ from ._python_impl import (
     EngineCache as EngineCache,
     EngineConfig as EngineConfig,
     EngineSlot as EngineSlot,
+    SessionBinding as SessionBinding,
     CertificateVerifyError as CertificateVerifyError,
     ChunkedEncodingError as ChunkedEncodingError,
     ConnectTimeout as ConnectTimeout,

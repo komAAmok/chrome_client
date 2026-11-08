@@ -211,6 +211,30 @@ session.get("https://example.com", proxy="socks5://127.0.0.1:1080")   # 单次�
 session = chrome_client.Session(max_engines=32)   # 池有 32 个端点
 ```
 
+不必靠 TIME_WAIT 才发现这件事：`Session.stats` 直接给出计数。
+
+```python
+with chrome_client.Session(impersonate="chrome_151") as session:
+    session.get(url)
+    session.get(url)
+    print(session.stats)
+    # {'live': 1, 'hits': 1, 'builds': 1, 'evictions': 0, 'deferred': 0,
+    #  'inflight': 0, 'generation': 0, 'max_engines': 8}
+```
+
+`builds` 一直涨就是每次请求都在换传输上下文；`hits` 才代表连接、TLS 会话
+（session resumption）和 HTTP/2/3 会话池被真正复用。
+
+`Session.binding(url)` 返回这条请求将要使用的传输上下文本身——profile（JA3/JA4、
+H2 SETTINGS 与伪头部、QUIC 传输参数都由它冻结）、代理、TLS 校验策略。两个
+`binding` 相等的请求共享同一个 `URLRequestContext`：
+
+```python
+with chrome_client.Session(impersonate="chrome_151", proxy="http://p:8080") as session:
+    print(session.binding("https://example.com"))
+    # SessionBinding(impersonate='chrome_151', proxy='http://p:8080')
+```
+
 代理规则**优先走 Chromium 原生语法**，只在原生不支持时才扩展。原生可解析的三种
 形式会原样交给 Core（此前 facade 会把它们重写成单个 `scheme://host`，直接弄坏）：
 
@@ -306,14 +330,37 @@ normal/H2 才对 h2 抓包**；拿 `v1` 去对 h2 抓包必然只报这两处。
 与协议无关，h1 下照常发送，不要把它一并当成"h1 本该没有"。
 门禁见 `tools/audit-h1-alps-absence.py`。
 
-**默认请求头不是 profile 数据。** `impersonate` 只把 `User-Agent` 的版本串换成
-对应 Chrome 版本，它**不会**补上 Chrome 实际发送的
-`sec-ch-ua`/`sec-ch-ua-mobile`/`sec-ch-ua-platform`、`Sec-Fetch-*` 或 `Accept`。
-那些头由 Chrome 的 `services/network` URLLoader 工厂层注入，而
-`net::URLRequestContextBuilder` 只暴露 `set_user_agent` / `set_accept_language`
-（两者落到只提供 `GetUserAgent()`/`GetAcceptLanguage()` 的
-`StaticHttpUserAgentSettings`），没有对应入口，因此当前**不可得**。补齐需要
-ABI v9，见 [`docs/NEXT_STEPS.md`](https://github.com/komAAmok/chrome_client/blob/main/docs/NEXT_STEPS.md) 的 client hints 条目。
+**默认请求头来自 profile 自己的抓包。** `impersonate="chrome_155"` 发出的头集合，
+与那个版本的 Chrome 在 `profiles/chrome_155/h1/captures.json` 里留下的六条抓包逐字节
+一致——顺序也一致，包含 `sec-ch-ua`、`sec-ch-ua-mobile`、`sec-ch-ua-platform`、
+`Upgrade-Insecure-Requests`、`Accept`、四个 `Sec-Fetch-*`、`Accept-Encoding`、
+`Accept-Language`。72 个 profile 全部如此，`bindings/python/tests/test_client_hints.py`
+逐个比对，`tools/audit-client-hints.py` 在提交前重新从抓包推导整张表。
+
+这些头由 facade 注入，不是 Core 发的：Chrome 自己是在 `services/network` 的
+URLLoader 工厂层生成它们的，而 `net::URLRequestContextBuilder` 只暴露
+`set_user_agent` / `set_accept_language`。要 Core 自己产出它们仍需 ABI v9
+（见 [`docs/NEXT_STEPS.md`](https://github.com/komAAmok/chrome_client/blob/main/docs/NEXT_STEPS.md)）；
+facade 注入的代价是这些头不在 Chromium 的 `net` 层，而在请求的 extra headers 里。
+
+**平台跟随宿主，不跟随抓包。** 抓包来自 Windows 桌面，但客户端不能声称一个
+套接字并不在的平台。`User-Agent` 的括号组与 `sec-ch-ua-platform` 都按宿主重写，
+与 Core 自己的推导（`core/source/minicronet.cc` 的 `BUILDFLAG(IS_WIN/IS_MAC)` 分支）
+保持一致——`"Windows"` 的 hint 配 `X11; Linux` 的 UA 比缺一个 hint 更容易被检出。
+
+**`Sec-Fetch-*` 描述的是顶层导航。** 每条抓包都是一次导航，因为浏览器打开 URL 就是
+导航，而 `session.get(url)` 是同一件事。要子资源语义就自己传那两个字段，其余字段
+仍然保留：
+
+```python
+session.get(url, headers={"Sec-Fetch-Site": "same-origin",
+                          "Sec-Fetch-Mode": "no-cors",
+                          "Sec-Fetch-Dest": "image"})
+session.get(url, headers={"Sec-Fetch-User": None})   # 删掉单个注入的字段
+session.get(url, default_headers=False)              # 整个注入关掉
+```
+
+`impersonate=None` 时**一个都不注入**：没有声称自己是浏览器的会话不该看起来像 Chrome。
 
 `Priority` 是这条规则的例外：RFC 9218 的 `priority` 请求头由 `net` 层自己序列化
 （`net/spdy/spdy_http_utils.cc` 的 `CreateSpdyHeadersFromHttpRequest`），不经

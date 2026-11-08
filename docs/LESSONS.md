@@ -1192,6 +1192,92 @@ feature 读取点分别是 175 / 180 / 178。脚本里原本硬编码一套 `534
 
 ---
 
+## 45. 「Session 里存着一堆字段」不等于「传输上下文是一个值」
+
+**现象**：`Session` 的传输相关配置（profile / 代理 / 代理凭据 / TLS 校验 / CA /
+UA / Accept-Language / 协议钉 / HTTP cache）散在 `__init__` 的十几个属性里，由
+`_engine_config()` 每次请求现场拼成一个 `EngineConfig`。三个后果各自都真实发生过：
+
+1. **无法回答「这条请求会不会复用我刚建好的连接？」** 只能反推 `EngineConfig` 的
+   键，而键的顺序和成员写在一个 `_FIELDS` 元组里，与构造函数是两份东西。
+2. **`generation` 混在同一个键里**，于是「cookie store 换代」和「换传输上下文」在
+   缓存键上无法区分——`discard_cookies` 的历史缺陷（§43）正是从这个混同里长出来的。
+3. **镜像 cookie 无锁**：`_resolve_cookies` 是「读 jar → 读 mirror → 比对 → 可能换
+   generation」四步，`_absorb_cookies` 是三个 jar 的更新。两个 worker 交错时可能各自
+   拿到不同 generation，于是一个请求发出的 `Cookie` 头会被它自己引擎的 store 覆盖。
+
+**根因**：传输身份是一个**值**，但它被写成了「对象上的一组可变属性 + 一个拼装函数」。
+值可以被比较、被哈希、被传出去；属性不行。
+
+**修法**：
+
+- 新增 `SessionBinding`：不可变、可哈希，字段固定为 `BINDING_FIELDS`，
+  `generation` **不在其中**。它同时是引擎缓存键（`EngineConfig` = binding +
+  generation），也是 `Session.binding(url)` 的返回值——于是「共享连接池」从推断变成
+  `==` 比较。
+- `EngineSlot` 记录 in-flight 计数，`EngineCache.acquire()` 返回租约，cookie 解析换
+  引擎时 `lease.rebind()` 把租约挪到新 slot。淘汰一个仍在使用的 slot 会被记成
+  `deferred`，不再看起来是「免费的淘汰」。
+- `_cookie_lock` 把四步序列和 mirror 更新各自变成原子操作；`EngineSlot` 再持一把
+  自己的锁。
+- `Session.stats` 把 `builds`/`hits`/`evictions`/`deferred`/`inflight` 暴露出来，
+  §29 的「每个请求重建上下文」不再是只有 TIME_WAIT 才能发现的事。
+
+**门禁**：`bindings/python/tests/test_session_binding.py`。变异测试确认过每条都
+能被证伪：去掉租约 `_retain()`、去掉 `_cookie_lock`、把 `_take` 的切片偏移改错、
+把 `deferred` 计数改成 `+= 0`，对应测试各自失败。其中锁的那条必须用 `time.sleep`
+而不是忙等——忙等不放 GIL，坏实现也会看起来是串行的。
+
+**代价记在账上**：`EngineConfig` 与 `SessionBinding` 有一份字段重叠，靠
+`EngineConfig.binding` 与 `_binding()` 单向派生保证不漂移；
+`test_any_transport_field_separates_the_key` 遍历 `BINDING_FIELDS`，新增字段不参与
+缓存键会立刻失败。
+
+## 46. 「不可得」与「没接上」是两件事
+
+**现象**：README、`docs/COMPATIBILITY_BOUNDARY.md`、`docs/NEXT_STEPS.md` 与
+`impersonate.py`/`utils.py` 的注释一致声称：`impersonate=` 只换 `User-Agent` 版本串，
+Chrome 的 `sec-ch-ua*`/`Sec-Fetch-*`/`Accept` 由 `services/network` 的 URLLoader 工厂层
+注入，`net::URLRequestContextBuilder` 没有入口，因此**不可得**，要等 ABI v9。
+
+这个说法**对一半**：需要 ABI v9 的是"让 Core 自己注入"。facade 层完全可以注入，
+而它一直没做。实测两件事：
+
+1. 72 个 profile 的 h1 抓包全部逐字节一致，六条抓包之间零分歧——证据一直在仓库里；
+2. 把这些头作为 extra headers 传进去，`ExtraFingerprints(header_order=...)` 能把顺序
+   也复原，**72/72 逐字节且顺序一致，diffs=0**。
+
+所以这是**接线缺口**，不是能力缺口。文档把"Core 层不可得"写成了"整体不可得"，
+于是一个可修的缺陷被记成了已声明的边界——这比缺一个头危险得多，因为它让下一个人
+不再去看。
+
+**修法**：`tools/generate-client-hints.py` 从抓包生成 `client_hints.py`
+（`CAPTURED_HEADERS`），`browser_headers.py` 把它变成有序头列表，
+`BaseSession._browser_headers` 在唯一的 `prepare_request` 入口合并——同步与异步共用，
+不可能分叉。两处刻意偏离抓包，都在文档里写明理由：
+
+- **平台跟随宿主**：抓包来自 Windows，但 `User-Agent` 括号组与 `sec-ch-ua-platform`
+  都按宿主重写，与 `core/source/minicronet.cc` 自己的推导一致。`"Windows"` 的 hint
+  配 `X11; Linux` 的 UA 比缺一个 hint 更容易被检出。
+- **`Sec-Fetch-*` 取导航语义**：每条抓包都是导航，`session.get(url)` 也是导航。
+
+**顺带修掉的既有缺陷**：`headers={"X-Gone": None}` 发的是字面量 `X-Gone: None`。
+`Headers.add` 把 `None` 交给 `_text` 字符串化了，而 requests 的语义是"删除"。
+`Headers` 现在记录删除（`deleted_names`），`merge_setting` 把它转发到合并结果，
+所以删除对注入的默认值也生效。
+
+**门禁**：`tools/audit-client-hints.py`（AGENTS.md §5）从抓包重新推导整张表，并检查
+UA 版本串与 Core 的 `kFullVersions` 一致、`sec-ch-ua-platform` 出现在抓包有的那些版本上。
+变异测试四条全部非零退出：改一个值、交换两个头的顺序、删掉一个 profile、给 chrome_86
+凭空加一个它从未发过的 hint。`test_client_hints.py` 17 条覆盖 72/72 逐字节、覆盖语义、
+两条删除路径、`default_headers=False` 与 `impersonate=None` 都不注入；变异测试四条
+（关掉注入、冻结平台、不重写 UA 组、丢掉删除记录）各自失败。
+
+**规则**：文档写"不可得"之前，先分别验证"Core 层有没有入口"和"绑定层能不能做到"。
+前者是 ABI 事实，后者是接线问题，两者混写会让可修的东西看起来修不了。
+
+---
+
 ## 新增 profile 的三级证据链：两个真实缺陷
 
 **现象 A**：`tools/audit-profile-addition.py` 判定 chrome_157 的源码不存在——

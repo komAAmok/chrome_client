@@ -8,6 +8,7 @@ seeing ``Any`` (PEP 561).
 
 from ._python_impl.engine import (
     DEFAULT_MAX_ENGINES as DEFAULT_MAX_ENGINES,
+    SessionBinding as SessionBinding,
     EngineConfig as EngineConfig,
     EngineSlot as EngineSlot,
     EngineCache as EngineCache,

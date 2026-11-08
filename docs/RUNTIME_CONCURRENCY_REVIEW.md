@@ -123,7 +123,15 @@ C++ Core 侧已补上（见 `docs/FORK_SAFETY_PATCH.md`）。Python 侧只有两
 
 ---
 
-## 三、指纹一致性 —— ✅ 设计上保证
+## 三、指纹一致性 —— ✅ 设计上保证，且现在是**可检查的值**
+
+`Session.binding(url)` 把「这条请求将使用的传输上下文」暴露成一个不可变值
+（`SessionBinding`：profile / 代理 / 代理凭据 / TLS 校验 / CA / UA / Accept-Language /
+协议钉 / HTTP cache / profile namespace）。它同时就是 Engine 缓存键，所以
+「两条请求是否共享连接池、TLS 会话缓存、H2/H3 会话池」从推断变成 `==` 比较。
+`generation`（cookie store 换代）**不在** binding 里，它是缓存键的附加项，不会
+污染传输身份。
+
 
 - `EngineConfig` 的 `__hash__`/`__eq__` 用 `(impersonate, proxy, verify, ca_pem, user_agent,
   accept_language, proxy_*, http_version, cache, profile_namespace, generation)` 作 key。
@@ -132,7 +140,23 @@ C++ Core 侧已补上（见 `docs/FORK_SAFETY_PATCH.md`）。Python 侧只有两
 - 越界 profile / 非 Chromium 家族显式抛 `ImpersonateError`，不静默降级。
 - 唯一"偏移"来源是 `generation`（清 cookie 时 +1 换引擎），属于预期行为。
 
-## 四、速度 —— ✅ 结构合理
+## 四、速度 —— ✅ 结构合理，2026-11 又削掉两处复制
+
+- **同步流式重切块**（`Response._stream_chunks`）：原实现把 Core 的每个 buffer 追加到
+  一个 bytes 累加器再按 `chunk_size` 切片，每切一块复制整个剩余缓冲——4 MiB 按 512B
+  读约复制 16 GiB。改为 deque + 读偏移，整块对齐时零复制。实测 4 MiB / 64 KiB buffer：
+  512B 块 602 → 1877 MiB/s（3.1×），4 KiB 块 4042 → 7568 MiB/s（1.9×）。
+- **异步流式重切块**（`Response._astream_blocks`，由 `aiter_content` 驱动）：与同步
+  版**共用同一个 `_take`**，因此对齐规则、余数处理、"对齐 buffer 原样交出"三点不可能
+  分叉。此前的 `aiter_content` 是另一份 `pending += chunk` 的复制循环，同步侧优化
+  之后它仍是最差的那一份。
+- **异步非流式聚合**：`_AsyncState.body` 由 `bytearray.extend`（到达即复制，最后
+  `bytes()` 再整体复制一次）改为 buffer 列表 + 一次 `b"".join`，少一次全量复制。
+
+两条路径的**共同性质**（同步/异步各自都有测试）：租约 pin/release、cookie 解析串行化、
+`stats` 计数、close 之后在飞请求仍可读完 body。异步侧另有 `max_clients` 门，
+它与租约是两个不同的限制——前者是"同时在飞多少个请求"，后者是"这些请求跑在哪个引擎上"，
+一个 HTTP/2 引擎可以在一条连接上复用它们全部。
 
 - 连接复用、TLS session 复用、H2/H3 多路复用都在 Engine 内部，长期存活（LRU 上限 8 个
   override 引擎 + 主引擎）。
@@ -172,8 +196,11 @@ C++ Core 侧已补上（见 `docs/FORK_SAFETY_PATCH.md`）。Python 侧只有两
      子进程不要复用父进程的 Session。
    - 📌 短期规避（对未升级的 so 仍适用）：任何工作进程在 fork 之后才 import
      chrome_client / 建 Session。
-2. **P2 — Cookie mirror 非线程安全**：多线程并发下 Python 侧 cookie 副本可能丢更新。
-   给 `_resolve_cookies`/mirror 读写加锁即可（网络层不受影响）。
+2. ~~**P2 — Cookie mirror 非线程安全**~~ **已修复（Session 重构）**：`BaseSession` 新增
+   `_cookie_lock`，`_resolve_cookies` 的「读 jar → 读 mirror → 比对 → 换 generation」
+   与 `_absorb_cookies` 的三 jar 更新都在锁内完成；`EngineSlot` 自己再持一把锁保护
+   mirror。回归测试 `test_cookie_resolution_never_runs_in_parallel` 用真 GIL 释放
+   （`time.sleep`）测重叠，把锁去掉即失败。
 3. **P2 — 流式 body 弃置依赖 `__del__`**：非 CPython 解释器（PyPy）下回收延迟，可能短暂
    占用 Core 请求。可给 `Response.close()` 提供显式通道并鼓励调用。
 4. **信息 — 单 IO 线程 + HTTP/1.1 每 host 6 连接**：Chromium 固有，不算缺陷，但要写进

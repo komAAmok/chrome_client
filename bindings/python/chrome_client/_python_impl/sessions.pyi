@@ -58,6 +58,7 @@ from ._types import (
 from .adapters import BaseAdapter
 from .auth import AuthBase
 from .cookies import RequestsCookieJar
+from .engine import SessionBinding
 from .impersonate import (
     ChromeProfileName,
     ExtraFingerprints,
@@ -675,6 +676,23 @@ class BaseSession:
         ...
 
     # -- requests Session surface ------------------------------------------
+    @property
+    def stats(self) -> dict:
+        """Returns the transport counters for this session.
+
+        ``builds`` counts engines that had to be constructed, ``hits`` the requests
+        that reused one, and ``live`` how many are cached now.  A ``builds`` that keeps
+        climbing is the signature of a per-request transport change -- a rotating
+        proxy pool wider than ``max_engines``, for instance -- and every one of
+        those builds is a fresh Chromium context and a fresh TCP connection
+        (docs/LESSONS.md section 29).
+
+        Returns:
+            A dict with ``live``, ``hits``, ``builds``, ``evictions``, ``deferred``,
+            ``inflight``, ``generation`` and ``max_engines``.
+        """
+        ...
+
     def mount(self, prefix: str, adapter: BaseAdapter) -> None:
         """Registers an adapter for URLs starting with ``prefix``.
 
@@ -687,6 +705,34 @@ class BaseSession:
 
         Example:
             >>> session.mount("https://api.example.com", MyAdapter())
+        """
+        ...
+
+    def binding(self, url: Optional[str] = None) -> SessionBinding:
+        """Returns the transport context a request to ``url`` would use.
+
+        This is the session as a value: the pinned profile (which fixes the
+        JA3/JA4 ClientHello, the HTTP/2 SETTINGS and pseudo-header set, and the
+        QUIC transport parameters together), the proxy the session routes
+        through, and the TLS verification policy.  Two requests whose bindings
+        compare equal share one Chromium ``URLRequestContext`` -- and therefore
+        one socket pool, TLS session cache and HTTP/2/3 session pool.
+
+        It is the same value the engine cache keys on, so it answers "is this
+        request going to reuse the connection I just warmed up?" before the
+        request is sent.
+
+        Args:
+            url: The URL the request would go to; selects the proxy from a
+                per-scheme ``proxies`` mapping.  ``None`` answers for the
+                session-level ``proxy=`` only.
+
+        Returns:
+            A :class:``SessionBinding``.
+
+        Raises:
+            InvalidProxyURL: The session routes through a per-scheme
+                ``proxies=`` mapping and no URL was given to resolve it.
         """
         ...
 

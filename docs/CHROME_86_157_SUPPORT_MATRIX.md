@@ -265,11 +265,14 @@ chrome_131 {(372,null)×7, 其余 null}
 (c) 同版本 h2 基准确实带 ALPS（证明缺 17613 是协议属性而非 profile 丢了 ALPS）。
 变异测试：向 chrome_157 的 h1 证据注入 `application_settings` → 门禁失败。
 
-### 4.2 HTTP/1.1 默认请求头不由 profile 决定
+### 4.2 HTTP/1.1 默认请求头：已由 facade 对齐到 profile 抓包
 
-基准的 H1 记录是浏览器导航头集（`sec-ch-ua*`、`Sec-Fetch-*`、`Accept-Encoding: zstd` 等 11–13 个），
-本 Core 经 `URLRequest` 发出的是 API 客户端头集（4 个）。该边界在
-`docs/COMPATIBILITY_BOUNDARY.md` 已声明，非本次引入。
+基准的 H1 记录是浏览器导航头集（`sec-ch-ua*`、`Sec-Fetch-*`、`Accept-Encoding: zstd` 等 11–13 个）。
+此前本 Core 经 `URLRequest` 发出的是 API 客户端头集（4 个）；现在 `impersonate=` 会由
+`browser_headers` 注入该 profile 自己的抓包头集合，72 个 profile 逐字节且顺序一致
+（`bindings/python/tests/test_client_hints.py`，门禁 `tools/audit-client-hints.py`）。
+平台字段跟随宿主而非抓包，`Sec-Fetch-*` 取导航语义，两者都可按字段覆盖——理由见
+`docs/COMPATIBILITY_BOUNDARY.md`。
 HTTP/1.1 的 TLS 层指纹（cipher/扩展集/曲线/签名算法/ALPN）仍逐项断言并通过。
 
 ### 4.3 86–97 的 `supported_versions` 差异：已按 profile 复原（改 Chromium）

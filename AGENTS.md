@@ -70,6 +70,10 @@ tools/audit-readme.sh
 tools/audit-pypi-metadata.sh
 python3 tools/audit-python-stubs.py
 python3 tools/audit-extra-fp.py
+# The per-profile request header set is generated from the h1 captures, so a
+# stale table or a capture that stopped agreeing with its five siblings has to
+# fail here rather than show up as a fingerprint mismatch on the wire.
+python3 tools/audit-client-hints.py
 # Every curl_cffi extra_fp knob must carry an explicit verdict: curl_cffi
 # simulates Firefox and Safari too, so some knobs have no counterpart in a
 # Chrome-only, Chromium-backed client. A new knob without a verdict fails.

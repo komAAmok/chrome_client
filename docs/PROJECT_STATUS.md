@@ -801,6 +801,62 @@ Core 的 `Request::OnAuthRequired` 一次都不执行。逐层证据与调用点
 原先「没有任何现有功能依赖 ICU 转换器」的断言已被删除：判断数据可否裁剪时只看了本仓库的
 调用点，漏掉了 **Chromium net 层自己**的消费者。
 
+## Session 重构与 profile 请求头（2026-11）
+
+两件事，第二件依赖第一件的结构。
+
+### 传输上下文变成值：`SessionBinding`
+
+`Session` 的传输配置（profile / 代理 / 凭据 / TLS 校验 / CA / UA / Accept-Language /
+协议钉 / HTTP cache）原本散在十几个可变属性里，由 `_engine_config()` 每次请求现场拼。
+现在它是一个不可变值 `SessionBinding`，同时充当引擎缓存键（`EngineConfig` = binding +
+`generation`），所以「两条请求是否共享连接池、TLS 会话缓存、H2/H3 会话池」从推断变成
+`==` 比较。`Session.binding(url)` 把它暴露出来。
+
+`generation` 不在 binding 里：它只表示 cookie store 换代，混进传输身份正是
+`discard_cookies` 历史缺陷（LESSONS §43）的根因。
+
+`EngineSlot` 记录 in-flight 计数，`EngineCache.acquire()` 返回租约，cookie 解析换引擎时
+`lease.rebind()` 把租约挪到新 slot；淘汰一个仍在使用的 slot 记为 `deferred`。
+`Session.stats` 暴露 `builds`/`hits`/`evictions`/`deferred`/`inflight`——LESSONS §29 的
+「每请求重建上下文」不再只能靠 TIME_WAIT 发现。
+
+### 同步与异步各自都改，共享同一实现
+
+| 能力 | 同步 | 异步 |
+| --- | --- | --- |
+| `SessionBinding` / `binding()` | ✅ | ✅ |
+| `stats` 计数器 | ✅ | ✅ |
+| 租约 pin/release + `rebind` | ✅ | ✅ |
+| cookie 解析串行化（`_cookie_lock`） | ✅ | ✅ |
+| 零复制流式重切块 | `_stream_chunks` | `_astream_blocks`，共用 `_take` |
+| 单次聚合复制 | — | `b"".join`，替代 `bytearray` + `bytes()` 两次复制 |
+| `close()` 后仍在飞的流可读完 | ✅ | ✅ |
+
+重切块实测（4 MiB / 64 KiB buffer）：512B 块 602 → 1877 MiB/s（3.1×），
+4 KiB 块 4042 → 7568 MiB/s（1.9×）。对齐的 buffer 原样交出，由对象 identity 断言锁定。
+
+### 默认请求头 = profile 自己的抓包
+
+`impersonate=` 原本只换 `User-Agent` 版本串，一个 `chrome_155` 会话发 4 个头，而那个版本
+发 14 个。现在表由 `tools/generate-client-hints.py` 从六条独立抓包生成（六条必须全等），
+`browser_headers.py` 把它变成有序头列表，`BaseSession._browser_headers` 在唯一的
+`prepare_request` 入口合并——同步与异步共用。**72/72 profile 逐字节且顺序一致。**
+
+两处刻意偏离抓包，理由写在 README 与 `docs/COMPATIBILITY_BOUNDARY.md`：平台跟随宿主
+（与 Core 的 UA 推导一致，`"Windows"` hint 配 `X11; Linux` UA 更容易被检出）、
+`Sec-Fetch-*` 取导航语义（`session.get(url)` 就是导航）。两者都可被调用方按字段覆盖，
+`default_headers=False` 可整体关闭，`impersonate=None` 一个都不注入。
+
+顺带修掉一个既有缺陷：`headers={"X": None}` 之前发的是字面量 `X: None`——`Headers.add`
+把 `None` 字符串化了，而 requests 的语义是删除。`Headers` 现在记录删除（`deleted_names`），
+`merge_setting` 转发到合并结果。
+
+仍未闭合（ABI v9）：让 Core 自己注入。facade 注入的头不经过 `net` 层的 URLLoader 工厂，
+所以 Chromium 的 `Sec-Fetch` 策略与 `Accept-CH` 协商不作用于它们。见 `docs/NEXT_STEPS.md`。
+
+---
+
 ## 门禁现状
 
 | 检查 | 状态 | 在 CI |
@@ -814,7 +870,8 @@ Core 的 `Request::OnAuthRequired` 一次都不执行。逐层证据与调用点
 | `tools/audit-readme.sh` | 通过 | 是 |
 | `cargo fmt` / `clippy -D warnings` | 通过 | 是 |
 | `cargo test --workspace` | 18 个单元测试通过（`request.rs` 16、`minicronet-sys/lib.rs` 2）；含 panic 不穿越 FFI 边界、丢弃 body stream 不搁死请求、`Some(Duration::ZERO)` 仍是真实 deadline 三项 | 是 |
-| Python 套件 | 260 个用例通过，2 个 skip（未设 `MINICRONET_WS_URL`/`MINICRONET_WSS_URL`，无真实 WS/WSS 端点） | 是 |
+| Python 套件 | 320 个用例通过，2 个 skip（未设 `MINICRONET_WS_URL`/`MINICRONET_WSS_URL`，无真实 WS/WSS 端点） | 是 |
+| `tools/audit-client-hints.py` | 72 个 profile 的请求头表从 `profiles/chrome_<major>/h1/captures.json` 重新推导；另断言每条抓包的 UA 版本串等于 Core 的 `kFullVersions`、`sec-ch-ua-platform` 只出现在抓包有的版本上。变异测试四条（改值/换序/删 profile/凭空加 hint）全部非零退出 | 是 |
 | `tools/audit-python-stubs.py` | 17 个 stub 模块，0 错；含 prose 版本区间与裸交叉引用两项扫描（都有空转守卫） | 是 |
 | `tools/audit-python-typing.py` | mypy 检查存根与消费者，两者都干净；**缺 mypy 时非零退出**（`--optional` 是显式逃生门，CI 与门禁清单都不传），不再静默跳过 | 是 |
 | Core manifest 与 `CHROMIUM_REVISION` 一致 | 8 个平台通过 | 是 |
@@ -834,8 +891,10 @@ Core 的 `Request::OnAuthRequired` 一次都不执行。逐层证据与调用点
 
 Python 套件能进 CI 是因为 linux-x86_64 Core 已提交在仓库里；已用一份浅克隆验证过
 从零检出可以跑通（装 `libnss3`、`cargo build --release -p chrome-client-python`）。
-套件现在分两个文件：`test_stability.py`（生命周期、并发、背压）和 `test_compat.py`
-（requests / curl-cffi 兼容面、cookie 会话、代理路由、泄漏、并发）。
+套件按关注点分文件：`test_stability.py`（生命周期、并发、背压）、`test_compat.py`
+（requests / curl-cffi 兼容面、cookie 会话、代理路由、泄漏、并发）、
+`test_session_binding.py`（传输绑定、租约、cookie 串行化、零复制重切块，同步与异步各自覆盖）、
+`test_client_hints.py`（72 个 profile 的请求头逐字节复现、覆盖语义、两条删除路径）。
 
 仍在 CI 之外的是需要 Chromium 源码树的两项：`audit-core-linux.sh` 的源码级审计
 （529 个 net 源文件、166 处 FeatureList 读取、体积上限）和 8 个平台的构建。它们依赖

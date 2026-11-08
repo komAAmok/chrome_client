@@ -62,6 +62,7 @@ from .engine import (
     EngineCache as EngineCache,
     EngineConfig as EngineConfig,
     EngineSlot as EngineSlot,
+    SessionBinding as SessionBinding,
 )
 from .exceptions import (
     CertificateVerifyError as CertificateVerifyError,

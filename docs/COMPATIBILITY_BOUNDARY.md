@@ -183,11 +183,36 @@ it does in Chromium.
 `extra_fp.header_order` and `extra_fp.form_boundary` are honoured, because the
 facade implements both itself.
 
-For the same reason the facade adds **no** default headers.
 `utils.default_headers()` returns an empty mapping: `requests` seeds
-`User-Agent`, `Accept`, `Accept-Encoding` and `Connection`, and doing that here
-would overwrite or duplicate what the profile emits -- an injected `Accept: */*`
-is visible to a fingerprinter.
+`User-Agent`, `Accept`, `Accept-Encoding` and `Connection` unconditionally, and a
+constant set here would overwrite or duplicate what the profile emits -- an
+injected `Accept: */*` is visible to a fingerprinter.
+
+What the facade does add is **profile data, not a constant**: when
+`impersonate=` names a pinned major, `browser_headers.browser_headers()` supplies
+the exact ordered header list that release's own build sent, taken from
+`profiles/chrome_<major>/h1/captures.json`, and
+`BaseSession._browser_headers` merges it *under* the caller's headers.  All 72
+pinned profiles reproduce their capture byte for byte, order included.
+
+Three limits on that:
+
+* **The platform follows the host.** The captures are from a Windows desktop;
+  `User-Agent`'s parenthesised group and `sec-ch-ua-platform` are rewritten to
+  what the Core itself derives from `BUILDFLAG(IS_WIN/IS_MAC)` and
+  `ARCH_CPU_*`.  A `"Windows"` hint beside an `X11; Linux` User-Agent is a louder
+  contradiction than a missing hint.
+* **`Sec-Fetch-*` describe a top-level navigation**, which is what every capture
+  is and what `session.get(url)` does.  A subresource fetch passes its own two or
+  three fields; the rest of the set stays.
+* **`impersonate=None` and `default_headers=False` inject nothing.** A session
+  that never claimed a profile must not start looking like Chrome.
+
+These headers travel as extra headers, not through Chromium's URLLoader factory,
+so Chromium's own `Sec-Fetch` policy and client-hint negotiation (the `Accept-CH`
+response header) do not apply to them: a server that only wants hints after
+`Accept-CH` still receives them.  Moving the injection into the Core is the
+ABI v9 item in `docs/NEXT_STEPS.md`.
 
 ### Options that fail closed
 

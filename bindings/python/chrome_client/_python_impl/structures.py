@@ -79,6 +79,13 @@ class Headers(CaseInsensitiveDict):
 
     def __init__(self, headers=None, encoding=None):
         self._list = []
+        #: Lower-cased names the caller removed, in removal order.
+        #: ``requests`` spells deletion as ``headers={"Name": None}``, and the
+        #: intent has to survive the merge: a deletion applied only to this
+        #: object would let a session-level default of the same name come back
+        #: (measured: ``Session(headers={"X-Gone": "yes"}).get(url,
+        #: headers={"X-Gone": None})`` still sent ``X-Gone: yes``).
+        self._deleted = []
         self.encoding = encoding or "utf-8"
         CaseInsensitiveDict.__init__(self)
         if headers is not None:
@@ -113,23 +120,59 @@ class Headers(CaseInsensitiveDict):
         self._store[lowered] = (name, ", ".join(values))
 
     def add(self, key, value):
-        """Appends a field without replacing an existing one of the same name."""
+        """Appends a field without replacing an existing one of the same name.
+
+        A ``None`` value means "remove this header", which is how ``requests``
+        spells deletion (``merge_setting`` drops such a key from the merge).
+        Storing it as the four characters ``None`` -- what ``_text`` used to do --
+        sent ``X-Gone: None`` on the wire, so a caller deleting a session header
+        instead invented a new one.
+
+        Args:
+            key: The field name.
+            value: The field value, or ``None`` to remove the field.
+        """
         lowered = _key(key)
+        if value is None:
+            self._remove(lowered)
+            return
         self._list.append((lowered, _text(key), _text(value, self.encoding)))
         self._refresh(lowered)
 
     def __setitem__(self, key, value):
         lowered = _key(key)
         self._list = [entry for entry in self._list if entry[0] != lowered]
+        if value is None:
+            self._remove(lowered)
+            return
         self._list.append((lowered, _text(key), _text(value, self.encoding)))
         self._refresh(lowered)
+
+    def _remove(self, lowered):
+        """Drops every field called *lowered* and remembers the removal.
+
+        Args:
+            lowered: The lower-cased field name.
+        """
+        self._list = [entry for entry in self._list if entry[0] != lowered]
+        self._refresh(lowered)
+        if lowered not in self._deleted:
+            self._deleted.append(lowered)
+
+    @property
+    def deleted_names(self):
+        """The lower-cased field names this object was asked to remove.
+
+        Returns:
+            A frozenset, so a caller cannot mutate the record by accident.
+        """
+        return frozenset(self._deleted)
 
     def __delitem__(self, key):
         lowered = _key(key)
         if lowered not in self._store:
             raise KeyError(key)
-        self._list = [entry for entry in self._list if entry[0] != lowered]
-        self._store.pop(lowered, None)
+        self._remove(lowered)
 
     def multi_items(self):
         return [(name, value) for _key, name, value in self._list]
@@ -152,7 +195,14 @@ class Headers(CaseInsensitiveDict):
                 for _key, name, value in self._list]
 
     def copy(self):
-        return Headers(self, encoding=self.encoding)
+        """Returns an independent copy, deletions included.
+
+        Returns:
+            A new :class:`Headers`.
+        """
+        clone = Headers(self, encoding=self.encoding)
+        clone._deleted = list(self._deleted)
+        return clone
 
     def update(self, headers=None, **kwargs):
         if headers is not None:

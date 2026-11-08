@@ -27,21 +27,19 @@ NETRC_FILES = (".netrc", "_netrc")
 
 
 def default_headers():
-    """Headers the facade adds on its own: none.
+    """Headers this module seeds: none.
 
     requests seeds ``User-Agent``, ``Accept``, ``Accept-Encoding`` and
-    ``Connection`` here.  Doing that would corrupt the very thing this client
-    exists for: the impersonation profile owns the UA version string, and an
-    injected ``Accept: */*`` is visible to any fingerprinter.
+    ``Connection`` here, unconditionally.  This module does not, because the
+    header set is not a constant: it belongs to the profile, and it lives in
+    :mod:`.browser_headers`, applied by
+    :meth:`.sessions.BaseSession._browser_headers`.  A session with no profile
+    still gets nothing from here -- Chromium's ``net/`` layer supplies ``Host``,
+    ``Connection``, ``User-Agent`` and ``Accept-Encoding`` on its own, and that
+    is the honest default for a client that is not claiming to be a browser.
 
-    What Chromium's ``net/`` layer supplies on its own is only ``Host``,
-    ``Connection``, ``User-Agent`` and ``Accept-Encoding`` -- measured, not
-    assumed.  Real Chrome additionally sends ``sec-ch-ua*``, ``Sec-Fetch-*``,
-    ``Accept`` and ``Priority``, but those are injected by the
-    ``services/network`` URLLoader factory layer, which
-    ``net::URLRequestContextBuilder`` gives no way to reach.  So the default
-    header set is *not* Chrome's and is not profile data; adding the missing
-    ones is tracked as an ABI v9 item in ``docs/NEXT_STEPS.md``.
+    Returns:
+        An empty mapping, so ``Session(headers=...)`` starts from nothing.
     """
     return CaseInsensitiveDict()
 

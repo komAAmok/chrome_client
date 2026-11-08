@@ -6,7 +6,7 @@ The public import stays ``chrome_client``; this subpackage holds the pieces:
 * ``structures``  -- ``CaseInsensitiveDict``, ``Headers``, ``LookupDict``
 * ``cookies``     -- ``RequestsCookieJar`` and the Core cookie-store bridge
 * ``models``      -- ``Request``, ``PreparedRequest``, ``Response``
-* ``engine``      -- Chromium engine configuration and per-session caching
+* ``engine``      -- transport binding, engine configuration and per-session caching
 * ``sessions``    -- ``Session`` and ``AsyncSession``
 * ``websockets``  -- ``WebSocket`` and ``AsyncWebSocket``
 * ``api``         -- module-level ``get``/``post``/... over a shared session
@@ -22,7 +22,7 @@ from .auth import AuthBase, HTTPBasicAuth, HTTPDigestAuth, HTTPProxyAuth
 from .cookies import (Cookie, CookieJar, Cookies, RequestsCookieJar,
                       add_dict_to_cookiejar, cookiejar_from_dict, create_cookie,
                       dict_from_cookiejar, merge_cookies, morsel_to_cookie)
-from .engine import DEFAULT_MAX_ENGINES, EngineConfig
+from .engine import DEFAULT_MAX_ENGINES, EngineConfig, SessionBinding
 from .exceptions import (CertificateVerifyError, ChunkedEncodingError, ConnectTimeout,
                          ConnectionError, ContentDecodingError, CookieConflict,
                          CookieConflictError, DNSError, HTTPError, ImpersonateError,
@@ -64,7 +64,7 @@ __all__ = [
     # containers
     "CaseInsensitiveDict", "Headers", "LookupDict", "CookieJar", "Cookies",
     "RequestsCookieJar", "Cookie", "CurlMime", "ExtraFingerprints", "CurlHttpVersion",
-    "EngineConfig", "DEFAULT_MAX_ENGINES",
+    "EngineConfig", "DEFAULT_MAX_ENGINES", "SessionBinding",
     # adapters and auth
     "HTTPAdapter", "BaseAdapter", "AuthBase", "HTTPBasicAuth", "HTTPProxyAuth",
     "HTTPDigestAuth",

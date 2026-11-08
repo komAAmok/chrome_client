@@ -16,6 +16,7 @@ import asyncio
 import math
 import os
 import random
+import threading
 import time
 import warnings
 from collections import deque
@@ -27,9 +28,11 @@ except ImportError:  # Python 3.6
     from collections import Mapping
 
 from . import multipart as _multipart
+from .browser_headers import browser_headers, header_order as browser_header_order
 from .auth import build_auth
 from .cookies import RequestsCookieJar, cookiejar_from_dict, merge_cookies
-from .engine import DEFAULT_MAX_ENGINES, EngineConfig, EngineCache
+from .engine import (BINDING_FIELDS, DEFAULT_MAX_ENGINES, EngineCache,
+                     EngineConfig, SessionBinding)
 from .exceptions import (InvalidProxyURL, InvalidURL, ProxyError,
                          RequestException, ResponseTooLarge, SessionClosed,
                          Timeout, TooManyRedirects, UnsupportedFeature,
@@ -527,7 +530,22 @@ _proxy_from_proxies = proxy_from_proxies
 
 
 def merge_setting(request_setting, session_setting, dict_class=CaseInsensitiveDict):
-    """requests' merge rule: request wins, and a ``None`` value deletes a key."""
+    """requests' merge rule: request wins, and a ``None`` value deletes a key.
+
+    When ``dict_class`` is :class:`Headers`, a deletion recorded by the request
+    side is carried onto the result.  ``requests`` gets this for free because a
+    deletion is just a ``None`` value in the merge; ``Headers`` applies the
+    deletion immediately, so the record has to be forwarded explicitly or the
+    session-level default of that name comes back.
+
+    Args:
+        request_setting: The per-request mapping, or ``None``.
+        session_setting: The session-level mapping, or ``None``.
+        dict_class: The mapping type to build.
+
+    Returns:
+    The merged mapping.
+    """
     if session_setting is None:
         return request_setting
     if request_setting is None:
@@ -539,6 +557,17 @@ def merge_setting(request_setting, session_setting, dict_class=CaseInsensitiveDi
     for key, value in request_setting.items():
         if value is None:
             merged.pop(key, None)
+    recorded = getattr(request_setting, "deleted_names", None)
+    if recorded:
+        # Headers applies a deletion immediately, so the merge above never sees
+        # it as a None value.  Without this the session-level default of that
+        # name survived: measured, Session(headers={"X-Gone": "yes"}).get(url,
+        # headers={"X-Gone": None}) still sent X-Gone: yes.
+        for name in recorded:
+            merged.pop(name, None)
+        if hasattr(merged, "deleted_names"):
+            for name in recorded:
+                merged._remove(name)
     return merged
 
 
@@ -771,7 +800,7 @@ class _AsyncState(object):
         self.error = None
         self.status = 0
         self.raw_headers = b""
-        self.body = None if stream else bytearray()
+        self.body = None if stream else []
         self.wake = asyncio.Event() if stream else None
         self.closed = False
         self.throttled = False
@@ -848,7 +877,11 @@ class _AsyncState(object):
             self.buffered += len(chunk)
             self._signal()
         else:
-            self.body.extend(chunk)
+            # A list of the Core's own buffers, joined once when the response is
+            # assembled.  Extending a bytearray copied every chunk on arrival and
+            # then copied the whole body again on ``bytes(...)``, so a large
+            # download paid two full copies; joining once pays one.
+            self.body.append(chunk)
 
     def _on_redirect(self, status_code, raw_headers, new_url):
         if self.follow:
@@ -1035,6 +1068,11 @@ class BaseSession(object):
         self.max_response_bytes = _validate_max_response_bytes(max_response_bytes)
         self.extra_fp = extra_fp
 
+        #: Whether the profile's captured browser headers are injected.  Stored,
+        #: not just consumed at construction: :meth:`_browser_headers` reads it on
+        #: every request, and a session that says "no default headers" must keep
+        #: saying so for its whole life.
+        self.default_headers = bool(default_headers)
         self.headers = Headers(_default_headers() if default_headers else None)
         if headers:
             self.headers.update(headers)
@@ -1053,11 +1091,25 @@ class BaseSession(object):
         self.mount("http://", HTTPAdapter())
 
         self._engines = EngineCache(max_engines)
+        #: Cookie-store generation.  Bumping it asks the cache for a structurally
+        #: identical engine with an empty store, which is the only way to drop
+        #: cookies the Core already accepted: ABI v8 exposes no entry point that
+        #: clears CookieMonster.  Every ordinary request keys on this value, so a
+        #: throwaway engine must never be obtained by moving it -- see
+        #: _one_shot_slot.
         self._generation = 0
         #: Counter for the throwaway engines 'discard_cookies' needs. Kept apart
         #: from '_generation' so a discard request never becomes the store every
-        #: later request uses.
+        #: later request uses.  Negative generations cannot collide with
+        #: '_generation', which only ever grows from zero.
         self._discard_serial = 0
+        #: Serialises the read-compare-replace sequence in _resolve_cookies and
+        #: the mirror updates in _absorb_cookies.  Both touch two jars -- the
+        #: caller's and the engine's mirror -- and decide whether the Core's store
+        #: has to be replaced.  Two threads interleaving those steps can each pick
+        #: a different generation for the same request, so one of them sends a
+        #: Cookie header its engine's store then overrides.
+        self._cookie_lock = threading.RLock()
         self._closed = False
 
     # -- requests Session surface ------------------------------------------
@@ -1097,7 +1149,20 @@ class BaseSession(object):
                 "cert": merge_setting(cert, self.cert)}
 
     def prepare_request(self, request):
-        """Merges session defaults into a ``Request`` and returns a ``PreparedRequest``."""
+        """Merges session defaults into a ``Request`` and returns a ``PreparedRequest``.
+
+        When the session names a profile, the header set that profile's own Chrome
+        sent is merged in underneath the caller's headers -- see
+        :meth:`_browser_headers`.  This is the single place both sessions pass
+        through, so the synchronous and asynchronous paths cannot disagree about
+        what the wire looks like.
+
+        Args:
+            request: The caller's :class:`Request`.
+
+        Returns:
+            A :class:`PreparedRequest` with session defaults applied.
+        """
         cookies = request.cookies or {}
         if not isinstance(cookies, RequestsCookieJar):
             cookies = cookiejar_from_dict(cookies)
@@ -1107,15 +1172,17 @@ class BaseSession(object):
         if auth is None and self.trust_env:
             auth = get_netrc_auth(request.url)
         prepared = PreparedRequest()
-        prepared.header_order = getattr(request, "header_order", None) or self.header_order
+        prepared.header_order = (getattr(request, "header_order", None)
+                                 or self.header_order)
         prepared.quote = getattr(request, "quote", None)
+        headers = self._browser_headers(request, prepared)
         prepared.prepare(
             method=request.method.upper() if request.method else "GET",
             url=self._absolute_url(request.url),
             files=request.files,
             data=request.data or None,
             json=request.json,
-            headers=merge_setting(request.headers, self.headers, dict_class=Headers),
+            headers=headers,
             params=merge_setting(request.params, self.params, dict_class=dict),
             auth=build_auth(auth) or self.auth,
             cookies=merged_cookies,
@@ -1123,12 +1190,110 @@ class BaseSession(object):
         )
         return prepared
 
+    def _browser_headers(self, request, prepared):
+        """Merges the profile's captured header set under the caller's headers.
+
+        ``impersonate=`` used to own only the ``User-Agent`` version string, so a
+        ``chrome_155`` session sent four headers where that release sends twelve.
+        The set now comes from ``profiles/chrome_<major>/h1/captures.json`` -- six
+        independent captures of that release's own build, all identical -- via
+        :mod:`.browser_headers`, and it is applied here rather than in the Core
+        because ``net::URLRequestContextBuilder`` exposes no hook for it.
+
+        Precedence, lowest first: the captured set, the session's ``headers``, the
+        request's ``headers``.  A caller therefore overrides one field without
+        losing the rest, which is what makes ``Sec-Fetch-*`` usable for a
+        subresource fetch: pass the two fields you need and the other ten stay.
+
+        Two things are deliberately *not* injected:
+
+        * Nothing at all when ``impersonate`` is ``None`` or ``default_headers=False``.
+          A session that never claimed a profile must not start looking like Chrome,
+          and the switch is how a caller who wants the bare transport turns it off.
+        * ``Accept-Language`` keeps the caller's value when the session set
+          ``accept_language=``.  The Core emits that field itself, so injecting a
+          second copy would send the header twice.
+
+        Args:
+            request: The caller's :class:`Request`, for its profile and headers.
+            prepared: The :class:`PreparedRequest` being built; its
+                ``header_order`` is set from the profile when the caller did not
+                pick an order of its own.
+
+        Returns:
+            The merged :class:`Headers`.
+        """
+        profile = getattr(request, "impersonate", None) or self.impersonate
+        # ``merge_setting`` implements requests' "a None value deletes a key" by
+        # dropping the entry, which also erases the caller's *intent* to delete.
+        # Without collecting it first, ``headers={"Sec-Fetch-User": None}`` did
+        # nothing: the captured value came back on the next line.
+        dropped = self._deleted_headers(request.headers)
+        caller = merge_setting(request.headers, self.headers, dict_class=Headers)
+        if not self.default_headers or not profile:
+            return caller
+        accept_language = self.accept_language
+        if not accept_language and caller is not None:
+            # The Core owns Accept-Language when the session set one; only inject
+            # the captured value when nothing else will produce the header.
+            accept_language = None
+        captured = browser_headers(profile, accept_language)
+        if not captured:
+            return caller
+        if caller is not None or dropped:
+            captured = [(name, value) for name, value in captured
+                        if name.lower() not in caller and name.lower() not in dropped]
+        merged = Headers(captured)
+        if caller is not None:
+            merged.update(caller)
+        if not prepared.header_order:
+            prepared.header_order = browser_header_order(profile)
+        return merged
+
+    @staticmethod
+    def _deleted_headers(headers):
+        """Returns the lower-cased names the caller asked to remove.
+
+        ``requests`` spells deletion as ``headers={"Name": None}``.  A
+        :class:`Headers` records the removal in ``deleted_names``; a plain
+        mapping still carries the ``None`` values, so both spellings are read.
+        Without this the injected default came straight back:
+        ``get(url, headers={"Sec-Fetch-User": None})`` still sent the header.
+
+        Args:
+            headers: The caller's header mapping, or ``None``.
+
+        Returns:
+            A set of lower-cased header names.
+        """
+        if headers is None:
+            return set()
+        recorded = getattr(headers, "deleted_names", None)
+        if recorded is not None:
+            return set(recorded)
+        try:
+            items = headers.items()
+        except AttributeError:
+            return set()
+        return {str(name).lower() for name, value in items if value is None}
+
     def _absolute_url(self, url):
         if self.base_url and not urlsplit(str(url)).scheme:
             return urljoin(self.base_url, str(url))
         return url
 
     def close(self):
+        """Closes the session, releasing every engine it owns.
+
+        Idempotent.  A request already in flight still completes: the Core's
+        request object holds its own reference to the Chromium context, so
+        closing the session ends the reuse of the pool, not the work running on
+        it.  What a closed session refuses is a *new* request, which
+        ``_ensure_open`` enforces.
+
+        Returns:
+            ``None``.
+        """
         self._closed = True
         self._engines.close()
         for adapter in self.adapters.values():
@@ -1137,8 +1302,35 @@ class BaseSession(object):
             except NotImplementedError:
                 pass
 
+    @property
+    def stats(self):
+        """Returns the transport counters for this session.
+
+        ``builds`` counts engines that had to be constructed, ``hits`` the
+        requests that reused one, and ``live`` how many are cached now.  A
+        ``builds`` that keeps climbing is the signature of a per-request
+        transport change -- a rotating proxy pool wider than ``max_engines``, for
+        instance -- and every one of those builds is a fresh Chromium context and
+        a fresh TCP connection (docs/LESSONS.md section 29).  This counter makes
+        that cost visible instead of leaving it to be discovered as
+        ``ERR_PROXY_CONNECTION_FAILED`` once the ephemeral port range runs out.
+
+        Returns:
+            A dict with ``live``, ``hits``, ``builds``, ``evictions``,
+            ``deferred``, ``inflight``, ``generation`` and ``max_engines``.
+        """
+        snapshot = self._engines.stats
+        snapshot["inflight"] = self._engines.inflight()
+        snapshot["generation"] = self._generation
+        snapshot["max_engines"] = self._engines.max_engines
+        return snapshot
+
     def upkeep(self):
-        """curl_cffi parity hook. Chromium keeps idle sockets warm itself."""
+        """curl_cffi parity hook. Chromium keeps idle sockets warm itself.
+
+        Returns:
+            Always ``0``: there is no facade-level pool to prune.
+        """
         return 0
 
     def _ensure_open(self):
@@ -1146,8 +1338,60 @@ class BaseSession(object):
             raise SessionClosed("Session is closed")
 
     # -- engine selection ---------------------------------------------------
-    def _engine_config(self, impersonate, proxy, verify, http_version, url=None,
-                        request_proxy=None, request_proxies=None):
+    def binding(self, url=None):
+        """Returns the transport context a request to *url* would use.
+
+        This is the session as a value: the pinned profile (which fixes the
+        JA3/JA4 ClientHello, the HTTP/2 SETTINGS and pseudo-header set, and the
+        QUIC transport parameters together), the proxy the session routes
+        through, and the TLS verification policy.  Two requests whose bindings
+        compare equal share one Chromium ``URLRequestContext`` -- and therefore one
+        socket pool, TLS session cache and HTTP/2/3 session pool.  Two that do
+        not, do not.
+
+        It is the same value the engine cache keys on, so it answers the question
+        ``"is this request going to reuse the connection I just warmed up?"``
+        before the request is sent.
+
+        Args:
+            url: The URL the request would go to; selects the proxy from a
+                per-scheme ``proxies`` mapping.  ``None`` answers for the
+                session-level ``proxy=`` only.
+
+        Returns:
+            A :class:`SessionBinding`.
+        """
+        proxy = self._effective_proxy(url, None, None)
+        if proxy is None and self.proxies and url is None:
+            # A per-scheme mapping cannot be resolved without a URL, and
+            # guessing one scheme's proxy would answer for the wrong request.
+            # Say so instead of reporting a direct connection that this session
+            # would never make.
+            raise InvalidProxyURL(
+                "binding() needs a URL to resolve the session's per-scheme "
+                "proxies= mapping; pass binding(url)")
+        return self._binding(None, proxy, None, None, url, None, None)
+
+    def _binding(self, impersonate, proxy, verify, http_version, url=None,
+                 request_proxy=None, request_proxies=None):
+        """Resolves one request into the transport context it will use.
+
+        This is the only place that decides what a binding contains, so the
+        engine cache, the WebSocket handshake and the public :meth:`binding`
+        cannot drift apart.
+
+        Args:
+            impersonate: Per-request profile override, or ``None``.
+            proxy: The proxy rule this request will use, already resolved.
+            verify: Per-request certificate policy, or ``None``.
+            http_version: Per-request protocol pin, or ``None``.
+            url: The request URL, for ``proxy_auth`` scoping.
+            request_proxy: The caller's per-request ``proxy=`` argument.
+            request_proxies: The caller's per-request ``proxies=`` mapping.
+
+        Returns:
+            A :class:`SessionBinding`.
+        """
         # Credentials embedded in the proxy URL have to be moved into the
         # Engine's separate fields: Chromium's proxy rule parser rejects
         # userinfo, so leaving them inline made the rule list empty and every
@@ -1176,7 +1420,7 @@ class BaseSession(object):
                 and self._proxy_auth_applies(proxy, url, request_proxy,
                                             request_proxies):
             username, password = self.proxy_auth
-        return EngineConfig(
+        return SessionBinding(
             # Normalise here, not only in __init__: a per-call ``impersonate=``
             # reaches the Core through this one function, and without it
             # ``"CHROME_155"``/``"chrome-155"`` were accepted at construction but
@@ -1193,8 +1437,33 @@ class BaseSession(object):
             http_version=http_version if http_version is not None else self.http_version,
             cache=self.cache,
             profile_namespace=None,
-            generation=self._generation,
         )
+
+    def _engine_config(self, impersonate, proxy, verify, http_version, url=None,
+                        request_proxy=None, request_proxies=None):
+        """Wraps the resolved binding in the engine cache key.
+
+        The key is the binding plus ``generation``, and nothing else: every
+        field that changes the wire belongs to the binding, so a request that
+        only changes its headers or its body cannot fork the connection pool.
+
+        Args:
+            impersonate: Per-request profile override, or ``None``.
+            proxy: The proxy rule this request will use, already resolved.
+            verify: Per-request certificate policy, or ``None``.
+            http_version: Per-request protocol pin, or ``None``.
+            url: The request URL, for ``proxy_auth`` scoping.
+            request_proxy: The caller's per-request ``proxy=`` argument.
+            request_proxies: The caller's per-request ``proxies=`` mapping.
+
+        Returns:
+            An :class:`EngineConfig` for the current cookie generation.
+        """
+        binding = self._binding(impersonate, proxy, verify, http_version, url,
+                                request_proxy, request_proxies)
+        return EngineConfig(generation=self._generation,
+                            **{name: getattr(binding, name)
+                               for name in BINDING_FIELDS})
 
     def _proxy_auth_applies(self, rule, url=None, request_proxy=None,
                             request_proxies=None):
@@ -1265,6 +1534,25 @@ class BaseSession(object):
         return selected
 
     def _slot(self, url, impersonate, proxy, proxies, verify, http_version):
+        """Returns the engine slot for one request, without pinning it.
+
+        Only the WebSocket handshake uses this form: the Core's WebSocket owns
+        its own reference to the Chromium context, so nothing has to be held
+        after the handshake call returns.  Request paths use :meth:`_lease`,
+        which keeps the slot pinned for as long as the facade still reads or
+        writes its state.
+
+        Args:
+            url: The request URL; selects the proxy from a mapping.
+            impersonate: Per-request profile override, or ``None``.
+            proxy: Per-request proxy override.
+            proxies: Per-request proxy mapping.
+            verify: Per-request certificate policy.
+            http_version: Per-request protocol pin.
+
+        Returns:
+            The matching :class:`EngineSlot`.
+        """
         self._ensure_open()
         # The per-request proxy= / proxies= have to reach _engine_config too:
         # proxy_auth may only be attached to the proxy the session itself
@@ -1274,12 +1562,56 @@ class BaseSession(object):
             http_version, url, proxy, proxies)
         return self._engines.get(config)
 
+    def _lease(self, url, impersonate, proxy, proxies, verify, http_version):
+        """Returns a context manager that pins one engine for a request.
+
+        The pin is the facade's statement that this request is using the
+        engine, so an eviction that happens while it is held is counted as
+        deferred rather than free.  The Chromium context itself survives an
+        eviction -- the Core request holds a reference to it -- so the pin is
+        about bookkeeping accuracy, not about keeping the socket alive.
+
+        Args:
+            url: The request URL; selects the proxy from a mapping.
+            impersonate: Per-request profile override, or ``None``.
+            proxy: Per-request proxy override.
+            proxies: Per-request proxy mapping.
+            verify: Per-request certificate policy.
+            http_version: Per-request protocol pin.
+
+        Returns:
+            A context manager yielding the :class:`EngineSlot`; the
+            yielded slot is also reachable afterwards through its `slot` property.
+        """
+        self._ensure_open()
+        config = self._engine_config(
+            impersonate, self._effective_proxy(url, proxy, proxies), verify,
+            http_version, url, proxy, proxies)
+        return self._engines.acquire(config)
+
     # -- cookie policy ------------------------------------------------------
     def _resolve_cookies(self, slot, prepared, discard):
         """Decides the outgoing ``Cookie`` header, rebuilding the engine if needed.
 
-        Returns the ``EngineSlot`` to use, which differs from *slot* only when the
-        Core's cookie store has to be discarded for a caller edit to be visible.
+        Two stores exist and the Core's wins ties, so the caller's jar can only
+        be honoured by replacing the engine whose store disagrees with it.  The
+        comparison is between the ``Cookie`` line the jar would send and the one
+        the engine's mirror would send, which is why the mirror exists at all:
+        ABI v8 cannot read, write or clear ``CookieMonster``.
+
+        The whole read-compare-replace runs under ``_cookie_lock``.  Two workers
+        interleaving it could each bump ``_generation`` and end up on different
+        generations for the same jar, so one of them would send a ``Cookie``
+        header its own engine's store then overrides.
+
+        Args:
+            slot: The slot the request would otherwise use.
+            prepared: The prepared request, whose ``Cookie`` header this may set.
+            discard: Whether the caller asked for "neither send nor record".
+
+        Returns:
+            The :class:`EngineSlot` to use.  It differs from *slot* only when
+            the store had to be replaced.
         """
         if discard:
             # Dropping the header is not enough: the Core's CookieMonster owns
@@ -1290,31 +1622,33 @@ class BaseSession(object):
             # response cookies are not absorbed into it either.
             prepared.headers.pop("Cookie", None)
             return self._one_shot_slot(slot.config)
-        jar = prepared._cookies if prepared._cookies is not None else self.cookies
-        desired = jar.cookie_header(prepared.url)
-        store = slot.mirror.cookie_header(prepared.url)
-        if store is None:
+        with self._cookie_lock:
+            jar = prepared._cookies if prepared._cookies is not None else self.cookies
+            desired = jar.cookie_header(prepared.url)
+            store = slot.cookie_header(prepared.url)
+            if store is None:
+                if desired:
+                    prepared.headers["Cookie"] = desired
+                return slot
+            if desired == store:
+                # The Core will emit exactly this line from its own store.
+                prepared.headers.pop("Cookie", None)
+                return slot
+            # The store would override whatever is sent, so replace the store: a
+            # new generation is a structurally identical engine with an empty jar.
+            self._generation += 1
+            replacement = self._engines.get(
+                slot.config.replace(generation=self._generation))
+            # The superseded slot is unreachable -- its mirror no longer matches
+            # the jar, so nothing selects it again -- but it still occupies one of
+            # the bounded cache slots. Measured: 8 caller edits filled all 8 slots
+            # with dead generations and evicted the reusable one. Same reason as
+            # the discard branch above.
+            if replacement is not slot:
+                self._engines.discard(slot.config)
             if desired:
                 prepared.headers["Cookie"] = desired
-            return slot
-        if desired == store:
-            # The Core will emit exactly this line from its own store.
-            prepared.headers.pop("Cookie", None)
-            return slot
-        # The store would override whatever is sent, so replace the store: a new
-        # generation is a structurally identical engine with an empty jar.
-        self._generation += 1
-        replacement = self._engines.get(slot.config.replace(generation=self._generation))
-        # The superseded slot is unreachable -- its mirror no longer matches the
-        # jar, so nothing selects it again -- but it still occupies one of the
-        # bounded cache slots. Measured: 8 caller edits filled all 8 slots with
-        # dead generations and evicted the reusable one. Same reason as the
-        # discard branch above.
-        if replacement is not slot:
-            self._engines.discard(slot.config)
-        if desired:
-            prepared.headers["Cookie"] = desired
-        return replacement
+            return replacement
 
     def _one_shot_slot(self, config):
         """Returns an empty-store engine that nothing else can ever reach.
@@ -1345,20 +1679,46 @@ class BaseSession(object):
         return slot
 
     def _absorb_cookies(self, slot, response, discard=False):
-        """Mirrors every ``Set-Cookie`` from the final hop and each redirect."""
+        """Mirrors every ``Set-Cookie`` from the final hop and each redirect.
+
+        Three jars are updated, and they are not redundant:
+
+        * ``slot.mirror`` records what this engine's Chromium store accepted, so
+          the next request can tell whether the store still agrees with the
+          caller's jar.
+        * ``response.cookies`` reports what *this response* set, which is what a
+          caller reads.
+        * ``self.cookies`` is the session jar the caller mutates and reads.
+
+        All three happen under ``_cookie_lock``.  A ``Set-Cookie`` arriving while
+        another thread is comparing the mirror against the jar would otherwise
+        be visible to the comparison but not to the jar, and the request would
+        send a ``Cookie`` line the store then silently overrides.
+
+        Args:
+            slot: The engine slot the response arrived on.
+            response: The assembled response, whose ``history_headers`` and
+                headers carry the ``Set-Cookie`` lines.
+            discard: When true the request asked for "neither send nor record",
+                so nothing is absorbed anywhere.
+
+        Returns:
+            ``None``.
+        """
         if discard:
             return
-        for url, headers in response.history_headers:
-            lines = headers.get_list("set-cookie")
+        with self._cookie_lock:
+            for url, headers in response.history_headers:
+                lines = headers.get_list("set-cookie")
+                if lines:
+                    slot.absorb(url, lines)
+                    response.cookies.absorb_set_cookie(url, lines)
+                    self.cookies.absorb_set_cookie(url, lines)
+            lines = response.headers.get_list("set-cookie")
             if lines:
-                slot.mirror.absorb_set_cookie(url, lines)
-                response.cookies.absorb_set_cookie(url, lines)
-                self.cookies.absorb_set_cookie(url, lines)
-        lines = response.headers.get_list("set-cookie")
-        if lines:
-            slot.mirror.absorb_set_cookie(response.url, lines)
-            response.cookies.absorb_set_cookie(response.url, lines)
-            self.cookies.absorb_set_cookie(response.url, lines)
+                slot.absorb(response.url, lines)
+                response.cookies.absorb_set_cookie(response.url, lines)
+                self.cookies.absorb_set_cookie(response.url, lines)
 
     # -- response assembly --------------------------------------------------
     def _new_response(self, async_mode=False):
@@ -1832,12 +2192,44 @@ class Session(BaseSession):
         return response
 
     def _send_once(self, prepared, options):
-        slot = self._slot(prepared.url, options.get("impersonate"),
-                          options.get("proxy"), options.get("proxies"),
-                          options.get("verify"), options.get("http_version"))
+        """Sends one prepared request on the engine its binding selects.
+
+        The engine is held through :meth:`_lease` for the whole call, so the
+        in-flight count describes what is really running and an eviction cannot
+        look free while a request is using the slot.
+
+        Args:
+            prepared: The prepared request.
+            options: The resolved call options.
+
+        Returns:
+            The assembled :class:`Response`.
+        """
         discard = options.get("discard_cookies")
         discard = self.discard_cookies if discard is None else discard
-        slot = self._resolve_cookies(slot, prepared, discard)
+        lease = self._lease(prepared.url, options.get("impersonate"),
+                            options.get("proxy"), options.get("proxies"),
+                            options.get("verify"), options.get("http_version"))
+        with lease:
+            return self._send_on_slot(lease, prepared, options, discard)
+
+    def _send_on_slot(self, lease, prepared, options, discard):
+        """Performs the transfer on the pinned slot, rebuilding its store if needed.
+
+        Args:
+            lease: The pinned :class:`_SlotLease`.
+            prepared: The prepared request.
+            options: The resolved call options.
+            discard: Whether cookies must be neither sent nor recorded.
+
+        Returns:
+            The assembled :class:`Response`.
+        """
+        slot = self._resolve_cookies(lease.slot, prepared, discard)
+        # Cookie resolution may have replaced the engine, and the replacement is
+        # the one this request runs on: move the pin so the in-flight count
+        # follows the request instead of the engine it abandoned.
+        lease.rebind(slot)
         limit = options.get("max_response_bytes")
         stream = bool(options.get("stream"))
         started = _now()
@@ -2014,9 +2406,18 @@ class AsyncSession(BaseSession):
     directly and each wakeup drains a batch of events, so thousands of in-flight
     requests cost one Future and one small state object each.
 
+    It shares everything :class:`BaseSession` owns -- the transport binding, the
+    engine cache, the cookie lock and ``stats`` -- so the two sessions differ only
+    in how a response is awaited, never in what the wire looks like.  A request
+    sent through either one lands on the same engine for the same binding, which
+    is why mixing them against one endpoint is safe.
+
     ``max_clients`` bounds how many requests are in flight at once.  Leaving it
     unset is fine for a few thousand; setting it is how a caller keeps a burst
-    from opening more sockets than the far end tolerates.
+    from opening more sockets than the far end tolerates.  It is not a
+    connection limit: one HTTP/2 engine multiplexes every request it is given
+    over a single connection, so ``max_clients`` is backpressure for the far end
+    while the engine is where the sockets actually live.
     """
 
     def __init__(self, impersonate=None, proxy=None, proxies=None, proxy_auth=None,
@@ -2137,23 +2538,54 @@ class AsyncSession(BaseSession):
         return response
 
     async def _send_once(self, prepared, options):
+        """Sends one prepared request, bounded by ``max_clients`` when set.
+
+        The client gate bounds requests, and the lease pins the engine.  They are
+        different limits on purpose: ``max_clients`` is how many requests may be
+        in flight at once, while the engine is where their sockets and HTTP/2
+        streams actually live.  A single HTTP/2 engine multiplexes many of them
+        over one connection, so the gate is a backpressure knob for the far end,
+        not a connection count.
+
+        Args:
+            prepared: The prepared request.
+            options: The resolved call options.
+
+        Returns:
+            The assembled :class:`AsyncResponse`.
+        """
         loop = _running_loop()
         gate = self._semaphore(loop)
         if gate is not None:
             await gate.acquire()
         try:
-            return await self._perform(prepared, options, loop)
+            lease = self._lease(prepared.url, options.get("impersonate"),
+                                options.get("proxy"), options.get("proxies"),
+                                options.get("verify"), options.get("http_version"))
+            with lease:
+                return await self._perform(lease, prepared, options, loop)
         finally:
             if gate is not None:
                 gate.release()
 
-    async def _perform(self, prepared, options, loop):
-        slot = self._slot(prepared.url, options.get("impersonate"),
-                          options.get("proxy"), options.get("proxies"),
-                          options.get("verify"), options.get("http_version"))
+    async def _perform(self, lease, prepared, options, loop):
+        """Performs the transfer on the pinned slot.
+
+        Args:
+            lease: The pinned :class:`_SlotLease`.
+            prepared: The prepared request.
+            options: The resolved call options.
+            loop: The running event loop.
+
+        Returns:
+            The assembled :class:`AsyncResponse`.
+        """
         discard = options.get("discard_cookies")
         discard = self.discard_cookies if discard is None else discard
-        slot = self._resolve_cookies(slot, prepared, discard)
+        slot = self._resolve_cookies(lease.slot, prepared, discard)
+        # The replacement engine is the one this request runs on; move the pin so
+        # the in-flight count follows the request rather than the engine it left.
+        lease.rebind(slot)
         stream = bool(options.get("stream"))
         limit = options.get("max_response_bytes")
         timeout = _split_timeout(options.get("timeout"))
@@ -2208,7 +2640,7 @@ class AsyncSession(BaseSession):
             # state, so it is correct for both redirect modes.
             response._async_body_reader = _AsyncBodyReader(state, limit)
         else:
-            response.content = bytes(state.body) if state.body is not None else b""
+            response.content = b"".join(state.body) if state.body is not None else b""
             state.finish()
             callback = options.get("content_callback")
             if callback is not None:

@@ -7,7 +7,17 @@ subclass so ``isinstance(response.headers, CaseInsensitiveDict)`` holds for
 requests-shaped code.
 """
 
-from typing import Any, Iterator, List, Mapping, MutableMapping, Optional, Tuple, Union
+from typing import (
+    Any,
+    FrozenSet,
+    Iterator,
+    List,
+    Mapping,
+    MutableMapping,
+    Optional,
+    Tuple,
+    Union,
+)
 
 from typing_extensions import TypeAlias
 
@@ -251,6 +261,19 @@ class Headers(CaseInsensitiveDict):
         Example:
             >>> Headers({"Accept": "application/json"}).raw
             [(b'Accept', b'application/json')]
+        """
+        ...
+
+    @property
+    def deleted_names(self) -> FrozenSet[str]:
+        """The lower-cased field names this object was asked to remove.
+
+        ``requests`` spells deletion as ``headers={"Name": None}``.  This object
+        applies such a deletion immediately and records it here, so a merge
+        cannot let a session-level default of that name come back.
+
+        Returns:
+            A frozenset of lower-cased names.
         """
         ...
 

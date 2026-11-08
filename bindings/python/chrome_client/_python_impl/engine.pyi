@@ -23,6 +23,156 @@ from .impersonate import ChromeProfileName, HttpVersionNormalized
 DEFAULT_MAX_ENGINES: int
 
 
+class SessionBinding:
+    """An immutable transport context: profile, proxy and TLS policy.
+
+    A browser decides its TLS fingerprint, its HTTP/2 pseudo-header set and its
+    proxy once per profile, not per request, and every connection that profile
+    makes inherits them. This value is that decision: it is what an
+    :class:``EngineConfig`` is built from and what the engine cache keys on.
+
+    Attributes:
+        impersonate: Canonical profile name, or ``None``.
+        proxy: Normalised proxy rule, or ``None`` for a direct connection.
+        proxy_username: Proxy user name, or ``None``.
+        proxy_password: Proxy password, or ``None``.
+        verify: Whether certificate verification is on.
+        ca_pem: PEM bytes of a custom CA bundle, when one was given.
+        user_agent: Engine-level ``User-Agent`` override, or ``None``.
+        accept_language: Engine-level ``Accept-Language``, or ``None``.
+        http_version: ``"v1"``/``"v2"``/``"v3"``, or ``None``.
+        cache: Whether the Chromium HTTP cache is enabled.
+        profile_namespace: Reserved isolation key for the profile.
+        key: The hashable tuple of every field above.
+        fingerprint: The profile whose wire behaviour this context reproduces.
+    """
+
+    impersonate: Optional[ChromeProfileName]
+    proxy: Optional[str]
+    proxy_username: Optional[str]
+    proxy_password: Optional[str]
+    verify: bool
+    ca_pem: Optional[bytes]
+    user_agent: Optional[str]
+    accept_language: Optional[str]
+    http_version: Optional[HttpVersionNormalized]
+    cache: bool
+    profile_namespace: Optional[str]
+
+    def __init__(
+        self,
+        impersonate: Optional[str] = None,
+        proxy: Optional[str] = None,
+        proxy_username: Optional[str] = None,
+        proxy_password: Optional[str] = None,
+        verify: bool = True,
+        ca_pem: Optional[bytes] = None,
+        user_agent: Optional[str] = None,
+        accept_language: Optional[str] = None,
+        http_version: Optional[str] = None,
+        cache: bool = True,
+        profile_namespace: Optional[str] = None,
+    ) -> None:
+        """Describes one transport context.
+
+        Args:
+            impersonate: Canonical profile name.
+            proxy: Normalised proxy rule.
+            proxy_username: Proxy user name.
+            proxy_password: Proxy password.
+            verify: Certificate verification; coerced to ``bool``.
+            ca_pem: PEM bytes for a custom CA bundle.
+            user_agent: Engine-level ``User-Agent``.
+            accept_language: Engine-level ``Accept-Language``.
+            http_version: Pinned protocol.
+            cache: Enable the HTTP cache; coerced to ``bool``.
+            profile_namespace: Reserved isolation key.
+        """
+        ...
+
+    def replace(self, **changes: Any) -> "SessionBinding":
+        """Returns a copy with fields replaced.
+
+        Args:
+            **changes: Field names to change.
+
+        Returns:
+            A new :class:``SessionBinding``; this one is never mutated.
+
+        Raises:
+            TypeError: A field name is not part of the binding.
+        """
+        ...
+
+    @property
+    def key(self) -> Tuple[Any, ...]:
+        """The hashable identity of this context.
+
+        Returns:
+            A tuple of every field, used as the engine-cache key.
+        """
+        ...
+
+    @property
+    def fingerprint(self) -> str:
+        """The profile whose wire behaviour this context reproduces.
+
+        Returns:
+            The canonical profile name, or ``"chromium_current"``.
+        """
+        ...
+
+    def describe(self) -> dict:
+        """Returns the fields this caller actually chose.
+
+        A field is listed when it differs from its default, so a bare
+        ``SessionBinding()`` describes nothing and a binding built from
+        ``SessionBinding(impersonate=...)`` describes exactly one field.
+
+        Returns:
+            A mapping of field name to value.
+        """
+        ...
+
+    def __eq__(self, other: object) -> bool:
+        """Compares bindings by their full key.
+
+        Args:
+            other: The other object.
+
+        Returns:
+            ``True`` when every field matches.
+        """
+        ...
+
+    def __ne__(self, other: object) -> bool:
+        """Negation of :meth:``__eq__``.
+
+        Args:
+            other: The other object.
+
+        Returns:
+            ``True`` when any field differs.
+        """
+        ...
+
+    def __hash__(self) -> int:
+        """Hashes the binding key.
+
+        Returns:
+            A hash stable for equal bindings.
+        """
+        ...
+
+    def __repr__(self) -> str:
+        """Returns a summary listing only the fields that were set.
+
+        Returns:
+            e.g. a SessionBinding(...) summary of the non-default fields.
+        """
+        ...
+
+
 class EngineConfig:
     """Hashable Engine configuration.
 
@@ -92,6 +242,15 @@ class EngineConfig:
             cache: Enable the HTTP cache; coerced to ``bool``.
             profile_namespace: Reserved isolation key.
             generation: Cookie-store generation.
+        """
+        ...
+
+    @property
+    def binding(self) -> SessionBinding:
+        """The transport context this engine reproduces.
+
+        Returns:
+            A :class:``SessionBinding`` built from every field except ``generation``.
         """
         ...
 
@@ -196,6 +355,44 @@ class EngineSlot:
         """
         ...
 
+    @property
+    def binding(self) -> SessionBinding:
+        """The transport context this slot reproduces.
+
+        Returns:
+            The :class:``SessionBinding`` of the configuration it was built from.
+        """
+        ...
+
+    @property
+    def inflight(self) -> int:
+        """How many requests are using this slot right now.
+
+        Returns:
+            The number of acquired, not yet released requests.
+        """
+        ...
+
+    def cookie_header(self, url: str) -> Optional[str]:
+        """Returns the ``Cookie`` line the Core's store would emit for ``url``.
+
+        Args:
+            url: The request URL.
+
+        Returns:
+            The header value, or ``None`` when the store holds no cookie for it.
+        """
+        ...
+
+    def absorb(self, url: str, lines: Any) -> None:
+        """Records ``Set-Cookie`` lines the Core accepted for ``url``.
+
+        Args:
+            url: The URL the response came from.
+            lines: The raw ``Set-Cookie`` field values.
+        """
+        ...
+
 
 class EngineCache:
     """Per-session, bounded, insertion-ordered engine cache.
@@ -215,6 +412,44 @@ class EngineCache:
 
         Args:
             max_engines: Ceiling; coerced to at least 1.
+        """
+        ...
+
+    def acquire(self, config: EngineConfig) -> Any:
+        """Returns a context manager that pins a slot for one request.
+
+        Args:
+            config: The configuration to look up.
+
+        Returns:
+            A context manager yielding the :class:``EngineSlot``; leaving it releases
+            the in-flight reference.
+        """
+        ...
+
+    @property
+    def max_engines(self) -> int:
+        """The ceiling this cache enforces.
+
+        Returns:
+            The coerced engine budget, at least ``1``.
+        """
+        ...
+
+    @property
+    def stats(self) -> dict:
+        """Returns a snapshot of the cache counters.
+
+        Returns:
+            A dict with ``hits``, ``builds``, ``evictions``, ``deferred`` and ``live``.
+        """
+        ...
+
+    def inflight(self) -> int:
+        """Returns how many requests the cached engines are serving.
+
+        Returns:
+            The sum of every slot's in-flight count.
         """
         ...
 

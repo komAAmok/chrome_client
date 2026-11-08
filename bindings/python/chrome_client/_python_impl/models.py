@@ -12,6 +12,7 @@ import asyncio
 import codecs
 import datetime
 import json as _json
+from collections import deque
 from urllib.parse import urlsplit, urlunsplit
 
 try:
@@ -739,19 +740,87 @@ class Response(object):
         return generator
 
     def _stream_chunks(self, reader, chunk_size):
-        pending = b""
+        """Re-chunks the Core's buffers without re-copying them.
+
+        The Core hands over one immutable buffer per read.  A naive re-chunker
+        appends those to a bytes accumulator and slices one block off at a time,
+        which copies the whole remaining accumulator on every slice: a 4 MiB
+        body read in 512-byte blocks copies roughly 16 GiB.  This one keeps the
+        buffers in a deque with a read offset and hands a buffer out unchanged
+        whenever it fills a block exactly, so the common case -- a Core read at
+        least as large as the requested block -- costs one view and no copy at
+        all.  Only a block that straddles two buffers is joined.
+
+        Args:
+            reader: The body reader to drain.
+            chunk_size: Bytes per yielded block.
+
+        Yields:
+            Blocks of exactly ``chunk_size`` bytes, then the remainder.
+        """
+        pending = deque()
+        available = 0
         try:
             for chunk in reader:
-                pending += chunk
-                while len(pending) >= chunk_size:
-                    yield pending[:chunk_size]
-                    pending = pending[chunk_size:]
+                if chunk:
+                    # [buffer, offset]: the offset is where the next unread byte
+                    # of that buffer starts.  A list, not a tuple, so advancing
+                    # does not allocate.
+                    pending.append([chunk, 0])
+                    available += len(chunk)
+                while available >= chunk_size:
+                    block, consumed = self._take(pending, chunk_size)
+                    available -= consumed
+                    yield block
+            if available:
+                block, _consumed = self._take(pending, available)
+                yield block
         finally:
+            pending.clear()
             reader.close()
             if self._claimed_reader is reader:
                 self._claimed_reader = None
-        if pending:
-            yield pending
+
+    @staticmethod
+    def _take(pending, size):
+        """Takes exactly *size* bytes off the front of *pending*.
+
+        Args:
+            pending: A deque of ``[buffer, offset]`` entries, oldest first.
+            size: How many bytes to take.
+
+        Returns:
+            A ``(block, consumed)`` pair.  ``consumed`` is how many bytes left
+            the deque, which is *size* except when a short final buffer was
+            handed out whole.
+        """
+        head, offset = pending[0]
+        remaining_in_head = len(head) - offset
+        if remaining_in_head == size:
+            pending.popleft()
+            # The buffer already is the block: hand it over without copying.
+            return (head if offset == 0 else head[offset:]), size
+        if remaining_in_head > size:
+            end = offset + size
+            pending[0][1] = end
+            return head[offset:end], size
+        pieces = [head[offset:]]
+        taken = remaining_in_head
+        pending.popleft()
+        while taken < size:
+            head, offset = pending[0]
+            needed = size - taken
+            remaining_in_head = len(head) - offset
+            if remaining_in_head <= needed:
+                pieces.append(head if offset == 0 else head[offset:])
+                taken += remaining_in_head
+                pending.popleft()
+            else:
+                end = offset + needed
+                pieces.append(head[offset:end])
+                pending[0][1] = end
+                taken += needed
+        return b"".join(pieces), size
 
     def _text_decoder(self):
         """Returns an incremental decoder for the resolved encoding.
@@ -880,6 +949,27 @@ class AsyncResponse(Response):
         return self.json(**kwargs)
 
     async def aiter_content(self, chunk_size=None, decode_unicode=False):
+        """Iterates the body in chunks, without a worker thread.
+
+        Same contract as :meth:`iter_content`, and the same zero-copy
+        re-chunking: the Core hands over one buffer per read and this hands it
+        out unchanged whenever it fills a block exactly.  The earlier version
+        kept a bytes accumulator and sliced one block off at a time, which
+        copied the whole remainder on every slice.
+
+        Args:
+            chunk_size: Bytes per yielded block. ``None`` means
+                :data:`CONTENT_CHUNK_SIZE`.
+            decode_unicode: Decode with the response encoding and yield ``str``.
+
+        Yields:
+            Blocks of ``bytes``, or of ``str`` when ``decode_unicode``.
+
+        Raises:
+            TypeError: ``chunk_size`` is not an int or ``None``.
+            ValueError: ``chunk_size`` is not positive.
+            StreamConsumedError: The body was already consumed.
+        """
         # Same contract as the synchronous twin. Without it a negative value
         # made the two slices below leave the pending buffer unchanged while
         # still satisfying the loop condition, so the inner loop yielded empty
@@ -895,20 +985,15 @@ class AsyncResponse(Response):
             reader, self._async_body_reader = self._async_body_reader, None
             self._claimed_async_reader = reader
             self._content_consumed = True
-            pending = b""
             decoder = self._text_decoder() if decode_unicode else None
             try:
-                async for chunk in reader:
-                    pending += chunk
-                    while len(pending) >= chunk_size:
-                        block = pending[:chunk_size]
-                        pending = pending[chunk_size:]
-                        if decoder is None:
-                            yield block
-                        else:
-                            text = decoder.decode(block)
-                            if text:
-                                yield text
+                async for block in self._astream_blocks(reader, chunk_size):
+                    if decoder is None:
+                        yield block
+                    else:
+                        text = decoder.decode(block)
+                        if text:
+                            yield text
             finally:
                 # cancel=True: an abandoned generator (the caller broke out of
                 # `async for` or dropped the iterator) runs this block during
@@ -919,19 +1004,41 @@ class AsyncResponse(Response):
                 await reader.aclose(cancel=True)
                 if self._claimed_async_reader is reader:
                     self._claimed_async_reader = None
-            if decoder is None:
-                if pending:
-                    yield pending
-                return
-            text = decoder.decode(pending) if pending else ""
-            if text:
-                yield text
-            tail = decoder.decode(b"", True)
-            if tail:
-                yield tail
+            if decoder is not None:
+                tail = decoder.decode(b"", True)
+                if tail:
+                    yield tail
             return
         for chunk in self.iter_content(chunk_size, decode_unicode=decode_unicode):
             yield chunk
+
+    async def _astream_blocks(self, reader, chunk_size):
+        """Re-chunks the asynchronous body reader without re-copying it.
+
+        The mirror of :meth:`_stream_chunks`, sharing its :meth:`_take` so the
+        two paths cannot drift: same alignment rule, same remainder handling,
+        same "hand an aligned buffer out unchanged" case.
+
+        Args:
+            reader: The asynchronous body reader to drain.
+            chunk_size: Bytes per yielded block.
+
+        Yields:
+            Blocks of exactly ``chunk_size`` bytes, then the remainder.
+        """
+        pending = deque()
+        available = 0
+        async for chunk in reader:
+            if chunk:
+                pending.append([chunk, 0])
+                available += len(chunk)
+            while available >= chunk_size:
+                block, consumed = self._take(pending, chunk_size)
+                available -= consumed
+                yield block
+        if available:
+            block, _consumed = self._take(pending, available)
+            yield block
 
     #: curl_cffi spells the byte stream ``aiter_content``; earlier releases of
     #: this package spelled it ``aiter_bytes``.  Both are kept.

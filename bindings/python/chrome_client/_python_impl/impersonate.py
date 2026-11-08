@@ -5,11 +5,15 @@ The Core registers one profile per pinned Chromium major (``chrome_86`` through
 priority frames, and the HTTP/3 transport parameters lives inside that profile;
 there is no knob to bend one profile into another.
 
-A profile does **not** own the default request header set.  It owns the
-``User-Agent`` version string and nothing else on that axis: Chrome's
-``sec-ch-ua*``, ``Sec-Fetch-*``, ``Accept`` and ``Priority`` come from the
-``services/network`` URLLoader factory layer, which the ``net`` layer this Core
-builds on cannot reach.  See ``default_headers`` in :mod:`.utils`.
+A profile owns the default request header set, and the facade applies it.  Each
+pinned major carries the exact ordered header list its own Chrome build sent,
+captured in ``profiles/chrome_<major>/h1/captures.json``; :mod:`.browser_headers`
+turns that into the request's headers and :meth:`.sessions.BaseSession._browser_headers`
+merges it under the caller's own.  The Core cannot produce these itself --
+Chrome generates ``sec-ch-ua*`` and ``Sec-Fetch-*`` in the ``services/network``
+URLLoader factory layer, which the ``net`` layer this Core builds on does not
+reach -- so the facade supplies them as extra headers.  ``Priority`` is the one
+exception: ``net`` serialises it itself, so it needs no help.
 
 That is why ``ja3``, ``akamai``, ``perk`` and most ``extra_fp`` fields raise
 instead of being ignored.  Accepting a JA3 string and then sending Chromium's
