@@ -12,7 +12,23 @@ Linux 使用 `manylinux2014` 容器。该容器以 glibc 2.17 为基线，因此
 
 Windows 构建前由 `tools/stage-windows-wheel.ps1` 把匹配架构的 `minicronet.dll` 放到 `chrome_client` 包目录中。ABI v8 起 ICU 数据已编入库中，不再携带 `icudtl.dat`（每个 Windows wheel 因此少 10.8 MB），Windows 系统 DLL 同样不随 wheel 携带。
 
-macOS 构建后使用 `delocate-wheel` 收集并修复匹配架构的 `libminicronet.dylib`。
+macOS 构建后使用 `delocate-wheel` 收集并修复匹配架构的 `libminicronet.dylib`，随后由
+`tools/macos-wheel-floor.py` 把 wheel 的平台标签抬到 wheel 内每个 Mach-O 声明的最低系统
+版本。这一步不是可选的装饰：
+
+| 来源 | 最低 macOS |
+| --- | --- |
+| Core dylib 的 `LC_BUILD_VERSION`（`mac_sdk.gni:29,38` 的 `mac_deployment_target`） | `13.0` |
+| maturin 给 wheel 打的 tag | x86_64 `10.12`，arm64 `11.0` |
+
+`delocate` 只改 install name，不动 `LC_BUILD_VERSION`。不抬标签的话，wheel 会在
+macOS 10.12–12 上装成功，然后在 `import` 时 dlopen 失败——用户拿到的是一句没有上下文
+的加载错误。抬到 13.0 之后，老系统上 pip 直接报 `No matching distribution found`，
+这是 fail-closed（AGENTS §8）而不是装出坏包。
+
+`--check` 只断言不改写，供测试与「宁可直接失败」的场合使用；默认模式会重写文件名与
+`WHEEL` 里的 `Tag:`，并重算 `RECORD`——pip 按文件名分派，其他工具相信元数据，两者必须
+一起动。
 
 主绑定使用 `cp39-abi3`，Python 3.6–3.8 使用独立的 `bindings/python36`、PyO3 0.15.1 和 `cp36-abi3`。
 

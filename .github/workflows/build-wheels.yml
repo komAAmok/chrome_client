@@ -302,6 +302,13 @@ jobs:
             delocate-wheel -w repaired dist/*.whl
           rm dist/*.whl
           mv repaired/*.whl dist/
+          # maturin tags the wheel from its own deployment target (10.12 for
+          # x86_64, 11.0 for arm64) but the Core dylib inside was built with the
+          # upstream mac_deployment_target of 13.0, and delocate only rewrites
+          # install names. Left alone, the wheel installs on macOS 10.12-12 and
+          # then fails at import, because dlopen refuses a dylib newer than the
+          # running system. Raise the tag to what the binary actually requires.
+          python3 tools/macos-wheel-floor.py dist/*.whl
 
       - uses: actions/upload-artifact@v4
         with:
