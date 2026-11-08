@@ -267,6 +267,43 @@ class SessionStateTests(Base):
             chrome_client.engine.EngineConfig.build = original
         self.assertEqual(len(built), 2)
 
+
+    def test_cookie_update_replaces_same_name(self):
+        """A later write of the same name must win, not sit beside the old one.
+
+        ``cookielib`` only overwrites on an exact ``(domain, path, name)``
+        match, so a server-set cookie for ``.example.com`` plus a caller-written
+        one for the default empty domain produced two entries: the request sent
+        ``Cookie: a=server; a=1`` and ``jar["a"]`` raised
+        ``CookieConflictError``. Measured before the fix.
+        """
+        jar = chrome_client.CookieJar()
+        jar.set_cookie(chrome_client.create_cookie(
+            "a", "server", domain=".example.com", path="/"))
+        jar.update({"a": "1"})
+        self.assertEqual(jar["a"], "1")
+        self.assertEqual(jar.items(), [("a", "1")])
+        self.assertEqual(jar.cookie_header("http://example.com/"), "a=1")
+
+    def test_cookie_update_keeps_distinct_domains(self):
+        """Two hosts may each hold their own cookie with the same name."""
+        jar = chrome_client.CookieJar()
+        jar.set("a", "one", domain="example.invalid", path="/")
+        jar.set("a", "two", domain="other.invalid", path="/")
+        self.assertEqual(len(list(jar)), 2)
+        self.assertEqual(jar.cookie_header("http://example.invalid/"), "a=one")
+        self.assertEqual(jar.cookie_header("http://other.invalid/"), "a=two")
+
+    def test_cookie_update_keeps_distinct_paths(self):
+        """RFC 6265 5.4: / and /sub are different cookies and both are sent."""
+        jar = chrome_client.CookieJar()
+        jar.set("a", "root", domain="h.invalid", path="/")
+        jar.set("a", "sub", domain="h.invalid", path="/sub")
+        self.assertEqual(len(list(jar)), 2)
+        self.assertEqual(jar.cookie_header("http://h.invalid/"), "a=root")
+        self.assertEqual(jar.cookie_header("http://h.invalid/sub/x"),
+                         "a=sub; a=root")
+
     def test_caller_cookie_edits_take_effect(self):
         with chrome_client.Session() as session:
             session.get(self.url + "set-cookie")

@@ -192,6 +192,30 @@ def morsel_to_cookie(morsel):
     )
 
 
+def _domain_covers(outer, inner):
+    """True when a cookie set for *outer* also applies to the host *inner*."""
+    if not outer or not inner:
+        # An unspecified domain on either side means "not constrained here",
+        # so the two scopes cannot be shown to be different.
+        return True
+    suffix = outer if outer.startswith(".") else "." + outer
+    return inner == outer or inner.endswith(suffix)
+
+
+def _replaces(existing, new):
+    """True when *new* supersedes *existing* instead of sitting beside it.
+
+    Distinct scopes are legitimate: example.invalid and other.invalid may both
+    hold a cookie named "a", and RFC 6265 requires a request to each host to
+    send only its own. Only a scope the new cookie actually covers is replaced.
+    """
+    if not _domain_covers(new.domain, existing.domain):
+        return False
+    if new.path and existing.path and not existing.path.startswith(new.path):
+        return False
+    return True
+
+
 class RequestsCookieJar(cookielib.CookieJar, MutableMapping):
     """``cookielib.CookieJar`` with the dict interface requests exposes.
 
@@ -238,7 +262,27 @@ class RequestsCookieJar(cookielib.CookieJar, MutableMapping):
             return default
 
     def set(self, name, value, **kwargs):
-        """Sets a cookie; ``value=None`` removes it, matching requests."""
+        """Sets a cookie; ``value=None`` removes it, matching requests.
+
+        A plain set replaces every cookie of this name whose scope it covers.
+        ``cookielib.CookieJar.set_cookie`` only overwrites an entry when the
+        ``(domain, path, name)`` triple matches exactly, so a jar holding ``a``
+        for ``.example.com`` that receives a caller-written ``a`` for the default
+        empty domain keeps both: the request then sends
+        ``Cookie: a=server; a=1`` and ``jar["a"]`` raises ``CookieConflictError``.
+        Upstream requests behaves the same way (measured against 2.34.2), but for
+        a setter that is the wrong answer: the caller wrote "a is 1" and neither
+        the read nor the outgoing header agrees.
+
+        The replacement is scope-aware. ``set("a", "1", domain=".example.com")``
+        rewrites the ``.example.com`` entry, while ``example.invalid`` and
+        ``other.invalid`` keep their own ``a``, because those are two cookies
+        that merely share a name and each must be sent to its own host.
+
+        ``set_cookie`` and ``update`` from a *jar* keep the upstream semantics:
+        they carry the domain and path from the response that produced them, so
+        that is a merge of two stores rather than a caller assignment.
+        """
         if value is None:
             self.remove_cookie_by_name(name, domain=kwargs.get("domain"),
                                        path=kwargs.get("path"))
@@ -247,9 +291,16 @@ class RequestsCookieJar(cookielib.CookieJar, MutableMapping):
             cookie = morsel_to_cookie(value)
         else:
             cookie = create_cookie(name, value, **kwargs)
+        # Clear before setting: cookielib keeps a dict keyed by (domain, path,
+        # name), so clearing after the insert would delete the cookie just added
+        # whenever the two triples happen to be equal.
+        for existing in list(iter(self)):
+            if existing.name == cookie.name and _replaces(existing, cookie):
+                cookielib.CookieJar.clear(self, existing.domain, existing.path,
+                                          existing.name)
+                self.revision += 1
         self.set_cookie(cookie)
         return cookie
-
     def iterkeys(self):
         for cookie in iter(self):
             yield cookie.name

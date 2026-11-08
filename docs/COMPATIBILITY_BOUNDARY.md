@@ -124,6 +124,27 @@ carries domain, path, secure and expiry metadata and `get_dict(domain=...)`
 answers from it. Cookie state survives a proxy or profile change because the jar
 is re-sent to the new Engine.
 
+### Cookies: a write replaces, a merge does not
+
+`jar.set(name, value)` and `jar.update({...})` are caller assignments, so a write
+of a name that already exists replaces the stored cookie instead of adding a second
+one beside it. `cookielib.CookieJar.set_cookie` only overwrites when the
+`(domain, path, name)` triple matches exactly, and upstream requests inherits that:
+measured against requests 2.34.2, a jar holding `a` for `.example.com` plus a
+caller-written `a` for the default empty domain sends `Cookie: a=server; a=1` and
+raises `CookieConflictError` on `jar["a"]`. Neither the read nor the outgoing header
+agrees with the write, which for a setter is the wrong answer.
+
+The replacement is scope-aware: a new cookie clears the entries of the same name
+whose domain and path it covers, and leaves alone the ones it does not. So
+`example.invalid` and `other.invalid` keep their own `a`, and `/` and `/sub` keep
+theirs — RFC 6265 requires both to be sent to their own scope, and collapsing them
+would silently drop a cookie the server set.
+
+`set_cookie` and `update` *from a jar* keep the upstream semantics: those carry the
+domain and path from the response that produced them, so they are a merge of two
+stores rather than a caller assignment.
+
 ### curl_cffi 参数审计：哪些在本项目里结构上无意义
 
 curl_cffi 同时模拟 Chrome / Firefox / Safari，所以它的 `extra_fp` 里有些旋钮是为**别的浏览器**
