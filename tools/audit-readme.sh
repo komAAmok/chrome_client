@@ -81,4 +81,12 @@ for readme in "$SOURCE" "$ROOT/README.en.md" "$ROOT/bindings/python/README.md"; 
   esac
 done
 
+# The two languages drift independently: README.en.md is not the PyPI long
+# description, so neither the mirror check nor the pyproject check above reads it,
+# and its capability tables went a release describing a different product when
+# ARMv7 was added to one file and not the other. That comparison needs a table
+# parser, so it lives next door in audit-readme-tables.py and is invoked here --
+# two gates a caller has to remember are one gate that nobody runs.
+python3 "$ROOT/tools/audit-readme-tables.py"
+
 printf 'README audit passed: PyPI description matches README.md for both wheels.\n'

@@ -67,6 +67,11 @@ Node (N-API) ──┘
 tools/audit-abi.sh
 python3 tools/audit-abi-layout.py
 tools/audit-readme.sh
+# It also runs tools/audit-readme-tables.py, which compares the capability
+# tables between README.md and README.en.md: row and column counts plus the
+# architecture names, not the prose. A row added to one language only is how
+# ARMv7 ended up documented as having a wheel in Chinese and not existing in
+# English.
 tools/audit-pypi-metadata.sh
 python3 tools/audit-python-stubs.py
 python3 tools/audit-extra-fp.py
