@@ -294,6 +294,56 @@ class SessionStateTests(Base):
         self.assertEqual(jar.cookie_header("http://example.invalid/"), "a=one")
         self.assertEqual(jar.cookie_header("http://other.invalid/"), "a=two")
 
+
+    def test_cookie_set_with_domain_only_touches_that_domain(self):
+        """A domain-bearing write must leave other hosts' cookies alone."""
+        jar = chrome_client.CookieJar()
+        jar.set("a", "one", domain="example.invalid", path="/")
+        jar.set("a", "two", domain="other.invalid", path="/")
+        jar.set("a", "1", domain="example.invalid", path="/")
+        self.assertEqual(len(list(jar)), 2)
+        self.assertEqual(jar.cookie_header("http://example.invalid/"), "a=1")
+        self.assertEqual(jar.cookie_header("http://other.invalid/"), "a=two")
+
+    def test_cookie_set_parent_domain_absorbs_subdomain(self):
+        """Writing the parent scope retires the narrower entry it covers."""
+        jar = chrome_client.CookieJar()
+        jar.set("a", "sub", domain="sub.example.com", path="/")
+        jar.set("a", "parent", domain=".example.com", path="/")
+        self.assertEqual(len(list(jar)), 1)
+        self.assertEqual(jar.cookie_header("http://sub.example.com/"), "a=parent")
+
+    def test_cookie_set_subdomain_does_not_retire_parent(self):
+        """The narrow write cannot claim hosts the parent still covers."""
+        jar = chrome_client.CookieJar()
+        jar.set("a", "parent", domain=".example.com", path="/")
+        jar.set("a", "sub", domain="sub.example.com", path="/")
+        self.assertEqual(len(list(jar)), 2)
+        self.assertEqual(jar.cookie_header("http://other.example.com/"), "a=parent")
+
+    def test_cookie_domainless_write_retires_scoped_entry(self):
+        """The reported defect: a domain-less write must win over a host entry."""
+        jar = chrome_client.CookieJar()
+        jar.set("a", "one", domain="example.invalid", path="/")
+        jar.set("a", "two", domain="other.invalid", path="/")
+        jar.update({"a": "1"})
+        self.assertEqual(jar["a"], "1")
+        self.assertEqual(len(list(jar)), 1)
+
+    def test_cookie_scoped_write_absorbs_domainless_entry(self):
+        """A domain on either side means the scopes are the same cookie.
+
+        Measured: this is the cost of one value per name. Writing with a domain
+        retires an existing domain-less entry for the same name, because an
+        unspecified domain matches everything and the two cannot be ranked.
+        """
+        jar = chrome_client.CookieJar()
+        jar.update({"a": "loose"})
+        jar.set("a", "scoped", domain="example.invalid", path="/")
+        self.assertEqual(len(list(jar)), 1)
+        self.assertEqual(jar["a"], "scoped")
+        self.assertEqual(jar.cookie_header("http://example.invalid/"), "a=scoped")
+
     def test_cookie_update_keeps_distinct_paths(self):
         """RFC 6265 5.4: / and /sub are different cookies and both are sent."""
         jar = chrome_client.CookieJar()

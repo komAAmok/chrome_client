@@ -274,10 +274,25 @@ class RequestsCookieJar(cookielib.CookieJar, MutableMapping):
         a setter that is the wrong answer: the caller wrote "a is 1" and neither
         the read nor the outgoing header agrees.
 
-        The replacement is scope-aware. ``set("a", "1", domain=".example.com")``
-        rewrites the ``.example.com`` entry, while ``example.invalid`` and
-        ``other.invalid`` keep their own ``a``, because those are two cookies
-        that merely share a name and each must be sent to its own host.
+        The replacement is scope-aware, and the two directions are deliberately
+        not symmetric:
+
+        * a write that names a domain replaces only the entries that domain
+          covers -- ``set("a", "1", domain="example.invalid")`` leaves
+          ``other.invalid`` alone, and ``set("a", ..., domain=".example.com")``
+          absorbs a ``sub.example.com`` entry, because the parent scope is what
+          the caller asked for;
+        * a write that names no domain replaces every entry of that name, because
+          an unspecified domain means "this value, wherever this cookie
+          applies". Leaving the old ones in place is exactly the defect the
+          replacement exists to fix: two entries, a conflict on read, and a
+          doubled ``Cookie`` line on the wire.
+
+        The rule is the same in both directions: an unspecified domain on either
+        side means the two scopes cannot be told apart, so they are the same
+        cookie. Writing ``set("a", "1", domain="example.invalid")`` therefore
+        also retires a domain-less ``a`` -- which is what one value per name
+        costs when a name is written without saying where it applies.
 
         ``set_cookie`` and ``update`` from a *jar* keep the upstream semantics:
         they carry the domain and path from the response that produced them, so

@@ -135,11 +135,28 @@ caller-written `a` for the default empty domain sends `Cookie: a=server; a=1` an
 raises `CookieConflictError` on `jar["a"]`. Neither the read nor the outgoing header
 agrees with the write, which for a setter is the wrong answer.
 
-The replacement is scope-aware: a new cookie clears the entries of the same name
-whose domain and path it covers, and leaves alone the ones it does not. So
-`example.invalid` and `other.invalid` keep their own `a`, and `/` and `/sub` keep
-theirs — RFC 6265 requires both to be sent to their own scope, and collapsing them
-would silently drop a cookie the server set.
+The rule: **an unspecified domain on either side makes the two scopes the same
+cookie**, so the write wins. Two consequences, both deliberate:
+
+| write | what it replaces |
+| --- | --- |
+| `set("a", "1")` / `update({"a": "1"})` | every entry named `a`, whatever its domain — this is the reported defect |
+| `set("a", "1", domain="example.invalid")` | the entries that domain covers **and** any domain-less `a`, because an empty domain matches everything |
+
+A write scoped to one domain still leaves a *different* domain alone:
+`example.invalid` and `other.invalid` keep their own `a`, and RFC 6265 requires a
+request to each to send only its own. A parent scope absorbs a narrower one
+(`.example.com` retires `sub.example.com`), while the narrow write does not retire
+the parent, which still covers hosts the new cookie never claimed.
+
+Paths are ranked, not collapsed: `/` and `/sub` are two cookies, RFC 6265 §5.4
+requires both to be sent to a `/sub/...` URL, and neither write retires the other
+unless its path prefix covers it.
+
+The cost of this rule is that a domain-less write is a statement about the name, not
+about a host, so every host-scoped `a` is retired along with it. The alternative —
+leaving them in place — is exactly the behaviour that made the write unreadable and
+sent the value twice.
 
 `set_cookie` and `update` *from a jar* keep the upstream semantics: those carry the
 domain and path from the response that produced them, so they are a merge of two
