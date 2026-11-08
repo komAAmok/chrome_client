@@ -20,7 +20,8 @@
 
 ### 阶段 0：可复现构建与基线
 
-- 从 `new/` 迁入 12 个 Chromium 补丁（`core/patches/`，现为 14 个）、8 个平台构建脚本、
+- 从 `new/` 迁入 12 个 Chromium 补丁（`core/patches/`，现为 14 个）、8 个平台构建脚本
+  （2026-11 增至 9 个，见「第九个目标」）、
   3 个平台审计脚本、FeatureList 审计、profile 表生成器
 - `sync-core.sh` 重写为本仓库布局，逐个校验补丁已应用，半应用状态直接失败
 - **可复现性成立**：用 08-23 版源码重建得到与已发布 wheel 逐字节一致的产物；
@@ -418,6 +419,46 @@ chrome_86..chrome_98 加入 profile 表之后，8 个平台**再次同批重建*
 | windows-arm64 | 8,118,272 | `d2e52049fcb30914` |
 | macos-x86_64 | 7,958,968 | `9d4e872f0b4940bb` |
 | macos-arm64 | 7,310,880 | `6e69ad70bf355923` |
+
+`linux-armv7` 不在上表里：它是在那次同批重建之后加入的第九个目标，合计口径仍是
+那份 8 平台记录。它自己的产物是 6,081,560 字节 / `a4cf93ff913b868e`，见下文
+「第九个目标：Linux ARMv7 (hard-float)」。
+
+### 第九个目标：Linux ARMv7 (hard-float)
+
+2026-11 新增 `linux-armv7`，Rust triple `armv7-unknown-linux-gnueabihf`。与另外 8 个
+目标不同，它的前置条件不是 `gclient runhooks` 会满足的：`debian_bullseye_armhf-sysroot`
+只在 `--arch=arm` 时下载，缺失时 `gn gen` 直接断言在 `build/config/sysroot.gni:60`。
+
+三条与别的目标不同的硬事实：
+
+1. **必须显式写 `arm_float_abi = "hard"`。** `build/config/arm.gni:51` 在
+   `current_os == "linux" && target_cpu != v8_target_cpu` 时默认 `softfp`，而本构建
+   正是这个条件；armhf sysroot 是 hard-float，用默认值会把两种 ABI 链进同一份产物。
+2. **NEON 是硬依赖，且无法在 GN 里关。** `build/config/arm.gni:9-11` 无条件
+   `arm_use_neon = true`。无 NEON 的 ARMv7 核会 SIGILL，不会报告缺特性。
+3. **`tools/audit-abi-layout.py` 对它不构成证明。** 该脚本用宿主 `cc` 取
+   `sizeof/offsetof`，与 32 位 ARM 无关。Rust 侧 72 处 `offset_of!` 断言按
+   `target_pointer_width` 分支（`crates/minicronet-sys/src/lib.rs:330+`），所以 32 位
+   能过，但这与 `linux-x86` 同属「交叉未验证」，不能写成已验证。
+
+产物：`core/binaries/linux-armv7/libminicronet.so`，**6,081,560 字节**，
+SHA-256 `a4cf93ff913b868e`，ELF32 / `ARM` / `EABI5`，DT_NEEDED 与另外两个 Linux
+目标同集合，loader 为 `ld-linux-armhf.so.3`。比 `linux-x86` 小 1,981,392 字节：
+`.text` 少 1,970,246（Thumb-2 比 i386 编码密），`.data` 只多 88 字节。
+
+连续性验证：
+
+- `tools/build-core-linux-armv7.sh` 一次跑通 6339 条 ninja 边，产出通过
+  `tools/audit-core-linux.sh`（20 个 ABI 符号、loader 名、依赖集、尺寸上限、
+  随机源标记、profile 载荷）。
+- **可复现**：强制重编同一份源码后哈希不变（`a4cf93ff...` 两次相同）。
+- `tools/audit-core-payloads.py`：27 个 artifact/载荷对全部命中，572 字节载荷逐字节相同。
+- 变异测试两条：把 x86_64 产物配上自洽 manifest 放进 `linux-armv7/` → 门禁报
+  `wrong architecture (ELF 64-bit ... x86-64)`；把 relinked loader 名改成
+  `ld-linux-armhf.so.9` → `audit-core-linux.sh` 退出码 1 并打印期望值与实际值的 diff。
+- **未运行**：本机无 `qemu-user`，也没有 ARMv7 硬件。按 AGENTS §12 记为
+  「已构建、静态审计通过、未加载、未发请求」，与另外 7 个目标同一档。
 
 ### 跨平台一致性：能证明到哪一步
 

@@ -1,0 +1,115 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+# Cross-build only. Runtime tests require a native ARMv7 userland or an emulator.
+# The Rust triple is armv7-unknown-linux-gnueabihf: EABI5, hard-float.
+ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+# The Chromium checkout defaults to a sibling of this repository, so this
+# script works from any directory on any machine. Point CHROMIUM_SRC at your
+# checkout if it lives elsewhere.
+source "$(dirname "${BASH_SOURCE[0]}")/core-paths.sh"
+# Installs the rg() wrapper used by the Android/Java/JNI leak check below. Without
+# it a missing rg made that check evaluate false and the build continued as if
+# the graph were clean.
+require_rg
+export CHROMIUM_SRC=$(resolve_chromium_src)
+OUT_DIR=${OUT_DIR:-$CHROMIUM_SRC/out/MiniCronet-linux-armv7}
+JOBS=${JOBS:-2}
+# Optional local pkgconf, kept outside this repository.
+if [[ -n ${MINICRONET_PKGCONF_DIR:-} && -x "$MINICRONET_PKGCONF_DIR/usr/bin/pkg-config" ]]; then
+  export PATH="$MINICRONET_PKGCONF_DIR/usr/bin:$PATH"
+  export LD_LIBRARY_PATH="$MINICRONET_PKGCONF_DIR/usr/lib/x86_64-linux-gnu${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+fi
+GN=$CHROMIUM_SRC/buildtools/linux64/gn
+NINJA=$CHROMIUM_SRC/third_party/ninja/ninja
+OBJCOPY=$CHROMIUM_SRC/third_party/llvm-build/Release+Asserts/bin/llvm-objcopy
+READELF=$CHROMIUM_SRC/third_party/llvm-build/Release+Asserts/bin/llvm-readelf
+SYSROOT=$CHROMIUM_SRC/build/linux/debian_bullseye_armhf-sysroot
+
+test -x "$GN"
+test -x "$NINJA"
+test -x "$OBJCOPY"
+test -x "$READELF"
+# The armhf sysroot is the one Debian sysroot the other eight targets never
+# fetch, so a checkout set up for them lacks it. Name the command as well as the
+# path: the path alone reads like a typo.
+if [[ ! -f $SYSROOT/usr/include/features.h ]]; then
+  printf 'build-core: missing %s; run: (cd %s && python3 build/linux/sysroot_scripts/install-sysroot.py --arch=arm)\n' \
+    "$SYSROOT" "$CHROMIUM_SRC" >&2
+  exit 1
+fi
+
+test -d "$CHROMIUM_SRC/net" || { printf 'build-core: no Chromium checkout at %s; set CHROMIUM_SRC to your Chromium checkout\n' "$CHROMIUM_SRC" >&2; exit 1; }
+
+# The profile table is a committed generated header. Regeneration needs the
+# profile evidence, which this repository does not own yet, so it is opt-in.
+if [[ ${REGENERATE_PROFILE_TABLE:-0} == 1 ]]; then
+  if [[ -z ${PROFILE_EVIDENCE_DIR:-} ]]; then
+    printf 'REGENERATE_PROFILE_TABLE=1 needs PROFILE_EVIDENCE_DIR
+' >&2
+    exit 1
+  fi
+  python3 "$ROOT_DIR/tools/generate-profile-table.py"
+fi
+"$ROOT_DIR/tools/sync-core.sh"
+
+mkdir -p "$OUT_DIR"
+cat >"$OUT_DIR/args.gn" <<EOF
+is_component_build = false
+is_debug = false
+is_official_build = true
+is_minicronet_build = true
+optimize_for_size = true
+symbol_level = 0
+chrome_pgo_phase = 0
+target_cpu = "arm"
+# build/config/arm.gni:51 falls back to "softfp" whenever target_cpu differs from
+# v8_target_cpu, which is this build. debian_bullseye_armhf-sysroot is
+# hard-float, so the default would mix two ABIs in one link. Set it here.
+arm_float_abi = "hard"
+arm_version = 7
+target_os = "linux"
+use_remoteexec = false
+use_reclient = false
+use_siso = false
+use_aura = false
+use_gio = false
+use_glib = false
+use_ozone = false
+use_udev = false
+# Embed the IDNA-only ICU dataset instead of shipping icudtl.dat beside the
+# library. Stub data must go with it or the linker sees two data symbols.
+icu_use_data_file = false
+icu_use_stub_data = false
+# Control-flow integrity costs jump tables and metadata in a library whose
+# only entry points are 20 audited C functions; the size is worth more here.
+# Upstream only turns is_cfi on for official linux-x64, so this line changes
+# nothing here; it is kept so all nine targets carry identical arguments.
+is_cfi = false
+EOF
+
+cd "$CHROMIUM_SRC"
+"$GN" gen "$OUT_DIR" --fail-on-unused-args \
+  --root-target=//minicronet '--root-pattern=//minicronet:*'
+if rg -q '(components/cronet/android|obj/base/android/|\.java( |$)|\.jar( |$)|jni_headers|/jni/)' \
+  "$OUT_DIR" -g '*.ninja' -g '*.rsp'; then
+  printf '%s\n' 'Android/Java/JNI dependency leaked into the desktop Core.' >&2
+  exit 1
+fi
+
+"$NINJA" -C "$OUT_DIR" -j"$JOBS" \
+  minicronet:minicronet \
+  minicronet:minicronet_smoke \
+  minicronet:minicronet_websocket_smoke \
+  minicronet:minicronet_abi_cpp_smoke \
+  minicronet:profile_probe
+
+"$OBJCOPY" --strip-unneeded \
+  --remove-section=.comment \
+  --remove-section=.note.gnu.build-id \
+  "$OUT_DIR/libminicronet.so"
+
+file "$OUT_DIR/libminicronet.so"
+"$READELF" -h "$OUT_DIR/libminicronet.so" | sed -n '1,14p'
+"$ROOT_DIR/tools/audit-core-linux.sh" "$OUT_DIR"
+printf 'Linux ARMv7 cross build and audit passed: %s\n' "$OUT_DIR"

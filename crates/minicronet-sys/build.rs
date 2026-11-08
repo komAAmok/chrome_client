@@ -4,6 +4,7 @@ fn target_directory(target: &str) -> Option<&'static str> {
     match target {
         "i686-unknown-linux-gnu" => Some("linux-x86"),
         "x86_64-unknown-linux-gnu" => Some("linux-x86_64"),
+        "armv7-unknown-linux-gnueabihf" => Some("linux-armv7"),
         "aarch64-unknown-linux-gnu" => Some("linux-arm64"),
         "i686-pc-windows-msvc" => Some("windows-x86"),
         "x86_64-pc-windows-msvc" => Some("windows-x86_64"),

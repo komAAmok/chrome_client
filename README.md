@@ -21,7 +21,7 @@ WebSocket。无法用 Chromium 忠实实现的选项会显式报错，而不是�
 
 | 操作系统 | Core 目标 | Python 3.9–3.15 | Python 3.6–3.8 | Rust | 备注 |
 | --- | --- | --- | --- | --- | --- |
-| Linux | x86 (`i686`)、x86_64、ARM64 | ✓ | ✓（独立 abi3 扩展） | ✓ | manylinux/glibc 运行时依赖见 manifest |
+| Linux | x86 (`i686`)、x86_64、ARMv7 (hard-float, NEON)、ARM64 | ✓ | ✓（独立 abi3 扩展） | ✓ | manylinux/glibc 运行时依赖见 manifest；ARMv7 无 wheel，只能从源码构建 |
 | Windows | x86、x86_64、ARM64 | ✓ | x86/x86_64 ✓ | ✓ | DLL 随 wheel；ICU 数据已编入库中 |
 | macOS | x86_64、ARM64 | ✓ | ✓（独立 abi3 扩展） | ✓ | dylib 按架构匹配 |
 
@@ -30,7 +30,7 @@ WebSocket。无法用 Chromium 忠实实现的选项会显式报错，而不是�
 SHA-256 和依赖清单。ABI 当前为 v8。Go 和 Node.js 目录目前是绑定设计说明，
 不是已发布的可安装包。
 
-Core 体积在 7.3–9.4 MB 之间（macOS ARM64 最小，Windows x86_64 最大，静态 MSVC/UCRT
+Core 体积在 6.1–9.4 MB 之间（Linux ARMv7 最小，Windows x86_64 最大，静态 MSVC/UCRT
 多出约 2 MB）。IDNA-only 的 ICU 数据已编入库中，所以不需要外挂 `icudtl.dat`；用不到的
 磁盘缓存后端不进链接产物。各平台的体积上限由 `tools/audit-core-*.sh` 把关，超了直接
 构建失败。
@@ -39,6 +39,7 @@ Core 体积在 7.3–9.4 MB 之间（macOS ARM64 最小，Windows x86_64 最大�
 | --- | --- | --- |
 | `linux-x86` | `i686-unknown-linux-gnu` | `libminicronet.so` |
 | `linux-x86_64` | `x86_64-unknown-linux-gnu` | `libminicronet.so` |
+| `linux-armv7` | `armv7-unknown-linux-gnueabihf` | `libminicronet.so` |
 | `linux-arm64` | `aarch64-unknown-linux-gnu` | `libminicronet.so` |
 | `windows-x86` | `i686-pc-windows-msvc` | `minicronet.dll` + `minicronet.lib` |
 | `windows-x86_64` | `x86_64-pc-windows-msvc` | `minicronet.dll` + `minicronet.lib` |
@@ -530,7 +531,7 @@ Cookie 会按 URL 匹配后附加到握手上。
 | 路径 | 内容 |
 | --- | --- |
 | `core/abi/` | 稳定 C ABI v8 |
-| `core/binaries/` | 8 个已审计平台 Core |
+| `core/binaries/` | 9 个已审计平台 Core |
 | `crates/minicronet/` | Rust 安全层、流和生命周期 |
 | `bindings/python/` | Python 3.9–3.15 绑定与共享 facade |
 | `bindings/python36/` | Python 3.6–3.8 独立 abi3 绑定（共用同一 facade） |

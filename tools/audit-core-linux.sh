@@ -13,7 +13,7 @@ CHROMIUM_SRC=$(resolve_chromium_src)
 # icudtl.dat travels with the library, then lowered after is_cfi = false removed
 # 147,456 bytes of jump tables, and lowered again after the memory-only disk
 # cache patch dropped the unreachable blockfile and simple backends
-# (-221,184 bytes here, -168,960 to -285,696 across the eight targets).
+# (-221,184 bytes here, -168,960 to -285,696 across the targets).
 # Lowered again for the size pass: -Oz here is -258,048, and the ICU
 # PropNameData trim removes another 28,672 on top of it. The dataset
 # also carries ICU's ISO-8859-1 conversion table (+4,096 here), which HTTP Basic
@@ -23,11 +23,11 @@ CHROMIUM_SRC=$(resolve_chromium_src)
 # Re-baselined for the 153 -> 156.0.8078.31 upgrade and again after the size
 # pass, and again after the chrome_86..chrome_98 profiles joined the table. The
 # rule has not changed: the largest artifact plus 2%, rounded up to 10,000. The
-# three committed artifacts are now 8,367,664 (x86_64) / 8,062,952 (x86) /
-# 8,012,448 (arm64), so 8,367,664 * 1.02 = 8,535,017 rounds up to the 8,540,000
-# below. Quote the artifacts, not an earlier build: the number is derived from
-# them, and a comment naming a superseded size reads as if the ceiling had
-# drifted from its own rule.
+# four committed artifacts are now 8,367,664 (x86_64) / 8,062,952 (x86) /
+# 8,012,448 (arm64) / 6,081,560 (armv7), so the largest, 8,367,664, times 1.02
+# is 8,535,017 and rounds up to the 8,540,000 below. Quote the artifacts, not an
+# earlier build: the number is derived from them, and a comment naming a
+# superseded size reads as if the ceiling had drifted from its own rule.
 MAX_BYTES=${MAX_BYTES:-8540000}
 LIB=$OUT_DIR/libminicronet.so
 READELF=$CHROMIUM_SRC/third_party/llvm-build/Release+Asserts/bin/llvm-readelf
@@ -181,6 +181,12 @@ case "$header" in
   *'Class:'*'ELF64'*'Machine:'*'AArch64'*)
     expected_loader=ld-linux-aarch64.so.1
     target_label=Linux-arm64
+    ;;
+  # 32-bit ARM hard-float. The Class token is part of the pattern so a 64-bit
+  # ARM artifact cannot take this branch by accident.
+  *'Class:'*'ELF32'*'Machine:'*'ARM'*)
+    expected_loader=ld-linux-armhf.so.3
+    target_label=Linux-armv7
     ;;
   *)
     printf 'Unsupported Linux ELF target for %s\n' "$LIB" >&2

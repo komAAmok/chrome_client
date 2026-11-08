@@ -11,7 +11,7 @@ MINICRONET_REQUIRE_NATIVE=1 \
 cargo check -p minicronet
 ```
 
-The eight platform directories are intentionally explicit; no script silently
+The nine platform directories are intentionally explicit; no script silently
 switches architecture.
 
 After migrating a Core build, verify all targets and manifests:
@@ -38,7 +38,7 @@ LD_LIBRARY_PATH="$PWD/core/binaries/linux-x86_64" \
 
 ## Building the Core
 
-All eight platform scripts need a pinned Chromium checkout; `tools/core-paths.sh`
+All nine platform scripts need a pinned Chromium checkout; `tools/core-paths.sh`
 resolves it from `CHROMIUM_SRC`, a sibling `../chromium/src`, or
 `$HOME/chromium/src`.
 
@@ -47,6 +47,20 @@ tools/build-core-linux-x86_64.sh
 tools/build-core-macos-arm64.sh
 tools/build-core-windows-x86_64.sh
 ```
+
+`tools/build-core-linux-armv7.sh` is the one script whose sysroot is not
+fetched by `gclient runhooks`: `debian_bullseye_armhf-sysroot` is only
+downloaded for `--arch=arm`. The script names the command when it is missing:
+
+```sh
+(cd "$CHROMIUM_SRC" && python3 build/linux/sysroot_scripts/install-sysroot.py --arch=arm)
+MINICRONET_PKGCONF_DIR=/tmp/pkgconf/root tools/build-core-linux-armv7.sh
+```
+
+It sets `arm_float_abi = "hard"` explicitly. `build/config/arm.gni` defaults to
+`softfp` whenever `target_cpu` differs from `v8_target_cpu`, which is this
+build, and the armhf sysroot is hard-float; leaving the default would mix two
+ABIs in one link.
 
 Each script syncs the Core sources, builds, strips, audits, and leaves the
 artifact in `$CHROMIUM_SRC/out/MiniCronet-<target>/`. Installing into the

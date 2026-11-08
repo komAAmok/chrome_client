@@ -29,7 +29,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 # platform -> (targets whose largest artifact sets the ceiling, the audit script)
 GROUPS = {
-    'linux': (['linux-x86', 'linux-x86_64', 'linux-arm64'],
+    'linux': (['linux-x86', 'linux-x86_64', 'linux-armv7', 'linux-arm64'],
               'tools/audit-core-linux.sh'),
     'windows': (['windows-x86', 'windows-x86_64', 'windows-arm64'],
                 'tools/audit-core-windows.sh'),

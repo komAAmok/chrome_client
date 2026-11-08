@@ -43,6 +43,7 @@ size ceiling, so a regression fails the build.
 | --- | --- | --- |
 | `linux-x86` | `i686-unknown-linux-gnu` | `libminicronet.so` |
 | `linux-x86_64` | `x86_64-unknown-linux-gnu` | `libminicronet.so` |
+| `linux-armv7` | `armv7-unknown-linux-gnueabihf` | `libminicronet.so` |
 | `linux-arm64` | `aarch64-unknown-linux-gnu` | `libminicronet.so` |
 | `windows-x86` | `i686-pc-windows-msvc` | `minicronet.dll` + `minicronet.lib` |
 | `windows-x86_64` | `x86_64-pc-windows-msvc` | `minicronet.dll` + `minicronet.lib` |
@@ -511,7 +512,7 @@ Deliberate behavioural differences:
 | Path | Contents |
 | --- | --- |
 | `core/abi/` | Stable C ABI v8 |
-| `core/binaries/` | Eight audited Core targets |
+| `core/binaries/` | Nine audited Core targets |
 | `crates/minicronet/` | Rust safety layer, streams and lifetimes |
 | `bindings/python/` | Python 3.9–3.15 binding and the shared facade |
 | `bindings/python36/` | Separate Python 3.6–3.8 abi3 binding (same facade) |

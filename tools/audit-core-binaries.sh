@@ -11,7 +11,7 @@ HEADER="$ROOT/core/abi/minicronet.h"
 TARGETS_JSON="$BINARIES/targets.json"
 
 targets=(
-  linux-x86 linux-x86_64 linux-arm64
+  linux-x86 linux-x86_64 linux-armv7 linux-arm64
   windows-x86 windows-x86_64 windows-arm64
   macos-x86_64 macos-arm64
 )
@@ -145,6 +145,9 @@ PY
   case "$target" in
     linux-x86) [[ "$description" == *"ELF 32-bit"* && "$description" == *"Intel 80386"* ]] || die "$target: wrong architecture ($description)" ;;
     linux-x86_64) [[ "$description" == *"ELF 64-bit"* && "$description" == *"x86-64"* ]] || die "$target: wrong architecture ($description)" ;;
+    # The class token is part of the claim: an AArch64 artifact also says
+    # "ARM", so EABI5 plus ELF 32-bit is what keeps the two apart.
+    linux-armv7) [[ "$description" == *"ELF 32-bit"* && "$description" == *"ARM"* && "$description" == *"EABI5"* ]] || die "$target: wrong architecture ($description)" ;;
     linux-arm64) [[ "$description" == *"ELF 64-bit"* && "$description" == *"ARM aarch64"* ]] || die "$target: wrong architecture ($description)" ;;
     windows-x86) [[ "$description" == *"PE32 executable"* && "$description" == *"Intel 80386"* ]] || die "$target: wrong architecture ($description)" ;;
     windows-x86_64) [[ "$description" == *"PE32+ executable"* && "$description" == *"x86-64"* ]] || die "$target: wrong architecture ($description)" ;;

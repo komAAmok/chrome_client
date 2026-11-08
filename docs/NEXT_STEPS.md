@@ -28,6 +28,7 @@
   | --- | --- | --- |
   | Linux x86 | `i686-unknown-linux-gnu` | Chromium i386 sysroot |
   | Linux x86_64 | `x86_64-unknown-linux-gnu` | 本机 glibc/NSS 或匹配发布 sysroot |
+  | Linux ARMv7 | `armv7-unknown-linux-gnueabihf` | Chromium ARMhf sysroot (`install-sysroot.py --arch=arm`), hard-float, 需要 NEON |
   | Linux ARM64 | `aarch64-unknown-linux-gnu` | Chromium ARM64 sysroot |
   | Windows x86 | `i686-pc-windows-msvc` | xwin Windows SDK/CRT + `lld-link` |
   | Windows x86_64 | `x86_64-pc-windows-msvc` | xwin Windows SDK/CRT + `lld-link` |
@@ -37,7 +38,7 @@
 
 - [ ] 运行 `cargo build --workspace --target <target>`，不能只以安装了 Rust
   std target 或 `cargo check` 作为完成依据。
-- [ ] Linux x86/ARM64 做 ELF 架构、解释器、sysroot 和动态依赖审计；不能用
+- [ ] Linux x86/ARMv7/ARM64 做 ELF 架构、解释器、sysroot 和动态依赖审计；不能用
   x86_64 glibc 冒充其他架构。
 - [ ] Windows 做 PE 架构、导出符号、import library、`icudtl.dat` 配对审计。
 - [ ] macOS 做 Mach-O 架构、最低系统版本、install name 和系统框架审计。
@@ -116,6 +117,24 @@
 6. Python/Go/Node 薄绑定
 7. CI 和发布包验收
 ```
+
+## 待办：linux-armv7 没有一次真实运行
+
+`core/binaries/linux-armv7/` 已构建、已审计、已提交，但本机没有 `qemu-user`
+（`apt-cache policy qemu-user-static` 有候选包，`sudo` 需要密码），也没有 ARMv7
+硬件，所以这个平台和另外 7 个一样停在「已构建、静态审计通过、未加载、未发请求」。
+
+补齐任一条即可把状态推到「能发请求」：
+
+1. 在有 ARMv7 的机器（树莓派 3/4 的 32 位系统，或 `arm32v7/python` 容器）上跑
+   `LD_LIBRARY_PATH=core/binaries/linux-armv7 python3 tools/run-http-smoke.py`；
+2. 在装了 `qemu-user-static` 的 x86_64 主机上跑同一条命令，并确认
+   `qemu-arm -L <armhf sysroot>` 能找到 `libnss3.so`；
+3. 在 CI 里加一个 `debian:bullseye-armhf` + `qemu` 的 job。
+
+三种都要先装 armhf 的 NSS（容器内 `apt-get install libnss3 libnspr4`，或把
+`debian_bullseye_armhf-sysroot/usr/lib/arm-linux-gnueabihf/` 加进 `LD_LIBRARY_PATH`）。
+做完之前 README 与 `docs/PLATFORM_SUPPORT.md` 都只能写「已构建、已审计」。
 
 ## 待办：profile_state_isolation_probe 缺测试服务器
 

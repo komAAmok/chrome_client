@@ -44,7 +44,7 @@ HEADER = ROOT / 'core/source/minicronet/profile_table_generated.h'
 NORMALIZED = ROOT / 'profiles/normalized_profiles.json'
 
 TARGETS = (
-    'linux-x86', 'linux-x86_64', 'linux-arm64',
+    'linux-x86', 'linux-x86_64', 'linux-armv7', 'linux-arm64',
     'windows-x86', 'windows-x86_64', 'windows-arm64',
     'macos-x86_64', 'macos-arm64',
 )

@@ -29,6 +29,7 @@ DEFAULT_CHROMIUM = ROOT.parent / "chromium" / "src"
 TARGETS = {
     "linux-x86": ("MiniCronet-linux-x86", "libminicronet.so", ()),
     "linux-x86_64": ("MiniCronet-linux-x86_64", "libminicronet.so", ()),
+    "linux-armv7": ("MiniCronet-linux-armv7", "libminicronet.so", ()),
     "linux-arm64": ("MiniCronet-linux-arm64", "libminicronet.so", ()),
     # The MSVC link step emits minicronet.dll.lib; the repository stores it as
     # minicronet.lib, so the import library is renamed on the way in.
