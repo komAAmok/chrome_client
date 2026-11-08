@@ -158,9 +158,12 @@ about a host, so every host-scoped `a` is retired along with it. The alternative
 leaving them in place — is exactly the behaviour that made the write unreadable and
 sent the value twice.
 
-`set_cookie` and `update` *from a jar* keep the upstream semantics: those carry the
-domain and path from the response that produced them, so they are a merge of two
-stores rather than a caller assignment.
+One rule, three entry points. `set()`, `update()` and a direct `set_cookie()` all
+retire through the same helper, so a caller cannot get the old behaviour back by
+picking the lower-level method. That covers the jar-to-jar merge above too: a
+`Set-Cookie` that updates a name the jar already holds replacing the older entry is
+what RFC 6265 §5.3 requires of a cookie store, and it was already true of
+`absorb_set_cookie` before this rule existed for caller writes.
 
 ### curl_cffi 参数审计：哪些在本项目里结构上无意义
 

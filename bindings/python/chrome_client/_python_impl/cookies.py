@@ -193,10 +193,24 @@ def morsel_to_cookie(morsel):
 
 
 def _domain_covers(outer, inner):
-    """True when a cookie set for *outer* also applies to the host *inner*."""
-    if not outer or not inner:
-        # An unspecified domain on either side means "not constrained here",
-        # so the two scopes cannot be shown to be different.
+    """True when a cookie set for *outer* also applies to the host *inner*.
+
+    The two empty-domain directions are written out separately because they
+    are separate decisions that happen to agree, and folding them back into
+    one `if not outer or not inner` would hide the one that costs something:
+    the second branch retires cookies the caller did scope.
+    """
+    if not outer:
+        # The new cookie names no domain, so it speaks about the name rather
+        # than about a host: it applies wherever that name applies, and it
+        # therefore covers every scope the old cookie could have had. This is
+        # what fixes jar.update({"a": "1"}) leaving a second entry behind.
+        return True
+    if not inner:
+        # The old cookie names no domain while the new one does. An
+        # unspecified domain matches everything, so the two cannot be ranked
+        # as different scopes: the narrower write still retires the wider
+        # entry, which is the price of one value per name.
         return True
     suffix = outer if outer.startswith(".") else "." + outer
     return inner == outer or inner.endswith(suffix)
@@ -236,8 +250,30 @@ class RequestsCookieJar(cookielib.CookieJar, MutableMapping):
         if hasattr(cookie.value, "startswith") and cookie.value.startswith('"') \
                 and cookie.value.endswith('"'):
             cookie.value = cookie.value.replace('\\"', "").strip('"')
+        # Retirement lives here rather than in set(): set() and update() call
+        # set_cookie too, and a caller using the low-level API must get the same
+        # "a write wins" behaviour, or the rule would depend on which method the
+        # caller happened to pick.
+        self._retire_replaced(cookie)
         self.revision += 1
         return cookielib.CookieJar.set_cookie(self, cookie, *args, **kwargs)
+
+    def _retire_replaced(self, cookie):
+        """Clears the entries *cookie* supersedes, leaving distinct scopes alone.
+
+        Called from ``set_cookie`` so that ``set``, ``update`` and a direct
+        ``set_cookie`` all obey one rule. Clearing happens before the insert
+        because ``cookielib`` keys its store by ``(domain, path, name)``:
+        clearing after would delete the cookie that was just added whenever the
+        two triples match exactly.
+        """
+        for existing in list(iter(self)):
+            if existing.name != cookie.name:
+                continue
+            if not _replaces(existing, cookie):
+                continue
+            cookielib.CookieJar.clear(self, existing.domain, existing.path,
+                                      existing.name)
 
     def clear(self, domain=None, path=None, name=None):
         self.revision += 1
@@ -306,14 +342,8 @@ class RequestsCookieJar(cookielib.CookieJar, MutableMapping):
             cookie = morsel_to_cookie(value)
         else:
             cookie = create_cookie(name, value, **kwargs)
-        # Clear before setting: cookielib keeps a dict keyed by (domain, path,
-        # name), so clearing after the insert would delete the cookie just added
-        # whenever the two triples happen to be equal.
-        for existing in list(iter(self)):
-            if existing.name == cookie.name and _replaces(existing, cookie):
-                cookielib.CookieJar.clear(self, existing.domain, existing.path,
-                                          existing.name)
-                self.revision += 1
+        # set_cookie does the retirement, so this method and a direct call to it
+        # cannot drift apart.
         self.set_cookie(cookie)
         return cookie
     def iterkeys(self):

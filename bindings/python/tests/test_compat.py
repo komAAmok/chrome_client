@@ -344,6 +344,40 @@ class SessionStateTests(Base):
         self.assertEqual(jar["a"], "scoped")
         self.assertEqual(jar.cookie_header("http://example.invalid/"), "a=scoped")
 
+
+    def test_set_cookie_retires_replaced_entry(self):
+        """A direct set_cookie must obey the same rule as set() and update().
+
+        The low-level API used to append a second entry whenever the
+        (domain, path, name) triple differed, so a caller reaching for it got
+        the pre-fix behaviour back.
+        """
+        jar = chrome_client.CookieJar()
+        jar.set_cookie(chrome_client.create_cookie(
+            "a", "server", domain=".example.com", path="/"))
+        jar.set_cookie(chrome_client.create_cookie("a", "1"))
+        self.assertEqual(len(list(jar)), 1)
+        self.assertEqual(jar["a"], "1")
+        self.assertEqual(jar.cookie_header("http://example.com/"), "a=1")
+
+    def test_set_cookie_keeps_distinct_domains(self):
+        """Retirement is scope-aware no matter which method wrote the cookie."""
+        jar = chrome_client.CookieJar()
+        jar.set_cookie(chrome_client.create_cookie(
+            "a", "one", domain="example.invalid", path="/"))
+        jar.set_cookie(chrome_client.create_cookie(
+            "a", "two", domain="other.invalid", path="/"))
+        self.assertEqual(len(list(jar)), 2)
+        self.assertEqual(jar.cookie_header("http://example.invalid/"), "a=one")
+        self.assertEqual(jar.cookie_header("http://other.invalid/"), "a=two")
+
+    def test_set_cookie_from_a_second_response_replaces(self):
+        """Two Set-Cookie lines for one name leave one entry, not two."""
+        jar = chrome_client.CookieJar()
+        jar.absorb_set_cookie("http://example.com/", ["a=first; Path=/"])
+        jar.absorb_set_cookie("http://example.com/", ["a=second; Path=/"])
+        self.assertEqual(jar.items(), [("a", "second")])
+
     def test_cookie_update_keeps_distinct_paths(self):
         """RFC 6265 5.4: / and /sub are different cookies and both are sent."""
         jar = chrome_client.CookieJar()
