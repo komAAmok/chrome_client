@@ -21,7 +21,8 @@ WebSocket。无法用 Chromium 忠实实现的选项会显式报错，而不是�
 
 | 操作系统 | Core 目标 | Python 3.9–3.15 | Python 3.6–3.8 | Rust | 备注 |
 | --- | --- | --- | --- | --- | --- |
-| Linux | x86 (`i686`)、x86_64、ARMv7 (hard-float, NEON)、ARM64 | ✓ | ✓（独立 abi3 扩展） | ✓ | manylinux/glibc 运行时依赖见 manifest；ARMv7 无 wheel，只能从源码构建 |
+| Linux | x86 (`i686`)、x86_64、ARM64 | ✓ | ✓（独立 abi3 扩展） | ✓ | manylinux/glibc 运行时依赖见 manifest |
+| Linux | ARMv7 (hard-float, NEON) | 未发布 | 未发布 | ✓ | Core 已构建并审计；不发布 wheel，需自行构建扩展 |
 | Windows | x86、x86_64、ARM64 | ✓ | x86/x86_64 ✓ | ✓ | DLL 随 wheel；ICU 数据已编入库中 |
 | macOS | x86_64、ARM64 | ✓ | ✓（独立 abi3 扩展） | ✓ | dylib 按架构匹配 |
 

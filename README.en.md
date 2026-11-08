@@ -24,6 +24,7 @@ the [compatibility boundary](https://github.com/komAAmok/chrome_client/blob/main
 | OS | Core targets | Python 3.9–3.15 | Python 3.6–3.8 | Rust | Notes |
 | --- | --- | --- | --- | --- | --- |
 | Linux | x86 (`i686`), x86_64, ARM64 | ✓ | ✓ (separate abi3 extension) | ✓ | Runtime dependencies are listed in each manifest |
+| Linux | ARMv7 (hard-float, NEON) | not published | not published | ✓ | Core is built and audited; build the extension yourself |
 | Windows | x86, x86_64, ARM64 | ✓ | x86/x86_64 ✓ | ✓ | Wheels bundle the DLL; ICU data is linked in |
 | macOS | x86_64, ARM64 | ✓ | ✓ (separate abi3 extension) | ✓ | dylib is architecture-specific |
 
