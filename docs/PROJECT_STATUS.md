@@ -424,6 +424,20 @@ chrome_86..chrome_98 加入 profile 表之后，8 个平台**再次同批重建*
 那份 8 平台记录。它自己的产物是 6,081,560 字节 / `a4cf93ff913b868e`，见下文
 「第九个目标：Linux ARMv7 (hard-float)」。
 
+### 打 tag 前全量 review 的约束（AGENTS §13）
+
+`AGENTS.md` §13 规定每次打 tag 前跑 `tools/review-before-tag.py`，把静态门禁、指纹、
+并发、泄漏、四个绑定放在同一份 commit 上一次跑完，产出 `docs/review-<version>/` 下的
+`summary.json` / `bench.json` / `leak.json` 与该 tag 一起提交。
+
+本次实测：28 步全部 pass，233 秒；`async_concurrency_128` 733.9 req/s，
+`sync_sequential_1kib` 455.5 req/s，5 种请求形态的泄漏测量全部平坦（fd ≤ +1，
+RSS ≤ +396 KiB）。
+
+同批重建全部 9 个平台产物。版本串随 `MINICRONET_VERSION` 进产物，
+`audit-core-binaries.sh` 逐个校验 `minicronet/<version>` 标记与 `tools/version.py`
+的输出相等。具体版本号只在根 `Cargo.toml`，此处不复述。
+
 ### 第九个目标：Linux ARMv7 (hard-float)
 
 2026-11 新增 `linux-armv7`，Rust triple `armv7-unknown-linux-gnueabihf`。与另外 8 个

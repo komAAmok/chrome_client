@@ -213,3 +213,69 @@ python3 -m unittest discover -s bindings/python/tests -p "test_*.py"
   否则不要在 README 打 ✓。
 - 需要外部依赖的测试要么在 CI 里满足依赖，要么在文档里明确标注为「长期跳过」——
   不允许悄悄 skip 掉一个曾经有效的门禁。
+
+## 13. 打 tag 前必须全量 review
+
+一个 tag 是「这一刻仓库里每一条断言都成立」的唯一凭据，而这些断言由不同的工具
+把守、从来没有在同一份 commit 上一起跑过：静态门禁、真实请求、并发基准、泄漏测量、
+四个语言的绑定，各自在某个时刻通过过。
+
+所以打 tag 前执行一次完整 review，产出一份 JSON 记录：
+
+```bash
+LD_LIBRARY_PATH=core/binaries/linux-x86_64 \
+  PYTHONPATH=bindings/python \
+  CHROMIUM_SRC=$CHROMIUM_SRC \
+  python3 tools/review-before-tag.py --out docs/review-<version>/summary.json
+```
+
+它不重新实现任何检查，每一步都 shell 出去交给拥有它的工具；跑不了的步骤记为
+`unavailable` 并写明原因，绝不记成 pass。退出码只在**能跑的步骤全部通过**时为 0。
+
+### 四组必查项，对应四类不能回归的性质
+
+| 组 | 查什么 | 工具 |
+| --- | --- | --- |
+| `gates` | ABI、README、stub、Core 产物、profile 证据 | `audit-abi.sh` 等 12 项 |
+| `fingerprint` | h1/h2/h3 指纹是否漂移 | `audit-padding-rule.py`、`audit-tls-version-range.py`、`audit-h1-alps-absence.py`、`audit-h3-profile-support.py`、`audit-profile-addition.py`、`audit-profile-probes.sh`、`run-http-smoke.py` |
+| `concurrency` | 同步/异步吞吐、`stalled_consumer_isolation` | `bench-core-baseline.py` |
+| `leaks` | 五种请求形态的 fd / RSS 增长 | `leak-probe.py` |
+
+`fingerprint` 组里前四个是静态的：它们比对 profile 表、抓包与源码，能发现改了表
+却没重新抓包。`wire-smoke` 是唯一真的连服务器的指纹检查——静态检查看不到协商结果。
+
+`concurrency` 与 `leaks` 是源码里读不出来的：只能测，且只在跑绑定的那台机器上有意义。
+两者都写 JSON，让一次发布有数字可比，而不只是一个退出码。
+
+### 泄漏必须覆盖五种形态
+
+`test_async_requests_do_not_leak` 在测试套件里比较两批等量请求，但它只覆盖异步回调
+一条路径。泄漏是分路径的，被测到的那条正好是唯一干净的那条就是最坏情况。所以
+`leak-probe.py` 每条形态各起一个子进程（崩溃或 finalizer 挂住不会被误判为干净），
+跑「预热 / 第 1 批 / 第 2 批」三个采样点：
+
+| 形态 | 覆盖的路径 |
+| --- | --- |
+| `sync-get` | `get()`，丢弃 body |
+| `sync-stream` | `stream=True` + `iter_content()`，完整消费 |
+| `sync-abandon` | `stream=True` 后 `close()` 但不读 |
+| `async-gather` | `AsyncSession` + `asyncio.gather` |
+| `error-path` | 每个请求都打到拒绝端口，测错误路径的分配 |
+
+判据是**第二批相对第一批的增量**（fd ≤ 8 个、RSS ≤ 24 MiB）：泄漏随请求数线性增长，
+固定容差吸收 Chromium 的缓存与线程池。
+
+### 报告要能数出来「哪些没跑」
+
+`unavailable` 不是一个可以通过的状态，但也不是失败：本机没有 Chromium 检出、没有网络、
+没有目标机时，这些步骤本来就不该跑。区别在于**必须写明原因**，因为沉默正是让 ARMv7
+那一行宣称了一个它从未有过的 wheel 的原因。
+
+每次打 tag 后，`docs/review-<version>/` 下的 `summary.json`、`bench.json`、
+`leak.json` 与 tag 一起提交，构成该版本的验收证据。
+
+```bash
+# 只要某一个子集（调试用）
+python3 tools/review-before-tag.py --only padding-rule leak-probe \
+  --out /tmp/partial.json
+```

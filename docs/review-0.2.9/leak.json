@@ -1,0 +1,106 @@
+{
+  "failures": 0,
+  "requests_per_batch": 60,
+  "shapes": [
+    {
+      "fd": [
+        10,
+        10,
+        10
+      ],
+      "fd_growth": 0,
+      "limits": {
+        "fd": 8,
+        "rss_kib": 24576
+      },
+      "rss_growth_kib": 24,
+      "rss_kib": [
+        34328,
+        34360,
+        34384
+      ],
+      "shape": "sync-get",
+      "status": "pass"
+    },
+    {
+      "fd": [
+        10,
+        10,
+        10
+      ],
+      "fd_growth": 0,
+      "limits": {
+        "fd": 8,
+        "rss_kib": 24576
+      },
+      "rss_growth_kib": 16,
+      "rss_kib": [
+        34472,
+        34512,
+        34528
+      ],
+      "shape": "sync-stream",
+      "status": "pass"
+    },
+    {
+      "fd": [
+        11,
+        11,
+        11
+      ],
+      "fd_growth": 0,
+      "limits": {
+        "fd": 8,
+        "rss_kib": 24576
+      },
+      "rss_growth_kib": 20,
+      "rss_kib": [
+        34632,
+        34724,
+        34744
+      ],
+      "shape": "sync-abandon",
+      "status": "pass"
+    },
+    {
+      "fd": [
+        10,
+        10,
+        10
+      ],
+      "fd_growth": 0,
+      "limits": {
+        "fd": 8,
+        "rss_kib": 24576
+      },
+      "rss_growth_kib": 48,
+      "rss_kib": [
+        35364,
+        35412,
+        35460
+      ],
+      "shape": "async-gather",
+      "status": "pass"
+    },
+    {
+      "fd": [
+        10,
+        10,
+        10
+      ],
+      "fd_growth": 0,
+      "limits": {
+        "fd": 8,
+        "rss_kib": 24576
+      },
+      "rss_growth_kib": 20,
+      "rss_kib": [
+        34156,
+        34164,
+        34184
+      ],
+      "shape": "error-path",
+      "status": "pass"
+    }
+  ]
+}

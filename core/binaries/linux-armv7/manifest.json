@@ -6,7 +6,7 @@
   "target": "linux-armv7",
   "triple": "armv7-unknown-linux-gnueabihf",
   "library": "libminicronet.so",
-  "sha256": "a4cf93ff913b868e3f238bdfb6da4721812277a3f58a1f1d8ca13dab050e1d14",
+  "sha256": "6ef28388d2d58321e720361a60d25492a157a0eff0347530f7e7b26fcf5bf52d",
   "size_bytes": 6081560,
   "runtime_dependencies": [
     "libc.so.6",

@@ -118,6 +118,28 @@
 7. CI 和发布包验收
 ```
 
+## 打 tag 前必须跑 review-before-tag.py（§13）
+
+`AGENTS.md` §13 现在要求每次打 tag 前跑一次全量 review，产出的 `summary.json`、
+`bench.json`、`leak.json` 与 tag 一起提交。
+
+`review-before-tag.py` 里有两步依赖本机之外的条件，跑不了时报告会写成
+`unavailable` 并给出原因，这不是通过也不是失败：
+
+| 步骤 | 需要什么 | 没有时会看到 |
+| --- | --- | --- |
+| `profile-addition` | 网络（googlesource）+ 该 profile 的 tag 源码 | `unavailable`，原因写明缺网络 |
+| `profile-probes` | Chromium 检出 + gn/ninja | 同上 |
+| `wire-smoke` | `out/MiniCronet-linux-x86_64/minicronet_smoke` | 原因里给出构建该二进制的脚本名 |
+
+第一次跑（0.2.9）时 28 步全部 pass，耗时 233 秒；`profile-addition` 用的是
+`--profile chrome_157 --levels 1,2`，与 AGENTS §5 里那行 CI 口径一致。如果要全表
+扫一遍（72 个 profile × 9 个文件），那是几千次请求，单独跑：
+
+```bash
+python3 tools/audit-profile-addition.py --all --levels 1
+```
+
 ## 待办：linux-armv7 没有一次真实运行
 
 `core/binaries/linux-armv7/` 已构建、已审计、已提交，但本机没有 `qemu-user`
