@@ -86,7 +86,21 @@ jobs:
           lfs: true
 
       - name: Verify Core artifact
-        run: python3 tools/verify-core-artifacts.py ${{ matrix.core-target }}
+        shell: bash
+        run: |
+          test -f "core/binaries/${{ matrix.core-target }}/libminicronet.so"
+          test -f "core/binaries/${{ matrix.core-target }}/manifest.json"
+          python3 - "${{ matrix.core-target }}" <<'PY'
+          import hashlib, json, pathlib, sys
+          target = sys.argv[1]
+          root = pathlib.Path("core/binaries") / target
+          manifest = json.loads((root / "manifest.json").read_text())
+          path = root / manifest["library"]
+          actual = hashlib.sha256(path.read_bytes()).hexdigest()
+          assert actual == manifest["sha256"], (target, actual)
+          assert path.stat().st_size == manifest["size_bytes"], target
+          print("Core artifact verified:", target)
+          PY
 
       - name: Set up QEMU for non-native manylinux targets
         if: matrix.target == 'i686-unknown-linux-gnu' || (matrix.target == 'aarch64-unknown-linux-gnu' && matrix.runner != 'ubuntu-24.04-arm')
@@ -254,7 +268,18 @@ jobs:
         run: rustup target add ${{ matrix.target }}
 
       - name: Verify Core artifact
-        run: python3 tools/verify-core-artifacts.py ${{ matrix.core-target }}
+        run: |
+          test -f "core/binaries/${{ matrix.core-target }}/libminicronet.dylib"
+          python3 - "${{ matrix.core-target }}" <<'PY'
+          import hashlib, json, pathlib, sys
+          target = sys.argv[1]
+          root = pathlib.Path("core/binaries") / target
+          manifest = json.loads((root / "manifest.json").read_text())
+          path = root / manifest["library"]
+          assert hashlib.sha256(path.read_bytes()).hexdigest() == manifest["sha256"]
+          assert path.stat().st_size == manifest["size_bytes"]
+          print("Core artifact verified:", target)
+          PY
 
       - name: Build macOS wheel
         uses: PyO3/maturin-action@v1
@@ -280,99 +305,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: per-arch-${{ matrix.core-target }}-${{ matrix.binding }}
-          path: dist/*.whl
-          if-no-files-found: error
-
-  # The universal2 wheel is the one artifact this workflow cannot take straight
-  # from `core/binaries`: Chromium is cross-built one macOS architecture at a
-  # time, so the repository holds an x86_64 dylib and an arm64 dylib and no
-  # universal one. Two facts force this shape:
-  #
-  #   * `rustc --print target-list` has no universal2 target (probed on 1.98.0;
-  #     universal2-apple-darwin is absent and `cargo build --target` refuses
-  #     it), so the extension module is built twice and fused afterwards;
-  #   * `lipo` lives only in an Xcode or osxcross toolchain, so the fusion is
-  #     tools/lipo-dylib.py, which writes the fat container directly.
-  #
-  # The fused Core dylib is staged first: delocate collects dependencies from
-  # DYLD_LIBRARY_PATH, and a wheel fused against the per-architecture dylibs
-  # would bundle whichever one it found first.
-  macos-universal:
-    name: macOS universal2 / ${{ matrix.binding }}
-    runs-on: macos-15
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - binding: python
-            manifest: bindings/python/Cargo.toml
-            maturin-version: latest
-          - binding: python36
-            manifest: bindings/python36/Cargo.toml
-            maturin-version: "0.14.17"
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          lfs: true
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.10"
-
-      - name: Install Rust targets
-        run: rustup target add x86_64-apple-darwin aarch64-apple-darwin
-
-      - name: Verify both Core artifacts
-        run: python3 tools/verify-core-artifacts.py macos-x86_64 macos-arm64
-
-      # delocate reads this directory, so it has to hold the fused dylib and not
-      # the two per-architecture ones.
-      - name: Stage the fused Core dylib
-        run: |
-          python3 tools/lipo-dylib.py \
-            --output universal-core/libminicronet.dylib \
-            core/binaries/macos-x86_64/libminicronet.dylib \
-            core/binaries/macos-arm64/libminicronet.dylib
-
-      - name: Build one extension module per architecture
-        run: |
-          set -euo pipefail
-          python3 -m pip install --disable-pip-version-check maturin
-          for triple in x86_64-apple-darwin aarch64-apple-darwin; do
-            python3 -m maturin build --release --locked \
-              --manifest-path ${{ matrix.manifest }} \
-              --target "$triple" --out multi
-          done
-
-      # The Core dylibs travel into the repaired wheel, so their minimum macOS
-      # version bounds the tag: they say 13.0 while the extension says
-      # 10.12/11.0, and an 11.0 tag would install on macOS 12 where the Core
-      # cannot be mapped. delocate reports this as a warning; a tag that installs
-      # a wheel which cannot import is a defect, not a warning.
-      - name: Fuse the two wheels into universal2
-        run: |
-          python3 tools/fuse-macos-wheels.py --out dist \
-            --bundled core/binaries/macos-x86_64/libminicronet.dylib \
-                      core/binaries/macos-arm64/libminicronet.dylib \
-            -- multi/*.whl
-
-      - name: Bundle the universal Core dylib
-        run: |
-          set -euo pipefail
-          python3 -m pip install --disable-pip-version-check delocate
-          mkdir repaired
-          DYLD_LIBRARY_PATH="$PWD/universal-core" delocate-wheel -w repaired dist/*.whl
-          rm dist/*.whl
-          mv repaired/*.whl dist/
-          # The tag must still cover every Mach-O file delocate just rewrote,
-          # and both slices must still carry the ABI. delocate treats a too-low
-          # deployment target as a warning and says nothing about a lost slice.
-          python3 tools/audit-macos-wheel.py dist/*.whl
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: wheel-macos-universal2-${{ matrix.binding }}
+          name: wheel-${{ matrix.core-target }}-${{ matrix.binding }}
           path: dist/*.whl
           if-no-files-found: error
 
@@ -429,7 +362,7 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v') || inputs.publish_to_pypi
     # python39-smoke belongs in needs: a wheel that cannot be imported on 3.9
     # must not reach PyPI, and that job is the only one that proves it can.
-    needs: [linux, windows, macos, macos-universal, metadata, python39-smoke]
+    needs: [linux, windows, macos, metadata, python39-smoke]
     runs-on: ubuntu-latest
     permissions:
       contents: read

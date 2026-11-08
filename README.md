@@ -23,7 +23,7 @@ WebSocket。无法用 Chromium 忠实实现的选项会显式报错，而不是�
 | --- | --- | --- | --- | --- | --- |
 | Linux | x86 (`i686`)、x86_64、ARMv7 (hard-float, NEON)、ARM64 | ✓ | ✓（独立 abi3 扩展） | ✓ | manylinux/glibc 运行时依赖见 manifest；ARMv7 无 wheel，只能从源码构建 |
 | Windows | x86、x86_64、ARM64 | ✓ | x86/x86_64 ✓ | ✓ | DLL 随 wheel；ICU 数据已编入库中 |
-| macOS | x86_64、ARM64、universal2 | ✓ | ✓（独立 abi3 扩展） | ✓ | 发布物是 universal2 wheel，dylib 由两个分架构产物 lipo 合成 |
+| macOS | x86_64、ARM64 | ✓ | ✓（独立 abi3 扩展） | ✓ | dylib 按架构匹配 |
 
 
 每个 Core 产物位于 `core/binaries/<target>/`，带 ABI 版本、Chromium revision、
