@@ -110,6 +110,15 @@ class ChunkedEncodingError(RequestException):
     pass
 
 
+class CacheMiss(RequestException):
+    """The request asked for cache-only and the cache had nothing usable.
+
+    Raised for ``cache_mode="only_if_cached"`` when the entry is absent or
+    stale, which Chromium reports as ``ERR_CACHE_MISS`` (-400). Before this
+    class existed the row mapped to ``None``, so the miss surfaced as a bare
+    ``RequestException`` and callers could not single it out.
+    """
+
 class ContentDecodingError(RequestException):
     pass
 
@@ -242,14 +251,20 @@ _NET_ERRORS = {
     # looking at certificates for a stream-level problem.
     -337: ("ERR_HTTP2_PROTOCOL_ERROR", ConnectionError),
     -348: ("ERR_PAC_NOT_IN_DHCP", ProxyError),
-    -350: ("ERR_RESPONSE_HEADERS_MULTIPLE_LOCATION", ContentDecodingError),
+    # -330 is what GzipSourceStream actually returns when inflate fails
+    # (gzip_source_stream.cc:155,228); -371 only fires when the decoder itself
+    # cannot be created. Without this row every gzip/br/zstd failure surfaced as
+    # ConnectionError and `except ContentDecodingError` never matched.
+    -330: ("ERR_CONTENT_DECODING_FAILED", ContentDecodingError),
+    # Multiple Location headers is a redirect fault, not a decoding one.
+    -350: ("ERR_RESPONSE_HEADERS_MULTIPLE_LOCATION", TooManyRedirects),
     -354: ("ERR_CONTENT_LENGTH_MISMATCH", IncompleteRead),
     # QUIC is a transport: a failed handshake or a broken QUIC session is a
     # connection error. ChunkedEncodingError (what these used to raise) names a
     # framing fault in HTTP/1.1, which is a different protocol entirely.
     -358: ("ERR_QUIC_HANDSHAKE_FAILED", ConnectionError),
     -371: ("ERR_CONTENT_DECODING_INIT_FAILED", ContentDecodingError),
-    -400: ("ERR_CACHE_MISS", None),
+    -400: ("ERR_CACHE_MISS", CacheMiss),
     -111: ("ERR_TUNNEL_CONNECTION_FAILED", ProxyError),
     -115: ("ERR_PROXY_AUTH_UNSUPPORTED", ProxyError),
     -120: ("ERR_SOCKS_CONNECTION_FAILED", ProxyError),

@@ -182,6 +182,100 @@ runner 已随 8 个平台 Core 重建上线；阶段 5 的 HTTP pause/resume 已
 Linux x86_64 的可复现构建、体积构成和吞吐/并发基线见
 [`BASELINE_LINUX_X86_64.md`](BASELINE_LINUX_X86_64.md)。
 
+## 工具链：本机已就绪（2026-11）
+
+此前 `cargo` / `rustc` 都不在本机，导致 `cargo fmt` / `check` / `clippy` / `test` 四条门禁
+从未真正跑过，`bindings/python36` 的 wheel 也无法重建。根因不是权限，而是**下载源**：
+
+```
+static.rust-lang.org   8 秒内 0 字节（官方源不可达）
+mirrors.ustc.edu.cn    2.2 MB/s
+rsproxy.cn             1.2 MB/s
+```
+
+换 `RUSTUP_DIST_SERVER=https://mirrors.ustc.edu.cn/rust-static` 后，整个 toolchain
+（rustc + cargo + rust-std，宿主 target）**60 秒装完**；九个 target 的 `rust-std` 与
+`rustfmt` / `clippy` 组件同样走镜像。crates 依赖用
+`sparse+https://mirrors.ustc.edu.cn/crates.io-index/` 亦可拉通。
+
+现在本机可执行：
+
+| 门禁 | 结果 |
+| --- | --- |
+| `cargo fmt --all -- --check` | 通过 |
+| `cargo check --workspace --all-targets` | 通过（13.9s） |
+| `cargo clippy --workspace --all-targets -- -D warnings` | 通过 |
+| `cargo test --workspace --all-targets` | 通过（2 个 abi_layout 用例） |
+| `maturin build`（bindings/python36） | 通过，产出 cp36-abi3 wheel |
+
+需要 `patchelf`（`pip install patchelf`）；缺它时 maturin 会在 repair 阶段失败并留下
+一个 22 字节的空 wheel。
+
+已安装的 target：`x86_64/i686/aarch64-unknown-linux-gnu`、
+`armv7-unknown-linux-gnueabihf`、`i686/x86_64/aarch64-pc-windows-msvc`。
+macOS 两个 target 的 `rust-std` 也装了，但交叉链接仍需要 osxcross 与对应 SDK。
+## 已完成：bindings/python36 的产物门禁（0.2.9）
+
+`bindings/python36/src/lib.rs` 里 `#[test]` 数量是 0，所以 `cargo test --manifest-path
+bindings/python36/Cargo.toml --locked` 只会编译然后退出 0。它曾经是打 tag 前 review 的
+`python36-tests` 一步——一个**不可能失败**的门禁，报告里却写着 Python 绑定已验证。
+
+现在那一步换成 `tools/audit-python36-artifact.py`，检查的是产物本身：
+
+1. 扩展能按自己的模块名导入（`PyInit_chrome_client_native36`）；
+2. `abi_version` 等于从 `core/abi/minicronet.h` 读到的 `MN_ABI_VERSION`；
+3. 没有链接 `libpython`，且除白名单外不引用 `_Py_*`（真的 abi3）；
+4. 能驱动 `bindings/python` 的 facade 发一次真实请求并记录响应 cookie。
+
+第 4 条是这次改动的重点：前三条都能被一个「能导入但已过时」的扩展满足，而那种扩展
+只在 facade 调用它没有的方法时才暴露。
+
+变异测试（AGENTS §6）：把 `MN_ABI_VERSION` 改成 9 → 门禁报
+`reports abi_version=8 but ... declares 9`；把 `.so` 里的 `PyInit_` 名称改一个字节 →
+门禁报 `dynamic module does not define module export function`。两条都非零退出，已恢复。
+
+配套加了 `tools/build-python36-wheel.sh`：本地构建 wheel 的唯一入口，构建完顺带跑上述
+门禁，并断言 wheel 标签必须是 `cp36-abi3`。
+
+### 重建 wheel 时发现的缺陷：facade 只认一个模块名
+
+wheel 建出来后装进干净 venv 实测，**3.12 上 import 直接失败**：
+
+```
+ImportError: chrome_client native extension 'chrome_client_native' is not installed
+```
+
+原因：两个 wheel 的 `requires-python` 都是 `>=3.6,<3.16`，所以 pip 可以把 cp36-abi3
+那个装到任何受支持的版本上；而 facade 的 `MODULE_NAME` 只按 `sys.version_info` 选一个名字。
+当装的是「另一个」wheel 时，它问的名字在包里根本不存在。
+
+`tools/audit-pypi-metadata.sh:303` 的门禁注释其实早就写明这个后果——「3.x–3.y 会拿到错误
+模块，在这个 README 标为支持的版本上 import 失败」——但门禁只比对 switch 点与 abi3 floor
+是否相等，没有验证运行时真的能加载。
+
+修法：`_native.py` 引入 `FALLBACK_MODULE_NAME`，`load()` 先按首选名字找，找不到再试另一个。
+实测同一个 wheel 在 3.12 venv 里从「import 失败」变为「请求 200 + 收到 cookie」。
+
+门禁同步扩展：`tools/audit-python36-artifact.py` 现在会解包 `dist/` 里最新的 wheel，用
+**当前解释器** import 其中的 facade。变异测试：把 wheel 里的 fallback 去掉重打包 →
+门禁报「the facade must accept either module name」；恢复后通过。
+**本机未能完成的部分**：这台机器没有 Rust 工具链（`cargo`/`rustc` 均缺，`apt` 需要
+sudo 密码，`rustup` 装到 3 个组件时下载停滞），所以 `maturin build` 没能真正跑通。
+门禁与脚本都已在**现有的** `bindings/python36/target/release/libchrome_client_native36.so`
+上验证（该产物 abi 8、无 libpython 依赖、能驱动 facade 完成真实请求）。重新产出一个
+新 wheel 仍需在有工具链的机器上执行 `tools/build-python36-wheel.sh`。
+## 提案：ABI v9 四项（cookie 存取 / 协商协议 / client hints / DNS）
+
+四项改动的完整提案见 [ABI_V9_PROPOSAL.md](ABI_V9_PROPOSAL.md)。本文件下面四条待办
+（协商协议、client hints、DNS）都已并入那份提案，外加一项此前没有登记的 cookie 存取。
+
+为什么不拆开做：四项都要改 `MN_ABI_VERSION`、三份导出表与九个平台产物，拆成四次发布
+等于重建九次。但**落地顺序**要拆：提案第 7 节建议先做协商协议（只加 getter、不改结构体
+布局、32 位断言不用动），再做 cookie（改动最大但回滚边界清楚），DNS 次之，
+client hints 最后（它阻塞在 72 份 profile 证据上，不应阻塞 v9 发布）。
+
+提案没有登记、也不应等 v9 的三项：`headers={"User-Agent": None}` 的删除语义、
+`tools/audit-python-stubs.py` 的硬编码清单、`bindings/python36` 的空壳门禁与 `include` 路径。
 ## 待办：把协商协议暴露到 ABI（v9）
 
 `http_version` 目前只在状态行能证明时返回协议，其余返回 `None`。原因是 ABI v8 的

@@ -28,6 +28,7 @@ from ._python_impl.exceptions import (
     InvalidHeader as InvalidHeader,
     InvalidProxyURL as InvalidProxyURL,
     ChunkedEncodingError as ChunkedEncodingError,
+    CacheMiss as CacheMiss,
     ContentDecodingError as ContentDecodingError,
     StreamConsumedError as StreamConsumedError,
     RetryError as RetryError,

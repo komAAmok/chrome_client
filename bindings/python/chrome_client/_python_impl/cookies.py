@@ -192,42 +192,62 @@ def morsel_to_cookie(morsel):
     )
 
 
-def _domain_covers(outer, inner):
-    """True when a cookie set for *outer* also applies to the host *inner*.
+def _normalise_domain(domain):
+    """Returns *domain* without the leading dot, so the two spellings compare.
 
-    The two empty-domain directions are written out separately because they
-    are separate decisions that happen to agree, and folding them back into
-    one `if not outer or not inner` would hide the one that costs something:
-    the second branch retires cookies the caller did scope.
+    ``cookielib`` keeps `.example.com` and `example.com` as different keys, and a
+    host-only cookie is stored with an empty domain. RFC 6265 does not
+    distinguish the first two, so every comparison here goes through this.
+    """
+    return domain[1:] if domain.startswith(".") else domain
+
+
+def _domain_covers(outer, inner):
+    """True when a cookie scoped to *outer* also applies to the host *inner*.
+
+    An empty domain means "whatever host the request is for", so it is a
+    different thing from a domain that happens to match: it covers every host.
+    The two directions are written out separately on purpose -- one of them is
+    free (``outer`` empty) and the other costs something (``inner`` empty).
     """
     if not outer:
-        # The new cookie names no domain, so it speaks about the name rather
-        # than about a host: it applies wherever that name applies, and it
-        # therefore covers every scope the old cookie could have had. This is
-        # what fixes jar.update({"a": "1"}) leaving a second entry behind.
+        # The new scope is "any host", which trivially covers the old one.
         return True
     if not inner:
-        # The old cookie names no domain while the new one does. An
-        # unspecified domain matches everything, so the two cannot be ranked
-        # as different scopes: the narrower write still retires the wider
-        # entry, which is the price of one value per name.
+        # The old cookie had no domain, so it is not a narrower scope than the
+        # new one; they describe the same name over overlapping hosts.
         return True
-    suffix = outer if outer.startswith(".") else "." + outer
-    return inner == outer or inner.endswith(suffix)
+    outer_n, inner_n = _normalise_domain(outer), _normalise_domain(inner)
+    if inner_n == outer_n:
+        return True
+    return inner_n.endswith("." + outer_n)
+
+
+def _same_path(left, right):
+    """True when two paths name the same cookie slot.
+
+    A cookie's identity is ``(domain, path, name)`` (RFC 6265 §5.3), so a write
+    at ``/`` and a stored cookie at ``/sub`` are *different* cookies and both
+    must survive. An earlier version used RFC 6265 §5.1.4's path-match here,
+    which answers "would this request carry that cookie" -- a different
+    question -- and made ``set("a", "root", path="/")`` silently delete
+    ``a`` at ``/sub``, the same class of loss the server-side split exists to
+    prevent.
+    """
+    return (left or "/") == (right or "/")
 
 
 def _replaces(existing, new):
     """True when *new* supersedes *existing* instead of sitting beside it.
 
-    Distinct scopes are legitimate: example.invalid and other.invalid may both
-    hold a cookie named "a", and RFC 6265 requires a request to each host to
-    send only its own. Only a scope the new cookie actually covers is replaced.
+    Used for caller assignments only (``set()`` / ``update()``). Two distinct
+    scopes are legitimate: ``example.invalid`` and ``other.invalid`` may each hold
+    a cookie named ``a``, and RFC 6265 requires a request to each host to send
+    only its own. So does the same host at two paths.
     """
     if not _domain_covers(new.domain, existing.domain):
         return False
-    if new.path and existing.path and not existing.path.startswith(new.path):
-        return False
-    return True
+    return _same_path(new.path, existing.path)
 
 
 class RequestsCookieJar(cookielib.CookieJar, MutableMapping):
@@ -247,25 +267,38 @@ class RequestsCookieJar(cookielib.CookieJar, MutableMapping):
 
     # -- mutation bookkeeping ------------------------------------------------
     def set_cookie(self, cookie, *args, **kwargs):
+        """Stores one cookie, exactly as ``cookielib`` would.
+
+        No retirement happens here on purpose. This method is also the path a
+        server's ``Set-Cookie`` takes (``extract_cookies`` -> ``set_cookie``), and
+        a cookie store must keep every distinct ``(domain, path, name)`` triple:
+        RFC 6265 §5.4 requires a request to ``/sub/x`` to send both
+        ``a=sub; Path=/sub`` and ``a=root; Path=/``. Applying the caller-assignment
+        rule here collapsed those two into one, and because the facade then
+        pushes the jar's ``Cookie`` line as a header whenever it disagrees with
+        the Core, the loss reached the wire: measured, a server that set both
+        paths got ``Cookie: a=root`` on the next ``/sub/x`` request.
+
+        ``set()`` and ``update()`` are caller assignments and do retire through
+        :meth:`_retire_replaced`; that is the difference between "the server told
+        me" and "I am setting this".
+        """
         if hasattr(cookie.value, "startswith") and cookie.value.startswith('"') \
                 and cookie.value.endswith('"'):
             cookie.value = cookie.value.replace('\\"', "").strip('"')
-        # Retirement lives here rather than in set(): set() and update() call
-        # set_cookie too, and a caller using the low-level API must get the same
-        # "a write wins" behaviour, or the rule would depend on which method the
-        # caller happened to pick.
-        self._retire_replaced(cookie)
         self.revision += 1
         return cookielib.CookieJar.set_cookie(self, cookie, *args, **kwargs)
 
     def _retire_replaced(self, cookie):
-        """Clears the entries *cookie* supersedes, leaving distinct scopes alone.
+        """Clears the entries a *caller assignment* supersedes.
 
-        Called from ``set_cookie`` so that ``set``, ``update`` and a direct
-        ``set_cookie`` all obey one rule. Clearing happens before the insert
-        because ``cookielib`` keys its store by ``(domain, path, name)``:
-        clearing after would delete the cookie that was just added whenever the
-        two triples match exactly.
+        Only ``set()`` and ``update()`` reach this. A server ``Set-Cookie`` goes
+        through :meth:`set_cookie`` and leaves every other scope intact, because
+        a store merges rather than assigns.
+
+        Clearing happens before the insert because ``cookielib`` keys its store
+        by ``(domain, path, name)``: clearing after would delete the cookie that
+        was just added whenever the two triples match exactly.
         """
         for existing in list(iter(self)):
             if existing.name != cookie.name:
@@ -342,8 +375,10 @@ class RequestsCookieJar(cookielib.CookieJar, MutableMapping):
             cookie = morsel_to_cookie(value)
         else:
             cookie = create_cookie(name, value, **kwargs)
-        # set_cookie does the retirement, so this method and a direct call to it
-        # cannot drift apart.
+        # A caller assignment retires the scopes it covers; a server Set-Cookie
+        # (which reaches set_cookie through extract_cookies) does not, because a
+        # store merges rather than assigns. See set_cookie's docstring.
+        self._retire_replaced(cookie)
         self.set_cookie(cookie)
         return cookie
     def iterkeys(self):

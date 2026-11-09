@@ -385,6 +385,11 @@ redirect_cap = int(redirect_match.group(1))
 redirect_line = redirect_text[:redirect_match.start()].count(chr(10)) + 1
 
 # (path, regex, human description of the sentence the regex anchors on)
+#
+# v0.2.9 changed the contract: every numeric value is refused, so the carriers
+# now assert *that* instead of "must be below N". The number still has to appear
+# because None means "Chromium's own N", and a stale N would misdescribe the
+# limit the caller inherits.
 redirect_carriers = (
     ("docs/COMPATIBILITY_BOUNDARY.md",
      r"max_redirects` tighter than Chromium's " + str(redirect_cap),
@@ -395,18 +400,12 @@ redirect_carriers = (
     ("docs/COMPATIBILITY_BOUNDARY.md",
      r"ceiling is \*\*" + str(redirect_cap) + r" hops\*\*",
      "the 'ceiling is N hops' sentence"),
-    ("docs/COMPATIBILITY_BOUNDARY.md",
-     r"at or above " + str(redirect_cap) + r" raises",
-     "the fail-closed sentence"),
     ("README.md",
-     r"必须小于 " + str(redirect_cap),
-     "the Chinese 'must be below N' sentence"),
+     r"只能是 `None`（= Chromium 在一个 `URLRequest` 内的上限 " + str(redirect_cap),
+     "the Chinese 'only None, Chromium's N' sentence"),
     ("README.en.md",
-     r"must be below " + str(redirect_cap),
-     "the English 'must be below N' sentence"),
-    ("README.en.md",
-     r"stops at " + str(redirect_cap) + r" hops",
-     "the English 'stops at N hops' sentence"),
+     r"must be `None` \(Chromium stops at " + str(redirect_cap) + r" hops",
+     "the English 'must be None, stops at N hops' sentence"),
 )
 for carrier, pattern, what in redirect_carriers:
     text = (root / carrier).read_text()
@@ -421,11 +420,12 @@ for carrier, pattern, what in redirect_carriers:
 # the mirror carries a *different* ceiling, which would mean the copy was edited
 # instead of regenerated.
 mirror_text = (root / "bindings/python36/README.md").read_text()
-if f"必须小于 {redirect_cap}" not in mirror_text:
+if f"只能是 `None`（= Chromium 在一个 `URLRequest` 内的上限 {redirect_cap}" not in mirror_text:
     raise SystemExit(
         "bindings/python36/README.md: the mirrored README does not state "
-        f"'必须小于 {redirect_cap}'; copy README.md over it (audit-readme.sh enforces "
-        "byte equality, so this only fires when the mirror was edited in place)")
+        f"'只能是 None（= Chromium ... 上限 {redirect_cap}'; copy README.md over it "
+        "(audit-readme.sh enforces byte equality, so this only fires when the "
+        "mirror was edited in place)")
 print(f"ok redirect ceiling: CHROMIUM_MAX_REDIRECTS={redirect_cap} "
       f"({redirect_src}:{redirect_line}) == {len(redirect_carriers)} prose carriers")
 PY

@@ -112,7 +112,11 @@ cargo fmt --all -- --check
 cargo check --workspace --all-targets
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace --all-targets
-cargo test --manifest-path bindings/python36/Cargo.toml --locked
+# bindings/python36 contains no #[test] function, so a cargo test on it compiles
+# and passes unconditionally. The artifact is what needs checking: it must still
+# load, still report the ABI version the header declares, still be a real abi3
+# build, and still drive the shared facade for one live request.
+python3 tools/audit-python36-artifact.py
 python3 -m unittest discover -s bindings/python/tests -p "test_*.py"
 ```
 

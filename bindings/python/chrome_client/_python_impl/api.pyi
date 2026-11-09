@@ -139,8 +139,8 @@ def session(
         cert: Rejected. Client certificates need a Core setting ABI v8 does not expose.
         stream: Default for the per-request ``stream=`` flag.
         hooks: ``{"response": callable}`` hooks.
-        max_redirects: Cap on redirects. Below Chromium's own cap of 20 the hops are
-            driven from Python so the caller's limit is honoured.
+        max_redirects: Must be ``None``. Chromium owns the 20-hop ceiling and ABI v8
+            cannot lower it, so a numeric cap raises ``UnsupportedFeature``.
         trust_env: Read ``HTTP_PROXY``/``HTTPS_PROXY``/``NO_PROXY``,
             ``REQUESTS_CA_BUNDLE``/``CURL_CA_BUNDLE`` and ``.netrc``.
         allow_redirects: Default redirect policy.
@@ -253,8 +253,8 @@ def async_session(
         cert: Rejected. Client certificates need a Core setting ABI v8 does not expose.
         stream: Default for the per-request ``stream=`` flag.
         hooks: ``{"response": callable}`` hooks.
-        max_redirects: Cap on redirects. Below Chromium's own cap of 20 the hops are
-            driven from Python so the caller's limit is honoured.
+        max_redirects: Must be ``None``. Chromium owns the 20-hop ceiling and ABI v8
+            cannot lower it, so a numeric cap raises ``UnsupportedFeature``.
         trust_env: Read ``HTTP_PROXY``/``HTTPS_PROXY``/``NO_PROXY``,
             ``REQUESTS_CA_BUNDLE``/``CURL_CA_BUNDLE`` and ``.netrc``.
         allow_redirects: Default redirect policy.

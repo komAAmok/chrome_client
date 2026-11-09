@@ -345,21 +345,38 @@ class SessionStateTests(Base):
         self.assertEqual(jar.cookie_header("http://example.invalid/"), "a=scoped")
 
 
-    def test_set_cookie_retires_replaced_entry(self):
-        """A direct set_cookie must obey the same rule as set() and update().
+    def test_set_cookie_merges_like_a_store(self):
+        """A direct ``set_cookie`` is a store insert, not a caller assignment.
 
-        The low-level API used to append a second entry whenever the
-        (domain, path, name) triple differed, so a caller reaching for it got
-        the pre-fix behaviour back.
+        It is the path a server's ``Set-Cookie`` takes (``extract_cookies`` ->
+        ``set_cookie``), and a store must keep every distinct scope: RFC 6265
+        §5.4 requires a request to ``/sub/x`` to send both ``a=sub; Path=/sub``
+        and ``a=root; Path=/``. Retiring here collapsed them, and because the
+        facade pushes the jar's ``Cookie`` line whenever it disagrees with the
+        Core, the loss reached the wire. ``set()`` / ``update()`` still retire:
+        see ``test_cookie_update_replaces_same_name``.
         """
         jar = chrome_client.CookieJar()
         jar.set_cookie(chrome_client.create_cookie(
             "a", "server", domain=".example.com", path="/"))
         jar.set_cookie(chrome_client.create_cookie("a", "1"))
-        self.assertEqual(len(list(jar)), 1)
-        self.assertEqual(jar["a"], "1")
-        self.assertEqual(jar.cookie_header("http://example.com/"), "a=1")
+        self.assertEqual(len(list(jar)), 2)
+        self.assertIn("a=server", jar.cookie_header("http://example.com/"))
+        self.assertIn("a=1", jar.cookie_header("http://example.com/"))
 
+    def test_a_server_may_keep_two_paths_of_one_name(self):
+        """RFC 6265 §5.4: / and /sub are two cookies and both are sent.
+
+        Measured before the fix: the jar collapsed them to the last one and the
+        next request carried ``Cookie: a=root`` instead of ``a=sub; a=root``.
+        """
+        jar = chrome_client.CookieJar()
+        jar.absorb_set_cookie("http://h.invalid/sub/x",
+                              ["a=sub; Path=/sub", "a=root; Path=/"])
+        self.assertEqual(len(list(jar)), 2)
+        self.assertEqual(jar.cookie_header("http://h.invalid/sub/x"),
+                         "a=sub; a=root")
+        self.assertEqual(jar.cookie_header("http://h.invalid/other"), "a=root")
     def test_set_cookie_keeps_distinct_domains(self):
         """Retirement is scope-aware no matter which method wrote the cookie."""
         jar = chrome_client.CookieJar()
@@ -656,11 +673,27 @@ class RequestsSurfaceTests(Base):
             chrome_client.Session(impersonate="chrome_151",
                                   user_agent="Conflicting/1.0").get(self.url)
 
-    def test_timeout_tuple_is_accepted(self):
+    def test_timeout_tuple_with_one_deadline_is_accepted(self):
+        """A pair whose halves agree is one deadline, so it is representable."""
         with chrome_client.Session() as session:
-            self.assertEqual(session.get(self.url, timeout=(1.0, 5.0)).status_code, 200)
+            self.assertEqual(session.get(self.url, timeout=(5.0, 5.0)).status_code, 200)
             with self.assertRaises(chrome_client.Timeout):
                 session.get(self.url + "slow", timeout=(0.01, 0.01))
+
+    def test_timeout_tuple_with_two_deadlines_fails_closed(self):
+        """ABI v8 has one deadline, so the pair cannot be honoured faithfully.
+
+        Measured before the fix, against a server that accepts and never
+        answers: ``timeout=(0.2, 10)`` waited 10.0s where requests waits 0.2s,
+        and came back as ``Timeout`` rather than ``ConnectTimeout``. Taking the larger
+        half silently deletes the only thing the pair is for.
+        """
+        import time as _time
+        with chrome_client.Session() as session:
+            started = _time.monotonic()
+            with self.assertRaises(chrome_client.UnsupportedFeature):
+                session.get(self.url, timeout=(0.2, 10))
+            self.assertLess(_time.monotonic() - started, 1.0)
 
     def test_params_encoding(self):
         with chrome_client.Session() as session:
@@ -766,13 +799,23 @@ class RedirectTests(Base):
             self.assertEqual(response.history, [])
             self.assertEqual(response.next.url, self.url + "redirect/0")
 
-    def test_max_redirects_is_enforced(self):
+    def test_a_numeric_max_redirects_fails_closed(self):
+        """ABI v8 cannot lower Chromium's ceiling, so a cap is refused.
+
+        The facade used to drive the hops from Python to make a tighter cap
+        true, which reimplemented redirect semantics in the binding layer: the
+        previous hop's Set-Cookie was not sent, Referrer-Policy was not applied,
+        redirect_count came back 0, and a 302 turned a PUT into a GET where
+        Chromium only rewrites POST. Chromium owns the number now, and anything
+        it cannot honour is an error rather than a different behaviour.
+        """
         with chrome_client.Session() as session:
-            with self.assertRaises(chrome_client.TooManyRedirects):
-                session.get(self.url + "redirect/5", max_redirects=2)
-            response = session.get(self.url + "redirect/2", max_redirects=5)
+            with self.assertRaises(chrome_client.UnsupportedFeature):
+                session.get(self.url + "redirect/2", max_redirects=5)
+            response = session.get(self.url + "redirect/2")
             self.assertEqual(response.status_code, 200)
             self.assertEqual(len(response.history), 2)
+            self.assertEqual(response.redirect_count, 2)
 
     def test_resolve_redirects_generator(self):
         with chrome_client.Session() as session:
@@ -1256,6 +1299,22 @@ class ConcurrencyTests(Base):
         self.assertEqual(cache._pid, os.getpid())
 
 
+class SeedCookieHandler(BaseHTTPRequestHandler):
+    """Seeds one cookie into the Core store so a later handshake can disagree."""
+
+    protocol_version = "HTTP/1.1"
+
+    def do_GET(self):
+        body = b"ok"
+        self.send_response(200)
+        self.send_header("Set-Cookie", "sid=core; Path=/")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, *_args):
+        pass
+
 class WebSocketServer(object):
     """Minimal WebSocket server that records handshake headers.
 
@@ -1450,6 +1509,41 @@ class WebSocketTests(unittest.TestCase):
                 socket_.recv_str()
         self.assertEqual(self.server.handshakes[-1]["headers"]["cookie"], "sid=WS")
 
+    def test_handshake_cookie_follows_the_caller_jar(self):
+        """A jar edit must reach the handshake, not lose to the Core store.
+
+        ``CookieMonster`` owns the ``Cookie`` header and re-attaches what it
+        already holds, so stuffing the jar value into an extra header was not
+        enough: measured before the fix, a rewritten jar still sent the store's
+        old value (``sid=core`` while the jar held ``sid=caller``), and a
+        cleared jar still sent the deleted cookie. The handshake now picks its
+        engine the same way an HTTP request does.
+        """
+        # A plain HTTP server on the same host seeds the Core cookie store, so
+        # the handshake has something to disagree with.
+        http = ThreadingHTTPServer(("127.0.0.1", 0), SeedCookieHandler)
+        self.addCleanup(http.server_close)
+        self.addCleanup(http.shutdown)
+        threading.Thread(target=http.serve_forever, daemon=True).start()
+        seed = "http://127.0.0.1:%d/seed" % http.server_address[1]
+
+        with chrome_client.Session() as session:
+            session.get(seed)
+            session.cookies.set("sid", "caller", domain="127.0.0.1", path="/")
+            with session.websocket(self.server.url) as socket_:
+                socket_.recv_str()
+        self.assertEqual(self.server.handshakes[-1]["headers"]["cookie"],
+                         "sid=caller")
+
+        session = chrome_client.Session()
+        try:
+            session.get(seed)
+            session.cookies.clear()
+            with session.websocket(self.server.url) as socket_:
+                socket_.recv_str()
+            self.assertNotIn("cookie", self.server.handshakes[-1]["headers"])
+        finally:
+            session.close()
     def test_failures_name_the_net_error(self):
         with chrome_client.Session() as session:
             with self.assertRaises(chrome_client.WebSocketError) as caught:
@@ -1759,6 +1853,184 @@ def _fetch_in_subprocess(url):
 
 
 
+def _import_native_loader():
+    """Returns the facade's _native module, not the extension it exposes.
+
+    ``chrome_client._python_impl.__init__`` does ``from ._native import native as
+    _native``, so ``chrome_client._python_impl._native`` is the loaded extension.
+    The loader module itself has to be imported by path.
+    """
+    import importlib.util as _ilu
+    import pathlib as _pathlib
+
+    path = (_pathlib.Path(chrome_client.__file__).parent / "_python_impl"
+            / "_native.py")
+    spec = _ilu.spec_from_file_location("_cc_native_loader", str(path))
+    module = _ilu.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+class NativeModuleSelectionTests(unittest.TestCase):
+    """The facade must accept either extension, not only the one it prefers."""
+
+    def test_both_module_names_are_known(self):
+        """Both wheels declare the same requires-python, so pip may install either.
+
+        Measured before the fix: a cp36-abi3 wheel installed into a 3.12 venv
+        imported fine once the legacy name was accepted, and failed with "is not
+        installed" when the facade only asked for ``chrome_client_native``.
+        """
+        _native = _import_native_loader()
+
+        self.assertNotEqual(_native.MODULE_NAME, _native.FALLBACK_MODULE_NAME)
+        self.assertEqual(
+            {_native.MODULE_NAME, _native.FALLBACK_MODULE_NAME},
+            {_native.LEGACY_MODULE_NAME, _native.MODERN_MODULE_NAME})
+
+    def test_the_preferred_name_matches_the_interpreter(self):
+        _native = _import_native_loader()
+
+        expected = (_native.LEGACY_MODULE_NAME if sys.version_info < (3, 9)
+                    else _native.MODERN_MODULE_NAME)
+        self.assertEqual(_native.MODULE_NAME, expected)
+
+    def test_both_names_resolve_to_a_loaded_module(self):
+        """Neither name may be a guess: the one this interpreter wants is loaded."""
+        _native = _import_native_loader()
+
+        self.assertIn(_native.MODULE_NAME, sys.modules)
+        self.assertEqual(sys.modules[_native.MODULE_NAME].abi_version,
+                         chrome_client.abi_version())
+
+class CoreOwnedHeaderTests(unittest.TestCase):
+    """A removal the Core cannot honour must fail, not silently send the value."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.server = ThreadingHTTPServer(("127.0.0.1", 0), _EchoHeaderHandler)
+        threading.Thread(target=cls.server.serve_forever, daemon=True).start()
+        cls.base = "http://127.0.0.1:%d/" % cls.server.server_address[1]
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.server.shutdown()
+        cls.server.server_close()
+
+    def test_removing_the_user_agent_fails_closed(self):
+        """Measured before the fix: the profile UA was sent anyway, no error."""
+        with chrome_client.Session(impersonate="chrome_124") as session:
+            with self.assertRaises(chrome_client.UnsupportedFeature) as caught:
+                session.get(self.base, headers={"User-Agent": None})
+        self.assertIn("user-agent", str(caught.exception).lower())
+
+    def test_removing_accept_encoding_fails_closed(self):
+        with chrome_client.Session(impersonate="chrome_124") as session:
+            with self.assertRaises(chrome_client.UnsupportedFeature):
+                session.get(self.base, headers={"Accept-Encoding": None})
+
+    def test_several_removals_are_all_named(self):
+        with chrome_client.Session(impersonate="chrome_124") as session:
+            with self.assertRaises(chrome_client.UnsupportedFeature) as caught:
+                session.get(self.base, headers={"User-Agent": None,
+                                                "Accept-Encoding": None})
+        message = str(caught.exception)
+        self.assertIn("user-agent", message)
+        self.assertIn("accept-encoding", message)
+
+    def test_a_caller_owned_removal_still_works(self):
+        """Only Core-owned names fail; everything else keeps requests semantics."""
+        with Session(headers={"X-Gone": "yes"}) as session:
+            session.get(self.base, headers={"X-Gone": None})
+        self.assertNotIn("X-Gone", _ECHOED[-1])
+
+    def test_overriding_a_core_owned_header_still_works(self):
+        with chrome_client.Session(impersonate="chrome_124") as session:
+            session.get(self.base, headers={"User-Agent": "mine/1.0"})
+        self.assertEqual(_ECHOED[-1]["User-Agent"], "mine/1.0")
+
+
+_ECHOED = []
+
+Session = chrome_client.Session
+
+
+class _EchoHeaderHandler(BaseHTTPRequestHandler):
+    """Records the request headers so a test can assert what reached the wire."""
+
+    protocol_version = "HTTP/1.1"
+
+    def do_GET(self):
+        _ECHOED.append({name: value for name, value in self.headers.items()})
+        body = b"ok"
+        self.send_response(200)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, *_args):
+        pass
+
+class NetErrorMappingTests(unittest.TestCase):
+    """Every declared exception class must have an entry that reaches it."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.server = ThreadingHTTPServer(("127.0.0.1", 0), _NetErrorHandler)
+        threading.Thread(target=cls.server.serve_forever, daemon=True).start()
+        cls.base = "http://127.0.0.1:%d" % cls.server.server_address[1]
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.server.shutdown()
+        cls.server.server_close()
+
+    def test_a_failed_content_decoding_raises_ContentDecodingError(self):
+        """-330 is what GzipSourceStream returns when inflate fails.
+
+        The table only had -371 (decoder creation), so every real decoding
+        failure surfaced as ``ConnectionError`` and ``except ContentDecodingError`` was
+        dead code.
+        """
+        with chrome_client.Session() as session:
+            with self.assertRaises(chrome_client.ContentDecodingError) as caught:
+                session.get(self.base + "/bad-gzip", timeout=5)
+        self.assertIn("-330", str(caught.exception))
+
+    def test_only_if_cached_without_an_entry_raises_CacheMiss(self):
+        """-400 used to map to None, so the miss was a bare RequestException."""
+        with chrome_client.Session() as session:
+            with self.assertRaises(chrome_client.CacheMiss) as caught:
+                session.get(self.base + "/cached", cache_mode="only_if_cached")
+        self.assertIn("-400", str(caught.exception))
+
+    def test_only_if_cached_with_an_entry_succeeds(self):
+        with chrome_client.Session() as session:
+            session.get(self.base + "/cached")
+            again = session.get(self.base + "/cached", cache_mode="only_if_cached")
+        self.assertEqual(again.status_code, 200)
+
+
+class _NetErrorHandler(BaseHTTPRequestHandler):
+    """Serves one badly-encoded body and one cacheable one."""
+
+    protocol_version = "HTTP/1.1"
+
+    def do_GET(self):
+        if self.path == "/bad-gzip":
+            body = b"this-is-not-gzip-and-here-is-padding"
+            self.send_response(200)
+            self.send_header("Content-Encoding", "gzip")
+        else:
+            body = b"ok"
+            self.send_response(200)
+            self.send_header("Cache-Control", "max-age=600")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, *_args):
+        pass
+
 class SilentLossRegressionTests(unittest.TestCase):
     """Regressions for defects that returned a wrong result without raising.
 
@@ -1783,19 +2055,18 @@ class SilentLossRegressionTests(unittest.TestCase):
     def test_async_streaming_keeps_the_body_without_native_redirects(self):
         """A streaming state buffers into chunks, so reading body gave b"".
 
-        Two triggers are covered: allow_redirects=False, and a max_redirects
-        tighter than Chromium's own limit (which also drives the hops from
-        Python). Only the second is easy to miss.
+        Forced by allow_redirects=False, which is now the only way to hold a
+        request in the Core's manual redirect mode: a numeric max_redirects is
+        refused up front, so it cannot reach this state any more.
         """
         url = self.base + "/bytes/10918"
 
         async def run():
             async with chrome_client.AsyncSession() as session:
-                for kwargs in ({"allow_redirects": False}, {"max_redirects": 5}):
-                    response = await session.get(url, stream=True, **kwargs)
-                    body = await response.acontent()
-                    self.assertEqual(len(body), 10918, kwargs)
-                    await response.aclose()
+                response = await session.get(url, stream=True, allow_redirects=False)
+                body = await response.acontent()
+                self.assertEqual(len(body), 10918)
+                await response.aclose()
         asyncio.run(run())
 
     def test_sync_and_async_streaming_agree(self):

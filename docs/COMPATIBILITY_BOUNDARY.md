@@ -124,47 +124,51 @@ carries domain, path, secure and expiry metadata and `get_dict(domain=...)`
 answers from it. Cookie state survives a proxy or profile change because the jar
 is re-sent to the new Engine.
 
-### Cookies: a write replaces, a merge does not
+### Cookies: a caller write retires, a server write merges
 
-`jar.set(name, value)` and `jar.update({...})` are caller assignments, so a write
-of a name that already exists replaces the stored cookie instead of adding a second
-one beside it. `cookielib.CookieJar.set_cookie` only overwrites when the
-`(domain, path, name)` triple matches exactly, and upstream requests inherits that:
-measured against requests 2.34.2, a jar holding `a` for `.example.com` plus a
-caller-written `a` for the default empty domain sends `Cookie: a=server; a=1` and
-raises `CookieConflictError` on `jar["a"]`. Neither the read nor the outgoing header
-agrees with the write, which for a setter is the wrong answer.
+The jar has two kinds of writer and they must not share one rule.
 
-The rule: **an unspecified domain on either side makes the two scopes the same
-cookie**, so the write wins. Two consequences, both deliberate:
+**Caller writes retire.** ``jar.set(name, value)`` and ``jar.update({...})`` are
+assignments: a write of a name that already exists replaces the stored cookie
+instead of adding a second one beside it. ``cookielib.CookieJar.set_cookie`` only
+overwrites when the ``(domain, path, name)`` triple matches exactly, and upstream
+requests inherits that: measured against requests 2.34.2, a jar holding ``a`` for
+``.example.com`` plus a caller-written ``a`` for the default empty domain sends
+``Cookie: a=server; a=1`` and raises ``CookieConflictError`` on ``jar["a"]``.
+Neither the read nor the outgoing header agrees with the write, which for a
+setter is the wrong answer.
 
 | write | what it replaces |
 | --- | --- |
-| `set("a", "1")` / `update({"a": "1"})` | every entry named `a`, whatever its domain — this is the reported defect |
-| `set("a", "1", domain="example.invalid")` | the entries that domain covers **and** any domain-less `a`, because an empty domain matches everything |
+| ``set("a", "1")`` / ``update({"a": "1"})`` | every entry named ``a``, whatever its domain |
+| ``set("a", "1", domain="example.invalid")`` | the entries that domain covers **and** any domain-less ``a`` |
 
 A write scoped to one domain still leaves a *different* domain alone:
-`example.invalid` and `other.invalid` keep their own `a`, and RFC 6265 requires a
+``example.invalid`` and ``other.invalid`` keep their own ``a``, and RFC 6265 requires a
 request to each to send only its own. A parent scope absorbs a narrower one
-(`.example.com` retires `sub.example.com`), while the narrow write does not retire
+(``.example.com`` retires ``sub.example.com``), while the narrow write does not retire
 the parent, which still covers hosts the new cookie never claimed.
 
-Paths are ranked, not collapsed: `/` and `/sub` are two cookies, RFC 6265 §5.4
-requires both to be sent to a `/sub/...` URL, and neither write retires the other
-unless its path prefix covers it.
+**Server writes merge.** ``Set-Cookie`` reaches the jar through ``extract_cookies`` ->
+``set_cookie``, and it must keep every distinct ``(domain, path, name)`` entry,
+because a request to ``/sub/x`` is required to carry both ``a=sub; Path=/sub`` and
+``a=root; Path=/``. An earlier revision applied the caller rule here too and collapsed
+the two, and because the facade pushes the jar's ``Cookie`` line whenever it
+disagrees with the Core, the loss reached the wire: measured, the next
+``/sub/x`` request carried ``Cookie: a=root`` and the ``Path=/sub`` cookie was gone
+(it is also a regression against v0.2.8, which kept both).
 
-The cost of this rule is that a domain-less write is a statement about the name, not
-about a host, so every host-scoped `a` is retired along with it. The alternative —
-leaving them in place — is exactly the behaviour that made the write unreadable and
-sent the value twice.
+Two entry points, two rules: ``set()`` and ``update()`` call
+``_retire_replaced``; a bare ``set_cookie`` inserts, exactly as ``cookielib`` does.
+Path identity is the slot: ``/su`` never retires ``/sub``, and ``/`` never retires ``/sub`` either.
+An RFC 6265 §5.1.4 path-match answers "would this request carry that cookie",
+which is a different question, and using it here made ``set("a", "root", path="/")``
+silently delete the cookie at ``/sub``.
 
-One rule, three entry points. `set()`, `update()` and a direct `set_cookie()` all
-retire through the same helper, so a caller cannot get the old behaviour back by
-picking the lower-level method. That covers the jar-to-jar merge above too: a
-`Set-Cookie` that updates a name the jar already holds replacing the older entry is
-what RFC 6265 §5.3 requires of a cookie store, and it was already true of
-`absorb_set_cookie` before this rule existed for caller writes.
-
+The cost of the caller rule is that a domain-less write is a statement about the
+name, not about a host, so every host-scoped ``a`` is retired along with it. The
+alternative -- leaving them in place -- is what made the write unreadable and sent
+the value twice.
 ### curl_cffi 参数审计：哪些在本项目里结构上无意义
 
 curl_cffi 同时模拟 Chrome / Firefox / Safari，所以它的 `extra_fp` 里有些旋钮是为**别的浏览器**
@@ -266,6 +270,47 @@ ABI v9 item in `docs/NEXT_STEPS.md`.
 | `max_recv_speed` | Chromium owns transfer pacing |
 | `referer=` or a `Referer` header | Routed to `URLRequest::SetReferrer`, so it is sent like a real Chrome's |
 | `impersonate` outside `chrome_86`–`chrome_157`, or a non-Chromium family | The Core registers Chromium desktop profiles only |
+
+### Headers: what a caller can add, override and remove
+
+A caller may add any header, and may override any header the Core itself would
+send. A caller may **not** remove one the Core owns: ``SetExtraRequestHeaders``
+only adds, so there is no ABI call that deletes ``User-Agent``, ``Accept-Encoding``
+``Accept-Language``, ``Host``, ``Connection`` or the body-framing headers.
+
+An earlier revision accepted ``headers={"User-Agent": None}`` and sent the profile UA
+anyway, with no error. Measured, both of these left the original value on the
+wire:
+
+```
+headers={"User-Agent": None}       -> User-Agent: Mozilla/5.0 (X11; Linux x86_64) ...
+headers={"Accept-Encoding": None}  -> Accept-Encoding: gzip, deflate, br, zstd
+```
+
+That is the degradation this project refuses elsewhere, so the removal now
+raises ``UnsupportedFeature`` naming every offending header. Everything else keeps
+requests semantics: removing a caller-owned header still removes it, and
+overriding a Core-owned one still overrides it (``headers={"User-Agent": "mine/1.0"}``
+reaches the wire as ``mine/1.0``).
+
+### Timeouts: one deadline, and a pair that cannot be split
+
+ABI v8 carries a single deadline per request, and Chromium owns both the
+connect and the read side of it. A ``timeout=(connect, read)`` pair therefore has no
+faithful representation.
+
+An earlier revision took ``max(connect, read)``, which silently deleted the only thing
+the pair is for. Measured against a server that accepts and never answers:
+
+| call | requests waits | this build used to wait |
+| --- | --- | --- |
+| ``timeout=(0.2, 10)`` | 0.2s (``ConnectTimeout``) | 10.0s (``Timeout``) |
+| ``timeout=(10, 0.2)`` | 0.2s (``ReadTimeout``) | 10.0s (``Timeout``) |
+
+A pair with two *different* values now raises ``UnsupportedFeature``; a pair whose
+halves agree is one deadline by definition and is accepted. Silently honouring
+the larger half is the degradation this project refuses elsewhere
+(``max_redirects``, ``extra_fp``).
 
 ### Certificate errors
 
@@ -464,10 +509,19 @@ stacking on it: `retry=2` means three attempts however the request failed.
 `allow_redirects=True` lets Chromium follow inside one `URLRequest`, which
 preserves the original request's site-for-cookies and is the higher-fidelity
 path; the facade reconstructs `Response.history` and the post-redirect URL from
-the per-hop redirect events the Core reports. Because Chromium enforces its own
-limit rather than the caller's, a `max_redirects` tighter than Chromium's 20
-makes the facade re-issue each hop from Python instead. `allow_redirects=False`
-uses manual redirect mode: the Core defers the hop and the facade returns the 3xx.
+the per-hop redirect events the Core reports. `allow_redirects=False` uses
+manual redirect mode: the Core defers the hop and the facade returns the 3xx.
+
+A `max_redirects` tighter than Chromium's 20 is **refused**, and so is any
+other numeric value. The facade used to re-issue each hop
+from Python to make a tighter cap true, which put redirect semantics in the
+binding layer where they drifted from Chromium's four measurable ways: a
+`Referrer-Policy` on the 302 was not applied to the next hop, the previous
+hop's `Set-Cookie` was not sent, `Response.redirect_count` came back 0, and a
+302 turned a `PUT` into a `GET` although `net/url_request/redirect_info.cc`
+only rewrites `POST`. Since ABI v8 cannot lower
+`net::URLRequest::kMaxRedirects`, the only honest answer is
+`UnsupportedFeature`; `max_redirects=None` means "Chromium's own ceiling".
 
 The facade's `max_redirects` default is `None`, which means "adopt Chromium's 20"
 -- **not** requests' 30. `requests.models.DEFAULT_REDIRECT_LIMIT` is still 30 and
@@ -483,8 +537,11 @@ this build does not enforce, and the lie would surface later as an unexplained
 
 ### Response fields the ABI cannot provide
 
-- `reason` comes from the standard status table, because ABI v8 carries only the
-  numeric status. A non-standard reason phrase is not visible.
+- `reason` is read from the status line the Core returns, so a non-standard
+  phrase survives: a server answering `200 Totally Custom` is reported verbatim.
+  The standard table is the fallback for a status line that carries no phrase at
+  all. (An earlier revision of this document claimed the opposite -- that the
+  phrase was not visible -- which the measurement above contradicts.)
 - `http_version` is `None` unless the status line proves the protocol. ABI v8
   reports a numeric status plus the header block, and Chromium normalizes every
   HTTP/2 and HTTP/3 response onto an `HTTP/1.1` status line
@@ -496,6 +553,20 @@ this build does not enforce, and the lie would surface later as an unexplained
   needs a new ABI field; it is tracked in `NEXT_STEPS.md`.
 - `Response.raw` is a small file-like view over the Core body stream, not a
   urllib3 `HTTPResponse`.
+
+- **Truncated compressed bodies are not an error.** A `Content-Encoding: gzip` body
+  that ends early yields `200` with whatever decompressed, matching requests byte for
+  byte: 20 bytes of a 70-byte gzip stream give an empty body, 40 give 12 bytes,
+  60 give 6726. Chromium's `GzipSourceStream` treats end-of-input in
+  `STATE_GZIP_FOOTER` as success and requests behaves the same way, so this is the
+  faithful answer rather than a defect to be "fixed" into an exception.
+- **A body that is not its declared encoding raises `ContentDecodingError`.**
+  Chromium reports `ERR_CONTENT_DECODING_FAILED` (-330); the table used to carry only
+  -371 (decoder *creation* failure), so every real decoding error surfaced as
+  `ConnectionError` and `except ContentDecodingError` never matched.
+- `cache_mode="only_if_cached"` raises `CacheMiss` when the entry is absent,
+  which is `ERR_CACHE_MISS` (-400). It used to map to no class, so the miss arrived as a
+  bare `RequestException` and could not be caught specifically.
 
 ### User-Agent platform token
 
@@ -524,3 +595,16 @@ only helps a child which reaches Python at all.
 Chromium allows at most 6 concurrent HTTP/1.1 connections per host group. That
 bounds per-host throughput regardless of how many requests are outstanding, and
 it is browser semantics rather than a binding limit.
+
+`max_clients` bounds in-flight requests, but only the ones whose body the facade
+reads itself: a `stream=True` request returns at the headers and then streams
+outside the gate. Measured with `max_clients=1` and two concurrent streaming
+requests, the server saw both at once. The gate is a bound on buffered responses,
+not on sockets, and the six-connection ceiling above is what actually limits
+per-host concurrency.
+
+An engine is torn down with its `Session`: `close()` is the intended path and
+`__del__` is only a safety net. A session that is never closed leaves one
+Chromium `URLRequestContext` resident -- measured, thirty unclosed sessions hold
+about 6 MiB and six descriptors against a flat baseline for closed ones -- so
+use `with Session(...)` or call `close()`.

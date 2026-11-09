@@ -177,17 +177,25 @@ class RedirectPolicyTests(Base):
             response = session.get(self.base + "redirect/1")
             self.assertEqual(response.status_code, 302)
 
-    def test_session_max_redirects_is_honoured(self):
-        """Measured before the fix: 200 over ten hops with a cap of five."""
-        with chrome_client.Session(max_redirects=5) as session:
-            with self.assertRaises(chrome_client.TooManyRedirects):
-                session.get(self.base + "redirect/10")
+    def test_a_numeric_cap_is_refused_at_construction(self):
+        """A cap the Core cannot lower is an error, not a Python-side hop loop."""
+        with self.assertRaises(chrome_client.UnsupportedFeature):
+            chrome_client.Session(max_redirects=5)
 
-    def test_a_cap_below_chromiums_ceiling_still_follows(self):
-        with chrome_client.Session(max_redirects=19) as session:
+    def test_chromiums_own_ceiling_still_follows(self):
+        """No cap means Chromium's 20 hops, driven entirely by the Core."""
+        with chrome_client.Session() as session:
             response = session.get(self.base + "redirect/3")
             self.assertEqual(response.status_code, 200)
             self.assertEqual(len(response.history), 3)
+            self.assertEqual(response.redirect_count, 3)
+
+    def test_chromiums_ceiling_is_enforced_by_the_core(self):
+        """A ten-hop chain without a caller cap passes through untouched."""
+        with chrome_client.Session() as session:
+            response = session.get(self.base + "redirect/10")
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(len(response.history), 10)
 
     def test_a_cap_at_chromiums_ceiling_fails_closed(self):
         """A cap of 30 cannot be honoured; clamping it to 20 would be a lie.

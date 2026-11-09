@@ -56,7 +56,8 @@ pyproject，**漏掉了 Core 自己这一份**。
 **规则**：一个状态对象有两条缓冲路径时，任何出口都必须先问「另一条路径里有没有数据」。
 新增读取点时不要假设模式。
 
-**门禁**：回归测试覆盖 `allow_redirects=False` 与 `max_redirects=5` 两种触发条件，
+**门禁**：回归测试覆盖 `allow_redirects=False`（唯一能进入 manual 模式的入口；
+`max_redirects` 的数值形式已在 0.2.9 改为拒绝，见 `docs/COMPATIBILITY_BOUNDARY.md`），
 同步/异步各测一次。
 
 ---

@@ -38,6 +38,14 @@ Repository = "https://github.com/komAAmok/chrome_client"
 
 [tool.maturin]
 manifest-path = "Cargo.toml"
+# python-source points at bindings/python, which is where the whole facade lives:
+# this wheel and the cp39 one ship the same Python, and only the native module
+# differs. The `include` globs below match nothing next to this file and are then
+# retried relative to `python-source` (maturin config docs: "Glob patterns are
+# resolved relative to the directory containing pyproject.toml. When using
+# python-source, patterns are also tried relative to the python-source directory if
+# they don't match relative to pyproject.toml"), which is where they resolve:
+# 20 .py, 47 .pyi and py.typed under bindings/python/chrome_client.
 python-source = "../python"
 include = [
     { path = "chrome_client/**/*.py", format = "wheel" },

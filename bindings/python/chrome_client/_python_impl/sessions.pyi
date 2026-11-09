@@ -284,8 +284,9 @@ class _StreamFlag(int):
                 ``chrome_<major>`` name or a curl_cffi ``chrome<major>`` alias.
             proxy: Proxy URL for this call; wins over ``proxies``.
             http_version: Pin ``"v1"``, ``"v2"`` or ``"v3"`` for this call.
-            max_redirects: Redirect cap. Below Chromium's 20, hops are driven from
-                Python so the caller's limit wins.
+            max_redirects: Must be ``None``. Chromium owns the 20-hop ceiling and ABI v8
+                cannot lower it, so a numeric cap raises
+                ``UnsupportedFeature``.
             max_response_bytes: Body ceiling for this call.
             referer: Sets ``Referer`` through Chromium's own referrer path, so it
                 reaches the wire the way a real Chrome sends it.
@@ -403,8 +404,9 @@ class _AsyncStreamFlag(int):
                 ``chrome_<major>`` name or a curl_cffi ``chrome<major>`` alias.
             proxy: Proxy URL for this call; wins over ``proxies``.
             http_version: Pin ``"v1"``, ``"v2"`` or ``"v3"`` for this call.
-            max_redirects: Redirect cap. Below Chromium's 20, hops are driven from
-                Python so the caller's limit wins.
+            max_redirects: Must be ``None``. Chromium owns the 20-hop ceiling and ABI v8
+                cannot lower it, so a numeric cap raises
+                ``UnsupportedFeature``.
             max_response_bytes: Body ceiling for this call.
             referer: Sets ``Referer`` through Chromium's own referrer path, so it
                 reaches the wire the way a real Chrome sends it.
@@ -624,8 +626,8 @@ class BaseSession:
                 not expose.
             stream: Default for the per-request ``stream=`` flag.
             hooks: ``{"response": callable}`` hooks.
-            max_redirects: Cap on redirects. Below Chromium's own cap of 20 the
-                hops are driven from Python so the caller's limit is honoured.
+            max_redirects: Must be ``None``. Chromium owns the 20-hop ceiling and ABI
+                v8 cannot lower it, so a numeric cap raises ``UnsupportedFeature``.
             trust_env: Read ``HTTP_PROXY``/``HTTPS_PROXY``/``NO_PROXY``,
                 ``REQUESTS_CA_BUNDLE``/``CURL_CA_BUNDLE`` and ``.netrc``.
             allow_redirects: Default redirect policy.
@@ -818,25 +820,6 @@ class BaseSession:
         """
         ...
 
-    def rebuild_method(self, prepared: PreparedRequest, response: Response) -> None:
-        """Rewrites the method for the next redirect hop, as requests does.
-
-        Args:
-            prepared: The request that is about to be re-sent; mutated in place.
-            response: The redirect response being followed (303 and 302 become
-                ``GET``, 301 turns ``POST`` into ``GET``).
-        """
-        ...
-
-    def rebuild_auth(self, prepared: PreparedRequest, response: Response) -> None:
-        """Drops ``Authorization`` when a redirect changes host.
-
-        Args:
-            prepared: The next-hop request; mutated in place.
-            response: The redirect response being followed.
-        """
-        ...
-
     # -- stream helper ------------------------------------------------------
     @property
     def stream(self) -> _StreamFlag:
@@ -956,8 +939,8 @@ class Session(BaseSession):
                 ``chrome_<major>`` name or a curl_cffi ``chrome<major>`` alias.
             proxy: Proxy URL for this call; wins over ``proxies``.
             http_version: Pin ``"v1"``, ``"v2"`` or ``"v3"`` for this call.
-            max_redirects: Redirect cap. Below Chromium's 20, hops are driven
-                from Python so the caller's limit wins.
+            max_redirects: Must be ``None``. Chromium owns the 20-hop ceiling and ABI
+                v8 cannot lower it, so a numeric cap raises ``UnsupportedFeature``.
             max_response_bytes: Body ceiling for this call.
             referer: Sets ``Referer`` through Chromium's own referrer path, so
                 it reaches the wire the way a real Chrome sends it.
@@ -1049,8 +1032,9 @@ class Session(BaseSession):
                 ``chrome_<major>`` name or a curl_cffi ``chrome<major>`` alias.
             proxy: Proxy URL for this call; wins over ``proxies``.
             http_version: Pin ``"v1"``, ``"v2"`` or ``"v3"`` for this call.
-            max_redirects: Redirect cap. Below Chromium's 20, hops are driven from
-                Python so the caller's limit wins.
+            max_redirects: Must be ``None``. Chromium owns the 20-hop ceiling and ABI v8
+                cannot lower it, so a numeric cap raises
+                ``UnsupportedFeature``.
             max_response_bytes: Body ceiling for this call.
             default_encoding: Fallback encoding for this response only.
             discard_cookies: Neither send nor record cookies for this call.
@@ -1159,8 +1143,9 @@ class Session(BaseSession):
                 ``chrome_<major>`` name or a curl_cffi ``chrome<major>`` alias.
             proxy: Proxy URL for this call; wins over ``proxies``.
             http_version: Pin ``"v1"``, ``"v2"`` or ``"v3"`` for this call.
-            max_redirects: Redirect cap. Below Chromium's 20, hops are driven from
-                Python so the caller's limit wins.
+            max_redirects: Must be ``None``. Chromium owns the 20-hop ceiling and ABI v8
+                cannot lower it, so a numeric cap raises
+                ``UnsupportedFeature``.
             max_response_bytes: Body ceiling for this call.
             referer: Sets ``Referer`` through Chromium's own referrer path, so it
                 reaches the wire the way a real Chrome sends it.
@@ -1273,8 +1258,9 @@ class Session(BaseSession):
                 ``chrome_<major>`` name or a curl_cffi ``chrome<major>`` alias.
             proxy: Proxy URL for this call; wins over ``proxies``.
             http_version: Pin ``"v1"``, ``"v2"`` or ``"v3"`` for this call.
-            max_redirects: Redirect cap. Below Chromium's 20, hops are driven from
-                Python so the caller's limit wins.
+            max_redirects: Must be ``None``. Chromium owns the 20-hop ceiling and ABI v8
+                cannot lower it, so a numeric cap raises
+                ``UnsupportedFeature``.
             max_response_bytes: Body ceiling for this call.
             referer: Sets ``Referer`` through Chromium's own referrer path, so it
                 reaches the wire the way a real Chrome sends it.
@@ -1386,8 +1372,9 @@ class Session(BaseSession):
                 ``chrome_<major>`` name or a curl_cffi ``chrome<major>`` alias.
             proxy: Proxy URL for this call; wins over ``proxies``.
             http_version: Pin ``"v1"``, ``"v2"`` or ``"v3"`` for this call.
-            max_redirects: Redirect cap. Below Chromium's 20, hops are driven from
-                Python so the caller's limit wins.
+            max_redirects: Must be ``None``. Chromium owns the 20-hop ceiling and ABI v8
+                cannot lower it, so a numeric cap raises
+                ``UnsupportedFeature``.
             max_response_bytes: Body ceiling for this call.
             referer: Sets ``Referer`` through Chromium's own referrer path, so it
                 reaches the wire the way a real Chrome sends it.
@@ -1497,8 +1484,9 @@ class Session(BaseSession):
                 ``chrome_<major>`` name or a curl_cffi ``chrome<major>`` alias.
             proxy: Proxy URL for this call; wins over ``proxies``.
             http_version: Pin ``"v1"``, ``"v2"`` or ``"v3"`` for this call.
-            max_redirects: Redirect cap. Below Chromium's 20, hops are driven from
-                Python so the caller's limit wins.
+            max_redirects: Must be ``None``. Chromium owns the 20-hop ceiling and ABI v8
+                cannot lower it, so a numeric cap raises
+                ``UnsupportedFeature``.
             max_response_bytes: Body ceiling for this call.
             referer: Sets ``Referer`` through Chromium's own referrer path, so it
                 reaches the wire the way a real Chrome sends it.
@@ -1612,8 +1600,9 @@ class Session(BaseSession):
                 ``chrome_<major>`` name or a curl_cffi ``chrome<major>`` alias.
             proxy: Proxy URL for this call; wins over ``proxies``.
             http_version: Pin ``"v1"``, ``"v2"`` or ``"v3"`` for this call.
-            max_redirects: Redirect cap. Below Chromium's 20, hops are driven from
-                Python so the caller's limit wins.
+            max_redirects: Must be ``None``. Chromium owns the 20-hop ceiling and ABI v8
+                cannot lower it, so a numeric cap raises
+                ``UnsupportedFeature``.
             max_response_bytes: Body ceiling for this call.
             referer: Sets ``Referer`` through Chromium's own referrer path, so it
                 reaches the wire the way a real Chrome sends it.
@@ -1722,8 +1711,9 @@ class Session(BaseSession):
                 ``chrome_<major>`` name or a curl_cffi ``chrome<major>`` alias.
             proxy: Proxy URL for this call; wins over ``proxies``.
             http_version: Pin ``"v1"``, ``"v2"`` or ``"v3"`` for this call.
-            max_redirects: Redirect cap. Below Chromium's 20, hops are driven from
-                Python so the caller's limit wins.
+            max_redirects: Must be ``None``. Chromium owns the 20-hop ceiling and ABI v8
+                cannot lower it, so a numeric cap raises
+                ``UnsupportedFeature``.
             max_response_bytes: Body ceiling for this call.
             referer: Sets ``Referer`` through Chromium's own referrer path, so it
                 reaches the wire the way a real Chrome sends it.
@@ -1832,8 +1822,9 @@ class Session(BaseSession):
                 ``chrome_<major>`` name or a curl_cffi ``chrome<major>`` alias.
             proxy: Proxy URL for this call; wins over ``proxies``.
             http_version: Pin ``"v1"``, ``"v2"`` or ``"v3"`` for this call.
-            max_redirects: Redirect cap. Below Chromium's 20, hops are driven from
-                Python so the caller's limit wins.
+            max_redirects: Must be ``None``. Chromium owns the 20-hop ceiling and ABI v8
+                cannot lower it, so a numeric cap raises
+                ``UnsupportedFeature``.
             max_response_bytes: Body ceiling for this call.
             referer: Sets ``Referer`` through Chromium's own referrer path, so it
                 reaches the wire the way a real Chrome sends it.
@@ -1942,8 +1933,9 @@ class Session(BaseSession):
                 ``chrome_<major>`` name or a curl_cffi ``chrome<major>`` alias.
             proxy: Proxy URL for this call; wins over ``proxies``.
             http_version: Pin ``"v1"``, ``"v2"`` or ``"v3"`` for this call.
-            max_redirects: Redirect cap. Below Chromium's 20, hops are driven from
-                Python so the caller's limit wins.
+            max_redirects: Must be ``None``. Chromium owns the 20-hop ceiling and ABI v8
+                cannot lower it, so a numeric cap raises
+                ``UnsupportedFeature``.
             max_response_bytes: Body ceiling for this call.
             referer: Sets ``Referer`` through Chromium's own referrer path, so it
                 reaches the wire the way a real Chrome sends it.
@@ -2052,8 +2044,9 @@ class Session(BaseSession):
                 ``chrome_<major>`` name or a curl_cffi ``chrome<major>`` alias.
             proxy: Proxy URL for this call; wins over ``proxies``.
             http_version: Pin ``"v1"``, ``"v2"`` or ``"v3"`` for this call.
-            max_redirects: Redirect cap. Below Chromium's 20, hops are driven from
-                Python so the caller's limit wins.
+            max_redirects: Must be ``None``. Chromium owns the 20-hop ceiling and ABI v8
+                cannot lower it, so a numeric cap raises
+                ``UnsupportedFeature``.
             max_response_bytes: Body ceiling for this call.
             referer: Sets ``Referer`` through Chromium's own referrer path, so it
                 reaches the wire the way a real Chrome sends it.
@@ -2346,7 +2339,8 @@ class AsyncSession(BaseSession):
             cert: Rejected; see :class:`BaseSession`.
             stream: Default ``stream=`` flag.
             hooks: Response hooks.
-            max_redirects: Redirect cap.
+            max_redirects: Must be ``None``. Chromium owns the 20-hop ceiling and ABI
+                v8 cannot lower it, so a numeric cap raises ``UnsupportedFeature``.
             trust_env: Read environment proxy/CA/``.netrc`` settings.
             allow_redirects: Default redirect policy.
             max_response_bytes: Default body ceiling.
@@ -2459,7 +2453,8 @@ class AsyncSession(BaseSession):
             impersonate: Profile override for this call.
             proxy: Proxy URL for this call.
             http_version: Protocol pin for this call.
-            max_redirects: Redirect cap for this call.
+            max_redirects: Must be ``None``. Chromium owns the 20-hop ceiling and ABI
+                v8 cannot lower it, so a numeric cap raises ``UnsupportedFeature``.
             max_response_bytes: Body ceiling for this call.
             referer: Routed through Chromium's referrer path.
             accept_encoding: Overrides ``Accept-Encoding``.
@@ -2541,8 +2536,9 @@ class AsyncSession(BaseSession):
                 ``chrome_<major>`` name or a curl_cffi ``chrome<major>`` alias.
             proxy: Proxy URL for this call; wins over ``proxies``.
             http_version: Pin ``"v1"``, ``"v2"`` or ``"v3"`` for this call.
-            max_redirects: Redirect cap. Below Chromium's 20, hops are driven from
-                Python so the caller's limit wins.
+            max_redirects: Must be ``None``. Chromium owns the 20-hop ceiling and ABI v8
+                cannot lower it, so a numeric cap raises
+                ``UnsupportedFeature``.
             max_response_bytes: Body ceiling for this call.
             default_encoding: Fallback encoding for this response only.
             discard_cookies: Neither send nor record cookies for this call.
@@ -2643,8 +2639,9 @@ class AsyncSession(BaseSession):
                 ``chrome_<major>`` name or a curl_cffi ``chrome<major>`` alias.
             proxy: Proxy URL for this call; wins over ``proxies``.
             http_version: Pin ``"v1"``, ``"v2"`` or ``"v3"`` for this call.
-            max_redirects: Redirect cap. Below Chromium's 20, hops are driven from
-                Python so the caller's limit wins.
+            max_redirects: Must be ``None``. Chromium owns the 20-hop ceiling and ABI v8
+                cannot lower it, so a numeric cap raises
+                ``UnsupportedFeature``.
             max_response_bytes: Body ceiling for this call.
             referer: Sets ``Referer`` through Chromium's own referrer path, so it
                 reaches the wire the way a real Chrome sends it.
@@ -2757,8 +2754,9 @@ class AsyncSession(BaseSession):
                 ``chrome_<major>`` name or a curl_cffi ``chrome<major>`` alias.
             proxy: Proxy URL for this call; wins over ``proxies``.
             http_version: Pin ``"v1"``, ``"v2"`` or ``"v3"`` for this call.
-            max_redirects: Redirect cap. Below Chromium's 20, hops are driven from
-                Python so the caller's limit wins.
+            max_redirects: Must be ``None``. Chromium owns the 20-hop ceiling and ABI v8
+                cannot lower it, so a numeric cap raises
+                ``UnsupportedFeature``.
             max_response_bytes: Body ceiling for this call.
             referer: Sets ``Referer`` through Chromium's own referrer path, so it
                 reaches the wire the way a real Chrome sends it.
@@ -2867,8 +2865,9 @@ class AsyncSession(BaseSession):
                 ``chrome_<major>`` name or a curl_cffi ``chrome<major>`` alias.
             proxy: Proxy URL for this call; wins over ``proxies``.
             http_version: Pin ``"v1"``, ``"v2"`` or ``"v3"`` for this call.
-            max_redirects: Redirect cap. Below Chromium's 20, hops are driven from
-                Python so the caller's limit wins.
+            max_redirects: Must be ``None``. Chromium owns the 20-hop ceiling and ABI v8
+                cannot lower it, so a numeric cap raises
+                ``UnsupportedFeature``.
             max_response_bytes: Body ceiling for this call.
             referer: Sets ``Referer`` through Chromium's own referrer path, so it
                 reaches the wire the way a real Chrome sends it.
@@ -2977,8 +2976,9 @@ class AsyncSession(BaseSession):
                 ``chrome_<major>`` name or a curl_cffi ``chrome<major>`` alias.
             proxy: Proxy URL for this call; wins over ``proxies``.
             http_version: Pin ``"v1"``, ``"v2"`` or ``"v3"`` for this call.
-            max_redirects: Redirect cap. Below Chromium's 20, hops are driven from
-                Python so the caller's limit wins.
+            max_redirects: Must be ``None``. Chromium owns the 20-hop ceiling and ABI v8
+                cannot lower it, so a numeric cap raises
+                ``UnsupportedFeature``.
             max_response_bytes: Body ceiling for this call.
             referer: Sets ``Referer`` through Chromium's own referrer path, so it
                 reaches the wire the way a real Chrome sends it.
@@ -3087,8 +3087,9 @@ class AsyncSession(BaseSession):
                 ``chrome_<major>`` name or a curl_cffi ``chrome<major>`` alias.
             proxy: Proxy URL for this call; wins over ``proxies``.
             http_version: Pin ``"v1"``, ``"v2"`` or ``"v3"`` for this call.
-            max_redirects: Redirect cap. Below Chromium's 20, hops are driven from
-                Python so the caller's limit wins.
+            max_redirects: Must be ``None``. Chromium owns the 20-hop ceiling and ABI v8
+                cannot lower it, so a numeric cap raises
+                ``UnsupportedFeature``.
             max_response_bytes: Body ceiling for this call.
             referer: Sets ``Referer`` through Chromium's own referrer path, so it
                 reaches the wire the way a real Chrome sends it.
@@ -3197,8 +3198,9 @@ class AsyncSession(BaseSession):
                 ``chrome_<major>`` name or a curl_cffi ``chrome<major>`` alias.
             proxy: Proxy URL for this call; wins over ``proxies``.
             http_version: Pin ``"v1"``, ``"v2"`` or ``"v3"`` for this call.
-            max_redirects: Redirect cap. Below Chromium's 20, hops are driven from
-                Python so the caller's limit wins.
+            max_redirects: Must be ``None``. Chromium owns the 20-hop ceiling and ABI v8
+                cannot lower it, so a numeric cap raises
+                ``UnsupportedFeature``.
             max_response_bytes: Body ceiling for this call.
             referer: Sets ``Referer`` through Chromium's own referrer path, so it
                 reaches the wire the way a real Chrome sends it.
@@ -3307,8 +3309,9 @@ class AsyncSession(BaseSession):
                 ``chrome_<major>`` name or a curl_cffi ``chrome<major>`` alias.
             proxy: Proxy URL for this call; wins over ``proxies``.
             http_version: Pin ``"v1"``, ``"v2"`` or ``"v3"`` for this call.
-            max_redirects: Redirect cap. Below Chromium's 20, hops are driven from
-                Python so the caller's limit wins.
+            max_redirects: Must be ``None``. Chromium owns the 20-hop ceiling and ABI v8
+                cannot lower it, so a numeric cap raises
+                ``UnsupportedFeature``.
             max_response_bytes: Body ceiling for this call.
             referer: Sets ``Referer`` through Chromium's own referrer path, so it
                 reaches the wire the way a real Chrome sends it.
@@ -3417,8 +3420,9 @@ class AsyncSession(BaseSession):
                 ``chrome_<major>`` name or a curl_cffi ``chrome<major>`` alias.
             proxy: Proxy URL for this call; wins over ``proxies``.
             http_version: Pin ``"v1"``, ``"v2"`` or ``"v3"`` for this call.
-            max_redirects: Redirect cap. Below Chromium's 20, hops are driven from
-                Python so the caller's limit wins.
+            max_redirects: Must be ``None``. Chromium owns the 20-hop ceiling and ABI v8
+                cannot lower it, so a numeric cap raises
+                ``UnsupportedFeature``.
             max_response_bytes: Body ceiling for this call.
             referer: Sets ``Referer`` through Chromium's own referrer path, so it
                 reaches the wire the way a real Chrome sends it.
@@ -3527,8 +3531,9 @@ class AsyncSession(BaseSession):
                 ``chrome_<major>`` name or a curl_cffi ``chrome<major>`` alias.
             proxy: Proxy URL for this call; wins over ``proxies``.
             http_version: Pin ``"v1"``, ``"v2"`` or ``"v3"`` for this call.
-            max_redirects: Redirect cap. Below Chromium's 20, hops are driven from
-                Python so the caller's limit wins.
+            max_redirects: Must be ``None``. Chromium owns the 20-hop ceiling and ABI v8
+                cannot lower it, so a numeric cap raises
+                ``UnsupportedFeature``.
             max_response_bytes: Body ceiling for this call.
             referer: Sets ``Referer`` through Chromium's own referrer path, so it
                 reaches the wire the way a real Chrome sends it.

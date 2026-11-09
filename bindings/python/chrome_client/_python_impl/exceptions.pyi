@@ -166,6 +166,13 @@ class ChunkedEncodingError(RequestException):
     """The response body was not framed as its headers promised."""
 
 
+class CacheMiss(RequestException):
+    """The request asked for cache-only and the cache had nothing usable.
+
+    Raised for ``cache_mode="only_if_cached"`` when the entry is absent or
+    stale, which Chromium reports as ``ERR_CACHE_MISS`` (-400).
+    """
+
 class ContentDecodingError(RequestException):
     """The body could not be decoded as its ``Content-Encoding`` promised."""
 

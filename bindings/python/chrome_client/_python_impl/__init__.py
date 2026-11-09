@@ -24,7 +24,7 @@ from .cookies import (Cookie, CookieJar, Cookies, RequestsCookieJar,
                       dict_from_cookiejar, merge_cookies, morsel_to_cookie)
 from .engine import DEFAULT_MAX_ENGINES, EngineConfig, SessionBinding
 from .exceptions import (CertificateVerifyError, ChunkedEncodingError, ConnectTimeout,
-                         ConnectionError, ContentDecodingError, CookieConflict,
+                         CacheMiss, ConnectionError, ContentDecodingError, CookieConflict,
                          CookieConflictError, DNSError, HTTPError, ImpersonateError,
                          IncompleteRead, InterfaceError, InvalidHeader, InvalidJSONError,
                          InvalidProxyURL, InvalidSchema, InvalidURL, JSONDecodeError,
@@ -76,7 +76,7 @@ __all__ = [
     "SSLError", "CertificateVerifyError", "DNSError", "Timeout", "ConnectTimeout",
     "ReadTimeout", "TooManyRedirects", "URLRequired", "MissingSchema", "InvalidSchema",
     "InvalidURL", "InvalidHeader", "InvalidProxyURL", "ChunkedEncodingError",
-    "ContentDecodingError", "StreamConsumedError", "RetryError", "UnrewindableBodyError",
+    "CacheMiss", "ContentDecodingError", "StreamConsumedError", "RetryError", "UnrewindableBodyError",
     "InvalidJSONError", "JSONDecodeError", "IncompleteRead", "InterfaceError",
     "SessionClosed", "ImpersonateError", "CookieConflict", "CookieConflictError",
     "ResponseTooLarge", "UnsupportedFeature", "WebSocketError", "WebSocketClosed",

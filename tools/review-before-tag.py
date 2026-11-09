@@ -85,10 +85,14 @@ STEPS = [
      "needs the linux-x86_64 Core on the build host"),
     ("bindings", "rust-tests", ["cargo", "test", "--workspace", "--all-targets"],
      "needs the linux-x86_64 Core on the build host"),
-    ("bindings", "python36-tests",
-     ["cargo", "test", "--manifest-path", "bindings/python36/Cargo.toml",
-      "--locked"],
-     "needs the linux-x86_64 Core on the build host"),
+    # bindings/python36 has zero #[test] functions, so `cargo test` on it compiles
+    # the crate and reports success unconditionally: the step looked like a gate
+    # and could not fail. What actually needs guarding is the artifact itself --
+    # that the legacy extension still loads, still speaks the same ABI, and still
+    # drives the shared facade -- so this runs the real check instead.
+    ("bindings", "python36-artifact",
+     ["python3", "tools/audit-python36-artifact.py"],
+     "needs a built bindings/python36 extension and the linux-x86_64 Core"),
     ("bindings", "python-tests",
      ["python3", "-m", "unittest", "discover", "-s", "bindings/python/tests",
       "-p", "test_*.py"],
@@ -113,7 +117,7 @@ STEPS = [
 
 #: Steps that need the Core on the dynamic loader path.
 NEEDS_CORE = {
-    "rust-check", "rust-clippy", "rust-tests", "python36-tests", "python-tests",
+    "rust-check", "rust-clippy", "rust-tests", "python36-artifact", "python-tests",
     "wire-smoke", "bench", "leak-probe",
 }
 

@@ -114,6 +114,40 @@ MINICRONET_CORE_DIR=$PWD/core/binaries/linux-x86_64 cargo build --release -p chr
 LD_LIBRARY_PATH=$PWD/core/binaries/linux-x86_64 PYTHONPATH=bindings/python python -c \
   'import chrome_client; print(chrome_client.get("https://example.com").status_code)'
 ```
+The wheel in `bindings/python36` is built by a script, which also runs the
+artifact gate described below:
+
+```bash
+tools/build-python36-wheel.sh linux-x86_64
+```
+
+It needs `cargo` and `maturin` (`pip install maturin`) on PATH, the Core directory
+must already exist, and the wheel must carry the `cp36-abi3` tag -- a `cp39` wheel
+would shadow the other package on 3.9+, and `py3-none-any` would claim to be pure
+Python. The manual equivalent is:
+
+```bash
+cd bindings/python36
+MINICRONET_CORE_DIR=$PWD/../../core/binaries/linux-x86_64 \
+  python3 -m maturin build --release --out dist
+```
+
+### Artifact gate
+
+`bindings/python36/src/lib.rs` contains **zero** `#[test]` functions, so running
+`cargo test` on that crate only compiles it and exits 0 -- it used to be a step in
+the pre-tag review and could never fail. That step is now
+`tools/audit-python36-artifact.py`, which checks the artifact itself:
+
+| Check | Why |
+| --- | --- |
+| The extension imports under its own module name | `PyInit_chrome_client_native36` is the only export an importer looks for |
+| `abi_version` equals `MN_ABI_VERSION` from `core/abi/minicronet.h` | The number is read from the header, not copied into the script, so a v9 bump cannot leave this gate passing |
+| No `libpython` link, and no `_Py_*` reference outside the allowed set | abi3 means 3.6 through 3.15 can install it; linking libpython contradicts that |
+| It drives the `bindings/python` facade for one live request | This is the failure mode that actually bites: a stale extension imports fine and only breaks when the facade calls a method it lacks |
+
+The last row is the point -- the first three are all satisfied by an extension that
+is importable and out of date.
 
 ### Type hints
 
@@ -271,10 +305,10 @@ response = session.get("https://example.com/r")
 print(response.url, response.history, response.redirect_count)
 response = session.get("https://example.com/r", allow_redirects=False)
 print(response.status_code, response.headers["Location"], response.next.url)
-session.get("https://example.com/r", max_redirects=5)   # raises TooManyRedirects
+session.get("https://example.com/r", allow_redirects=False)  # returns the 3xx
 ```
 
-`max_redirects` must be below 20 (Chromium stops at 20 hops inside one
+`max_redirects` must be `None` (Chromium stops at 20 hops inside one
 `URLRequest`); a value of 20 or more raises `UnsupportedFeature` instead of being
 silently clamped to 20. The default is `None`, meaning "adopt Chromium's 20" --
 **not** requests' 30. `requests.models.DEFAULT_REDIRECT_LIMIT` is still 30 and
@@ -471,7 +505,9 @@ no further edits.
 | `get/post/put/patch/delete/head/options/trace/query` | ✓ |
 | `Session`, `AsyncSession`, `Client`, `AsyncClient` | ✓ (`Client` aliases `Session`) |
 | `params`, `data`, `json`, `content`, `files`, `multipart` | ✓ |
-| `headers`, `cookies`, `auth`, `timeout` (including `(connect, read)`) | ✓ |
+| `headers`, `cookies`, `auth`, `timeout` | ✓ |
+| Removing a Core-owned header (`User-Agent`, `Accept-Encoding`, ...) | ✗ raises `UnsupportedFeature`; overriding still works |
+| `timeout=(connect, read)` with two different values | ✗ raises `UnsupportedFeature` (ABI v8 carries one deadline); an agreeing pair works |
 | `proxies`, `proxy`, `proxy_auth`, `trust_env`, `NO_PROXY` | ✓ |
 | `verify=True/False/"/path/ca.pem"` | ✓ |
 | `allow_redirects`, `max_redirects`, `history`, final URL | ✓ |

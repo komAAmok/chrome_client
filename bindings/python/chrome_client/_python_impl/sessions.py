@@ -45,7 +45,7 @@ from .models import (PreparedRequest, Request, Response, AsyncResponse,
                      reason_from_status_line)
 from .structures import CaseInsensitiveDict, Headers
 from .utils import (default_headers as _default_headers, get_netrc_auth,
-                    requote_uri, resolve_proxies, should_bypass_proxies,
+                    resolve_proxies, should_bypass_proxies,
                     to_key_val_list)
 
 #: Events drained from the Core per event-loop wakeup.  Batching is what keeps a
@@ -148,20 +148,37 @@ def _check_timeout(value):
 
 
 def _split_timeout(timeout):
-    """Accepts requests' ``(connect, read)`` tuple.
+    """Reduces a requests deadline to the one number ABI v8 can carry.
 
-    ABI v8 carries one deadline, so the larger of the two is used and the
-    distinction is lost; that is better than rejecting a valid requests call.
+    ABI v8 has a single deadline per request, and Chromium owns both the
+    connect and the read side of it. A ``(connect, read)`` pair therefore has no
+    faithful representation: the two halves cannot be told apart.
+
+    This used to take ``max(connect, read)``, which silently deleted the only
+    thing the pair is for. Measured against a server that accepts and never
+    answers, ``timeout=(0.2, 10)`` waited 10.0s where requests waits 0.2s,
+    and the error was ``Timeout`` rather than ``ConnectTimeout``. Silently
+    honouring the larger half is exactly the degradation this project refuses
+    elsewhere (``max_redirects``, ``extra_fp``), so a pair with two *different*
+    values now fails closed. A pair whose halves agree is one deadline by
+    definition and is accepted.
     """
     if timeout is None:
         return None
     if isinstance(timeout, (tuple, list)):
         if len(timeout) != 2:
             raise ValueError("timeout tuple must be (connect, read)")
-        values = [value for value in timeout if value is not None]
-        return max(_check_timeout(value) for value in values) if values else None
+        values = [_check_timeout(value) for value in timeout if value is not None]
+        if not values:
+            return None
+        if len(set(values)) > 1:
+            raise UnsupportedFeature(
+                "timeout=(connect, read) cannot be honoured: ABI v8 carries one "
+                "deadline per request and Chromium owns both halves, so %r would "
+                "silently wait %r for a connection the caller capped at %r. Pass a "
+                "single number instead." % (tuple(timeout), max(values), min(values)))
+        return values[0]
     return _check_timeout(timeout)
-
 
 def _cancel_quietly(native):
     """Cancels a Core request, ignoring "already finished".
@@ -184,26 +201,72 @@ def _validate_max_response_bytes(value):
     return value
 
 
-def _validate_max_redirects(value):
-    """Rejects a cap the native follow path cannot honour.
 
-    Chromium stops at CHROMIUM_MAX_REDIRECTS hops inside one URLRequest, so a
-    larger cap is unreachable rather than merely unsupported: the request dies
-    at hop 21 with ERR_TOO_MANY_REDIRECTS no matter what the caller asked for.
-    Returning the value anyway -- which is what the facade did -- turned an
-    explicit "follow up to 30" into an unexplained failure three hops early.
+#: Headers Chromium or the profile owns: they are produced by the Core, so a
+#: caller cannot remove them through extra headers -- ``SetExtraRequestHeaders``
+#: only ever adds. Deleting one silently changed nothing, which is the
+#: degradation this project refuses: measured, ``headers={"User-Agent": None}``
+#: and ``headers={"Accept-Encoding": None}`` both sent the original value.
+_CORE_OWNED_HEADERS = frozenset((
+    "user-agent",
+    "accept-encoding",
+    "accept-language",
+    "host",
+    "connection",
+    "content-length",
+    "transfer-encoding",
+))
+
+
+def _reject_core_owned_removals(headers, method):
+    """Fails closed when a caller asks to remove a header the Core owns.
+
+    Args:
+        headers: The prepared request headers, or ``None``.
+        method: The request method, so the body-framing headers can be judged.
+
+    Raises:
+        UnsupportedFeature: A removal was requested for a header the binding
+            cannot delete. The message names the headers and what to do instead.
+    """
+    if headers is None:
+        return
+    removed = sorted(name for name in headers.deleted_names
+                     if name in _CORE_OWNED_HEADERS)
+    if not removed:
+        return
+    raise UnsupportedFeature(
+        "%s cannot be removed: Chromium owns %s for every request it sends, and "
+        "the ABI only lets the binding add extra headers, never delete one. Set "
+        "the value you want instead, or choose a profile whose captured header "
+        "list already omits it."
+        % (", ".join(removed), "it" if len(removed) == 1 else "them"))
+
+def _validate_max_redirects(value):
+    """Rejects every caller-supplied cap; Chromium owns the redirect limit.
+
+    ``net::URLRequest::kMaxRedirects`` is 20 and the Core installs no limit of
+    its own, so it is the only ceiling this build can honour. Lowering it is
+    not something ABI v8 can ask for, and the facade used to fake it by
+    re-issuing each hop from Python -- which reimplemented redirect semantics
+    in the binding layer, where they drifted from Chromium four ways:
+    ``Referrer-Policy`` was not applied, the previous hop Set-Cookie was not
+    sent, Response.redirect_count came back 0, and a 302 turned a PUT into a
+    GET although Chromium only rewrites POST.
+
+    The only accepted value is None, meaning Chromium own limit. Anything
+    else fails closed instead of following a different hop count than asked.
     """
     if value is None:
         return None
     if isinstance(value, bool) or not isinstance(value, int) or value < 0:
         raise ValueError("max_redirects must be a non-negative integer or None")
-    if value >= CHROMIUM_MAX_REDIRECTS:
-        raise UnsupportedFeature(
-            "max_redirects=%d cannot be honoured: Chromium stops after %d hops "
-            "inside one URLRequest (net::URLRequest::kMaxRedirects), and this "
-            "build has no way to raise that ceiling. Pass a value below %d."
-            % (value, CHROMIUM_MAX_REDIRECTS, CHROMIUM_MAX_REDIRECTS))
-    return value
+    raise UnsupportedFeature(
+        "max_redirects=%d cannot be honoured: ABI v8 cannot lower Chromium's "
+        "%d-hop ceiling (net::URLRequest::kMaxRedirects), and re-issuing the "
+        "hops from Python would reimplement redirect semantics the Core owns. "
+        "Use allow_redirects=False for a single hop, or omit max_redirects to "
+        "accept Chromium's own limit." % (value, CHROMIUM_MAX_REDIRECTS))
 
 
 #: Schemes Chromium's rule parser accepts in a proxy URI, from
@@ -1023,6 +1086,12 @@ class BaseSession(object):
         deadline or a ``(connect, read)`` pair. Request methods may override these
         defaults for one call. Compatibility-only options unsupported by ABI v8
         raise ``UnsupportedFeature`` instead of being silently ignored.
+
+        ``max_redirects`` must stay ``None``: Chromium's 20-hop ceiling is the only
+        limit this build can honour, and ABI v8 exposes no way to lower it. A
+        numeric cap raises ``UnsupportedFeature`` rather than re-issuing the hops
+        from Python, which would put redirect semantics in the binding layer where
+        they would drift from Chromium's.
         """
         reject_fingerprint_overrides(ja3, akamai, perk)
         for name, value in (("cert", cert), ("interface", interface),
@@ -1853,10 +1922,13 @@ class BaseSession(object):
         )
         request.quote = values.get("quote")
         request.header_order = header_order
-
-        allow_redirects, effective_max, python_redirects = \
-            self._resolve_redirect_policy(values.get("allow_redirects"),
-                                          values.get("max_redirects"))
+        _reject_core_owned_removals(request.headers, request.method)
+        allow_redirects = self.allow_redirects \
+            if values.get("allow_redirects") is None \
+            else bool(values.get("allow_redirects"))
+        effective_max = self.max_redirects \
+            if values.get("max_redirects") is None \
+            else _validate_max_redirects(values.get("max_redirects"))
         stream = values.get("stream")
         limit = values.get("max_response_bytes")
         options = {
@@ -1887,8 +1959,7 @@ class BaseSession(object):
             else default_priority(values.get("impersonate")
                                   if values.get("impersonate") is not None
                                   else self.impersonate),
-            "native_redirects": bool(allow_redirects) and not python_redirects,
-            "python_redirects": python_redirects,
+            "allow_redirects": bool(allow_redirects),
             "max_redirects": effective_max,
             "retry": RetryStrategy.coerce(values["retry"])
             if values.get("retry") is not None else None,
@@ -1901,6 +1972,22 @@ class BaseSession(object):
 
     def _open_websocket(self, url, origin, headers, timeout, proxy, proxies,
                         impersonate, protocols, verify):
+        """Opens a WebSocket on an engine whose cookie store agrees with the jar.
+
+        The handshake has to reach the server with the same ``Cookie`` line the
+        HTTP path would send, which means it cannot simply stuff the jar's value
+        into an extra header: ``CookieMonster`` owns that header and re-attaches
+        whatever it already holds for the URL. Measured before this check: a
+        caller who rewrote or cleared ``session.cookies`` still saw the Core's
+        old value on the wire (``sid=core`` while the jar held ``sid=caller``),
+        while the HTTP path on the same session correctly sent ``sid=caller``.
+
+        So the slot is chosen exactly the way :meth:`_resolve_cookies` chooses
+        one for a request: if the jar and the engine's mirror disagree, take a
+        structurally identical engine with an empty store. ABI v8 exposes no way
+        to clear ``CookieMonster``, so a fresh generation is the only faithful
+        option and a silent disagreement is refused rather than papered over.
+        """
         slot = self._slot(url, impersonate, proxy, proxies, verify, None)
         merged = Headers(self.headers)
         if headers:
@@ -1915,15 +2002,31 @@ class BaseSession(object):
                 "headers come from the URL and the handshake."
                 % (", ".join(forbidden), ", ".join(_FORBIDDEN_WS_HEADERS)))
         http_url = _websocket_http_url(url)
-        cookie = self.cookies.cookie_header(http_url)
-        if cookie:
-            merged["Cookie"] = cookie
+        with self._cookie_lock:
+            desired = self.cookies.cookie_header(http_url)
+            store = slot.cookie_header(http_url)
+            if store is not None and desired != store:
+                # Same replacement rule as _resolve_cookies: the Core store
+                # would win the header, so move to an empty-store engine.
+                self._generation += 1
+                replacement = self._engines.get(
+                    slot.config.replace(generation=self._generation))
+                if replacement is not slot:
+                    self._engines.discard(slot.config)
+                slot = replacement
+                if replacement.cookie_header(http_url) is not None:
+                    raise UnsupportedFeature(
+                        "the WebSocket handshake cannot honour the session cookie "
+                        "jar: the Core's cookie store still holds a cookie for "
+                        "%s that the jar does not, and ABI v8 cannot clear it."
+                        % (http_url,))
+            if desired:
+                merged["Cookie"] = desired
         return slot.engine.websocket(url, origin or _default_websocket_origin(url),
                                      merged.multi_items(),
                                      _split_timeout(timeout if timeout is not None
                                                     else self.timeout),
                                      list(protocols or ()))
-
     def _with_session_defaults(self, options):
         """Fills in the session-level defaults a direct ``send()`` bypasses.
 
@@ -1956,16 +2059,13 @@ class BaseSession(object):
             resolved["discard_cookies"] = self.discard_cookies
         if resolved.get("retry") is None:
             resolved["retry"] = self.retry
-        if resolved.get("native_redirects") is None \
-                and resolved.get("python_redirects") is None:
+        if resolved.get("allow_redirects") is None:
             # A caller who builds the options by hand uses the requests
             # spelling ``allow_redirects=``; it used to be dropped on the floor
             # here, so the resolved policy always came out of the session.
-            allow, cap, python_redirects = self._resolve_redirect_policy(
-                resolved.get("allow_redirects"), resolved.get("max_redirects"))
-            resolved["python_redirects"] = python_redirects
-            resolved["native_redirects"] = bool(allow) and not python_redirects
-            resolved["max_redirects"] = cap
+            resolved["allow_redirects"] = self.allow_redirects
+        if resolved.get("max_redirects") is None:
+            resolved["max_redirects"] = self.max_redirects
         return resolved
 
 
@@ -1994,66 +2094,6 @@ class BaseSession(object):
             return False
         return _request_is_replayable(prepared)
 
-    # -- redirect policy ----------------------------------------------------
-    def _resolve_redirect_policy(self, allow_redirects, max_redirects):
-        """Resolves one call into ``(allow_redirects, max_redirects, python_redirects)``.
-
-        Three silent defects lived in this decision:
-
-        * ``request()`` defaulted ``allow_redirects=True``, so the session's own
-          ``allow_redirects`` was overwritten before the ``None`` check could see it and
-          ``Session(allow_redirects=False)`` followed redirects anyway.
-        * the request's ``max_redirects`` -- ``None`` whenever the caller passed none -- was
-          tested instead of the resolved cap, so ``Session(max_redirects=5)`` fell
-          through to Chromium and followed twenty hops.
-        * the threshold was 30 (requests' own default) rather than Chromium's 20,
-          so ``max_redirects=30`` took the native path and died at hop 21 with a
-          limit nobody had set. A cap at or above 20 is refused up front by
-          ``_validate_max_redirects`` rather than clamped.
-
-        ``python_redirects`` is true only when the caller asked to follow *and* the
-        cap is tighter than Chromium's, which is the one case where re-issuing
-        each hop from Python is what makes the caller's number true.
-        """
-        allow = self.allow_redirects if allow_redirects is None else bool(allow_redirects)
-        cap = self.max_redirects if max_redirects is None else max_redirects
-        cap = _validate_max_redirects(cap)
-        if cap is None:
-            # No caller cap: Chromium's own limit is the only one, so the native
-            # follow path is both correct and higher fidelity -- it preserves the
-            # original request's site-for-cookies. Driving the hops from Python
-            # here would also lose 'Response.redirect_count', which is counted
-            # from the Core's per-hop events.
-            return allow, CHROMIUM_MAX_REDIRECTS, False
-        return allow, cap, bool(allow) and cap < CHROMIUM_MAX_REDIRECTS
-
-    def rebuild_method(self, prepared, response):
-        method = prepared.method
-        if response.status_code == 303 and method != "HEAD":
-            method = "GET"
-        if response.status_code == 302 and method != "HEAD":
-            method = "GET"
-        if response.status_code == 301 and method == "POST":
-            method = "GET"
-        prepared.method = method
-
-    def rebuild_auth(self, prepared, response):
-        if "Authorization" in prepared.headers and \
-                urlsplit(response.url).hostname != urlsplit(prepared.url).hostname:
-            del prepared.headers["Authorization"]
-
-    def _next_hop(self, response, prepared):
-        following = prepared.copy()
-        following.url = requote_uri(urljoin(response.url, response.headers["location"]))
-        self.rebuild_method(following, response)
-        if following.method in ("GET", "HEAD") or response.status_code == 303:
-            following.body = None
-            following.stream_body = False
-            for name in ("Content-Length", "Content-Type", "Transfer-Encoding"):
-                following.headers.pop(name, None)
-        self.rebuild_auth(following, response)
-        following.headers.pop("Cookie", None)
-        return following
 
 
 def _warn_if_blocking_the_loop():
@@ -2167,28 +2207,10 @@ class Session(BaseSession):
                 time.sleep(retry.sleep_for(attempt))
                 continue
             break
-        if options.get("python_redirects"):
-            response = self._follow_in_python(response, request, options)
         response = self._dispatch_hooks(response, request)
         if options.get("raise_for_status") if options.get("raise_for_status") is not None \
                 else self.raise_for_status:
             response.raise_for_status()
-        return response
-
-    def _follow_in_python(self, response, request, options):
-        limit = options["max_redirects"]
-        history = []
-        hop_request = request
-        while response.is_redirect:
-            if len(history) >= limit:
-                raise TooManyRedirects("Exceeded %d redirects." % limit,
-                                       response=response)
-            response.content
-            history.append(response)
-            hop_request = self._next_hop(response, hop_request)
-            response = self._send_once(hop_request, options)
-        if history:
-            response.history = history + list(response.history)
         return response
 
     def _send_once(self, prepared, options):
@@ -2233,7 +2255,7 @@ class Session(BaseSession):
         limit = options.get("max_response_bytes")
         stream = bool(options.get("stream"))
         started = _now()
-        follow = options.get("native_redirects", True)
+        follow = bool(options.get("allow_redirects", True))
         native = None
         try:
             native = self._native_request(
@@ -2275,7 +2297,13 @@ class Session(BaseSession):
             # explains what went wrong.
             if native is not None:
                 _cancel_quietly(native)
-            if isinstance(error, RuntimeError):
+            # Only a bare RuntimeError is a Core error string. UnsupportedFeature
+            # derives from NotImplementedError, which is a RuntimeError, so a
+            # facade-raised UnsupportedFeature used to be fed back through
+            # map_native_error and re-classified by its own wording -- measured:
+            # the max_redirects and timeout=(connect, read) refusals came out as
+            # Timeout because their messages contain the word.
+            if isinstance(error, RuntimeError) and not isinstance(error, RequestException):
                 raise map_native_error(error, request=prepared)
             raise
         hops = native.take_redirects()
@@ -2331,28 +2359,86 @@ class Session(BaseSession):
     def resolve_redirects(self, response, request, stream=False, timeout=None,
                           verify=True, cert=None, proxies=None, yield_requests=False,
                           **kwargs):
-        """Yields each response in a redirect chain, as requests does."""
-        hop_request = request
-        count = 0
-        # 'max_redirects' is None when the caller set no cap, meaning Chromium's
-        # own ceiling; this generator still needs a number to stop at.
-        limit = (CHROMIUM_MAX_REDIRECTS if self.max_redirects is None
-                 else self.max_redirects)
-        while response.is_redirect:
-            if count >= limit:
-                raise TooManyRedirects("Exceeded %d redirects." % limit,
-                                       response=response)
-            response.content
-            hop_request = self._next_hop(response, hop_request)
-            if yield_requests:
-                yield hop_request
-            else:
-                response = self._send_once(hop_request, {
-                    "stream": stream, "timeout": timeout, "verify": verify,
-                    "proxies": proxies, "native_redirects": False,
-                })
-                yield response
-            count += 1
+        """Yields each response in a redirect chain, as requests does.
+
+        The hops are driven by Chromium, not by this generator: the request is
+        held in the Core's manual redirect mode, and each step asks the Core
+        for the redirect it computed (``new_url``, ``new_method``, referrer
+        policy, the previous hop's cookies, dropped credentials) and then
+        releases it with ``follow_redirect``. Nothing here decides what the next
+        URL or method is, which is what keeps this method a thin wrapper instead
+        of a second redirect implementation.
+
+        The Core caps the chain at ``CHROMIUM_MAX_REDIRECTS``; a longer chain
+        surfaces as :class:`TooManyRedirects` from the Core itself.
+
+        Args:
+            response: The redirect response to continue from.
+            request: The ``PreparedRequest`` that produced *response*.
+            stream: Passed through to each hop's ``send``.
+            timeout: Passed through to each hop's ``send``.
+            verify: Passed through to each hop's ``send``.
+            cert: Accepted for requests parity; the Core owns TLS.
+            proxies: Passed through to each hop's ``send``.
+            yield_requests: Yield ``PreparedRequest`` hops instead of responses.
+
+        Yields:
+            Each :class:`Response` in the chain, or each ``PreparedRequest`` when
+            ``yield_requests`` is true.
+
+        Raises:
+            TooManyRedirects: The chain exceeded Chromium's ceiling.
+        """
+        url = response.url
+        slot = self._slot(url, kwargs.get("impersonate"),
+                          kwargs.get("proxy"), proxies, verify,
+                          kwargs.get("http_version"))
+        # Manual mode: Chromium computes each hop and hands it to us, then waits
+        # for `follow_redirect` before issuing it. That is the only path where
+        # the binding can observe a hop without deciding what it is: `new_url`,
+        # the method, the referrer policy and the cookie snapshot all come from
+        # RedirectInfo, not from urljoin() and a copy of requests' rules.
+        native = self._native_request(slot, request, timeout or self.timeout,
+                                      False, kwargs.get("cache_mode"),
+                                      kwargs.get("priority"))
+        deadline = _split_timeout(timeout or self.timeout)
+        try:
+            native.start()
+            while True:
+                hop, head = native.wait_manual(deadline)
+                if hop is not None:
+                    status_code, raw_headers, url, _new_method = hop
+                    if yield_requests:
+                        following = request.copy()
+                        following.url = url
+                        yield following
+                    else:
+                        # A redirect hop carries no body of its own: Chromium
+                        # has the 3xx headers and nothing else to read here.
+                        hop_response = self._finalize(
+                            self._new_response(), request, status_code,
+                            raw_headers, [], _now(), slot, False, body=b"")
+                        hop_response.url = url
+                        yield hop_response
+                    native.follow_redirect()
+                    continue
+                if head is not None:
+                    if yield_requests:
+                        # The chain is exhausted; requests' spelling yields one
+                        # PreparedRequest per hop and stops before the final
+                        # response, which the caller already holds.
+                        return
+                    status_code, raw_headers = head
+                    body = b"" if stream else native.read_body()
+                    final = self._finalize(self._new_response(), request,
+                                           status_code, raw_headers, [], _now(),
+                                           slot, False, body=body)
+                    final.url = url
+                    yield final
+                    return
+                raise Timeout("request timed out")
+        finally:
+            _cancel_quietly(native)
 
     def _stream_context(self, method, url, **kwargs):
         """Backs ``session.stream("GET", url)``, curl_cffi's streaming helper."""
@@ -2513,28 +2599,10 @@ class AsyncSession(BaseSession):
                 await asyncio.sleep(retry.sleep_for(attempt))
                 continue
             break
-        if options.get("python_redirects"):
-            response = await self._follow_in_python(response, request, options)
         response = self._dispatch_hooks(response, request)
         raise_flag = options.get("raise_for_status")
         if self.raise_for_status if raise_flag is None else raise_flag:
             response.raise_for_status()
-        return response
-
-    async def _follow_in_python(self, response, request, options):
-        limit = options["max_redirects"]
-        history = []
-        hop_request = request
-        while response.is_redirect:
-            if len(history) >= limit:
-                raise TooManyRedirects("Exceeded %d redirects." % limit,
-                                       response=response)
-            await response.acontent()
-            history.append(response)
-            hop_request = self._next_hop(response, hop_request)
-            response = await self._send_once(hop_request, options)
-        if history:
-            response.history = history + list(response.history)
         return response
 
     async def _send_once(self, prepared, options):
@@ -2593,11 +2661,11 @@ class AsyncSession(BaseSession):
         try:
             native = self._native_request(
                 slot, prepared, options.get("timeout"),
-                options.get("native_redirects", True), options.get("cache_mode"),
+                bool(options.get("allow_redirects", True)), options.get("cache_mode"),
                 options.get("priority"))
         except RuntimeError as error:
             raise map_native_error(error, request=prepared)
-        follow = options.get("native_redirects", True)
+        follow = bool(options.get("allow_redirects", True))
         state = _AsyncState(native, loop, stream, limit, timeout, follow)
         try:
             if prepared.stream_body:
@@ -2613,7 +2681,10 @@ class AsyncSession(BaseSession):
             # ``state.finish(cancel=True)`` cancels it and detaches the
             # callback; the exception is then re-raised unchanged.
             state.finish(cancel=True)
-            if isinstance(error, RuntimeError):
+            # Same guard as the synchronous path: a facade-raised
+            # UnsupportedFeature is a RuntimeError by inheritance, not a Core
+            # error string, and must keep its own class.
+            if isinstance(error, RuntimeError) and not isinstance(error, RequestException):
                 raise map_native_error(error, request=prepared)
             raise
         try:
@@ -2633,8 +2704,8 @@ class AsyncSession(BaseSession):
         if stream:
             # Always hand a streaming response its reader, exactly as the
             # synchronous path does. The condition used to be `stream and
-            # follow`, so with allow_redirects=False (or a max_redirects
-            # tighter than Chromium's own limit) the body was read eagerly
+            # follow`, so with allow_redirects=False (manual redirect mode) the
+            # body was read eagerly
             # from ``state.body`` -- which is None in streaming mode -- and the
             # response silently came back empty. The reader waits on the same
             # state, so it is correct for both redirect modes.

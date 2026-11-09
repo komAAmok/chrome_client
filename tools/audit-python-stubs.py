@@ -67,7 +67,27 @@ ALIASED = (
 #: __init__ and _native -- the two stubs with no facade -- with no coverage
 #: at all: a phantom function added to _native.pyi passed every check,
 #: because no loop ever opened the file.
-AUDITED = ALIASED + ("_native", "__init__")
+#: ``_native`` and ``__init__`` are the two stubs with no facade module.
+SPECIAL = ("_native", "__init__")
+
+#: Every private module that exists at runtime. Derived, not listed: a hardcoded
+#: tuple meant a new module slipped in with no stub and no audit at all --
+#: measured, adding ``_python_impl/_probe_new.py`` left this script reporting
+#: "17 stub modules, 0 error(s)". ``browser_headers`` and ``client_hints`` were
+#: in exactly that state: on disk, imported by ``sessions``, but absent from both
+#: the tuple and the stub directory, so nothing compared them to anything.
+#:
+#: ``_types`` is a stub-only helper with no runtime module, so it is subtracted
+#: rather than included.
+IMPL_MODULES = tuple(sorted(
+    path.stem for path in IMPL.glob("*.py")
+    if path.stem != "__init__"))
+STUB_ONLY = tuple(sorted(
+    path.stem for path in IMPL.glob("*.pyi")
+    if path.stem != "__init__" and not (IMPL / (path.stem + ".py")).exists()))
+
+#: The tuple the comparison loops walk.
+AUDITED = IMPL_MODULES
 
 
 #: Runtime constants the stubs spell as literals.

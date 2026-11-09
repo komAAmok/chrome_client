@@ -100,7 +100,39 @@ python -m pip install chrome-client
 ```
 
 已发布的 wheel 自带对应平台的 native 扩展。从源码使用时，先针对某个 Core 目录构建
-扩展（`MINICRONET_CORE_DIR` 在构建期读取），运行时把同一目录放到加载路径上：
+扩展（`MINICRONET_CORE_DIR` 在构建期读取），运行时把同一目录放到加载路径上。
+
+本目录的 wheel 用脚本构建，它会顺带跑产物门禁（见下面「产物门禁」）：
+
+```bash
+tools/build-python36-wheel.sh linux-x86_64
+```
+
+脚本要求 `cargo` 与 `maturin`（`pip install maturin`）在 PATH 上，Core 目录必须已存在，
+产出的 wheel 必须是 `cp36-abi3` 标签——一个 `cp39` 的 wheel 会在 3.9+ 上遮蔽另一个包，
+而 `py3-none-any` 会假装自己是纯 Python。手工构建等价于：
+
+```bash
+cd bindings/python36
+MINICRONET_CORE_DIR=$PWD/../../core/binaries/linux-x86_64 \
+  python3 -m maturin build --release --out dist
+```
+
+### 产物门禁
+
+`bindings/python36/src/lib.rs` 里 `#[test]` 的数量是 **0**，所以对这个 crate 跑
+`cargo test` 只会编译然后退出 0——它曾经是打 tag 前 review 的一步，但永远不可能失败。
+现在那一步换成 `tools/audit-python36-artifact.py`，检查产物本身：
+
+| 检查 | 为什么 |
+| --- | --- |
+| 扩展能按自己的模块名导入 | `PyInit_chrome_client_native36` 是导入器唯一会找的导出名，换个名字加载必然失败 |
+| `abi_version` 等于 `core/abi/minicronet.h` 的 `MN_ABI_VERSION` | 版本从头部读，不从脚本里抄，v9 时这个门禁不会继续通过 |
+| 没有链接 `libpython`、没有引用除白名单外的 `_Py_*` | `abi3` 意味着 3.6 到 3.15 都能装，链上 libpython 就不是 |
+| 能驱动 `bindings/python` 的 facade 发一次真实请求 | 这是真正会出问题的形态：旧扩展导入正常，只在 facade 调用它没有的方法时才崩 |
+
+最后一条是重点——前三条都能被一个「能导入但过时」的扩展满足。
+
 
 ```bash
 MINICRONET_CORE_DIR=$PWD/core/binaries/linux-x86_64 cargo build --release -p chrome-client-python
@@ -274,10 +306,11 @@ response = session.get("https://example.com/r")
 print(response.url, response.history, response.redirect_count)
 response = session.get("https://example.com/r", allow_redirects=False)
 print(response.status_code, response.headers["Location"], response.next.url)
-session.get("https://example.com/r", max_redirects=5)   # 超限抛 TooManyRedirects
+session.get("https://example.com/r", allow_redirects=False)  # 拿到 3xx 本身
 ```
 
-`max_redirects` 必须小于 20（Chromium 在一个 `URLRequest` 内停在上限 20）；
+`max_redirects` 只能是 `None`（= Chromium 在一个 `URLRequest` 内的上限 20）：数值一律抛
+`UnsupportedFeature`，因为它无法下调该上限，而在 Python 侧重发会另写一套重定向语义；
 大于等于 20 抛 `UnsupportedFeature`，不静默钳到 20。默认值是 `None`，含义是
 「采用 Chromium 的 20」，**不是** requests 的 30——`requests.models.DEFAULT_REDIRECT_LIMIT`
 仍是 30 且仍可导入，但本包不把它当作默认值。
@@ -492,7 +525,9 @@ Cookie 会按 URL 匹配后附加到握手上。
 | `get/post/put/patch/delete/head/options/trace/query` | ✓ |
 | `Session`、`AsyncSession`、`Client`、`AsyncClient` | ✓（`Client` 是 `Session` 别名） |
 | `params`、`data`、`json`、`content`、`files`、`multipart` | ✓ |
-| `headers`、`cookies`、`auth`、`timeout`（含 `(connect, read)`） | ✓ |
+| `headers`、`cookies`、`auth`、`timeout` | ✓ |
+| 删除 Core 自有的头（`User-Agent`、`Accept-Encoding` 等） | ✗ 抛 `UnsupportedFeature`；覆盖仍然可以 |
+| `timeout=(connect, read)` 两值不同 | ✗ 抛 `UnsupportedFeature`（ABI v8 只有一个期限）；两值相同可用 |
 | `proxies`、`proxy`、`proxy_auth`、`trust_env`、`NO_PROXY` | ✓ |
 | `verify=True/False/"/path/ca.pem"` | ✓ |
 | `allow_redirects`、`max_redirects`、`history`、最终 URL | ✓ |
