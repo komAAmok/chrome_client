@@ -131,10 +131,42 @@ benchmark medians over four runs each overlap -> size win with no throughput cos
 O1 已采用、O2 已排除。所以往 args.gn 加 `use_thin_lto = true` 只会得到一个重复
 赋值——`ninja` 返回 `no work to do` 是正常的。这一项**不构成待做的优化**。
 
+### 接受 C 之后，静态门禁能守住什么（已实测）
+
+三档变异，每次改完都**同步更新 manifest**，模拟「诚实但过期」的构建：
+
+| 变异 | `audit-core-binaries` | `audit-core-payloads` | `size-ceilings` |
+| --- | --- | --- | --- |
+| 改产物任意字节，不改 manifest | 抓到 | 通过 | 通过 |
+| 改产物任意字节 + manifest 同步 | **通过（漏）** | **通过（漏）** | 通过 |
+| 改 payload 单字节 + manifest 同步 | **通过（漏）** | 抓到 | 通过 |
+
+第三档的做法：从 `profile_table_generated.h` 取出 `trust_anchor_ids_0`（204 字节），
+在产物里定位到偏移 907952，改动 payload 内第 10 个字节，重算 sha256 写回 manifest。
+这是 C 场景下**最坏也最真实**的情况：有人重建了产物、诚实更新了 manifest，但 profile 表是旧的。
+
+**所以 C 的代价是具体的：**
+
+- 只有 **profile 数据**被静态守住：`audit-core-payloads.py` 从生成头取数组，要求每个平台
+  的产物逐字节包含它们。这条链是有效的，第三档变异证明了它。
+- **代码逻辑没有静态保护。** 第二档变异说明：改任意字节 + 同步 manifest，两个门禁都通过。
+  如果 `minicronet.cc` 的逻辑改了却按旧 args 增量构建，没有静态门禁能发现。
+- 非 linux-x86_64 的八个平台在 C 下**完全没有运行时验证**——只有 linux-x86_64 能真实加载并跑
+  `run-http-smoke.py` 与 Python 套件。
+
+**因此 C 可接受，但它守的是数据不是代码。** 这条必须写进文档，不能笼统说「接受限制」。
+
 ### 结论
 
 体积这条路已到边际：`strip` 37% + LTO O1 0.65%，没有剩余空间。
-「可复现」是真问题，但它需要的是**记录配置**，不是继续修断言链。
+「可复现」是真问题，但它需要的是**记录配置**，不是继续修断言链——A 与 A2 已实测否决，
+继续深挖等于逐个 patch 掉 `//ui` 层的平台假设。
+
+**采用 C**：接受「只能增量构建」，把它写成已知限制，并配以两条硬性要求：
+
+1. 阶段 0 的三项任务（配置快照 / 限制声明 / 重建要求）必须完成；
+2. `audit-core-payloads.py` 必须留在门禁清单里——它是 C 之下唯一能抓住
+   「诚实但过期」构建的检查（见上表第三档）。删掉它，C 就变成裸奔。
 
 详见 `docs/LESSONS.md` 第 48 条。
 

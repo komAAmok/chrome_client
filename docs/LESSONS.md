@@ -1374,14 +1374,39 @@ use_gtk = is_linux && !is_castos
    只能说明「某人某时构建过」，不能说明「用仓库里的配置构建过」。
 3. 上游 Chromium 更新后，若 `build.ninja` 需要重新生成，整个构建链会直接断掉。
 
-**修法方向**（未实施，需先决定）：
+**修法方向**（A 与 A2 已实测否决，采用 C）：
 
-| 方案 | 做法 | 代价 |
+| 方案 | 状态 | 结论 |
 | --- | --- | --- |
-| A. 补 args 并绕过断言 | `use_gtk = false`，并在 `sync-core.sh` 的补丁里把 `//ui/gl/BUILD.gn` 的 `is_linux` 分支排除 `//ui/platform_window/common` | 需要新增一个 Chromium 补丁；断言链可能还有下一环 |
-| B. 反向：开回 ozone/gio/gtk | 让配置自洽，放弃这几个开关带来的体积收益 | 产物变大，且与 `is_minicronet_build` 的意图相反 |
-| C. 不做 | 接受「只能增量构建」，把这条写成已知限制 | 无法做任何 args 层优化，也无法复现构建 |
+| A. 补 args 并绕过断言 | **已实测否决** | 补 `use_gtk = false` / `use_dbus = false`，并给 `//ui/gl:554` 写补丁（`git apply --check` 通过）后，断言链继续走到第 3、第 4 环。**每修一环就冒出下一环** |
+| A2. 把 `gn_all` 置空 | **已实测否决** | 复用 cronet 的 `deps = []` 分支后补丁生效，但 `//ui/gl` 不是只经 `gn_all` 进来。又试 `--root-target=//net:net`，`//net` 本身经由 `//ui/base/interaction` 就够到第 4 环的断言——只能缩小 root，切不断真实依赖 |
+| B. 反向：开回 ozone/gio/gtk | 未实测 | 让配置自洽的唯一方向，但需先实测「开回来之后产物多大」，不能假设 |
+| C. 接受限制 | **采用** | 把「不可从零重建」写成已知限制 + 锁定配置快照。代价见下 |
 
+**完整断言链（四条，逐环实测）**：
+
+| 环 | 位置 | 触发原因 |
+| --- | --- | --- |
+| 1 | `//ui/gtk/BUILD.gn:16` `assert(use_gio)` | `use_gtk = is_linux`（`gtk.gni:9`）恒真，args 关了 `use_gio` |
+| 2 | `//ui/platform_window/common/BUILD.gn:8` `assert(use_ozone)` | `//ui/gl/BUILD.gn:554` 无条件依赖 |
+| 3 | `//ui/ozone/BUILD.gn:12` `assert(use_ozone)` | `use_dbus = is_linux`（`features.gni:37`）恒真 |
+| 4 | `//ui/native_window_tracker/BUILD.gn:8` `assert(use_aura \|\| is_mac \|\| is_android)` | `//ui/base/interaction/BUILD.gn:100-102` 在 `!is_ios` 时无条件依赖 |
+
+第 1、3 环是 args 漏关，第 2、4 环是上游没有守卫。**继续修等于逐个 patch 掉 `//ui` 层的**
+**平台假设，那是重写抽象而不是调配置。**
+
+**采用 C 之后的代价（已实测）**：三档变异，每次改完都同步更新 manifest，模拟「诚实但过期」
+的构建——
+
+| 变异 | `audit-core-binaries` | `audit-core-payloads` |
+| --- | --- | --- |
+| 改产物任意字节，不改 manifest | 抓到 | 通过 |
+| 改产物任意字节 + manifest 同步 | **通过（漏）** | **通过（漏）** |
+| 改 payload 单字节 + manifest 同步 | **通过（漏）** | 抓到 |
+
+所以 C 守的是**数据**不是**代码**：只有 profile payload 有静态保护（`audit-core-payloads.py`），
+代码逻辑改动在增量构建下没有任何静态门禁能发现；非 linux-x86_64 的八个平台完全没有运行时验证。
+这条教训的具体化是：**接受 C 的前提是把 `audit-core-payloads.py` 留在门禁清单里，删了就是裸奔。**
 **规则**：判断「构建是否可复现」不能只看命令能否跑通，要**改一个无副作用的 arg 再重建**，
 看它是否真的生效。这次就是靠「加 `use_thin_lto` 后 `no work to do`」发现的。
 
