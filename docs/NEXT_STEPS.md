@@ -17,64 +17,110 @@
 - 版本 profile 只覆盖已审计的 Chrome 99--155 差异；无法证明的行为必须
   `fail-closed`，不能用当前 Chromium 行为冒充历史版本。
 
-## 阶段 0：让 Core 构建可复现（阻塞其他一切，需构建机）
+## 阶段 0：产物不可从零重建（已知限制，路径 A/A2 已实测否决）
 
-**为什么它是阶段 0**：九个平台的产物目前**无法从零重建**。`manifest.json` 里的 sha256
-只能证明「某人某时构建过」，不能证明「用仓库里的配置构建过」。AGENTS §9 要求九个平台
-产物必须能复现抓包，而这套构建链做不到——所以它排在其他所有平台工作之前。
+**结论先行**：当前 `args.gn` **无法通过 `gn gen`**，而这**不是补几个开关能修的**——
+`is_minicronet_build` 的裁剪方向与 Chromium `//ui` 层的平台假设直接冲突。阶段 0 的目标
+因此改为：**记录并锁定能生成当前 `build.ninja` 的那份配置**，而不是让今天的 args 去
+挑战它。
 
 ### 实测现状
 
 ```text
 $ ./buildtools/linux64/gn gen out/MiniCronet-linux-x86_64
 ERROR at //ui/gtk/BUILD.gn:16  assert(use_gio, "GIO is required for building with GTK")
-ERROR at //ui/platform_window/common/BUILD.gn:8  assert(use_ozone)
 $ tail -2 args.gn            # 仓库里的原始配置，未做任何修改
 is_cfi = false
 ```
 
-把 `args.gn` 恢复成仓库原状后重跑，**同样失败**。所以不是某个参数的问题，而是这套配置
-从未通过过 `gn gen`。现有 `build.ninja` 是更早生成的，只能增量使用——任何 args 变更
-都会被静默忽略（加 `use_thin_lto = true` 后 `ninja` 返回 `no work to do`）。
+把 args.gn 恢复成仓库原状后重跑，**同样失败**。现有 `build.ninja` 是更早生成的，
+只能增量使用——任何 args 变更都被静默忽略（加 `use_thin_lto = true` 后
+`ninja` 返回 `no work to do`，因为它本来就开着）。
 
-### 根因（已定位）
+### 已实测的断言链（四条，逐环确认）
 
-| # | 位置 | 内容 |
+| 环 | 位置 | 触发原因 |
 | --- | --- | --- |
-| 1 | `build/config/linux/gtk/gtk.gni:9` | `use_gtk = is_linux && !is_castos`，Linux 上恒真；args.gn 关了 `use_gio` → 撞 `//ui/gtk/BUILD.gn:16` |
-| 2 | `//ui/gl/BUILD.gn:553-555` | `is_linux` 时**无条件**依赖 `//ui/platform_window/common`，后者 `assert(use_ozone)`（`BUILD.gn:8`）→ 与 args.gn 的 `use_ozone = false` 互斥 |
+| 1 | `//ui/gtk/BUILD.gn:16` `assert(use_gio)` | `use_gtk = is_linux && !is_castos`（`build/config/linux/gtk/gtk.gni:9`）恒真，args 关了 `use_gio` |
+| 2 | `//ui/platform_window/common/BUILD.gn:8` `assert(use_ozone)` | `//ui/gl/BUILD.gn:554` 无条件依赖它 |
+| 3 | `//ui/ozone/BUILD.gn:12` `assert(use_ozone)` | `use_dbus = is_linux`（`build/config/features.gni:37`）恒真，args 关了 `use_glib` 却没关它 |
+| 4 | `//ui/native_window_tracker/BUILD.gn:8` `assert(use_aura || is_mac || is_android)` | `//ui/base/interaction/BUILD.gn:100-102` 在 `!is_ios` 时无条件依赖；Linux 上三者皆假 |
 
-第 2 条是关键：它意味着「无 ozone」与「Linux 上构建 `ui/gl`」在这份检出里**不能同时成立**。
-补 `use_gtk = false` 只能解决第 1 条。
+第 1、3 环是 args 漏关（补 `use_gtk = false`/`use_dbus = false` 可解），
+第 2、4 环是**上游代码没有守卫**。
 
-### 可选路径（实施前必须选一条并写进本文件）
+### 两条路径已实测否决
 
-| 方案 | 做法 | 代价 |
-| --- | --- | --- |
-| A（推荐） | 补 `use_gtk = false`；新增 `core/patches/no-ozone-ui-gl.patch`，把 `//ui/gl/BUILD.gn` 的 `is_linux` 分支改成 `if (use_ozone)` 内 | 多一个 Chromium 补丁；断言链可能还有第三环，需迭代 |
-| B | 反向：开回 `use_gtk` / `use_gio` / `use_ozone` 让配置自洽 | 产物变大，与 `is_minicronet_build` 意图相反；UI 依赖被拉进来 |
-| C | 放弃 args 层配置，只保留增量构建 | 永久无法复现，且 `audit-core-size-ceilings.py` 的「1.02 倍」规则失去意义 |
+**A：补 args + 补丁。** 补上 `use_gtk = false` / `use_dbus = false`，并为
+`//ui/gl/BUILD.gn:554` 写补丁（把条件改成 `&& use_ozone`，`git apply --check` 通过）。
+结果：断言链继续走到第 3、第 4 环。**每修一环就冒出下一环**。
 
-### 验收（缺一不可）
+**A2：把 `gn_all` 置空。** 复用 cronet 已有的分支，改成
+`if (is_cronet_build || is_minicronet_build) { deps = [] }`。补丁生效了，
+但第 2 环仍然触发——因为 `//ui/gl` 不是只经 `gn_all` 进来。
 
-- [ ] `gn gen` 在九个 `out/MiniCronet-*` 目录下均以 0 退出；
-- [ ] 对每个平台，**改一个无副作用的 arg 后重建，产物哈希必须改变**——这是「配置真的
-      生效」的判据，而不是「命令能跑」；
-- [ ] 九个平台从 `rm -rf out/MiniCronet-*` 开始完整重建一次，记录耗时与最终大小；
-- [ ] `tools/audit-core-payloads.py` 逐字节比对仍通过（跨平台「行为没变」的唯一证明）；
-- [ ] linux-x86_64 上跑 `tools/run-http-smoke.py` 与完整 Python 套件；
-- [ ] 九个 `manifest.json` 的 sha256 全部更新，提交信息里说明「这次是首次可复现构建」。
+又试 `--root-target` 缩小解析范围，同样无效：
 
-### 顺带可做（本任务完成后才解锁）
+```text
+$ gn gen out/... --root-target=//net:net
+ERROR at //ui/native_window_tracker/BUILD.gn:8
+See //ui/base/interaction/BUILD.gn:101:15
+```
 
-| 优化 | 预期收益 | 风险 |
-| --- | --- | --- |
-| `--icf=all` | 未测，可能 2-5% | 可能改变函数地址 |
-| 其余 `dcheck` / `CHECK` | **零** | 已确认关闭：`-DNDEBUG` 生效，产物里 `Check failed` 只剩 1 条 |
-| `use_thin_lto` | **已经做了，不要再试** | 见下 |
+`--root-target` 只能缩小 root，切不断真实依赖——`//net` 本身经由
+`//ui/base/interaction` 就够到那个断言了。
 
-**`use_thin_lto` 已经开着，且已实测到边际。** `core/patches/minicronet-core.patch` 里
-改的是 `lto_opt_level`，记录如下：
+### 为什么从原理上不可行
+
+`is_minicronet_build` 关掉的（aura / ozone / gtk / gio / dbus / mdns）恰恰是
+`//ui` 层假设**必须存在**的东西：
+
+| `//ui` 层的假设 | Core 的选择 |
+| --- | --- |
+| 桌面平台必有 `use_aura` 或 `use_ozone` | 都关 |
+| 非 iOS 必有 `native_window_tracker` | 无法满足断言 |
+| `ui/gl` 在 Linux 必依赖 `platform_window/common` | 后者要求 `use_ozone` |
+
+继续修下去等于**逐个 patch 掉 `//ui` 层的平台假设**，那是重写抽象，不是调配置。
+
+### 那现有产物是怎么来的
+
+`build.ninja` 是在某个**当时能通过 `gn gen`** 的历史状态下生成的。
+之后 args 被修改（关掉 gio / ozone / glib / udev 等），binja 文件未重新生成，于是
+形成今天的局面：增量可用，配置不可改。
+
+这也解释了为什么 `audit-core-size-ceilings.py` 的「最大产物 × 1.02」规则
+仍然有意义——它比对的是**已有产物**，不依赖重建。
+
+### 阶段 0 现在的目标
+
+不再追求「让今天的 args 通过 gn gen」，改为三件事：
+
+- [ ] **锁定配置**：把能生成当前 `build.ninja` 的那份 args 完整记录下来（从
+      `build.ninja.d` / `gn_logs.txt` / 产物里的 buildflags 反推），存成
+      `core/build-args/<target>.snapshot.txt`，并在文件头写明「这是历史快照，不是
+      当前 `args.gn`」；
+- [ ] **声明限制**：在 `docs/BUILD.md` 与每个 `core/binaries/<target>/manifest.json` 旁
+      写明「本产物无法从仓库当前配置从零重建」，让 sha256 的含义明确为
+      「已验证的构建产物」而非「可复现的构建产物」；
+- [ ] **重建时的要求**：未来任何重建都必须附上**实际使用的完整 args 快照**，否则视为
+      未验证——避免下一次又出现「不知道当时是什么配置」。
+
+### 如果将来真要让它可复现
+
+唯一可行的方向是**反向**：把 `use_aura` / `use_ozone` 开回来，让配置自洽，
+再评估产物会变大多少。代价是 UI 依赖被拉进来，与 `is_minicronet_build` 的意图相反。
+在动手前必须先实测「开回来之后产物多大」，而不是假设。
+
+### 已确认无效的优化方向，不要再试
+
+| 方向 | 结论 |
+| --- | --- |
+| 关 `dcheck_always_on` | **零收益**：`-DNDEBUG` 已生效，产物里 `Check failed` 只剩 1 条 |
+| `strip` | **已在做，且是最大一项**：未 strip 13,294,128 字节，`llvm-objcopy --strip-unneeded` 后 8,368,280，省 4.9 MB（37%） |
+| `use_thin_lto` | **已经开着**，见下 |
+
+`core/patches/minicronet-core.patch` 里的实测记录：
 
 ```text
 --lto-O1 is -57,456 bytes (-0.65%) after an identical strip
@@ -82,21 +128,13 @@ is_cfi = false
 benchmark medians over four runs each overlap -> size win with no throughput cost
 ```
 
-所以 O1 已采用、O2 已排除。往 args.gn 加 `use_thin_lto = true` 只会得到一个
-重复赋值，`ninja` 返回 `no work to do` 是正常的——这也是发现本任务的方式，
-但它**不构成一个待做的优化项**。
+O1 已采用、O2 已排除。所以往 args.gn 加 `use_thin_lto = true` 只会得到一个重复
+赋值——`ninja` 返回 `no work to do` 是正常的。这一项**不构成待做的优化**。
 
-**阶段 0 的价值是「可复现」，不是「能变小」。** 体积这条路已经走到边际：
-`strip` 省 37%（4.9 MB），LTO O1 再省 0.65%，继续挤压的收益远小于构建可复现的价值。
-**已确认无效的方向，不要再试**：关 `dcheck_always_on` 没有空间；`strip` 已经在做，
-且它是目前最大的一项——未 strip 13,294,128 字节，`llvm-objcopy --strip-unneeded` 后
-8,368,280，省 4.9 MB，占原始体积 37%。
+### 结论
 
-### 为什么标注「需构建机」
-
-这条路径要求在九个 `out/` 目录里反复 `gn gen` + 全量重建。本机只有 linux-x86_64 能真实
-加载运行（其余七个无法在本机验证行为），而断言链修复需要迭代——每轮都要一次完整重建。
-所以它不是「想清楚就能写完」的任务。
+体积这条路已到边际：`strip` 37% + LTO O1 0.65%，没有剩余空间。
+「可复现」是真问题，但它需要的是**记录配置**，不是继续修断言链。
 
 详见 `docs/LESSONS.md` 第 48 条。
 
@@ -192,7 +230,7 @@ benchmark medians over four runs each overlap -> size win with no throughput cos
 ## 当前可执行顺序
 
 ```text
-0. 让 Core 构建可复现（gn gen 跑通，九个平台从零重建）   <- 阶段 0，阻塞以下全部
+0. 锁定构建配置快照 + 声明「不可从零重建」（阶段 0；A/A2 已否决）
 1. target/linker wrapper + sysroot/SDK 检查
 2. 九个 target 的 Rust build 与产物审计
 3. ABI/Core manifest 重新核对
