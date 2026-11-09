@@ -17,7 +17,90 @@
 - 版本 profile 只覆盖已审计的 Chrome 99--155 差异；无法证明的行为必须
   `fail-closed`，不能用当前 Chromium 行为冒充历史版本。
 
-## 阶段 1：多平台 Rust target 与 linker（当前首项）
+## 阶段 0：让 Core 构建可复现（阻塞其他一切，需构建机）
+
+**为什么它是阶段 0**：九个平台的产物目前**无法从零重建**。`manifest.json` 里的 sha256
+只能证明「某人某时构建过」，不能证明「用仓库里的配置构建过」。AGENTS §9 要求九个平台
+产物必须能复现抓包，而这套构建链做不到——所以它排在其他所有平台工作之前。
+
+### 实测现状
+
+```text
+$ ./buildtools/linux64/gn gen out/MiniCronet-linux-x86_64
+ERROR at //ui/gtk/BUILD.gn:16  assert(use_gio, "GIO is required for building with GTK")
+ERROR at //ui/platform_window/common/BUILD.gn:8  assert(use_ozone)
+$ tail -2 args.gn            # 仓库里的原始配置，未做任何修改
+is_cfi = false
+```
+
+把 `args.gn` 恢复成仓库原状后重跑，**同样失败**。所以不是某个参数的问题，而是这套配置
+从未通过过 `gn gen`。现有 `build.ninja` 是更早生成的，只能增量使用——任何 args 变更
+都会被静默忽略（加 `use_thin_lto = true` 后 `ninja` 返回 `no work to do`）。
+
+### 根因（已定位）
+
+| # | 位置 | 内容 |
+| --- | --- | --- |
+| 1 | `build/config/linux/gtk/gtk.gni:9` | `use_gtk = is_linux && !is_castos`，Linux 上恒真；args.gn 关了 `use_gio` → 撞 `//ui/gtk/BUILD.gn:16` |
+| 2 | `//ui/gl/BUILD.gn:553-555` | `is_linux` 时**无条件**依赖 `//ui/platform_window/common`，后者 `assert(use_ozone)`（`BUILD.gn:8`）→ 与 args.gn 的 `use_ozone = false` 互斥 |
+
+第 2 条是关键：它意味着「无 ozone」与「Linux 上构建 `ui/gl`」在这份检出里**不能同时成立**。
+补 `use_gtk = false` 只能解决第 1 条。
+
+### 可选路径（实施前必须选一条并写进本文件）
+
+| 方案 | 做法 | 代价 |
+| --- | --- | --- |
+| A（推荐） | 补 `use_gtk = false`；新增 `core/patches/no-ozone-ui-gl.patch`，把 `//ui/gl/BUILD.gn` 的 `is_linux` 分支改成 `if (use_ozone)` 内 | 多一个 Chromium 补丁；断言链可能还有第三环，需迭代 |
+| B | 反向：开回 `use_gtk` / `use_gio` / `use_ozone` 让配置自洽 | 产物变大，与 `is_minicronet_build` 意图相反；UI 依赖被拉进来 |
+| C | 放弃 args 层配置，只保留增量构建 | 永久无法复现，且 `audit-core-size-ceilings.py` 的「1.02 倍」规则失去意义 |
+
+### 验收（缺一不可）
+
+- [ ] `gn gen` 在九个 `out/MiniCronet-*` 目录下均以 0 退出；
+- [ ] 对每个平台，**改一个无副作用的 arg 后重建，产物哈希必须改变**——这是「配置真的
+      生效」的判据，而不是「命令能跑」；
+- [ ] 九个平台从 `rm -rf out/MiniCronet-*` 开始完整重建一次，记录耗时与最终大小；
+- [ ] `tools/audit-core-payloads.py` 逐字节比对仍通过（跨平台「行为没变」的唯一证明）；
+- [ ] linux-x86_64 上跑 `tools/run-http-smoke.py` 与完整 Python 套件；
+- [ ] 九个 `manifest.json` 的 sha256 全部更新，提交信息里说明「这次是首次可复现构建」。
+
+### 顺带可做（本任务完成后才解锁）
+
+| 优化 | 预期收益 | 风险 |
+| --- | --- | --- |
+| `--icf=all` | 未测，可能 2-5% | 可能改变函数地址 |
+| 其余 `dcheck` / `CHECK` | **零** | 已确认关闭：`-DNDEBUG` 生效，产物里 `Check failed` 只剩 1 条 |
+| `use_thin_lto` | **已经做了，不要再试** | 见下 |
+
+**`use_thin_lto` 已经开着，且已实测到边际。** `core/patches/minicronet-core.patch` 里
+改的是 `lto_opt_level`，记录如下：
+
+```text
+--lto-O1 is -57,456 bytes (-0.65%) after an identical strip
+--lto-O2 is +12,176 bytes (larger) because it re-enables inlining that -Oz avoided
+benchmark medians over four runs each overlap -> size win with no throughput cost
+```
+
+所以 O1 已采用、O2 已排除。往 args.gn 加 `use_thin_lto = true` 只会得到一个
+重复赋值，`ninja` 返回 `no work to do` 是正常的——这也是发现本任务的方式，
+但它**不构成一个待做的优化项**。
+
+**阶段 0 的价值是「可复现」，不是「能变小」。** 体积这条路已经走到边际：
+`strip` 省 37%（4.9 MB），LTO O1 再省 0.65%，继续挤压的收益远小于构建可复现的价值。
+**已确认无效的方向，不要再试**：关 `dcheck_always_on` 没有空间；`strip` 已经在做，
+且它是目前最大的一项——未 strip 13,294,128 字节，`llvm-objcopy --strip-unneeded` 后
+8,368,280，省 4.9 MB，占原始体积 37%。
+
+### 为什么标注「需构建机」
+
+这条路径要求在九个 `out/` 目录里反复 `gn gen` + 全量重建。本机只有 linux-x86_64 能真实
+加载运行（其余七个无法在本机验证行为），而断言链修复需要迭代——每轮都要一次完整重建。
+所以它不是「想清楚就能写完」的任务。
+
+详见 `docs/LESSONS.md` 第 48 条。
+
+## 阶段 1：多平台 Rust target 与 linker
 
 - [ ] 添加本地可覆盖的 `.cargo/config.toml`；绝对路径只能由环境变量或 wrapper
   提供，不能写成唯一的机器路径。
@@ -109,8 +192,9 @@
 ## 当前可执行顺序
 
 ```text
+0. 让 Core 构建可复现（gn gen 跑通，九个平台从零重建）   <- 阶段 0，阻塞以下全部
 1. target/linker wrapper + sysroot/SDK 检查
-2. 8 个 target 的 Rust build 与产物审计
+2. 九个 target 的 Rust build 与产物审计
 3. ABI/Core manifest 重新核对
 4. Rust 生命周期与网络回归
 5. profile/隔离回归
@@ -264,15 +348,52 @@ sudo 密码，`rustup` 装到 3 个组件时下载停滞），所以 `maturin bu
 门禁与脚本都已在**现有的** `bindings/python36/target/release/libchrome_client_native36.so`
 上验证（该产物 abi 8、无 libpython 依赖、能驱动 facade 完成真实请求）。重新产出一个
 新 wheel 仍需在有工具链的机器上执行 `tools/build-python36-wheel.sh`。
-## 提案：ABI v9 四项（cookie 存取 / 协商协议 / client hints / DNS）
+## 提案：ABI v9 十项（cookie 存取 / 协商协议+ECH / client hints / DNS / host mapping / mTLS / 原生能力补齐 / 平台身份 / 非幂等重发 / hop-by-hop 头）
 
-四项改动的完整提案见 [ABI_V9_PROPOSAL.md](ABI_V9_PROPOSAL.md)。本文件下面四条待办
+十项改动的完整提案见 [ABI_V9_PROPOSAL.md](ABI_V9_PROPOSAL.md)（cookie 存取、协商协议 + ECH 状态、
+client hints、DNS 配置、host mapping、mTLS、四项原生能力补齐、平台身份、非幂等重发修复、
+hop-by-hop 头）。本文件下面四条待办
 （协商协议、client hints、DNS）都已并入那份提案，外加一项此前没有登记的 cookie 存取。
 
-为什么不拆开做：四项都要改 `MN_ABI_VERSION`、三份导出表与九个平台产物，拆成四次发布
+为什么不拆开做：八项 ABI 改动都要同步 `MN_ABI_VERSION`、三份导出表与九个平台产物，拆开等于多次重建；
+第九项（非幂等重发）不改 ABI，可以单独出一个补丁版本，不必等 v9
 等于重建九次。但**落地顺序**要拆：提案第 7 节建议先做协商协议（只加 getter、不改结构体
 布局、32 位断言不用动），再做 cookie（改动最大但回滚边界清楚），DNS 次之，
 client hints 最后（它阻塞在 72 份 profile 证据上，不应阻塞 v9 发布）。
+
+第五项（host mapping）与第六项（mTLS）都是评估时补上的，不在最初的清单里：
+
+- host mapping 关闭一个现存测试盲区（`ERR_NAME_NOT_RESOLVED` 在本机被 DNS 拦截，一直
+  不可测），并且是 CDN 直连的前置条件；
+- mTLS 让一整类双向认证部署（企业内网 / 金融网关 / IoT 管理）从"完全不可用"变为可用，
+  且注入点是 public 的、不改变 ClientHello 指纹。
+
+第十项（`Connection` 等 hop-by-hop 头）与第九项同类，都是「行为与声明不符」，但只需绑定层
+`fail-closed`：`Connection: close` 现在能发出去却不关闭连接（实测 3 次请求仍共用 1 条），
+而在 h2/h3 上它被 `spdy_http_utils.cc:214-221` 静默丢弃——同一份代码的行为随协商协议变化。
+修法是把 RFC 9110 §7.6.1 的 hop-by-hop 集合整组拒绝，不加 ABI、不重建平台产物。
+
+第九项（非幂等重发修复）与第十项都是**语义缺陷**，其余都是能力缺失或保真度不足。
+实测：服务端在复用连接上直接关闭响应时，POST 被重发两次、body 也逐字节重发，而 `retry=0`
+拦不住——重发发生在 Chromium 的 `HttpNetworkTransaction` 内部，判据只看「连接是否复用」
+与「是否收到响应头」，不看方法是否幂等。逐层验证后确认不 patch 无法关闭，因此需要
+第四个 `net/` 层补丁（`HttpUtil::IsMethodIdempotent` 已现成）。取舍：从「可能重复提交」
+变成「可能因连接重置而失败」——失败可处理，重复提交不可撤销。
+
+第八项（平台身份）来自两个实测发现：传参 `User-Agent` 后 `sec-ch-ua-platform` 会消失或
+仍是本机值，三处平台身份可以互相矛盾；而 `impersonate=None` 的默认 UA 是 `minicronet/0.2.9`，
+一眼看出不是浏览器。修法不是「自动修正传参 UA」（那会砍掉「伪装成 Windows」这个真实需求），
+而是新增 `platform_override` 让三者由同一个值派生，同时把默认 UA 改成 Chrome 版本串。
+顺带补一个现在完全缺失的门禁：UA / platform / mobile 的一致性从未被断言过。
+
+第七项（原生能力补齐）来自一次系统审计：把 `URLRequestContextBuilder` 的 41 个 `set_*`
+入口与 Core 实际用的 8 个做差集，剩下的四项按影响排序——HSTS 完全没启用（对 HSTS 站点
+会先发明文 HTTP）、cookie 语义缺 `CookieAccessDelegate`（SameSite 落桶与 Chrome 不同）、
+H2 session params 用 C++ 默认（END_STREAM 帧选择可能不同）、代理缺 delegate（多跳链）。
+前三项里只有前两项进 ABI；H2 params 属 `RuntimeProfileData`，是数据问题不是接口问题。
+
+ECH 只暴露状态（第 2.5 节）：桌面端 Chromium 的 `EchMode` 恒为 `kDisabled`，暴露配置
+等于在 Core 里重建一条 Chrome 从不走的路径，所以只加一个 getter。
 
 提案没有登记、也不应等 v9 的三项：`headers={"User-Agent": None}` 的删除语义、
 `tools/audit-python-stubs.py` 的硬编码清单、`bindings/python36` 的空壳门禁与 `include` 路径。

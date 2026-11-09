@@ -1279,6 +1279,120 @@ UA 版本串与 Core 的 `kFullVersions` 一致、`sec-ch-ua-platform` 出现在
 
 ---
 
+## 47. `is_minicronet_build` 与 `is_cronet_build` 是两个标志
+
+**现象**：审计 `URLRequestContextBuilder` 的 41 个 `set_*` 入口时，我判定六项与本项目
+无关，其中三项给出的理由是「需要服务端配合」「需要 OS 级安全硬件」「客户端库没有
+上报端点」。这三个理由**都是推断，不是源码依据**。
+
+**复核后的真实原因**是另一回事：
+
+```gn
+# net/features.gni:40
+enable_reporting = !is_ios && !is_minicronet_build
+
+# net/features.gni:63-64
+enable_device_bound_sessions =
+    !is_minicronet_build && (is_win || is_linux || is_mac)
+```
+
+```c
+// net/url_request/url_request_context_builder.cc:581
+#if !BUILDFLAG(MINICRONET_BUILD)
+  if (enable_shared_dictionary_) { ... }
+#endif
+```
+
+三项都是**被 `is_minicronet_build` 条件编译掉**，不是「不需要」。这个差别很大：前者
+意味着即使想做也做不了（除非改 `MINICRONET_BUILD` 的语义），后者是设计取舍。
+
+**根因**：我把「cronet 关掉的」当成了「minicronet 也关掉的」。它们**是两个独立标志**，
+而 `sync-core.sh` 之所以有一串补丁，正是在手工把 `is_minicronet_build` 并进若干原本
+只判断 `is_cronet_build` 的位置。反例就在同一份文件里：
+
+```gn
+# net/features.gni:48  —— 只判断 is_cronet_build，不判断 is_minicronet_build
+include_transport_security_state_preload_list = !is_cronet_build
+```
+
+所以 **HSTS 预置列表在 Core 里是编进去的**，`TransportSecurityState` 对象也确实存在
+——缺的只是「没接上」，而不是「没有」。如果我按「cronet 关了就等于 minicronet 关了」
+推断，会把一个可修的能力误判成不可得，与第 46 条是同一个错误。
+
+**规则**：判断某项能力在 Core 里是否存在，必须逐项去 `net/features.gni` 与对应
+`BUILD.gn` 里看**用的是哪个标志**，不能看项名，也不能从 cronet 的行为外推。
+
+**如何复查**：
+
+```bash
+grep -rn "<该项的开关名>" $CHROMIUM_SRC/net/features.gni \
+    $CHROMIUM_SRC/net/url_request/url_request_context_builder.*
+```
+
+看结果里是 `is_minicronet_build`、`is_cronet_build`、`BUILDFLAG(MINICRONET_BUILD)` 还是
+毫无条件——四种情形的结论完全不同。
+
+**否定性结论同样需要证据**（AGENTS §11）：写「这项无意义」时，要能指出具体是哪一行
+让它无意义。给不出行号，就说明还没查。
+
+---
+## 48. 构建配置无法复现：`gn gen` 从来跑不通
+
+**现象**：往 `out/MiniCronet-linux-x86_64/args.gn` 加一行 `use_thin_lto = true` 后重建，
+`ninja` 返回 `no work to do`——gn 没有因新 args 重新生成。强制 `gn gen` 后连续撞两个断言：
+
+```text
+ERROR at //ui/gtk/BUILD.gn:16  assert(use_gio, "GIO is required for building with GTK")
+ERROR at //ui/platform_window/common/BUILD.gn:8  assert(use_ozone)
+```
+
+**关键**：把 args.gn 恢复成仓库里的原始内容再跑 `gn gen`，**同样失败**。所以这不是
+「我新加的 arg 有问题」，而是这套 args 从来就没通过过 `gn gen`。
+
+**根因**：`args.gn` 显式关了 `use_gio` / `use_ozone` / `use_aura` / `use_udev`，
+却没有关 `use_gtk`。而
+
+```gn
+# build/config/linux/gtk/gtk.gni:9
+use_gtk = is_linux && !is_castos
+```
+
+在 Linux 上它恒为 `true`，于是 `use_gtk && !use_gio` 直接触发 `//ui/gtk/BUILD.gn:16` 的断言。
+补上 `use_gtk = false` 之后，链条继续走到下一个矛盾：`//ui/gl/BUILD.gn:553-555` 在
+`is_linux` 时**无条件**依赖 `//ui/platform_window/common`，而后者 `assert(use_ozone)`
+（`BUILD.gn:8`）——也就是说「无 ozone」与「Linux 上构建 ui/gl」在这份检出里互相排斥。
+
+**后果**：现有的九个产物是靠一份更早生成的 `build.ninja` 增量构建出来的。任何 args 变更
+都无法生效，包括 `use_thin_lto`、`dcheck_always_on`、任何后续的裁剪尝试。产物因此
+**不可从零复现**——这与 `docs/LESSONS.md` 第 24 条（只存在于开发机的构建输入）是同一类
+问题，但更隐蔽：文件都在，命令也跑得通，只是改不动配置。
+
+**为什么危险**：
+
+1. 无法验证「改了 args 会让产物变小」这类假设——上一轮想测 LTO 就是被这个卡住的。
+2. 无法在干净机器上重建同一份产物，于是「九个平台都已重建」的判据（manifest 的 sha256）
+   只能说明「某人某时构建过」，不能说明「用仓库里的配置构建过」。
+3. 上游 Chromium 更新后，若 `build.ninja` 需要重新生成，整个构建链会直接断掉。
+
+**修法方向**（未实施，需先决定）：
+
+| 方案 | 做法 | 代价 |
+| --- | --- | --- |
+| A. 补 args 并绕过断言 | `use_gtk = false`，并在 `sync-core.sh` 的补丁里把 `//ui/gl/BUILD.gn` 的 `is_linux` 分支排除 `//ui/platform_window/common` | 需要新增一个 Chromium 补丁；断言链可能还有下一环 |
+| B. 反向：开回 ozone/gio/gtk | 让配置自洽，放弃这几个开关带来的体积收益 | 产物变大，且与 `is_minicronet_build` 的意图相反 |
+| C. 不做 | 接受「只能增量构建」，把这条写成已知限制 | 无法做任何 args 层优化，也无法复现构建 |
+
+**规则**：判断「构建是否可复现」不能只看命令能否跑通，要**改一个无副作用的 arg 再重建**，
+看它是否真的生效。这次就是靠「加 `use_thin_lto` 后 `no work to do`」发现的。
+
+**如何复查**：
+
+```bash
+cd $CHROMIUM_SRC && ./buildtools/linux64/gn gen out/MiniCronet-linux-x86_64
+echo "exit=$?"    # 当前为 1
+```
+
+---
 ## 新增 profile 的三级证据链：两个真实缺陷
 
 **现象 A**：`tools/audit-profile-addition.py` 判定 chrome_157 的源码不存在——
