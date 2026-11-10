@@ -104,11 +104,14 @@ See //ui/base/interaction/BUILD.gn:101:15
       Windows 三个平台没有 out 目录，如实记为 skipped 而不是编造。
       `--check` 已接入 AGENTS §5 门禁：改一个 flag、改 target_cpu、删一行，三种变异都
       非零退出（已实测）。
-- [ ] **声明限制**：在 `docs/BUILD.md` 与每个 `core/binaries/<target>/manifest.json` 旁
-      写明「本产物无法从仓库当前配置从零重建」，让 sha256 的含义明确为
-      「已验证的构建产物」而非「可复现的构建产物」；
-- [ ] **重建时的要求**：未来任何重建都必须先重跑 `record-core-build-args.py` 再提交，
-      否则 `--check` 会失败——这条已由门禁强制执行，不再是约定。
+- [x] **声明限制**（已完成）：
+      `docs/BUILD.md` 新增一节「The committed args.gn cannot be regenerated」，
+      含 `gn gen` 的真实报错、四环断言链的指向、以及「增量可用、从零不可用」的区别；
+      `core/binaries/README.md` 新增「What the manifest sha256 does and does not mean」，
+      把 sha256 的含义钉成「这个产物被构建并审计过」，明确它不是可复现性证明。
+- [x] **重建时的要求**（已完成）：流程写进 `docs/BUILD.md`（七步，从 sync-core.sh
+      到 audit-core-binaries.sh），并由 `record-core-build-args.py --check` 强制执行：
+      改了配置却没重跑记录，门禁立刻失败。
 
 ### 如果将来真要让它可复现
 
