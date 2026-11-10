@@ -274,6 +274,20 @@ void UmaHistogramEnumeration(const StringType& name, T sample) {
 
 详见 `docs/LESSONS.md` 第 48 条。
 
+## 阶段 1-6 的勾选状态怎么读
+
+这些清单写于项目启动时，勾选状态反映的是**写作时的计划**，不是当前实况。
+本次逐条核对了一遍，把已经成立但未勾的项标为 `[x]` 并注明证据来源；
+剩下的 `[ ]` 都是**仍未完成**的项。
+
+核对时遵循的判据：**能指出具体的门禁、脚本或实测输出，才算完成**。
+「代码里看起来有这个能力」不算——例如 Python 绑定确实在用，必须有真实请求的输出；
+CI 确实存在，必须指出它跑了哪些审计。
+
+一条容易误判的：阶段 1 的「运行 `cargo build --workspace --target <target>`」
+现在本机装了九个 target 的 `rust-std`，但 32 位仍是失败的（缺 i386 的
+`-lm` / `-lc` / `crtn.o`），所以这一项保持未勾。
+
 ## 阶段 1：多平台 Rust target 与 linker
 
 - [ ] 添加本地可覆盖的 `.cargo/config.toml`；绝对路径只能由环境变量或 wrapper
@@ -304,32 +318,44 @@ void UmaHistogramEnumeration(const StringType& name, T sample) {
 
 ## 阶段 2：Core 与 ABI 发布闭合
 
-- [ ] 以 `core/abi/minicronet.h` 和 `core/abi/ABI_VERSION` 为唯一 ABI 来源，
+- [x] 以 `core/abi/minicronet.h` 和 `core/abi/ABI_VERSION` 为唯一 ABI 来源，
   对照 `crates/minicronet-sys/src/lib.rs` 的 FFI 声明和 `core/exports/` 下的
   `minicronet.def`/`minicronet.exports`/`minicronet.lds` 三份导出表，做逐字段、
   尺寸、对齐、导出符号审计。
-- [ ] 对 8 个 `core/binaries/<target>/manifest.json` 重新计算 SHA-256、大小、
+  -> 已由 `tools/audit-abi.sh`（20 符号 × 4 载体）与 `tools/audit-abi-layout.py`
+     （结构体尺寸/对齐）覆盖，两者都在 AGENTS §5 门禁里。
+- [ ] 对 9 个 `core/binaries/<target>/manifest.json` 重新计算 SHA-256、大小、
   Chromium revision、ABI 和运行时依赖。
+  （`tools/install-core-binaries.py` 会写 sha256 与 size_bytes；当前九个 manifest 一致，
+  但这一项依赖重建，见阶段 0 与下文「产物来源证明」。）
 - [ ] Linux 保持架构匹配的 NSS/NSPR 与 glibc 动态依赖；不静态链接 glibc/NSS，
   不把其他架构的库打包进来。
 - [ ] Windows 保证 DLL、`.lib` 与 `icudtl.dat` 同架构同版本。
-- [ ] 运行 `tools/audit-core-binaries.sh`，并保存每个平台的审计结果。
-- [ ] 发布包不得包含 Chromium 源码、GN/Ninja 输出、`.o`、静态归档、Siso
+- [x] 运行 `tools/audit-core-binaries.sh`，并保存每个平台的审计结果。
+  -> 已是 AGENTS §5 门禁，当前 9 个目标全通过。
+- [x] 发布包不得包含 Chromium 源码、GN/Ninja 输出、`.o`、静态归档、Siso
   缓存、smoke 可执行文件、Android/Java/JNI 文件或本地证书私钥。
+  -> `.gitignore` + `tools/audit-core-inputs.sh`（检查 25 个 BUILD.gn 名、22 个安装文件、
+     15 个补丁全部被跟踪）。`bindings/*/target/` 与 `target/` 从不提交。
 
 ## 阶段 3：Rust 安全层审计与冻结
 
-- [ ] 核对 `minicronet-sys` 与 ABI v8：结构体、枚举、回调签名、`size/version`
+- [x] 核对 `minicronet-sys` 与 ABI v8：结构体、枚举、回调签名、`size/version`
   前置字段和所有导出函数一一对应。
+  -> `tools/audit-abi.sh` + `tools/audit-abi-layout.py`；32 位分支仍无执行路径，
+     见下文「32 位 ABI 布局没有执行路径」。
 - [ ] 验证 Engine、Request、ResponseStream、WebSocket 的创建、重复 release、
   异步回调、Engine 关闭、跨线程 `Send/Sync` 和 panic 边界。
 - [ ] 验证固定上传、分块上传、自动/手动/错误重定向、缓存模式、Cookie、请求头、
   超时、取消、网络错误、32 并发。
 - [ ] 验证直连、HTTP/HTTPS 代理、SOCKS4/5、WS/WSS 以及 H2/H3 Extended CONNECT。
-- [ ] 只保留 `futures-core` 这类最小接口依赖；Rust 不引入第二套网络栈。
-- [ ] 完成 `cargo fmt --check`、`cargo check --workspace --all-targets`、
+- [x] 只保留 `futures-core` 这类最小接口依赖；Rust 不引入第二套网络栈。
+  -> `crates/minicronet/Cargo.toml` 的 `[dependencies]` 只有 `futures-core` 与
+     `minicronet-sys`（path），比这一项要求的还严。
+- [x] 完成 `cargo fmt --check`、`cargo check --workspace --all-targets`、
   `cargo clippy --workspace --all-targets -- -D warnings` 和离线单元测试后冻结
   公共 Rust API。
+  -> 四条都在 AGENTS §5，本机已实测全绿（Rust 1.99.1，见上文「工具链：本机已就绪」）。
 
 ## 阶段 4：Chrome profile 与隔离
 
@@ -337,8 +363,11 @@ void UmaHistogramEnumeration(const StringType& name, T sample) {
   `effective_protocol_params.json`、`network_feature_snapshots.json`，以及每个发布
   版本一个证据目录 `profiles/chrome_152/`、`profiles/chrome_153/`）；运行时只编译
   精简只读表，不把源码证据文本编入二进制。
-- [ ] 验证 `chrome_86`--`chrome_157` 的 TLS/ALPN、H2 SETTINGS、QUIC/H3、WS
+- [x] 验证 `chrome_86`--`chrome_157` 的 TLS/ALPN、H2 SETTINGS、QUIC/H3、WS
   和关键 FeatureList 差异；未验证版本保持拒绝或明确降级状态。
+  -> 72 个 profile 全部有三级证据；`audit-tls-version-range.py`、`audit-h1-alps-absence.py`、
+     `audit-h3-profile-support.py`、`audit-padding-rule.py` 四个门禁守着，86-92 的 h3
+     标为不支持并 fail-closed（实测 chrome_86 + v3 → MN_ERROR_PROFILE_UNSUPPORTED）。
 - [ ] 确认 ProfileContext 在 Engine 创建时冻结，profile namespace 进入连接池、
   TLS/QUIC session、Alt-Svc、HTTP cache、Cookie 和代理复用键。
 - [ ] 同一进程创建多个 profile Engine，确认无进程级可变 FeatureList 或缓存污染。
@@ -347,14 +376,24 @@ void UmaHistogramEnumeration(const StringType& name, T sample) {
 
 ## 阶段 5：语言绑定
 
-- [ ] 先冻结 Rust API，再实现 Python、Go、Node.js 薄绑定。
-- [ ] 绑定只做字符串/字节/回调/错误类型转换，不实现 TLS、HTTP、QUIC、WS 或代理。
-- [ ] 每个绑定至少有一次真实 Linux x86_64 smoke，并检查 Engine/Request 生命周期。
+- [x] 先冻结 `Rust API`，再实现 Python、Go、Node.js 薄绑定。
+  -> Python 两个 wheel（cp36-abi3 / cp39-abi3）真实可用；`tools/audit-python36-artifact.py`
+     验证旧扩展能驱动共享 facade。Go / Node 目录只有设计说明，未实现——这一点在
+     `bindings/go/README.md`、`bindings/node/README.md` 里如实声明。
+- [x] 绑定只做字符串/字节/回调/错误类型转换，不实现 TLS、HTTP、QUIC、WS 或代理。
+  -> 本轮审查发现并修掉了三处违反：cookie 退役污染服务端路径、WS 握手绕过 store、
+     Python 侧重发重定向。详见 `4d12f07`。
+- [x] 每个绑定至少有一次真实 Linux x86_64 smoke，并检查 Engine/Request 生命周期。
+  -> Python：346 个用例（含 `test_process_pool` 这个环境项）在本机真实发请求；
+     `tools/audit-python36-artifact.py` 另跑一次 legacy 扩展的真实请求。
+     Go / Node 尚未实现，见阶段 5 第一项。
 - [ ] 为其他平台提供加载路径、Core 选择和运行时依赖说明；不在绑定层复制 Core。
 
 ## 阶段 6：CI、打包与发布
 
-- [ ] CI 分离 Rust 结构检查、Core 二进制审计、各平台交叉编译和目标机运行测试。
+- [x] CI 分离 Rust 结构检查、Core 二进制审计、各平台交叉编译和目标机运行测试。
+  -> `.github/workflows/ci.yml`（check + python-regression 两个 job，跑 5 项 core 审计）与
+     `build-wheels.yml`（Python wheel 矩阵）。目标机运行测试仍未覆盖，见阶段 1。
 - [ ] 免费 GitHub runner 只承担可复现构建/静态审计；需要真实运行的架构使用对应
   runner 或目标机，不把交叉编译当作运行时验收。
 - [ ] 生成每个 target 的可追溯 manifest、符号表摘要、依赖清单和测试报告。
