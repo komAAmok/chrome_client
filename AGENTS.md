@@ -87,6 +87,12 @@ tools/audit-core-binaries.sh
 tools/audit-core-inputs.sh
 python3 tools/audit-core-size-ceilings.py
 python3 tools/audit-core-payloads.py
+# Stage 0 (docs/NEXT_STEPS.md) records that the committed args.gn cannot pass
+# gn gen, so an artifact cannot be rebuilt from the repository. This gate keeps
+# the per-target configuration snapshot in step with the build output that
+# actually produced the artifact: a rebuild that changes a flag without
+# re-recording it fails here.
+python3 tools/record-core-build-args.py --check
 # The line above is the only cross-platform behavioural claim this
 # repository can make without running anything: every artifact must
 # embed the profile payloads from the generated header byte for byte.

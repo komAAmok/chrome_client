@@ -96,15 +96,19 @@ See //ui/base/interaction/BUILD.gn:101:15
 
 不再追求「让今天的 args 通过 gn gen」，改为三件事：
 
-- [ ] **锁定配置**：把能生成当前 `build.ninja` 的那份 args 完整记录下来（从
-      `build.ninja.d` / `gn_logs.txt` / 产物里的 buildflags 反推），存成
-      `core/build-args/<target>.snapshot.txt`，并在文件头写明「这是历史快照，不是
-      当前 `args.gn`」；
+- [x] **锁定配置**（已完成）：`tools/record-core-build-args.py` 从**构建输出**反推配置，
+      而不是抄 `args.gn`。依据是生成的 buildflag 头（`gen/base/debug/debugging_buildflags.h`、
+      `gen/base/cfi_buildflags.h`）——那些常量是真正到达编译器的，属于证据而非意图。
+      产出 `core/build-args/<target>.snapshot.txt`，文件头写明「THIS IS A HISTORICAL RECORD,
+      NOT A RECIPE」。本机已有 6 个平台的 out 目录，所以产出 6 份快照；
+      Windows 三个平台没有 out 目录，如实记为 skipped 而不是编造。
+      `--check` 已接入 AGENTS §5 门禁：改一个 flag、改 target_cpu、删一行，三种变异都
+      非零退出（已实测）。
 - [ ] **声明限制**：在 `docs/BUILD.md` 与每个 `core/binaries/<target>/manifest.json` 旁
       写明「本产物无法从仓库当前配置从零重建」，让 sha256 的含义明确为
       「已验证的构建产物」而非「可复现的构建产物」；
-- [ ] **重建时的要求**：未来任何重建都必须附上**实际使用的完整 args 快照**，否则视为
-      未验证——避免下一次又出现「不知道当时是什么配置」。
+- [ ] **重建时的要求**：未来任何重建都必须先重跑 `record-core-build-args.py` 再提交，
+      否则 `--check` 会失败——这条已由门禁强制执行，不再是约定。
 
 ### 如果将来真要让它可复现
 
