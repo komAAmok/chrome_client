@@ -1428,7 +1428,12 @@ cd $CHROMIUM_SRC/out/MiniCronet-linux-x86_64
   0 条，而 Rust `.rlib` 里有 261 条——它们是 Rust 标准库 panic 的 Location 路径，在
   编译工具链时固化。`-ffile-prefix-map` 管不到，要修得重建 Rust std。C++ 侧其实
   已经干净了（`-g0` + `-ffile-compilation-dir=.`）。
-- 641 条 UMA 直方图名字（26,729 字节）没有编译期开关。`base/metrics/histogram_functions.h:80` 把
+- 641 条 UMA 直方图名字（26,729 字节）没有编译期开关。
+- `.rodata` 2.3 MB 的完整分解（逐项实测）：root store 证书 347 KB（249 张 / 331 KB DER）、
+  Brotli 静态字典 ~112 KB、UMA 名字 26.7 KB、Rust 路径 22.6 KB、profile 表 ~10 KB、
+  其余 ~1.8 MB 是 NSS/BoringSSL 错误串与协议查找表。**没有一项是无用的**——两项大头的
+  共同点是「删除即失去功能」：root store 换系统 CA 库会让校验结果随机器变化，Brotli 字典
+  删了 `br` 立刻失效。`base/metrics/histogram_functions.h:80` 把
   名字作为函数参数传入，`grep ENABLE_UMA` 零结果，只能改源码。
 **规则**：判断「构建是否可复现」不能只看命令能否跑通，要**改一个无副作用的 arg 再重建**，
 看它是否真的生效。这次就是靠「加 `use_thin_lto` 后 `no work to do`」发现的。

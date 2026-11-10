@@ -130,6 +130,9 @@ See //ui/base/interaction/BUILD.gn:101:15
 | `-ffile-prefix-map` 抹平路径字符串 | **不可行**：见下，字符串来自 Rust rlib 不是 C++ |
 | 裁 UMA 直方图名字 | **不可行**：无编译期开关，需改 Chromium 源码 |
 | 减 profile 数量 / 关 QUIC / 关 WebSocket | **不该做**：放弃功能，与「保证现有功能」冲突 |
+| 裁剪 `chrome_root_store` | **不该做**：347 KB，实测 249 张证书 / 331 KB DER，是 Chrome 的证书信任链本体。换系统 CA 库会让不同机器的校验结果不同 |
+| 裁剪 Brotli 静态字典 | **不该做**：~112 KB，是 `br` 解码的必需数据；72 个 profile 的 `Accept-Encoding` 都含 `br` |
+| 裁剪「协议字面量 / 错误消息」 | **不可行**：1.8 MB 全是 NSS/BoringSSL 错误串、net error 描述、QUIC/H2 帧名与字符查找表，都被代码引用 |
 
 **为什么查法很重要**：我第一次用 `grep -o "gc-sections" toolchain.ninja` 得到零命中，
 据此判定「未启用」，进而建议去做这项优化。实际上链接命令在 `libminicronet.so.rsp` 与
@@ -186,13 +189,38 @@ void UmaHistogramEnumeration(const StringType& name, T sample) {
 `base/metrics/` 里零结果）。唯一的办法是改 Chromium 源码把 `UmaHistogram*` 改成空实现——
 那是第 5 个 net 层补丁，**收益 26 KB，代价是又一处与上游分叉**。
 
+#### `.rodata` 的完整分解（每一项都有实测依据）
+
+| 项目 | 大小 | 性质 | 可精简 |
+| --- | --- | --- | --- |
+| Chrome Root Store 证书 | **347 KB** | 证书信任链本体 | ❌ 换系统 CA 库会破坏「与真正 Chrome 一致」 |
+| Brotli 静态字典 | **~112 KB** | `br` 解码的必需数据 | ❌ 删了 `Accept-Encoding: br` 立刻失效 |
+| UMA 直方图名字 | 26.7 KB | 641 条，见上 | ❌ 无编译期开关 |
+| Rust 路径字符串 | 22.6 KB | 388 条，见上 | ❌ 需重建 Rust std |
+| profile 表（数组 + 72 条记录） | ~10 KB | 已去重：1 份 cipher_suites 服务 72 个 profile | ❌ 上限只有 10 KB |
+| 填充 / 测试模式 | 2.9 KB | 库内部常量表 | ❌ 可忽略 |
+| hex 常量 | 1.1 KB | 协议查找表 | ❌ |
+| 其余 ~1.8 MB | | NSS/BoringSSL 错误串、net error 描述、QUIC/H2 帧名、字符查找表 | ❌ 被代码引用 |
+
+两项大头的实测方法：
+
+- **root store 347 KB**：在产物里按严格 DER 规则扫描（外层 `SEQUENCE` 长度 500–2500，
+  内层也是 `SEQUENCE` 且长度合理），得到 **249 张证书、331,047 字节 DER**，
+  起始偏移 1,807,616、连续跨度 346,916 字节、相邻间隔中位数仅 9 字节——是一整块连续数据。
+  用源文件交叉验证：`net/data/ssl/chrome_root_store/additional.certs` 441,237 字节 PEM，
+  换算 DER 约 330,928，与实测差 119 字节。
+- **Brotli 字典 ~112 KB**：最长一批「散文」字符串是 `firstvideolightworldmedia...`、
+  `gustomentemariofirmacosto...` 这类，正是 Brotli 标准静态字典的内容；特征片段位于偏移
+  2,567,680，在 `.rodata` 内连续。Chromium 侧对应 `third_party/brotli/enc/static_init.c:24`
+  的 `BrotliGetDictionary()`。
+
 #### 结论：8.37 MB 里没有「无用部分」可剔
 
 剩余构成：
 
 ```text
 .text     5.2 MB   真正被引用到的 Chromium net + BoringSSL + QUICHE 代码
-.rodata   2.3 MB   证书、profile 表、协议字面量、UMA 名字
+.rodata   2.3 MB   见上面的完整分解表（无一项可剔）
 其它      0.9 MB   重定位、动态符号、段表
 ```
 
