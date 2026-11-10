@@ -114,22 +114,91 @@ See //ui/base/interaction/BUILD.gn:101:15
 
 ### 已确认无效的优化方向，不要再试
 
+三轮排查覆盖了 size optimization 的全部常见手段。**先看这一节，能省掉重复调查。**
+
 | 方向 | 结论 |
 | --- | --- |
+| `--gc-sections` | **已在用**。不能用 `grep toolchain.ninja` 查（会误判为未启用），必须用 `ninja -t commands libminicronet.so` |
+| `--icf=all` | **已在用**，且是 `all` 不是 `safe`。同上，查法一样 |
+| `-Wl,-O2`（链接期） | **已在用** |
+| `-flto=thin` + `-Wl,--lto-O1` | **已在用**。O2 测过更大，见下 |
+| `-fwhole-program-vtables` | **已在用** |
+| `-Oz`（编译期） | **已在用** |
+| `-fno-unique-section-names` / `-z,noseparate-code` | **已在用**，省段名与段对齐 padding |
+| `strip` | **已在做，且是最大一项**：未 strip 13,294,128 → `llvm-objcopy --strip-unneeded` 后 8,368,280，省 4.9 MB（37%） |
 | 关 `dcheck_always_on` | **零收益**：`-DNDEBUG` 已生效，产物里 `Check failed` 只剩 1 条 |
-| `strip` | **已在做，且是最大一项**：未 strip 13,294,128 字节，`llvm-objcopy --strip-unneeded` 后 8,368,280，省 4.9 MB（37%） |
-| `use_thin_lto` | **已经开着**，见下 |
+| `-ffile-prefix-map` 抹平路径字符串 | **不可行**：见下，字符串来自 Rust rlib 不是 C++ |
+| 裁 UMA 直方图名字 | **不可行**：无编译期开关，需改 Chromium 源码 |
+| 减 profile 数量 / 关 QUIC / 关 WebSocket | **不该做**：放弃功能，与「保证现有功能」冲突 |
 
-`core/patches/minicronet-core.patch` 里的实测记录：
+**为什么查法很重要**：我第一次用 `grep -o "gc-sections" toolchain.ninja` 得到零命中，
+据此判定「未启用」，进而建议去做这项优化。实际上链接命令在 `libminicronet.so.rsp` 与
+ninja 的 solink 规则里，`toolchain.ninja` 只存编译器与工具链定义。
+**判据必须来自真实命令**：
 
-```text
---lto-O1 is -57,456 bytes (-0.65%) after an identical strip
---lto-O2 is +12,176 bytes (larger) because it re-enables inlining that -Oz avoided
-benchmark medians over four runs each overlap -> size win with no throughput cost
+```bash
+cd $CHROMIUM_SRC/out/MiniCronet-linux-x86_64
+../../third_party/ninja/ninja -t commands libminicronet.so | tail -1 | tr " " "\n" | grep -E "gc-sections|icf|lto-O"
 ```
 
-O1 已采用、O2 已排除。所以往 args.gn 加 `use_thin_lto = true` 只会得到一个重复
-赋值——`ninja` 返回 `no work to do` 是正常的。这一项**不构成待做的优化**。
+#### 路径字符串：来自 Rust rlib，`-ffile-prefix-map` 无效
+
+产物里有 388 条以 `../../` 开头的字符串，合计 22,564 字节。表面上看像是 C++ 的
+`__FILE__`，但扫描全部对象文件后否定了这个猜测：
+
+| 检查 | 结果 |
+| --- | --- |
+| C++ `.o` 里的路径字符串（扫 600 个对象） | **0 条** |
+| Rust `.rlib` 里的 | **261 条** |
+
+来源分布：`libcompiler_builtins` 160 条、`libcore` 70 条、`libstd` 15 条、
+`liballoc` 11 条、`liblibc` 5 条。样例：
+
+```text
+../../third_party/rust-toolchain/lib/rustlib/src/rust/library/compiler-builtins/
+  compiler-builtins/src/math/../../../libm/src/math/support/float_traits.rs
+```
+
+这些是 **Rust 标准库 panic 时的 Location 路径**，在编译工具链时固化进 `.rlib`。
+改 C++ 编译 flag 不可能影响预编译好的 rlib；要修只能用 `rustc --remap-path-prefix` 重建整个 Rust std。
+**收益 22 KB，代价是重建工具链——不值得。**
+
+C++ 侧其实已经处理干净了：编译命令里有 `-g0` 与 `-ffile-compilation-dir=.`。
+
+#### UMA 直方图名字：确认是 UMA 名，但没有编译期开关
+
+641 条以 `Net.` / `Http.` / `Cookie.` / `Quic.` 开头的字符串，合计 26,729 字节。
+抽样确认确实是 UMA 直方图名：
+
+```text
+Cookie.CookiePartitionSizeKibibytes
+Cookie.CrossSiteRedirectDowngradeChangesInclusion2.Read
+Cookie.GetCookieListWithOptions.Duration.Subsampled
+```
+
+但 `base/metrics/histogram_functions.h:80` 的实现是把名字作为**函数参数**传入：
+
+```cpp
+void UmaHistogramEnumeration(const StringType& name, T sample) {
+```
+
+没有 `ENABLE_UMA` / `UMA_ENABLED` 之类的编译期开关能把它变成空操作（`grep ENABLE_UMA` 在
+`base/metrics/` 里零结果）。唯一的办法是改 Chromium 源码把 `UmaHistogram*` 改成空实现——
+那是第 5 个 net 层补丁，**收益 26 KB，代价是又一处与上游分叉**。
+
+#### 结论：8.37 MB 里没有「无用部分」可剔
+
+剩余构成：
+
+```text
+.text     5.2 MB   真正被引用到的 Chromium net + BoringSSL + QUICHE 代码
+.rodata   2.3 MB   证书、profile 表、协议字面量、UMA 名字
+其它      0.9 MB   重定位、动态符号、段表
+```
+
+这份产物已经是 `-Oz` + ThinLTO(lto-O1) + `--gc-sections` + `--icf=all` +
+`-fwhole-program-vtables` + `-fno-unique-section-names` + `--strip-unneeded` 的组合结果，
+属于 Chromium 能给出的接近极限的尺寸。继续挤压只能靠放弃功能。
 
 ### 接受 C 之后，静态门禁能守住什么（已实测）
 

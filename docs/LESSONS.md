@@ -1407,6 +1407,29 @@ use_gtk = is_linux && !is_castos
 所以 C 守的是**数据**不是**代码**：只有 profile payload 有静态保护（`audit-core-payloads.py`），
 代码逻辑改动在增量构建下没有任何静态门禁能发现；非 linux-x86_64 的八个平台完全没有运行时验证。
 这条教训的具体化是：**接受 C 的前提是把 `audit-core-payloads.py` 留在门禁清单里，删了就是裸奔。**
+**一个自己踩过的坑：查 flag 用错了文件。** 我用 `grep -o "gc-sections" toolchain.ninja` 得到
+零命中，据此判定「`--gc-sections` 未启用」，还建议去做这项优化。实际上链接命令在
+ninja 的 solink 规则与 `.rsp` 里，`toolchain.ninja` 只存编译器与工具链定义。用真实命令
+一查，`--gc-sections`、`--icf=all`、`-Wl,-O2` 全都已启用：
+
+```bash
+cd $CHROMIUM_SRC/out/MiniCronet-linux-x86_64
+../../third_party/ninja/ninja -t commands libminicronet.so | tail -1 | tr " " "\n" \
+  | grep -E "gc-sections|icf|lto-O"
+```
+
+**教训**：判断某个编译/链接选项是否生效，判据必须来自**真实执行的命令**，不能来自某个
+看起来相关的配置文件的 grep 结果。零命中可能是「文件里没有」，也可能是「查错了文件」——
+两者的结论完全相反，而我只看到了第一种解释。
+
+**顺带查清的两条也记在这里**：
+
+- 产物里 388 条 `../../` 路径字符串**不是 C++ 的 `__FILE__`**。扫 600 个 `.o` 得到
+  0 条，而 Rust `.rlib` 里有 261 条——它们是 Rust 标准库 panic 的 Location 路径，在
+  编译工具链时固化。`-ffile-prefix-map` 管不到，要修得重建 Rust std。C++ 侧其实
+  已经干净了（`-g0` + `-ffile-compilation-dir=.`）。
+- 641 条 UMA 直方图名字（26,729 字节）没有编译期开关。`base/metrics/histogram_functions.h:80` 把
+  名字作为函数参数传入，`grep ENABLE_UMA` 零结果，只能改源码。
 **规则**：判断「构建是否可复现」不能只看命令能否跑通，要**改一个无副作用的 arg 再重建**，
 看它是否真的生效。这次就是靠「加 `use_thin_lto` 后 `no work to do`」发现的。
 
