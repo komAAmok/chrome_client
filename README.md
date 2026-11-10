@@ -527,6 +527,7 @@ Cookie 会按 URL 匹配后附加到握手上。
 | `params`、`data`、`json`、`content`、`files`、`multipart` | ✓ |
 | `headers`、`cookies`、`auth`、`timeout` | ✓ |
 | 删除 Core 自有的头（`User-Agent`、`Accept-Encoding` 等） | ✗ 抛 `UnsupportedFeature`；覆盖仍然可以 |
+| 设置 hop-by-hop 头（`Connection`、`Keep-Alive`、`TE`、`Trailer`、`Upgrade`、`Proxy-Connection`） | ✗ 抛 `UnsupportedFeature`；Chromium 拥有连接生命周期，h2/h3 上这些字段被直接丢弃 |
 | `timeout=(connect, read)` 两值不同 | ✗ 抛 `UnsupportedFeature`（ABI v8 只有一个期限）；两值相同可用 |
 | `proxies`、`proxy`、`proxy_auth`、`trust_env`、`NO_PROXY` | ✓ |
 | `verify=True/False/"/path/ca.pem"` | ✓ |

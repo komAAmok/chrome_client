@@ -507,6 +507,7 @@ no further edits.
 | `params`, `data`, `json`, `content`, `files`, `multipart` | ✓ |
 | `headers`, `cookies`, `auth`, `timeout` | ✓ |
 | Removing a Core-owned header (`User-Agent`, `Accept-Encoding`, ...) | ✗ raises `UnsupportedFeature`; overriding still works |
+| Setting a hop-by-hop field (`Connection`, `Keep-Alive`, `TE`, `Trailer`, `Upgrade`, `Proxy-Connection`) | ✗ raises `UnsupportedFeature`; Chromium owns connection lifetime and discards these on h2/h3 |
 | `timeout=(connect, read)` with two different values | ✗ raises `UnsupportedFeature` (ABI v8 carries one deadline); an agreeing pair works |
 | `proxies`, `proxy`, `proxy_auth`, `trust_env`, `NO_PROXY` | ✓ |
 | `verify=True/False/"/path/ca.pem"` | ✓ |

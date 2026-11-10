@@ -218,6 +218,49 @@ _CORE_OWNED_HEADERS = frozenset((
 ))
 
 
+#: RFC 9110 §7.6.1 hop-by-hop fields, minus the ones this facade does honour.
+#: Chromium owns connection lifetime, and ``SetExtraRequestHeaders`` never reaches
+#: the connection pool, so setting any of these changes nothing on HTTP/1.1 --
+#: measured: ``Connection: close`` was sent but three requests still shared one
+#: socket. On HTTP/2 and HTTP/3 they are discarded outright
+#: (``net/spdy/spdy_http_utils.cc:214-221`` skips ``connection``, ``proxy-connection``
+#: and ``transfer-encoding``; RFC 9113 §8.2.2 and RFC 9114 §4.2 forbid all of
+#: them), so accepting a value would make behaviour depend on the negotiated
+#: protocol. ``transfer-encoding`` and ``content-length`` are excluded here
+#: because they are body framing, which the caller does control.
+_HOP_BY_HOP_HEADERS = frozenset((
+    "connection",
+    "proxy-connection",
+    "keep-alive",
+    "te",
+    "trailer",
+    "upgrade",
+))
+
+
+def _reject_hop_by_hop_headers(headers):
+    """Fails closed for fields only the connection layer can honour.
+
+    Args:
+        headers: The prepared request headers, or ``None``.
+
+    Raises:
+        UnsupportedFeature: A hop-by-hop field was set or removed. The message
+            names every offending field and says why it cannot work.
+    """
+    if headers is None:
+        return
+    present = {name.lower() for name, _ in headers.multi_items()}
+    offending = sorted(present.union(headers.deleted_names) & _HOP_BY_HOP_HEADERS)
+    if not offending:
+        return
+    raise UnsupportedFeature(
+        "%s cannot be set: Chromium owns connection lifetime, and extra headers "
+        "do not reach the connection pool. On HTTP/2 and HTTP/3 these fields are "
+        "discarded outright (RFC 9113 section 8.2.2, RFC 9114 section 4.2), so "
+        "accepting a value would make behaviour depend on the negotiated "
+        "protocol." % (", ".join(offending),))
+
 def _reject_core_owned_removals(headers, method):
     """Fails closed when a caller asks to remove a header the Core owns.
 
@@ -1923,6 +1966,7 @@ class BaseSession(object):
         request.quote = values.get("quote")
         request.header_order = header_order
         _reject_core_owned_removals(request.headers, request.method)
+        _reject_hop_by_hop_headers(request.headers)
         allow_redirects = self.allow_redirects \
             if values.get("allow_redirects") is None \
             else bool(values.get("allow_redirects"))

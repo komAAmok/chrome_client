@@ -1902,6 +1902,51 @@ class NativeModuleSelectionTests(unittest.TestCase):
         self.assertEqual(sys.modules[_native.MODULE_NAME].abi_version,
                          chrome_client.abi_version())
 
+class HopByHopHeaderTests(unittest.TestCase):
+    """Fields only the connection layer can honour must fail, not be ignored."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.server = ThreadingHTTPServer(("127.0.0.1", 0), _EchoHeaderHandler)
+        threading.Thread(target=cls.server.serve_forever, daemon=True).start()
+        cls.base = "http://127.0.0.1:%d/" % cls.server.server_address[1]
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.server.shutdown()
+        cls.server.server_close()
+
+    def test_every_hop_by_hop_field_is_refused(self):
+        """Measured before the fix: Connection: close was sent but ignored.
+
+        Three requests still shared one socket, and on HTTP/2 the same field is
+        dropped outright (net/spdy/spdy_http_utils.cc:214-221), so the behaviour
+        depended on the negotiated protocol.
+        """
+        for name, value in (("Connection", "close"),
+                            ("Connection", "keep-alive"),
+                            ("Proxy-Connection", "keep-alive"),
+                            ("Keep-Alive", "timeout=5"),
+                            ("TE", "trailers"),
+                            ("Trailer", "X-Checksum"),
+                            ("Upgrade", "h2c")):
+            with chrome_client.Session() as session:
+                with self.assertRaises(chrome_client.UnsupportedFeature):
+                    session.get(self.base, headers={name: value})
+
+    def test_removal_still_fails_through_the_core_owned_path(self):
+        with chrome_client.Session() as session:
+            with self.assertRaises(chrome_client.UnsupportedFeature):
+                session.get(self.base, headers={"Connection": None})
+
+    def test_ordinary_headers_are_unaffected(self):
+        """The guard must not swallow body framing or caller-owned fields."""
+        with chrome_client.Session(impersonate="chrome_124") as session:
+            session.get(self.base, headers={"X-Custom": "1",
+                                            "Content-Type": "text/plain"})
+        self.assertEqual(_ECHOED[-1]["X-Custom"], "1")
+        self.assertEqual(_ECHOED[-1]["Content-Type"], "text/plain")
+
 class CoreOwnedHeaderTests(unittest.TestCase):
     """A removal the Core cannot honour must fail, not silently send the value."""
 

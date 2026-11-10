@@ -271,6 +271,27 @@ ABI v9 item in `docs/NEXT_STEPS.md`.
 | `referer=` or a `Referer` header | Routed to `URLRequest::SetReferrer`, so it is sent like a real Chrome's |
 | `impersonate` outside `chrome_86`–`chrome_157`, or a non-Chromium family | The Core registers Chromium desktop profiles only |
 
+### Headers: hop-by-hop fields are refused outright
+
+RFC 9110 §7.6.1 names the hop-by-hop fields, and none of them can be honoured
+through extra headers: Chromium owns connection lifetime, and
+`SetExtraRequestHeaders` never reaches the connection pool.
+
+| field | what happens if accepted |
+| --- | --- |
+| `Connection` | measured: `: close` was sent but three requests still shared one socket |
+| `Proxy-Connection` / `Keep-Alive` / `TE` / `Trailer` / `Upgrade` | nothing, for the same reason |
+
+On HTTP/2 and HTTP/3 the situation is worse than "no effect":
+`net/spdy/spdy_http_utils.cc:214-221` skips `connection`,
+`proxy-connection` and `transfer-encoding` when building the header block, and
+RFC 9113 §8.2.2 / RFC 9114 §4.2 forbid all of them. So accepting a value would
+make the behaviour depend on the negotiated protocol -- silently.
+
+All six are now refused with `UnsupportedFeature`, whether set or removed.
+`transfer-encoding` and `content-length` stay settable: they are body framing,
+which the caller does control, and removing them was already fail-closed.
+
 ### Headers: what a caller can add, override and remove
 
 A caller may add any header, and may override any header the Core itself would
