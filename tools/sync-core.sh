@@ -87,6 +87,15 @@ apply_patch minicronet-core.patch . \
   'net/features.gni:disable_file_support = is_cronet_build || is_minicronet_build' \
   'net/BUILD.gn:!is_cronet_build && !is_minicronet_build' \
   'base/BUILD.gn:nix/xdg_util_minicronet.cc'
+# //net resends a request on a reused keep-alive connection whenever no response
+# header has arrived (net/http/http_network_transaction.cc:ShouldResendRequest),
+# without looking at the method. For a browser that is safe: the renderer owns
+# the submit and the user can see it. A client library exposes URLRequest
+# directly, so a POST whose reused connection died is silently sent twice, body
+# included -- measured, and Session(retry=0) cannot prevent it because the
+# resend is below the ABI. Idempotent methods keep the resend.
+apply_patch no-resend-non-idempotent.patch . \
+  'net/http/http_network_transaction.cc:MINICRONET: a non-idempotent request'
 apply_patch profile-context-net.patch . \
   'net/http/http_network_session.h:send_http2_enable_push_setting' \
   'net/socket/ssl_client_socket_impl.cc:const bool has_profile =' \

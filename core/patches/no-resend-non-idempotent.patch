@@ -1,0 +1,27 @@
+diff --git a/net/http/http_network_transaction.cc b/net/http/http_network_transaction.cc
+--- a/net/http/http_network_transaction.cc
++++ b/net/http/http_network_transaction.cc
+@@ -2386,11 +2386,23 @@
+ }
+ 
+ bool HttpNetworkTransaction::ShouldResendRequest() const {
+   bool connection_is_proven = stream_->IsConnectionReused();
+   bool has_received_headers = GetResponseHeaders() != nullptr;
++  // MINICRONET: a non-idempotent request must never be resent. The origin may
++  // already have processed the first copy, and nothing above this layer can undo
++  // that: a client library exposes URLRequest directly, without the browser-side
++  // prompts that make this safe in Chrome. Measured before this guard: a POST
++  // whose reused keep-alive connection was closed by the server was sent twice,
++  // body included, and Session(retry=0) could not prevent it -- the resend
++  // happens inside HttpNetworkTransaction, below the ABI. Failing with a
++  // connection error is recoverable; a silent duplicate POST is not.
++  if (request_ && !HttpUtil::IsMethodIdempotent(request_->method)) {
++    return false;
++  }
++
+ 
+   // NOTE: we resend a request only if we reused a keep-alive connection.
+   // This automatically prevents an infinite resend loop because we'll run
+   // out of the cached keep-alive connections eventually.
+   return connection_is_proven && !has_received_headers;
+ }
