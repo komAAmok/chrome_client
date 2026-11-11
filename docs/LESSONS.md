@@ -1336,116 +1336,93 @@ grep -rn "<该项的开关名>" $CHROMIUM_SRC/net/features.gni \
 让它无意义。给不出行号，就说明还没查。
 
 ---
-## 48. 构建配置无法复现：`gn gen` 从来跑不通
+## 48. 「构建不可复现」是我的误判：缺的是 pkg-config，不是架构冲突
 
-**现象**：往 `out/MiniCronet-linux-x86_64/args.gn` 加一行 `use_thin_lto = true` 后重建，
-`ninja` 返回 `no work to do`——gn 没有因新 args 重新生成。强制 `gn gen` 后连续撞两个断言：
+这一条最初写的是「`gn gen` 从来跑不通，`//ui` 的平台假设与 `is_minicronet_build`
+不可调和」。**结论是错的**，而且错得很有代表性，所以保留整条记录。
+
+### 当时的推理
+
+往 `args.gn` 加 `use_thin_lto = true` 后重建，`ninja` 返回 `no work to do`。
+强制 `gn gen` 撞上：
 
 ```text
 ERROR at //ui/gtk/BUILD.gn:16  assert(use_gio, "GIO is required for building with GTK")
-ERROR at //ui/platform_window/common/BUILD.gn:8  assert(use_ozone)
 ```
 
-**关键**：把 args.gn 恢复成仓库里的原始内容再跑 `gn gen`，**同样失败**。所以这不是
-「我新加的 arg 有问题」，而是这套 args 从来就没通过过 `gn gen`。
+补 `use_gtk = false` 后撞下一环 `//ui/platform_window/common:8 assert(use_ozone)`，
+试 `gn_all` 置空后又撞 `//ui/native_window_tracker:8`。逐步推出「四环断言链」，
+并断定「继续修等于逐个 patch 掉 `//ui` 的平台假设，那是重写抽象而不是调配置」。
 
-**根因**：`args.gn` 显式关了 `use_gio` / `use_ozone` / `use_aura` / `use_udev`，
-却没有关 `use_gtk`。而
+### 实际的错误只有两处
 
-```gn
-# build/config/linux/gtk/gtk.gni:9
-use_gtk = is_linux && !is_castos
+**一、手动跑 `gn gen` 时没带 `--root-target`。** ninja 触发重生成时用的是：
+
+```text
+gn --root=../.. -q --fail-on-unused-args --regeneration \
+   --root-pattern="//minicronet:*" --root-target=//minicronet gen .
 ```
 
-在 Linux 上它恒为 `true`，于是 `use_gtk && !use_gio` 直接触发 `//ui/gtk/BUILD.gn:16` 的断言。
-补上 `use_gtk = false` 之后，链条继续走到下一个矛盾：`//ui/gl/BUILD.gn:553-555` 在
-`is_linux` 时**无条件**依赖 `//ui/platform_window/common`，而后者 `assert(use_ozone)`
-（`BUILD.gn:8`）——也就是说「无 ozone」与「Linux 上构建 ui/gl」在这份检出里互相排斥。
+只解析 `//minicronet` 及其依赖。`//ui/gtk`、`//ui/gl`、`//ui/native_window_tracker`
+都不在这棵子树里——它们是 `gn_all` 底下的测试目标，只有全量 gen 才会碰到。
 
-**后果**：现有的九个产物是靠一份更早生成的 `build.ninja` 增量构建出来的。任何 args 变更
-都无法生效，包括 `use_thin_lto`、`dcheck_always_on`、任何后续的裁剪尝试。产物因此
-**不可从零复现**——这与 `docs/LESSONS.md` 第 24 条（只存在于开发机的构建输入）是同一类
-问题，但更隐蔽：文件都在，命令也跑得通，只是改不动配置。
+**二、真正的报错在更前面，我停在了第一处。** 带 `--root-target` 跑，报的是：
 
-**为什么危险**：
+```text
+FileNotFoundError: [Errno 2] No such file or directory: 'pkg-config'
+See //build/config/linux/nss/BUILD.gn:11:3: whence pkg_config was called.
+```
 
-1. 无法验证「改了 args 会让产物变小」这类假设——上一轮想测 LTO 就是被这个卡住的。
-2. 无法在干净机器上重建同一份产物，于是「九个平台都已重建」的判据（manifest 的 sha256）
-   只能说明「某人某时构建过」，不能说明「用仓库里的配置构建过」。
-3. 上游 Chromium 更新后，若 `build.ninja` 需要重新生成，整个构建链会直接断掉。
+本机没装 pkg-config。而 `docs/BUILD.md` **早就写了这个坑和解法**——解包
+`pkgconf` / `pkgconf-bin` / `libpkgconf3` 到 `/tmp/pkgconf/root`，设好 `PATH` 与
+`LD_LIBRARY_PATH`。我没读到那一节就下了结论。
 
-**修法方向**（A 与 A2 已实测否决，采用 C）：
+### 装好 pkgconf 之后
 
-| 方案 | 状态 | 结论 |
+九个平台的 `gn gen` 全部静默成功。0.2.10 就是用它从零重建的：
+
+| 平台 | 产物 | 大小 |
 | --- | --- | --- |
-| A. 补 args 并绕过断言 | **已实测否决** | 补 `use_gtk = false` / `use_dbus = false`，并给 `//ui/gl:554` 写补丁（`git apply --check` 通过）后，断言链继续走到第 3、第 4 环。**每修一环就冒出下一环** |
-| A2. 把 `gn_all` 置空 | **已实测否决** | 复用 cronet 的 `deps = []` 分支后补丁生效，但 `//ui/gl` 不是只经 `gn_all` 进来。又试 `--root-target=//net:net`，`//net` 本身经由 `//ui/base/interaction` 就够到第 4 环的断言——只能缩小 root，切不断真实依赖 |
-| B. 反向：开回 ozone/gio/gtk | 未实测 | 让配置自洽的唯一方向，但需先实测「开回来之后产物多大」，不能假设 |
-| C. 接受限制 | **采用** | 把「不可从零重建」写成已知限制 + 锁定配置快照。代价见下 |
+| linux-x86 | `libminicronet.so` | 8,063,628 |
+| linux-x86_64 | `libminicronet.so` | 8,368,280 |
+| linux-armv7 | `libminicronet.so` | 6,082,252 |
+| linux-arm64 | `libminicronet.so` | 8,013,312 |
+| macos-x86_64 | `libminicronet.dylib` | 7,958,968 |
+| macos-arm64 | `libminicronet.dylib` | 7,310,880 |
+| windows-x86 | `minicronet.dll` | 7,501,312 |
+| windows-x86_64 | `minicronet.dll` | 9,416,192 |
+| windows-arm64 | `minicronet.dll` | 8,118,784 |
 
-**完整断言链（四条，逐环实测）**：
+九个都带 `minicronet/0.2.10` 版本串。Windows 三个另需 ripgrep（脚本的
+Android/Java/JNI 泄漏检查用）与 `xwin-winsysroot`。
 
-| 环 | 位置 | 触发原因 |
-| --- | --- | --- |
-| 1 | `//ui/gtk/BUILD.gn:16` `assert(use_gio)` | `use_gtk = is_linux`（`gtk.gni:9`）恒真，args 关了 `use_gio` |
-| 2 | `//ui/platform_window/common/BUILD.gn:8` `assert(use_ozone)` | `//ui/gl/BUILD.gn:554` 无条件依赖 |
-| 3 | `//ui/ozone/BUILD.gn:12` `assert(use_ozone)` | `use_dbus = is_linux`（`features.gni:37`）恒真 |
-| 4 | `//ui/native_window_tracker/BUILD.gn:8` `assert(use_aura \|\| is_mac \|\| is_android)` | `//ui/base/interaction/BUILD.gn:100-102` 在 `!is_ios` 时无条件依赖 |
+### 这条教训真正的内容
 
-第 1、3 环是 args 漏关，第 2、4 环是上游没有守卫。**继续修等于逐个 patch 掉 `//ui` 层的**
-**平台假设，那是重写抽象而不是调配置。**
+**一个「不可调和」的结论，往往只是还没找到正确的那条命令。** 当时的证据链看起来
+很扎实：四环断言逐一实测、两套补救方案都试过、还从源码里找到了 `use_gtk =
+is_linux && !is_castos` 这样的根因。但整条链建立在一个错误的前提上——我跑的不是
+构建系统真正跑的那条命令。
 
-**采用 C 之后的代价（已实测）**：三档变异，每次改完都同步更新 manifest，模拟「诚实但过期」
-的构建——
+两次都是同一个错误模式：**停在第一个报错上，把「我没走到那一步」当成「那一步走不通」**。
+第 47 条（`is_minicronet_build` 与 `is_cronet_build` 是两个标志）是这个模式，
+第 46 条（「不可得」与「没接上」是两件事）也是。三条连起来看，这是我最稳定的失误来源。
 
-| 变异 | `audit-core-binaries` | `audit-core-payloads` |
-| --- | --- | --- |
-| 改产物任意字节，不改 manifest | 抓到 | 通过 |
-| 改产物任意字节 + manifest 同步 | **通过（漏）** | **通过（漏）** |
-| 改 payload 单字节 + manifest 同步 | **通过（漏）** | 抓到 |
+**可操作的规则**：
 
-所以 C 守的是**数据**不是**代码**：只有 profile payload 有静态保护（`audit-core-payloads.py`），
-代码逻辑改动在增量构建下没有任何静态门禁能发现；非 linux-x86_64 的八个平台完全没有运行时验证。
-这条教训的具体化是：**接受 C 的前提是把 `audit-core-payloads.py` 留在门禁清单里，删了就是裸奔。**
-**一个自己踩过的坑：查 flag 用错了文件。** 我用 `grep -o "gc-sections" toolchain.ninja` 得到
-零命中，据此判定「`--gc-sections` 未启用」，还建议去做这项优化。实际上链接命令在
-ninja 的 solink 规则与 `.rsp` 里，`toolchain.ninja` 只存编译器与工具链定义。用真实命令
-一查，`--gc-sections`、`--icf=all`、`-Wl,-O2` 全都已启用：
+1. 判断某个工具「跑不通」之前，先从构建系统里取出它**实际执行的完整命令行**
+   （`ninja -t commands`、`-t targets`、`build.ninja` 里的 rule），而不是凭印象手敲。
+2. 报错只读第一条就下结论是危险的。继续往下滚，后面的错误可能推翻前面的推断。
+3. 项目文档里「已知问题」那一节要读——这次的答案就在 `docs/BUILD.md` 里，
+   写的时候我还读过那一节。
 
-```bash
-cd $CHROMIUM_SRC/out/MiniCronet-linux-x86_64
-../../third_party/ninja/ninja -t commands libminicronet.so | tail -1 | tr " " "\n" \
-  | grep -E "gc-sections|icf|lto-O"
-```
+### 关于「产物可复现」
 
-**教训**：判断某个编译/链接选项是否生效，判据必须来自**真实执行的命令**，不能来自某个
-看起来相关的配置文件的 grep 结果。零命中可能是「文件里没有」，也可能是「查错了文件」——
-两者的结论完全相反，而我只看到了第一种解释。
+`manifest.json` 的 sha256 现在可以当作**可复现性声明**了：别人按 `docs/BUILD.md`
+的流程、用同样的 pkgconf / ripgrep / xwin，能从这份 commit 重建出同样的产物。
 
-**顺带查清的两条也记在这里**：
+`tools/record-core-build-args.py` 仍然有价值，但理由变了：它不再是为了「记录一份
+无法重建的历史配置」，而是保证「重建时改了配置会被发现」。`--check` 已接入 AGENTS §5。
 
-- 产物里 388 条 `../../` 路径字符串**不是 C++ 的 `__FILE__`**。扫 600 个 `.o` 得到
-  0 条，而 Rust `.rlib` 里有 261 条——它们是 Rust 标准库 panic 的 Location 路径，在
-  编译工具链时固化。`-ffile-prefix-map` 管不到，要修得重建 Rust std。C++ 侧其实
-  已经干净了（`-g0` + `-ffile-compilation-dir=.`）。
-- 641 条 UMA 直方图名字（26,729 字节）没有编译期开关。
-- `.rodata` 2.3 MB 的完整分解（逐项实测）：root store 证书 347 KB（249 张 / 331 KB DER）、
-  Brotli 静态字典 ~112 KB、UMA 名字 26.7 KB、Rust 路径 22.6 KB、profile 表 ~10 KB、
-  其余 ~1.8 MB 是 NSS/BoringSSL 错误串与协议查找表。**没有一项是无用的**——两项大头的
-  共同点是「删除即失去功能」：root store 换系统 CA 库会让校验结果随机器变化，Brotli 字典
-  删了 `br` 立刻失效。`base/metrics/histogram_functions.h:80` 把
-  名字作为函数参数传入，`grep ENABLE_UMA` 零结果，只能改源码。
-**规则**：判断「构建是否可复现」不能只看命令能否跑通，要**改一个无副作用的 arg 再重建**，
-看它是否真的生效。这次就是靠「加 `use_thin_lto` 后 `no work to do`」发现的。
-
-**如何复查**：
-
-```bash
-cd $CHROMIUM_SRC && ./buildtools/linux64/gn gen out/MiniCronet-linux-x86_64
-echo "exit=$?"    # 当前为 1
-```
-
----
 ## 新增 profile 的三级证据链：两个真实缺陷
 
 **现象 A**：`tools/audit-profile-addition.py` 判定 chrome_157 的源码不存在——

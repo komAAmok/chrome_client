@@ -17,107 +17,122 @@
 - 版本 profile 只覆盖已审计的 Chrome 99--155 差异；无法证明的行为必须
   `fail-closed`，不能用当前 Chromium 行为冒充历史版本。
 
-## 阶段 0：产物不可从零重建（已知限制，路径 A/A2 已实测否决）
+## 阶段 0：Core 重建链（已完成）
 
-**结论先行**：当前 `args.gn` **无法通过 `gn gen`**，而这**不是补几个开关能修的**——
-`is_minicronet_build` 的裁剪方向与 Chromium `//ui` 层的平台假设直接冲突。阶段 0 的目标
-因此改为：**记录并锁定能生成当前 `build.ninja` 的那份配置**，而不是让今天的 args 去
-挑战它。
+**结论**：九个平台已全部重建成功，产物带 `minicronet/0.2.10` 版本串。
+这一节原本断言「产物不可从零重建」，那个结论是错的，错在哪儿写在下面。
 
-### 实测现状
+### 更正：gn gen 一直可以跑通，缺的是 pkg-config
+
+原判断的推理链是：跑 `gn gen` 撞上 `//ui/gtk/BUILD.gn:16 assert(use_gio)`，
+于是认定 `//ui` 的平台假设与 `is_minicronet_build` 冲突，不可调和。
+实际是两处误判：
+
+**一、手动跑 gn gen 少了 `--root-target`。** ninja 触发重生成时用的是
 
 ```text
-$ ./buildtools/linux64/gn gen out/MiniCronet-linux-x86_64
-ERROR at //ui/gtk/BUILD.gn:16  assert(use_gio, "GIO is required for building with GTK")
-$ tail -2 args.gn            # 仓库里的原始配置，未做任何修改
-is_cfi = false
+../../buildtools/linux64/gn --root=../.. -q --fail-on-unused-args --regeneration \
+  --root-pattern="//minicronet:*" --root-target=//minicronet gen .
 ```
 
-把 args.gn 恢复成仓库原状后重跑，**同样失败**。现有 `build.ninja` 是更早生成的，
-只能增量使用——任何 args 变更都被静默忽略（加 `use_thin_lto = true` 后
-`ninja` 返回 `no work to do`，因为它本来就开着）。
+只解析 Core 目标及其依赖，根本走不到 `//ui/gtk`。我手动跑的是不带参数的全量 gen，
+那才会碰到 `gn_all` 底下的测试目标。
 
-### 已实测的断言链（四条，逐环确认）
+**二、真正的错误在更前面，我停在了第一处。** 带 `--root-target` 跑，报的是：
 
-| 环 | 位置 | 触发原因 |
+```text
+FileNotFoundError: [Errno 2] No such file or directory: 'pkg-config'
+See //build/config/linux/nss/BUILD.gn:11:3: whence pkg_config was called.
+```
+
+本机没装 pkg-config，而 `//net` 通过 `//build/config/linux/nss` 需要它。
+`docs/BUILD.md` 里早就写了这个坑和解法（解包三个 deb 到 `/tmp/pkgconf`），
+我没往下读到那里就下了结论。
+
+### 重建九个平台实际需要什么
+
+| 依赖 | 用途 | 获取方式 |
 | --- | --- | --- |
-| 1 | `//ui/gtk/BUILD.gn:16` `assert(use_gio)` | `use_gtk = is_linux && !is_castos`（`build/config/linux/gtk/gtk.gni:9`）恒真，args 关了 `use_gio` |
-| 2 | `//ui/platform_window/common/BUILD.gn:8` `assert(use_ozone)` | `//ui/gl/BUILD.gn:554` 无条件依赖它 |
-| 3 | `//ui/ozone/BUILD.gn:12` `assert(use_ozone)` | `use_dbus = is_linux`（`build/config/features.gni:37`）恒真，args 关了 `use_glib` 却没关它 |
-| 4 | `//ui/native_window_tracker/BUILD.gn:8` `assert(use_aura || is_mac || is_android)` | `//ui/base/interaction/BUILD.gn:100-102` 在 `!is_ios` 时无条件依赖；Linux 上三者皆假 |
+| pkgconf 1.8.1 | Linux 目标解析 NSS（`//build/config/linux/nss/BUILD.gn:11`） | `apt-get download pkgconf pkgconf-bin libpkgconf3` 后 `dpkg-deb -x` 到 `/tmp/pkgconf/root` |
+| ripgrep 14.1.0 | Windows 脚本的 Android/Java/JNI 泄漏检查 | `apt-get download ripgrep` 后解包，`PATH` 加进去 |
+| xwin-winsysroot | Windows 三目标的 MSVC 头文件与库 | 本机已有 `/home/sj/chromium/xwin-winsysroot`（1.5 GB） |
+| Chromium 检出 + 已生成的 `build.ninja` | 全部九个 | `CHROMIUM_SRC`；缺 `build.ninja` 时用上面的 gn 命令生成 |
 
-第 1、3 环是 args 漏关（补 `use_gtk = false`/`use_dbus = false` 可解），
-第 2、4 环是**上游代码没有守卫**。
+完整流程（`docs/BUILD.md` 有更详细的版本）：
 
-### 两条路径已实测否决
+```bash
+export PATH=/tmp/rgpkg/root/usr/bin:/tmp/pkgconf/root/usr/bin:$PATH
+export LD_LIBRARY_PATH=/tmp/pkgconf/root/usr/lib/x86_64-linux-gnu
+export CHROMIUM_SRC=/home/sj/chromium/src
+export CHROMIUM_TOOLCHAIN=/home/sj/chromium
+export XWIN_ROOT=/home/sj/chromium/xwin-winsysroot
 
-**A：补 args + 补丁。** 补上 `use_gtk = false` / `use_dbus = false`，并为
-`//ui/gl/BUILD.gn:554` 写补丁（把条件改成 `&& use_ozone`，`git apply --check` 通过）。
-结果：断言链继续走到第 3、第 4 环。**每修一环就冒出下一环**。
+tools/sync-core.sh                       # 应用 15 个补丁 + 写版本头
 
-**A2：把 `gn_all` 置空。** 复用 cronet 已有的分支，改成
-`if (is_cronet_build || is_minicronet_build) { deps = [] }`。补丁生效了，
-但第 2 环仍然触发——因为 `//ui/gl` 不是只经 `gn_all` 进来。
+# Linux 四个：ninja 后必须 strip
+for t in linux-x86 linux-x86_64 linux-armv7 linux-arm64; do
+  ninja -C $CHROMIUM_SRC/out/MiniCronet-$t libminicronet.so
+  $CHROMIUM_SRC/third_party/llvm-build/Release+Asserts/bin/llvm-objcopy \
+    --strip-unneeded $CHROMIUM_SRC/out/MiniCronet-$t/libminicronet.so
+done
 
-又试 `--root-target` 缩小解析范围，同样无效：
+# macOS 两个：脚本自带 strip
+for t in macos-x86_64 macos-arm64; do
+  ninja -C $CHROMIUM_SRC/out/MiniCronet-$t libminicronet.dylib
+done
 
-```text
-$ gn gen out/... --root-target=//net:net
-ERROR at //ui/native_window_tracker/BUILD.gn:8
-See //ui/base/interaction/BUILD.gn:101:15
+# Windows 三个：脚本自带 gn gen、编译与审计
+for t in x86 x86_64 arm64; do tools/build-core-windows-$t.sh; done
+
+python3 tools/install-core-binaries.py --abi-version 8 --chromium-src $CHROMIUM_SRC
+tools/audit-core-binaries.sh
+python3 tools/audit-core-payloads.py
+python3 tools/record-core-build-args.py --check
 ```
 
-`--root-target` 只能缩小 root，切不断真实依赖——`//net` 本身经由
-`//ui/base/interaction` 就够到那个断言了。
+### 0.2.10 的实测结果
 
-### 为什么从原理上不可行
+| 平台 | 产物 | 大小 |
+| --- | --- | --- |
+| linux-x86 | `libminicronet.so` | 8,063,628 |
+| linux-x86_64 | `libminicronet.so` | 8,368,280 |
+| linux-armv7 | `libminicronet.so` | 6,082,252 |
+| linux-arm64 | `libminicronet.so` | 8,013,312 |
+| macos-x86_64 | `libminicronet.dylib` | 7,958,968 |
+| macos-arm64 | `libminicronet.dylib` | 7,310,880 |
+| windows-x86 | `minicronet.dll` | 7,501,312 |
+| windows-x86_64 | `minicronet.dll` | 9,416,192 |
+| windows-arm64 | `minicronet.dll` | 8,118,784 |
 
-`is_minicronet_build` 关掉的（aura / ozone / gtk / gio / dbus / mdns）恰恰是
-`//ui` 层假设**必须存在**的东西：
+九个产物 `strings` 逐个核对，版本串都是 `minicronet/0.2.10`，ABI 8 不变。
 
-| `//ui` 层的假设 | Core 的选择 |
-| --- | --- |
-| 桌面平台必有 `use_aura` 或 `use_ozone` | 都关 |
-| 非 iOS 必有 `native_window_tracker` | 无法满足断言 |
-| `ui/gl` 在 Linux 必依赖 `platform_window/common` | 后者要求 `use_ozone` |
+### 配置快照
 
-继续修下去等于**逐个 patch 掉 `//ui` 层的平台假设**，那是重写抽象，不是调配置。
+`tools/record-core-build-args.py` 从**构建输出**反推配置，而不是抄 `args.gn`。
+依据是生成的 buildflag 头（`gen/base/debug/debugging_buildflags.h`、
+`gen/base/cfi_buildflags.h`）——那些常量是真正到达编译器的，属于证据而非意图。
+产出 `core/build-args/<target>.snapshot.txt`，文件头写明
+「THIS IS A HISTORICAL RECORD, NOT A RECIPE」。
 
-### 那现有产物是怎么来的
+`--check` 已接入 AGENTS §5：改一个 flag、改 target_cpu、删一行，三种变异都非零退出。
 
-`build.ninja` 是在某个**当时能通过 `gn gen`** 的历史状态下生成的。
-之后 args 被修改（关掉 gio / ozone / glib / udev 等），binja 文件未重新生成，于是
-形成今天的局面：增量可用，配置不可改。
+### 仍然做不到的
 
-这也解释了为什么 `audit-core-size-ceilings.py` 的「最大产物 × 1.02」规则
-仍然有意义——它比对的是**已有产物**，不依赖重建。
+- **32 位 ABI 布局没有运行时验证。** `cargo test --target i686-unknown-linux-gnu` 在链接阶段失败，
+  缺 i386 的 `-lm` / `-lc` / `crtn.o`。静态布局审计（`audit-abi-layout.py`）
+  通过，但那只是头文件与 Rust 声明的比对，不是真实执行。
+- **七个平台无法在本机加载运行。** 只有 linux-x86_64 能真实发请求；其余八个的验证
+  依靠 `audit-core-payloads.py`（payload 字节一致）与各平台的静态审计。
 
-### 阶段 0 现在的目标
+### 两条已否决的路径，留作记录
 
-不再追求「让今天的 args 通过 gn gen」，改为三件事：
+当初为解决「gn gen 失败」试过两条，都失败——但失败的原因是上面那个误判，
+不是方法本身有问题。它们仍然不该做，理由不同：
 
-- [x] **锁定配置**（已完成）：`tools/record-core-build-args.py` 从**构建输出**反推配置，
-      而不是抄 `args.gn`。依据是生成的 buildflag 头（`gen/base/debug/debugging_buildflags.h`、
-      `gen/base/cfi_buildflags.h`）——那些常量是真正到达编译器的，属于证据而非意图。
-      产出 `core/build-args/<target>.snapshot.txt`，文件头写明「THIS IS A HISTORICAL RECORD,
-      NOT A RECIPE」。本机已有 6 个平台的 out 目录，所以产出 6 份快照；
-      Windows 三个平台没有 out 目录，如实记为 skipped 而不是编造。
-      `--check` 已接入 AGENTS §5 门禁：改一个 flag、改 target_cpu、删一行，三种变异都
-      非零退出（已实测）。
-- [x] **声明限制**（已完成）：
-      `docs/BUILD.md` 新增一节「The committed args.gn cannot be regenerated」，
-      含 `gn gen` 的真实报错、四环断言链的指向、以及「增量可用、从零不可用」的区别；
-      `core/binaries/README.md` 新增「What the manifest sha256 does and does not mean」，
-      把 sha256 的含义钉成「这个产物被构建并审计过」，明确它不是可复现性证明。
-- [x] **重建时的要求**（已完成）：流程写进 `docs/BUILD.md`（七步，从 sync-core.sh
-      到 audit-core-binaries.sh），并由 `record-core-build-args.py --check` 强制执行：
-      改了配置却没重跑记录，门禁立刻失败。
-
-### 如果将来真要让它可复现
-
-唯一可行的方向是**反向**：把 `use_aura` / `use_ozone` 开回来，让配置自洽，
-再评估产物会变大多少。代价是 UI 依赖被拉进来，与 `is_minicronet_build` 的意图相反。
-在动手前必须先实测「开回来之后产物多大」，而不是假设。
+| 路径 | 当时的结果 | 现在怎么看 |
+| --- | --- | --- |
+| A：补 `use_gtk` / `use_dbus` + 给 `//ui/gl` 写补丁 | 断言链继续走到下一环 | **不必做**：带上 `--root-target` 后 `//ui` 根本不在解析范围内 |
+| A2：把 `gn_all` 置空 | 补丁生效但 `//ui/gl` 仍被解析 | **不必做**：同上。且改 `gn_all` 会影响所有非 minicronet 构建 |
 
 ### 已确认无效的优化方向，不要再试
 
