@@ -16,7 +16,7 @@ use std::{
 use minicronet_sys as sys;
 
 pub use request::{
-    CacheMode, Header, Redirect, RedirectMode, Request, RequestConfig, RequestError,
+    CacheMode, Header, HttpVersion, Redirect, RedirectMode, Request, RequestConfig, RequestError,
     RequestPriority, Response, ResponseFuture, ResponseStream, Upload,
 };
 pub use websocket::{
@@ -122,6 +122,30 @@ pub enum TlsVerifyMode {
     Insecure,
 }
 
+/// Which platform identity the engine presents.
+///
+/// The User-Agent group, sec-ch-ua-platform and sec-ch-ua-mobile are three
+/// statements of one fact, so all three derive from this value. Auto follows
+/// the host the Core runs on.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Platform {
+    Auto,
+    Windows,
+    Macos,
+    Linux,
+}
+
+impl From<Platform> for sys::mn_platform_t {
+    fn from(value: Platform) -> Self {
+        match value {
+            Platform::Auto => Self::MN_PLATFORM_AUTO,
+            Platform::Windows => Self::MN_PLATFORM_WINDOWS,
+            Platform::Macos => Self::MN_PLATFORM_MACOS,
+            Platform::Linux => Self::MN_PLATFORM_LINUX,
+        }
+    }
+}
+
 impl From<TlsVerifyMode> for sys::mn_tls_verify_mode_t {
     fn from(value: TlsVerifyMode) -> Self {
         match value {
@@ -130,6 +154,88 @@ impl From<TlsVerifyMode> for sys::mn_tls_verify_mode_t {
             TlsVerifyMode::Insecure => Self::MN_TLS_VERIFY_INSECURE,
         }
     }
+}
+
+/// One cookie as the Core reports it.
+///
+/// Every field is owned: the Core's strings live only until the next cookies
+/// call on that engine, so they are copied at the boundary.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Cookie {
+    pub name: String,
+    pub value: String,
+    pub domain: String,
+    pub path: String,
+    /// Seconds since the Unix epoch, meaningful only when `has_expiry`.
+    pub expiry_unix_seconds: i64,
+    pub has_expiry: bool,
+    pub secure: bool,
+    pub http_only: bool,
+    pub same_site: CookieSameSite,
+}
+
+/// The `SameSite` attribute as the store recorded it.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CookieSameSite {
+    Unspecified,
+    NoRestriction,
+    Lax,
+    Strict,
+}
+
+impl Cookie {
+    fn from_raw(raw: sys::mn_cookie_t) -> Self {
+        Self {
+            name: read_str(raw.name, raw.name_length),
+            value: read_str(raw.value, raw.value_length),
+            domain: read_str(raw.domain, raw.domain_length),
+            path: read_str(raw.path, raw.path_length),
+            expiry_unix_seconds: raw.expiry_unix_seconds,
+            has_expiry: raw.has_expiry != 0,
+            secure: raw.secure != 0,
+            http_only: raw.http_only != 0,
+            same_site: match raw.same_site {
+                1 => CookieSameSite::NoRestriction,
+                2 => CookieSameSite::Lax,
+                3 => CookieSameSite::Strict,
+                _ => CookieSameSite::Unspecified,
+            },
+        }
+    }
+
+    fn to_raw(&self) -> sys::mn_cookie_t {
+        sys::mn_cookie_t {
+            size: std::mem::size_of::<sys::mn_cookie_t>() as u32,
+            version: sys::MN_ABI_VERSION,
+            name: self.name.as_ptr().cast(),
+            name_length: self.name.len(),
+            value: self.value.as_ptr().cast(),
+            value_length: self.value.len(),
+            domain: self.domain.as_ptr().cast(),
+            domain_length: self.domain.len(),
+            path: self.path.as_ptr().cast(),
+            path_length: self.path.len(),
+            expiry_unix_seconds: self.expiry_unix_seconds,
+            has_expiry: u8::from(self.has_expiry),
+            secure: u8::from(self.secure),
+            http_only: u8::from(self.http_only),
+            same_site: match self.same_site {
+                CookieSameSite::NoRestriction => 1,
+                CookieSameSite::Lax => 2,
+                CookieSameSite::Strict => 3,
+                CookieSameSite::Unspecified => 0,
+            },
+        }
+    }
+}
+
+/// Copies a Core-owned string, whose length the Core reports separately.
+fn read_str(data: *const i8, length: usize) -> String {
+    if data.is_null() || length == 0 {
+        return String::new();
+    }
+    let bytes = unsafe { std::slice::from_raw_parts(data.cast::<u8>(), length) };
+    String::from_utf8_lossy(bytes).into_owned()
 }
 
 #[derive(Clone, Debug)]
@@ -145,6 +251,16 @@ pub struct EngineConfig {
     pub protocol: ProtocolMode,
     pub tls_verify: TlsVerifyMode,
     pub custom_ca_pem: Option<Vec<u8>>,
+    pub host_mapping_rules: Option<String>,
+    pub dns_nameservers: Option<String>,
+    pub doh_template: Option<String>,
+    pub hsts_bypass_list: Option<String>,
+    pub proxy_chain: Option<String>,
+    pub dns_secure_mode: u8,
+    pub dns_over_tls: u8,
+    pub dns_rotate: u8,
+    pub dns_padding: u8,
+    pub platform: Platform,
 }
 
 impl Default for EngineConfig {
@@ -161,6 +277,16 @@ impl Default for EngineConfig {
             protocol: ProtocolMode::Native,
             tls_verify: TlsVerifyMode::ChromiumDefault,
             custom_ca_pem: None,
+            host_mapping_rules: None,
+            dns_nameservers: None,
+            doh_template: None,
+            hsts_bypass_list: None,
+            proxy_chain: None,
+            dns_secure_mode: 0,
+            dns_over_tls: 0,
+            dns_rotate: 0,
+            dns_padding: 0,
+            platform: Platform::Auto,
         }
     }
 }
@@ -200,6 +326,11 @@ impl Engine {
         let proxy_username = bytes(config.proxy_username.as_deref());
         let proxy_password = bytes(config.proxy_password.as_deref());
         let ca = config.custom_ca_pem.as_deref().unwrap_or_default();
+        let host_mapping_rules = bytes(config.host_mapping_rules.as_deref());
+        let dns_nameservers = bytes(config.dns_nameservers.as_deref());
+        let doh_template = bytes(config.doh_template.as_deref());
+        let hsts_bypass_list = bytes(config.hsts_bypass_list.as_deref());
+        let proxy_chain = bytes(config.proxy_chain.as_deref());
         let raw_config = sys::mn_engine_config_t {
             size: std::mem::size_of::<sys::mn_engine_config_t>() as u32,
             version: sys::MN_ABI_VERSION,
@@ -222,6 +353,23 @@ impl Engine {
             tls_verify_mode: config.tls_verify.into(),
             custom_ca_pem: ffi_bytes(ca),
             custom_ca_pem_length: ca.len(),
+            host_mapping_rules: ptr_or_null(&host_mapping_rules),
+            host_mapping_rules_length: host_mapping_rules.len(),
+            dns_nameservers: ptr_or_null(&dns_nameservers),
+            dns_nameservers_length: dns_nameservers.len(),
+            doh_template: ptr_or_null(&doh_template),
+            doh_template_length: doh_template.len(),
+            hsts_bypass_list: ptr_or_null(&hsts_bypass_list),
+            hsts_bypass_list_length: hsts_bypass_list.len(),
+            proxy_chain: ptr_or_null(&proxy_chain),
+            proxy_chain_length: proxy_chain.len(),
+            dns_secure_mode: config.dns_secure_mode,
+            dns_over_tls: config.dns_over_tls,
+            dns_rotate: config.dns_rotate,
+            dns_padding: config.dns_padding,
+            cookie_samesite_override: 0,
+            inject_client_hints: 0,
+            platform: config.platform.into(),
         };
         let mut raw = std::ptr::null_mut();
         let result = unsafe { sys::mn_engine_create(&raw_config, &mut raw) };
@@ -252,6 +400,107 @@ impl Engine {
 
     pub(crate) fn raw(&self) -> *mut sys::mn_engine_t {
         self.0.raw.as_ptr()
+    }
+
+    /// Reads the engine's Chromium cookie store.
+    ///
+    /// `url` of `None` returns every cookie; `Some` returns the cookies a
+    /// request to that URL would carry. Both block until the Core answers.
+    ///
+    /// The strings a returned cookie points at belong to the engine's handle
+    /// and stay valid until the next cookies call or until the engine is
+    /// released, so every field is copied out here: a caller must not have to
+    /// reason about that lifetime.
+    pub fn cookies(&self, url: Option<&str>) -> Result<Vec<Cookie>, Error> {
+        let mut count = 0usize;
+        let url_ptr = url.map(|v| v.as_ptr().cast::<i8>());
+        let url_len = url.map_or(0, str::len);
+        let mut result = unsafe {
+            sys::mn_engine_cookies_get(
+                self.raw(),
+                url_ptr.unwrap_or(std::ptr::null()),
+                url_len,
+                std::ptr::null_mut(),
+                0,
+                &mut count,
+            )
+        };
+        if result != sys::mn_result_t::MN_OK {
+            return Err(result.into());
+        }
+        if count == 0 {
+            return Ok(Vec::new());
+        }
+        let mut raw = vec![sys::mn_cookie_t::default(); count];
+        result = unsafe {
+            sys::mn_engine_cookies_get(
+                self.raw(),
+                url_ptr.unwrap_or(std::ptr::null()),
+                url_len,
+                raw.as_mut_ptr(),
+                raw.len(),
+                &mut count,
+            )
+        };
+        if result != sys::mn_result_t::MN_OK {
+            return Err(result.into());
+        }
+        raw.truncate(count.min(raw.len()));
+        Ok(raw.into_iter().map(Cookie::from_raw).collect())
+    }
+
+    /// Writes one cookie through the store's own validation.
+    ///
+    /// `source_url` decides domain matching; a cookie the store rejects comes
+    /// back as an error rather than being silently dropped.
+    pub fn set_cookie(&self, cookie: &Cookie, source_url: &str) -> Result<(), Error> {
+        let raw = cookie.to_raw();
+        let result = unsafe {
+            sys::mn_engine_cookies_set(
+                self.raw(),
+                &raw,
+                source_url.as_ptr().cast(),
+                source_url.len(),
+                0,
+            )
+        };
+        if result == sys::mn_result_t::MN_OK {
+            Ok(())
+        } else {
+            Err(result.into())
+        }
+    }
+
+    /// Deletes every cookie matching the triple and returns how many went.
+    pub fn delete_cookie(&self, domain: &str, path: &str, name: &str) -> Result<usize, Error> {
+        let mut removed = 0usize;
+        let result = unsafe {
+            sys::mn_engine_cookies_delete(
+                self.raw(),
+                domain.as_ptr().cast(),
+                domain.len(),
+                path.as_ptr().cast(),
+                path.len(),
+                name.as_ptr().cast(),
+                name.len(),
+                &mut removed,
+            )
+        };
+        if result == sys::mn_result_t::MN_OK {
+            Ok(removed)
+        } else {
+            Err(result.into())
+        }
+    }
+
+    /// Empties the store.
+    pub fn clear_cookies(&self) -> Result<(), Error> {
+        let result = unsafe { sys::mn_engine_cookies_clear(self.raw()) };
+        if result == sys::mn_result_t::MN_OK {
+            Ok(())
+        } else {
+            Err(result.into())
+        }
     }
 }
 

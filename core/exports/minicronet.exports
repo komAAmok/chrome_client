@@ -3,6 +3,12 @@ _mn_version_string
 _mn_engine_create
 _mn_engine_retain
 _mn_engine_release
+_mn_engine_cookies_get
+_mn_engine_cookies_set
+_mn_engine_cookies_delete
+_mn_engine_cookies_clear
+_mn_engine_set_client_certificate
+_mn_engine_clear_client_certificate
 _mn_request_create
 _mn_request_retain
 _mn_request_release
@@ -11,6 +17,8 @@ _mn_request_cancel
 _mn_request_upload_write
 _mn_request_follow_redirect
 _mn_request_resume_read
+_mn_request_negotiated_protocol
+_mn_request_ech_status
 _mn_websocket_create
 _mn_websocket_retain
 _mn_websocket_release

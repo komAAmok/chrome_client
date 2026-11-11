@@ -61,7 +61,8 @@ scoped_refptr<minicronet::Engine> MakeEngine(
   net::ProxyConfig proxy;
   return minicronet::Engine::Create("minicronet/probe", "", proxy, "", "",
                                     true, MN_PROTOCOL_NATIVE,
-                                    MN_TLS_VERIFY_CHROMIUM_DEFAULT, "", profile);
+                                    MN_TLS_VERIFY_CHROMIUM_DEFAULT, "", profile,
+                                    minicronet::EngineOptions());
 }
 
 class Request final : public net::URLRequest::Delegate {

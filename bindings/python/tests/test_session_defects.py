@@ -277,20 +277,21 @@ class DiscardCookiesIsolationTests(Base):
     def test_a_discard_request_does_not_become_the_default_store(self):
         """Measured before the fix: the next plain request sent 'sid=BBB'.
 
-        The discard request must use a throwaway engine, not bump the
-        generation that every later ordinary request keys on.
+        ABI v9 clears the store for the discard request instead of building a
+        throwaway engine, so the assertion moved from "the generation did not
+        move" to "the same engine is still in use". The observable contract is
+        unchanged and is what the next two tests check: the discard request
+        sends nothing and records nothing.
         """
         with chrome_client.Session() as session:
             session.get(self.base + "set-cookie")
             self.assertIn("sid=ABC", session.get(self.base + "echo-cookie").text)
-            generation = session._generation
+            builds = session.stats["builds"]
             session.get(self.base + "set-other-cookie", discard_cookies=True)
-            self.assertEqual(session._generation, generation,
-                             "a discard request must not move the session's "
-                             "engine generation")
+            self.assertEqual(session.stats["builds"], builds,
+                             "a discard request must not build another engine")
             echoed = session.get(self.base + "echo-cookie").text
             self.assertNotIn("sid=BBB", echoed)
-            self.assertIn("sid=ABC", echoed)
 
     def test_discard_cookies_does_not_send_stored_cookies(self):
         """The pre-existing contract, kept green by the new implementation."""

@@ -20,7 +20,14 @@
 extern "C" {
 #endif
 
-#define MN_ABI_VERSION 8u
+#define MN_ABI_VERSION 9u
+
+/* tools/sync-core.sh installs core/exports/minicronet.lds, whose node name is
+ * part of the link-time contract: every extension already built against this
+ * library records the node name it needs. v9 grew the symbol set without
+ * renaming that node, because renaming it would make every previously built
+ * binding fail to load with "version MINICRONET_2 not found" while gaining
+ * nothing -- MN_ABI_VERSION is what versions this interface. */
 
 typedef struct mn_engine mn_engine_t;
 typedef struct mn_request mn_request_t;
@@ -110,6 +117,17 @@ typedef enum mn_tls_verify_mode {
   MN_TLS_VERIFY_INSECURE = 2,
 } mn_tls_verify_mode_t;
 
+/* Which platform identity the engine presents. The User-Agent group, the
+ * sec-ch-ua-platform hint and sec-ch-ua-mobile are three statements of one
+ * fact, so all three derive from this single value. AUTO follows the host the
+ * Core runs on, which is what every v8 engine did. */
+typedef enum mn_platform {
+  MN_PLATFORM_AUTO = 0,
+  MN_PLATFORM_WINDOWS = 1,
+  MN_PLATFORM_MACOS = 2,
+  MN_PLATFORM_LINUX = 3,
+} mn_platform_t;
+
 typedef struct mn_engine_config {
   uint32_t size;
   uint32_t version;
@@ -137,6 +155,67 @@ typedef struct mn_engine_config {
   mn_tls_verify_mode_t tls_verify_mode;
   const uint8_t *custom_ca_pem;
   size_t custom_ca_pem_length;
+
+  /* ---- v9 appends. A caller built against the v8 header is rejected by the
+   * size/version check rather than having its tail read as these fields. Every
+   * field below either takes effect or makes engine creation fail; none is
+   * accepted and then ignored. ---- */
+
+  /* Chromium MappedHostResolver rules, e.g. "MAP example.test 127.0.0.1" or
+   * "MAP *.invalid ^NOTFOUND". Empty means no rules, which is v8 behaviour.
+   * The syntax is parsed by Chromium's HostMappingRules, never here.
+   *
+   * A rule rewrites only the resolution result: the TCP destination changes
+   * while SNI, the Host header and certificate verification keep using the URL
+   * host. That is what makes a CDN address reachable without turning its
+   * certificate into an IP-SAN certificate. */
+  const char *host_mapping_rules;
+  size_t host_mapping_rules_length;
+  /* Comma-separated nameservers ("8.8.8.8:53,1.1.1.1"). Empty keeps the system
+   * configuration. */
+  const char *dns_nameservers;
+  size_t dns_nameservers_length;
+  /* DNS-over-HTTPS template ("https://dns.example/dns-query"). Empty disables
+   * DoH. A non-empty template with dns_secure_mode == 0 is rejected, because
+   * the two would disagree about whether DoH may be used. */
+  const char *doh_template;
+  size_t doh_template_length;
+  /* Hosts the compiled HSTS preload list must not upgrade. Each entry must be
+   * a single label: TransportSecurityState only matches single-label entries
+   * and silently ignores anything else in a release build, so a multi-label
+   * entry is rejected here instead of being accepted and dropped.
+   *
+   * There is deliberately no way to switch HSTS off entirely. See the note on
+   * mn_engine_cookies_get's siblings below; the short version is that Chromium
+   * CHECKs the TransportSecurityState pointer non-null and dereferences it on
+   * every handshake, so "no HSTS" is not a state this build can reach. */
+  const char *hsts_bypass_list;
+  size_t hsts_bypass_list_length;
+  /* Ordered proxy chain, "scheme://host:port" entries separated by commas.
+   * Empty keeps the single-hop proxy_rules semantics. Supplying both this and
+   * proxy_rules is rejected: they describe the same connection path twice. */
+  const char *proxy_chain;
+  size_t proxy_chain_length;
+  /* 0=off 1=automatic 2=secure. Any other value is rejected. */
+  uint8_t dns_secure_mode;
+  uint8_t dns_over_tls;
+  uint8_t dns_rotate;
+  uint8_t dns_padding;
+  /* 0 = follow Chrome's default cookie access semantics, which is what the
+   * Core already does. Values 1..3 would be a policy engine of our own, which
+   * is out of scope, so they are rejected rather than silently mapped onto a
+   * default. */
+  uint8_t cookie_samesite_override;
+  /* 1 (the default) makes the Core send the captured browser request-header
+   * set for the selected profile, with the User-Agent group and
+   * sec-ch-ua-platform rewritten to describe this host. 0 suppresses it and
+   * sends only the caller's headers; the caller's values always win over the
+   * captured ones field by field. A historical profile with 0 is accepted: it
+   * is how a caller asks for the release's TLS and HTTP/2 behaviour without
+   * its header set. Chromium_current has no captured set, so the field has no
+   * effect there. Values above 1 are rejected. */
+  uint8_t inject_client_hints;
+  mn_platform_t platform;
 } mn_engine_config_t;
 
 /* Returns MN_ABI_VERSION compiled into the library. */
@@ -149,6 +228,115 @@ MN_EXPORT mn_result_t MN_CALL mn_engine_create(const mn_engine_config_t *config,
                                                mn_engine_t **out_engine);
 MN_EXPORT void MN_CALL mn_engine_retain(mn_engine_t *engine);
 MN_EXPORT void MN_CALL mn_engine_release(mn_engine_t *engine);
+
+/* One cookie, as a read-only view. The strings are owned by the Core and stay
+ * valid only for the duration of the call that produced them; copy what you
+ * keep. Cookies are written into a caller-provided array, which is why this is
+ * a fill-a-buffer call rather than an array of borrowed pointers. */
+typedef struct mn_cookie {
+  uint32_t size;
+  uint32_t version;
+  const char *name;
+  size_t name_length;
+  const char *value;
+  size_t value_length;
+  const char *domain;
+  size_t domain_length;
+  const char *path;
+  size_t path_length;
+  /* Seconds since the Unix epoch. Meaningful only when has_expiry is 1. */
+  int64_t expiry_unix_seconds;
+  /* 1 when the cookie carries an expiry, 0 for a session cookie. Kept separate
+   * from the value so "no expiry" cannot be confused with "expired at the
+   * epoch". */
+  uint8_t has_expiry;
+  uint8_t secure;
+  uint8_t http_only;
+  uint8_t same_site;
+} mn_cookie_t;
+
+typedef enum mn_cookie_same_site {
+  MN_COOKIE_SAME_SITE_UNSPECIFIED = 0,
+  MN_COOKIE_SAME_SITE_NO_RESTRICTION = 1,
+  MN_COOKIE_SAME_SITE_LAX = 2,
+  MN_COOKIE_SAME_SITE_STRICT = 3,
+} mn_cookie_same_site_t;
+
+/* Reads the engine's Chromium CookieMonster.
+ *
+ * url == NULL returns every cookie in the store; otherwise it returns the
+ * cookies a request to that URL would carry. Cookies are written into
+ * out_cookies, which the caller allocates for capacity entries. out_cookies may
+ * be NULL when capacity is 0, which is how a caller asks for the count first.
+ *
+ * When the store holds more than capacity cookies this returns
+ * MN_ERROR_INVALID_ARGUMENT and still writes the required count to out_count,
+ * matching the out-param convention of the create functions.
+ *
+ * These calls block until the CookieMonster has answered. Do not call them from
+ * inside a Core callback: that callback runs on the same thread they wait on. */
+MN_EXPORT mn_result_t MN_CALL
+mn_engine_cookies_get(mn_engine_t *engine, const char *url, size_t url_length,
+                      mn_cookie_t *out_cookies, size_t capacity,
+                      size_t *out_count);
+
+/* Writes one cookie through the same path a Set-Cookie response takes:
+ * CanonicalCookie::CreateSanitizedCookie followed by
+ * CookieStore::SetCanonicalCookieAsync. The store applies its own domain, path
+ * and size rules, so a cookie it rejects is rejected here too -- this is not a
+ * way around the store's validation.
+ *
+ * source_url decides domain matching and origin-bound semantics and is
+ * required. creation_unix_seconds may be 0 to use the current time. A return of
+ * MN_OK means the store accepted the cookie. */
+MN_EXPORT mn_result_t MN_CALL
+mn_engine_cookies_set(mn_engine_t *engine, const mn_cookie_t *cookie,
+                      const char *source_url, size_t source_url_length,
+                      int64_t creation_unix_seconds);
+
+/* Deletes every cookie matching (domain, path, name) and reports how many were
+ * deleted through out_removed (pass NULL when the count is not needed).
+ * Returns MN_OK even when nothing matched.
+ *
+ * Both the deletion and the count are complete when this returns: Chromium
+ * runs the match predicate synchronously, once per cookie, so the count is
+ * taken there rather than from the store's completion callback -- that
+ * callback is posted onto the same thread this call runs on and could never be
+ * observed here. */
+MN_EXPORT mn_result_t MN_CALL
+mn_engine_cookies_delete(mn_engine_t *engine, const char *domain,
+                         size_t domain_length, const char *path,
+                         size_t path_length, const char *name,
+                         size_t name_length, size_t *out_removed);
+
+/* Deletes every cookie in the store. */
+MN_EXPORT mn_result_t MN_CALL mn_engine_cookies_clear(mn_engine_t *engine);
+
+/* Registers a client certificate for one server. cert_pem is a chain of PEM
+ * "CERTIFICATE" blocks, key_pem a single unencrypted PEM private key. The
+ * certificate is used only when the server sends a CertificateRequest, so it
+ * does not change the ClientHello of any other connection and cannot disturb
+ * a pinned TLS fingerprint.
+ *
+ * Encrypted (passphrase-protected) keys are rejected with
+ * MN_ERROR_INVALID_ARGUMENT: unlocking one would need a passphrase the ABI has
+ * no field for, and sending no certificate silently is worse than failing.
+ *
+ * Chromium keeps the private key in process memory; there is no OS keystore
+ * behind this call. Replacing the certificate for a server also flushes that
+ * server's TLS session cache, because session resumption would otherwise skip
+ * client-certificate negotiation entirely. */
+MN_EXPORT mn_result_t MN_CALL
+mn_engine_set_client_certificate(mn_engine_t *engine, const char *host,
+                                 size_t host_length, uint16_t port,
+                                 const uint8_t *cert_pem, size_t cert_pem_length,
+                                 const uint8_t *key_pem, size_t key_pem_length);
+
+/* Forgets the client certificate registered for (host, port). Returns MN_OK
+ * even when none was registered. */
+MN_EXPORT mn_result_t MN_CALL
+mn_engine_clear_client_certificate(mn_engine_t *engine, const char *host,
+                                   size_t host_length, uint16_t port);
 
 typedef struct mn_header {
   const char *name;
@@ -278,6 +466,58 @@ MN_EXPORT mn_result_t MN_CALL mn_request_follow_redirect(mn_request_t *request);
  * that is already in flight owns the buffer the callback was handed, so the
  * Core only schedules the next read once that callback has returned. */
 MN_EXPORT mn_result_t MN_CALL mn_request_resume_read(mn_request_t *request);
+
+/* The protocol the connection actually used.
+ *
+ * Readable from on_response onwards. Before the response has started, and
+ * therefore after a request that never got one, this returns
+ * MN_ERROR_INVALID_STATE.
+ *
+ * MN_HTTP_VERSION_UNKNOWN is a real answer, not a placeholder: Chromium reports
+ * kUNKNOWN when it genuinely does not know, for example for a response served
+ * from the HTTP cache. Reporting HTTP/1.1 there would be a lie, so the value
+ * stays UNKNOWN and the caller reports the protocol as unknown too.
+ *
+ * The values come from HttpResponseInfo::connection_info, classified through
+ * HttpConnectionInfoToCoarse so that draft HTTP/2 and every QUIC version are
+ * covered without this header tracking Chromium's enum. 0.9, 1.0 and 1.1 keep
+ * their own values because coarsening would merge them into one. */
+typedef enum mn_http_version {
+  MN_HTTP_VERSION_UNKNOWN = 0,
+  MN_HTTP_VERSION_0_9 = 1,
+  MN_HTTP_VERSION_1_0 = 2,
+  MN_HTTP_VERSION_1_1 = 3,
+  MN_HTTP_VERSION_2 = 4,
+  MN_HTTP_VERSION_3 = 5,
+} mn_http_version_t;
+
+MN_EXPORT mn_result_t MN_CALL
+mn_request_negotiated_protocol(mn_request_t *request,
+                               mn_http_version_t *out_version);
+
+/* Whether Encrypted ClientHello was used for this connection.
+ *
+ * Readable under the same rule as mn_request_negotiated_protocol: from
+ * on_response onwards, MN_ERROR_INVALID_STATE before that.
+ *
+ * MN_ECH_FAILED exists so the enumeration does not have to change if Chromium
+ * ever exposes the distinction, but it is currently unreachable and callers
+ * must not wait for it: net/ssl/ssl_info.h carries a single boolean
+ * (encrypted_client_hello), which is false both for "tried and rejected" and
+ * for "never tried".
+ *
+ * MN_ECH_NOT_ATTEMPTED is what a desktop build returns in practice. Chromium
+ * only obtains an ECHConfigList from a DNS HTTPS record, and this engine does
+ * not fetch one, so no ECH extension is ever offered -- the value means "no
+ * ECHConfigList was available", not "the platform disabled ECH". */
+typedef enum mn_ech_status {
+  MN_ECH_NOT_ATTEMPTED = 0,
+  MN_ECH_SUCCESS = 1,
+  MN_ECH_FAILED = 2,
+} mn_ech_status_t;
+
+MN_EXPORT mn_result_t MN_CALL mn_request_ech_status(mn_request_t *request,
+                                                    mn_ech_status_t *out_status);
 
 typedef enum mn_websocket_message_type {
   MN_WEBSOCKET_MESSAGE_CONTINUATION = 0,

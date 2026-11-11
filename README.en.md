@@ -360,17 +360,27 @@ accepting a JA3 string while still sending Chromium's own ClientHello would
 report a fidelity this build does not have. The two `extra_fp` fields the facade
 can honour are accepted: `header_order` and `form_boundary`.
 
-**Default request headers are not profile data.** `impersonate` swaps the version
-string in `User-Agent`; it does **not** add the
-`sec-ch-ua`/`sec-ch-ua-mobile`/`sec-ch-ua-platform`, `Sec-Fetch-*`, `Accept` or
-`Priority` headers Chrome actually sends. Chrome injects those in the
-`services/network` URLLoader factory layer, and `net::URLRequestContextBuilder`
-exposes only `set_user_agent` / `set_accept_language` (both landing in
-`StaticHttpUserAgentSettings`, which offers just
-`GetUserAgent()`/`GetAcceptLanguage()`), so there is no entry point today. The
-measured default set is `Host`, `Connection`, `User-Agent`, `Accept-Encoding`.
-Closing this needs ABI v9; see the client hints item in
-[`docs/NEXT_STEPS.md`](https://github.com/komAAmok/chrome_client/blob/main/docs/NEXT_STEPS.md).
+**Default request headers come from the Core, built from the profile's own
+captures.** `impersonate="chrome_155"` sends the same header set that release
+left in `profiles/chrome_155/h1/captures.json` across six independent
+connections: `sec-ch-ua`, `sec-ch-ua-mobile`, `sec-ch-ua-platform`,
+`Upgrade-Insecure-Requests`, `User-Agent`, `Accept`, four `Sec-Fetch-*`,
+`Accept-Encoding`, `Accept-Language` -- in capture order. ABI v9 compiles
+those sets into `libminicronet` (three distinct sets cover all 72 profiles: 9,
+11 and 12 fields, 39 KB of text) and `Request::StartOnNetworkThread` sends them
+through `SetExtraRequestHeaders`.
+
+That placement is the point. Chrome builds these headers in the
+`services/network` URLLoader factory, which is the same layer
+`SetExtraRequestHeaders` reaches, so `Accept-CH` negotiation sees a real
+request. When the binding assembled them instead they sat outside `net` and
+`net` did not know they existed.
+
+`mn_engine_config_t.inject_client_hints` turns this off (1 is the default, 0
+sends only the caller's headers, which always win field by field).
+`bindings/python/tests/test_client_hints.py` compares every profile against
+its captures, and `tools/audit-client-hints.py` re-derives the whole table
+from the captures before a commit.
 
 Also rejected explicitly: `cert=` (client certificates), `interface=`,
 `doh_url=`, `curl_options=`, `max_recv_speed=` and `referer=`. The last one is
@@ -549,7 +559,7 @@ Deliberate behavioural differences:
 
 | Path | Contents |
 | --- | --- |
-| `core/abi/` | Stable C ABI v8 |
+| `core/abi/` | Stable C ABI v9 |
 | `core/binaries/` | Nine audited Core targets |
 | `crates/minicronet/` | Rust safety layer, streams and lifetimes |
 | `bindings/python/` | Python 3.9–3.15 binding and the shared facade |

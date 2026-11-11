@@ -891,7 +891,8 @@ class _AsyncState(object):
 
     __slots__ = ("request", "loop", "future", "chunks", "buffered", "done", "error",
                  "status", "raw_headers", "body", "stream", "limit", "total",
-                 "wake", "timer", "closed", "throttled", "hops", "follow")
+                 "wake", "timer", "closed", "throttled", "hops", "follow",
+                 "http_version")
 
     def __init__(self, request, loop, stream, limit, timeout, follow=True):
         self.request = request
@@ -906,6 +907,8 @@ class _AsyncState(object):
         self.error = None
         self.status = 0
         self.raw_headers = b""
+        #: The protocol the Core reported, or ``None`` when it did not know.
+        self.http_version = None
         self.body = None if stream else []
         self.wake = asyncio.Event() if stream else None
         self.closed = False
@@ -941,6 +944,10 @@ class _AsyncState(object):
             elif kind == "response":
                 self.status = code
                 self.raw_headers = raw_headers
+                # The protocol is a getter on the request, not part of the
+                # event tuple: only the head needs it, and widening the tuple
+                # would change a shape several places unpack positionally.
+                self.http_version = self.request.http_version()
                 if self.stream:
                     self._signal()
             elif kind == "redirect":
@@ -1099,6 +1106,57 @@ class _StreamFlag(int):
         return repr(bool(self))
 
 
+class _SessionJarSink(object):
+    """Forwards a jar mutation to the session's engine store.
+
+    A jar can be created before any engine exists (``Session(cookies=...)``)
+    and can outlive one (the cache evicts), so the sink holds the session and
+    resolves the slot per call rather than capturing one. The three methods are
+    exactly what :class:`~.cookies.RequestsCookieJar` calls.
+    """
+
+    __slots__ = ("_session",)
+
+    def __init__(self, session):
+        """Binds the sink to the session whose store it mirrors.
+
+        Args:
+            session: The owning :class:`BaseSession`.
+        """
+        self._session = session
+
+    def write_cookie(self, cookie, source_url):
+        """Writes one cookie through to the store.
+
+        Under the session's cookie lock, because the jar retires the scopes a
+        caller assignment covers and then writes the replacement: two threads
+        interleaving those steps can retire each other's work, so the pair has
+        to be one critical section rather than two.
+
+        Args:
+            cookie: A ``cookielib.Cookie``.
+            source_url: The URL the cookie came from.
+        """
+        with self._session._cookie_lock:
+            self._session._store_slot().write_cookie(cookie, source_url)
+
+    def remove_cookie(self, domain, path, name):
+        """Deletes one cookie from the store.
+
+        Args:
+            domain: Cookie domain.
+            path: Cookie path.
+            name: Cookie name.
+        """
+        with self._session._cookie_lock:
+            self._session._store_slot().remove_cookie(domain, path, name)
+
+    def clear_cookies(self):
+        """Empties the store."""
+        with self._session._cookie_lock:
+            self._session._store_slot().clear_cookies()
+
+
 class BaseSession(object):
     """Shared configuration, engine selection, and cookie policy."""
 
@@ -1190,6 +1248,30 @@ class BaseSession(object):
             self.headers.update(headers)
         self.cookies = cookiejar_from_dict(cookies) \
             if not isinstance(cookies, RequestsCookieJar) else cookies
+        # The jar writes through to the engine's store (ABI v9), so a caller
+        # edit reaches the wire without a reconciliation step. The sink is
+        # resolved lazily because the engine does not exist yet at construction
+        # -- see _SessionJarSink.
+        self.cookies._sink = _SessionJarSink(self)
+        #: Cookies that arrived before the sink existed (Session(cookies=...))
+        #: and have not been written to a store yet. Flushed once, before the
+        #: first request that has a URL to give them as their source.
+        self._pending_store_cookies = True
+        #: Slots whose store already mirrors the jar.
+        #:
+        #: Keyed by the slot itself, not by ``id(slot)``. CPython reuses an id
+        #: once the object is freed, so an id-keyed set can mistake a brand-new
+        #: slot -- empty store, same recycled id -- for one already seeded, and
+        #: skip it. Measured: after the engine cache cycled with max_engines=1,
+        #: the session's cookie stopped being sent. A strong reference also
+        #: keeps the entry alive, which is correct: the slot is alive for as long
+        #: as it is cached, and that is exactly when the entry is meaningful.
+        #:
+        #: A dropped slot keeps itself out of this set: the cache holds the only
+        #: other reference, so eviction frees the object and CPython removes the
+        #: entry. Measured over 60 engine cycles with max_engines=1 (59
+        #: evictions): the set held 1 entry, so no pruning pass is needed.
+        self._seeded_slots = set()
         for event, hook in (hooks or {}).items():
             self.hooks.setdefault(event, [])
             if callable(hook):
@@ -1203,24 +1285,11 @@ class BaseSession(object):
         self.mount("http://", HTTPAdapter())
 
         self._engines = EngineCache(max_engines)
-        #: Cookie-store generation.  Bumping it asks the cache for a structurally
-        #: identical engine with an empty store, which is the only way to drop
-        #: cookies the Core already accepted: ABI v8 exposes no entry point that
-        #: clears CookieMonster.  Every ordinary request keys on this value, so a
-        #: throwaway engine must never be obtained by moving it -- see
-        #: _one_shot_slot.
-        self._generation = 0
-        #: Counter for the throwaway engines 'discard_cookies' needs. Kept apart
-        #: from '_generation' so a discard request never becomes the store every
-        #: later request uses.  Negative generations cannot collide with
-        #: '_generation', which only ever grows from zero.
-        self._discard_serial = 0
-        #: Serialises the read-compare-replace sequence in _resolve_cookies and
-        #: the mirror updates in _absorb_cookies.  Both touch two jars -- the
-        #: caller's and the engine's mirror -- and decide whether the Core's store
-        #: has to be replaced.  Two threads interleaving those steps can each pick
-        #: a different generation for the same request, so one of them sends a
-        #: Cookie header its engine's store then overrides.
+        #: Serialises operations that read the store and then act on what they
+        #: read -- accept a Set-Cookie line, honour a jar edit, or clear the
+        #: store for 'discard_cookies'.  Each is several store calls that only
+        #: make sense together, and two threads interleaving them would see a
+        #: half-applied state.
         self._cookie_lock = threading.RLock()
         self._closed = False
 
@@ -1300,6 +1369,11 @@ class BaseSession(object):
             cookies=merged_cookies,
             hooks=merge_hooks(request.hooks, self.hooks),
         )
+        # The jar mirrors the store; remembering the resolved URL lets a caller
+        # assignment that names no domain inherit a source for the store to
+        # check it against.
+        self.cookies.default_source = prepared.url
+        self._flush_pending_store_cookies()
         return prepared
 
     def _browser_headers(self, request, prepared):
@@ -1429,11 +1503,10 @@ class BaseSession(object):
 
         Returns:
             A dict with ``live``, ``hits``, ``builds``, ``evictions``,
-            ``deferred``, ``inflight``, ``generation`` and ``max_engines``.
+            ``deferred``, ``inflight``, ``builds`` and ``max_engines``.
         """
         snapshot = self._engines.stats
         snapshot["inflight"] = self._engines.inflight()
-        snapshot["generation"] = self._generation
         snapshot["max_engines"] = self._engines.max_engines
         return snapshot
 
@@ -1555,7 +1628,7 @@ class BaseSession(object):
                         request_proxy=None, request_proxies=None):
         """Wraps the resolved binding in the engine cache key.
 
-        The key is the binding plus ``generation``, and nothing else: every
+        The key is the binding, and nothing else: every
         field that changes the wire belongs to the binding, so a request that
         only changes its headers or its body cannot fork the connection pool.
 
@@ -1569,12 +1642,11 @@ class BaseSession(object):
             request_proxies: The caller's per-request ``proxies=`` mapping.
 
         Returns:
-            An :class:`EngineConfig` for the current cookie generation.
+            An :class:`EngineConfig` for these settings.
         """
         binding = self._binding(impersonate, proxy, verify, http_version, url,
                                 request_proxy, request_proxies)
-        return EngineConfig(generation=self._generation,
-                            **{name: getattr(binding, name)
+        return EngineConfig(**{name: getattr(binding, name)
                                for name in BINDING_FIELDS})
 
     def _proxy_auth_applies(self, rule, url=None, request_proxy=None,
@@ -1701,111 +1773,243 @@ class BaseSession(object):
             http_version, url, proxy, proxies)
         return self._engines.acquire(config)
 
+    # -- cookie store (ABI v9) ---------------------------------------------
+
+    def _store_slot(self):
+        """Returns the slot whose store these helpers read and write.
+
+        The store is per engine, and a session may own several (one per
+        profile/proxy/verify combination). The one every ordinary request in
+        this session would use is the default configuration's, which is what
+        ``session.cookies`` describes; a per-request override gets its own
+        store and is not reachable from here by design.
+
+        Returns:
+            The :class:`EngineSlot` for the session defaults.
+        """
+        return self._engines.get(self._engine_config(None, self.proxy,
+                                                    self.verify, self.http_version))
+
+    def _engine_cookies(self, url=None):
+        """Returns the Core's own cookie store.
+
+        This is the store the requests actually send from, as opposed to
+        ``session.cookies``, which is the jar the caller edits. Both describe
+        the same cookies once the jar is reconciled against the store.
+
+        Args:
+            url: Restrict to the cookies a request to this URL would carry.
+
+        Returns:
+            A list of ``(name, value, domain, path, expiry, has_expiry,
+            secure, http_only, same_site)`` tuples.
+        """
+        self._ensure_open()
+        return self._store_slot().cookies(url)
+
+    def _engine_cookies_set(self, name, value, domain, path, source_url,
+                            secure=False, http_only=False, same_site="",
+                            expires=None):
+        """Writes one cookie into the Core's store.
+
+        The store applies its own domain, path and size rules, so a cookie it
+        rejects raises instead of being silently dropped (AGENTS §8).
+
+        Args:
+            name: Cookie name.
+            value: Cookie value.
+            domain: Cookie domain, as the store should record it.
+            path: Cookie path.
+            source_url: The URL the cookie is being set from; decides domain
+                matching and origin-bound semantics.
+            secure: The ``Secure`` attribute.
+            http_only: The ``HttpOnly`` attribute.
+            same_site: ``"lax"``, ``"strict"``, ``"none"`` or empty.
+            expires: Unix seconds, or ``None`` for a session cookie.
+        """
+        self._ensure_open()
+        self._store_slot().set_cookie(
+            (name, value, domain, path, expires, secure, http_only, same_site),
+            source_url)
+
+    def _engine_cookies_delete(self, domain, path, name):
+        """Deletes every matching cookie from the Core's store.
+
+        Args:
+            domain: Cookie domain.
+            path: Cookie path.
+            name: Cookie name.
+
+        Returns:
+            How many cookies were deleted.
+        """
+        self._ensure_open()
+        return self._store_slot().delete_cookie(domain, path, name)
+
+    def _engine_cookies_clear(self):
+        """Empties the Core's store."""
+        self._ensure_open()
+        self._store_slot().clear_cookies()
+
     # -- cookie policy ------------------------------------------------------
     def _resolve_cookies(self, slot, prepared, discard):
-        """Decides the outgoing ``Cookie`` header, rebuilding the engine if needed.
+        """Decides the outgoing ``Cookie`` header.
 
-        Two stores exist and the Core's wins ties, so the caller's jar can only
-        be honoured by replacing the engine whose store disagrees with it.  The
-        comparison is between the ``Cookie`` line the jar would send and the one
-        the engine's mirror would send, which is why the mirror exists at all:
-        ABI v8 cannot read, write or clear ``CookieMonster``.
-
-        The whole read-compare-replace runs under ``_cookie_lock``.  Two workers
-        interleaving it could each bump ``_generation`` and end up on different
-        generations for the same jar, so one of them would send a ``Cookie``
-        header its own engine's store then overrides.
+        The store and the jar are the same now: ``ServerCookieJar`` is a view
+        over ``CookieMonster`` (ABI v9), so there is nothing to reconcile. What
+        is left here is the one thing a view cannot express on its own --
+        ``discard_cookies``, which means "neither send nor record" and therefore
+        has to empty the store before the request rather than skip a header.
 
         Args:
             slot: The slot the request would otherwise use.
-            prepared: The prepared request, whose ``Cookie`` header this may set.
+            prepared: The prepared request.
             discard: Whether the caller asked for "neither send nor record".
 
         Returns:
-            The :class:`EngineSlot` to use.  It differs from *slot* only when
-            the store had to be replaced.
+            The :class:`EngineSlot` to use, always *slot*.
         """
         if discard:
-            # Dropping the header is not enough: the Core's CookieMonster owns
-            # the store and re-attaches every cookie it already holds, so the
-            # documented "neither send nor record" only holds if the store is
-            # discarded too. A fresh generation is a structurally identical
-            # engine with an empty jar, and the mirror stays empty so the
-            # response cookies are not absorbed into it either.
+            # Clearing the store is what makes the promise hold. Dropping the
+            # header alone is not enough: CookieMonster owns the header and
+            # re-attaches whatever it holds. Measured before ABI v9: the only
+            # faithful implementation was a one-shot engine, because there was
+            # no way to clear the store. Now there is.
             prepared.headers.pop("Cookie", None)
-            return self._one_shot_slot(slot.config)
-        with self._cookie_lock:
-            jar = prepared._cookies if prepared._cookies is not None else self.cookies
-            desired = jar.cookie_header(prepared.url)
-            store = slot.cookie_header(prepared.url)
-            if store is None:
-                if desired:
-                    prepared.headers["Cookie"] = desired
-                return slot
-            if desired == store:
-                # The Core will emit exactly this line from its own store.
-                prepared.headers.pop("Cookie", None)
-                return slot
-            # The store would override whatever is sent, so replace the store: a
-            # new generation is a structurally identical engine with an empty jar.
-            self._generation += 1
-            replacement = self._engines.get(
-                slot.config.replace(generation=self._generation))
-            # The superseded slot is unreachable -- its mirror no longer matches
-            # the jar, so nothing selects it again -- but it still occupies one of
-            # the bounded cache slots. Measured: 8 caller edits filled all 8 slots
-            # with dead generations and evicted the reusable one. Same reason as
-            # the discard branch above.
-            if replacement is not slot:
-                self._engines.discard(slot.config)
-            if desired:
-                prepared.headers["Cookie"] = desired
-            return replacement
-
-    def _one_shot_slot(self, config):
-        """Returns an empty-store engine that nothing else can ever reach.
-
-        'discard_cookies' needs a Core cookie store with no cookies in it,
-        and ABI v8 offers no way to clear one, so the only faithful
-        implementation is a brand-new engine. That engine must be *one-shot*:
-        it used to be obtained by bumping 'self._generation', which is also the
-        key every later ordinary request reads, so the store the discard request
-        had just filled with the server's 'Set-Cookie' became the default store
-        for the whole session. Measured: get(/set) -> get(/ok, discard_cookies=
-        True) -> get(/plain) sent 'Cookie: sid=ABC' on the last call, which is
-        the opposite of "neither send nor record".
-
-        The slot is pulled straight back out of the bounded cache: its store must
-        start empty on every discard request, so reusing it would leak the
-        previous discard response's cookies, and leaving it cached would evict
-        the ordinary engine. The engine itself stays alive through the 'EngineSlot'
-        this returns and, for a streaming response, through the native request,
-        which holds its own reference to the Chromium context.
-        """
-        self._discard_serial += 1
-        # Negative generations cannot collide with 'self._generation', which
-        # only ever grows from zero.
-        one_shot = config.replace(generation=-self._discard_serial)
-        slot = self._engines.get(one_shot)
-        self._engines.discard(one_shot)
+            slot.clear_cookies()
+            # "nor record" half. The response's Set-Cookie lines still reach the
+            # jar -- a caller reading response.cookies expects that -- so the
+            # write-through is suppressed for the duration, or the discard
+            # request quietly puts its own cookies back into the store it just
+            # emptied. Measured with the flag absent: the next plain request
+            # sent sid=BBB.
+            self.cookies.writing_suppressed = True
+            return slot
+        # A per-request ``cookies=`` mapping goes into the store for this
+        # request. A header would not do: CookieMonster owns the Cookie header
+        # and re-attaches whatever it holds, so a cookie the store also has
+        # would come out twice -- the caller's value has to be the one the store
+        # holds.
+        # An engine owns its store, so an override that selects a different
+        # configuration starts with an empty one. The session jar has to seed
+        # it -- once, so the seeding does not overwrite that engine's own
+        # cookies on every later request.
+        self._seed_store_from_jar(slot, prepared.url)
+        per_request = getattr(prepared, "_cookies", None)
+        if per_request:
+            source = prepared.url or self.cookies.default_source
+            with self._cookie_lock:
+                for cookie in per_request:
+                    try:
+                        self.cookies._write_through(cookie, source)
+                    except Exception:
+                        # Same rule as the seed path: one request-scoped cookie
+                        # the store refuses must not abort the request. The
+                        # caller asked for this single request, and failing the
+                        # whole transfer over one bad entry is not a faithful
+                        # reading of that.
+                        continue
+        # The jar writes through to the store, so the header the Core emits is
+        # the one the jar describes. Nothing to compare, nothing to replace.
         return slot
+    def _seed_store_from_jar(self, slot, source_url):
+        """Writes the session jar into a store the session has not filled yet.
+
+        One store per engine means a per-request override (``verify=``,
+        ``proxy=``, ``impersonate=``) runs on an engine whose store is empty.
+        Without seeding it, a cookie the session already holds would stop being
+        sent the moment a request used that override -- measured: the echo came
+        back empty after a verify=False request.
+
+        Seeded exactly once per slot: after that the store is the authority for
+        that engine, and re-seeding would undo cookies it had received.
+
+        Args:
+            slot: The slot the request will run on.
+            source_url: The resolved request URL, used as each cookie's source.
+        """
+        if not source_url:
+            return
+        with self._cookie_lock:
+            if slot in self._seeded_slots:
+                return
+            self._prune_seeded_slots()
+            self._seeded_slots.add(slot)
+            for cookie in list(self.cookies):
+                try:
+                    slot.write_cookie(cookie, source_url)
+                except Exception:
+                    # One entry the store refuses must not keep the rest of the
+                    # jar off this engine. Measured: a jar holding a cookie with
+                    # an unusable domain made every request on an override
+                    # configuration raise, so the override path was unusable
+                    # until the bad entry was removed by hand.
+                    continue
+
+    def _prune_seeded_slots(self):
+        """Forgets slots the engine cache no longer holds.
+
+        Called under ``_cookie_lock`` from the only writer of
+        ``_seeded_slots``.
+
+        This is required, and the reason is not obvious: keying on the slot
+        object was supposed to let CPython drop an evicted entry for free, and
+        for a plain ``get()`` cycle it does. It does not when the request used
+        an override -- the Core keeps the superseded engine alive through the
+        request it served, so the object survives a ``gc.collect()``.
+        Measured: 8 ``verify=False`` requests with ``max_engines=1`` (17 builds)
+        left 9 entries behind the single live slot.
+        """
+        live = set(self._engines.slots())
+        self._seeded_slots &= live
+
+    def _flush_pending_store_cookies(self):
+        """Writes the jar's pre-existing cookies into the store, once.
+
+        ``Session(cookies={...})`` and any jar built before the first request
+        predate the write-through sink, so those entries exist only in Python.
+        They are flushed on the first request, when a URL exists to use as their
+        source -- the store needs one to run its own domain checks, and inventing
+        one earlier would mean writing cookies against the wrong origin.
+        """
+        if not self._pending_store_cookies:
+            return
+        source = self.cookies.default_source
+        if not source:
+            # No URL yet, so there is no origin to record these against. Leave the
+            # flag set: the next request will have one. Clearing it here instead
+            # would drop every pre-existing cookie the moment a request failed
+            # before resolving its URL -- measured: the store stayed empty and the
+            # cookies were never sent again, silently.
+            return
+        with self._cookie_lock:
+            for cookie in list(self.cookies):
+                try:
+                    self.cookies._write_through(cookie, source)
+                except Exception:
+                    # One cookie the store rejects -- a domain that cannot apply to
+                    # this URL, say -- must not stop the rest of the jar from
+                    # reaching it. The first request is the only chance this batch
+                    # gets, so a single throw here would drop every later cookie
+                    # too.
+                    continue
+            # Only after the whole batch: a throw must leave the work pending.
+            self._pending_store_cookies = False
 
     def _absorb_cookies(self, slot, response, discard=False):
         """Mirrors every ``Set-Cookie`` from the final hop and each redirect.
 
-        Three jars are updated, and they are not redundant:
+        Two jars are updated, and they serve different readers:
 
-        * ``slot.mirror`` records what this engine's Chromium store accepted, so
-          the next request can tell whether the store still agrees with the
-          caller's jar.
-        * ``response.cookies`` reports what *this response* set, which is what a
-          caller reads.
+        * ``response.cookies`` reports what *this response* set.
         * ``self.cookies`` is the session jar the caller mutates and reads.
 
-        All three happen under ``_cookie_lock``.  A ``Set-Cookie`` arriving while
-        another thread is comparing the mirror against the jar would otherwise
-        be visible to the comparison but not to the jar, and the request would
-        send a ``Cookie`` line the store then silently overrides.
+        There is no third copy for the engine: the store has already accepted
+        these cookies, so recording them again would be duplicating the thing
+        the jar is a view of.
+
+        Both happen under ``_cookie_lock`` so a ``Set-Cookie`` is never visible
+        to one reader and not the other.
 
         Args:
             slot: The engine slot the response arrived on.
@@ -1823,12 +2027,10 @@ class BaseSession(object):
             for url, headers in response.history_headers:
                 lines = headers.get_list("set-cookie")
                 if lines:
-                    slot.absorb(url, lines)
                     response.cookies.absorb_set_cookie(url, lines)
                     self.cookies.absorb_set_cookie(url, lines)
             lines = response.headers.get_list("set-cookie")
             if lines:
-                slot.absorb(response.url, lines)
                 response.cookies.absorb_set_cookie(response.url, lines)
                 self.cookies.absorb_set_cookie(response.url, lines)
 
@@ -1839,7 +2041,7 @@ class BaseSession(object):
         return AsyncResponse() if async_mode else Response()
 
     def _finalize(self, response, prepared, status_code, raw_headers, hops, started,
-                  slot, discard_cookies=False, body=None):
+                  slot, discard_cookies=False, body=None, http_version=None):
         status_line, headers = parse_raw_headers(raw_headers)
         if body is not None:
             response.content = body
@@ -1847,12 +2049,21 @@ class BaseSession(object):
         response.headers = headers
         response.status_line = status_line
         response.reason = reason_from_status_line(status_line, status_code)
-        # ABI v8 carries no negotiated protocol, and the status line cannot
-        # stand in for one: Chromium normalizes an HTTP/2 response onto
-        # "HTTP/1.1 200" (net/spdy/spdy_http_utils.cc), so parsing it reported
-        # HTTP/1.1 for every h2 and h3 connection. Reporting the truth is the
-        # same rule the reason phrase follows -- derive only what can be derived.
-        response.http_version = _negotiated_http_version(status_line)
+        # ABI v9 reports the negotiated protocol, so this is the Core's answer
+        # whenever the caller supplied one. Chromium normalizes an HTTP/2
+        # response onto "HTTP/1.1 200" (net/spdy/spdy_http_utils.cc), so the
+        # status line cannot stand in for it: parsing that reported HTTP/1.1
+        # for every h2 and h3 connection.
+        #
+        # The fallback stays for the paths that have no live Core response to
+        # ask -- a redirect hop assembled from the redirect callback, and a
+        # cache hit where the Core itself answers UNKNOWN. Both are cases where
+        # the status line is all there is, and it reports None unless it can
+        # prove the protocol.
+        if http_version is not None:
+            response.http_version = http_version
+        else:
+            response.http_version = _negotiated_http_version(status_line)
         response.request = prepared
         response.elapsed = _elapsed(started)
         response.default_encoding = self.default_encoding
@@ -1878,6 +2089,14 @@ class BaseSession(object):
         response.url = url
         response.redirect_url = url if history else None
         self._absorb_cookies(slot, response, discard_cookies)
+        if discard_cookies:
+            # The response's Set-Cookie lines reach the store through Chromium
+            # itself, not through the jar: CookieMonster accepts them while the
+            # request runs. Clearing before the request is therefore not enough
+            # -- measured, the next plain request sent sid=BBB. Clearing again
+            # after it is what makes "nor record" true.
+            slot.clear_cookies()
+            self.cookies.writing_suppressed = False
         if response.is_redirect:
             following = prepared.copy()
             following.url = urljoin(response.url, response.headers["location"])
@@ -2016,21 +2235,13 @@ class BaseSession(object):
 
     def _open_websocket(self, url, origin, headers, timeout, proxy, proxies,
                         impersonate, protocols, verify):
-        """Opens a WebSocket on an engine whose cookie store agrees with the jar.
+        """Opens a WebSocket on the session's engine.
 
-        The handshake has to reach the server with the same ``Cookie`` line the
-        HTTP path would send, which means it cannot simply stuff the jar's value
-        into an extra header: ``CookieMonster`` owns that header and re-attaches
-        whatever it already holds for the URL. Measured before this check: a
-        caller who rewrote or cleared ``session.cookies`` still saw the Core's
-        old value on the wire (``sid=core`` while the jar held ``sid=caller``),
-        while the HTTP path on the same session correctly sent ``sid=caller``.
-
-        So the slot is chosen exactly the way :meth:`_resolve_cookies` chooses
-        one for a request: if the jar and the engine's mirror disagree, take a
-        structurally identical engine with an empty store. ABI v8 exposes no way
-        to clear ``CookieMonster``, so a fresh generation is the only faithful
-        option and a silent disagreement is refused rather than papered over.
+        The handshake and an HTTP request now resolve cookies the same way --
+        through the Core's own store -- because the jar writes through to it.
+        That is what removed the old disagreement this method used to work
+        around: a caller who cleared ``session.cookies`` saw the Core's old
+        value on the wire, and the fix was to build a throwaway engine.
         """
         slot = self._slot(url, impersonate, proxy, proxies, verify, None)
         merged = Headers(self.headers)
@@ -2045,27 +2256,6 @@ class BaseSession(object):
                 "pick an impersonate profile; Host, Origin and the Sec-WebSocket-* "
                 "headers come from the URL and the handshake."
                 % (", ".join(forbidden), ", ".join(_FORBIDDEN_WS_HEADERS)))
-        http_url = _websocket_http_url(url)
-        with self._cookie_lock:
-            desired = self.cookies.cookie_header(http_url)
-            store = slot.cookie_header(http_url)
-            if store is not None and desired != store:
-                # Same replacement rule as _resolve_cookies: the Core store
-                # would win the header, so move to an empty-store engine.
-                self._generation += 1
-                replacement = self._engines.get(
-                    slot.config.replace(generation=self._generation))
-                if replacement is not slot:
-                    self._engines.discard(slot.config)
-                slot = replacement
-                if replacement.cookie_header(http_url) is not None:
-                    raise UnsupportedFeature(
-                        "the WebSocket handshake cannot honour the session cookie "
-                        "jar: the Core's cookie store still holds a cookie for "
-                        "%s that the jar does not, and ABI v8 cannot clear it."
-                        % (http_url,))
-            if desired:
-                merged["Cookie"] = desired
         return slot.engine.websocket(url, origin or _default_websocket_origin(url),
                                      merged.multi_items(),
                                      _split_timeout(timeout if timeout is not None
@@ -2277,7 +2467,19 @@ class Session(BaseSession):
                             options.get("proxy"), options.get("proxies"),
                             options.get("verify"), options.get("http_version"))
         with lease:
-            return self._send_on_slot(lease, prepared, options, discard)
+            try:
+                return self._send_on_slot(lease, prepared, options, discard)
+            finally:
+                # The mute belongs to this request and nothing else. Restoring
+                # it here rather than only on the success path is what keeps a
+                # failure -- a refused connection, a cancelled stream, an
+                # exception out of the caller's own body iterator -- from
+                # leaving the jar silently unable to reach the store again.
+                # Measured with the restore on the success path alone: after one
+                # failed discard request, every later cookie the caller set was
+                # recorded in the jar and never sent.
+                if discard:
+                    self.cookies.writing_suppressed = False
 
     def _send_on_slot(self, lease, prepared, options, discard):
         """Performs the transfer on the pinned slot, rebuilding its store if needed.
@@ -2368,8 +2570,13 @@ class Session(BaseSession):
         callback = options.get("content_callback")
         if callback is not None and not stream:
             callback(response.content)
+        # `head` is the Core's own response object; it carries the protocol the
+        # connection actually used. It is None only on the paths that never got
+        # a header block, where _finalize falls back to the status line.
+        negotiated = getattr(head, "http_version", None) if head is not None else None
         return self._finalize(response, prepared, status_code, raw_headers,
-                              hops, started, slot, discard)
+                              hops, started, slot, discard,
+                              http_version=negotiated)
 
     # -- verbs --------------------------------------------------------------
     def get(self, url, **kwargs):
@@ -2761,7 +2968,8 @@ class AsyncSession(BaseSession):
             if callback is not None:
                 callback(response.content)
         return self._finalize(response, prepared, state.status, state.raw_headers,
-                              state.hops, started, slot, discard)
+                              state.hops, started, slot, discard,
+                              http_version=state.http_version)
 
     @staticmethod
     async def _await_headers(state):

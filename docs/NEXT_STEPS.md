@@ -625,19 +625,74 @@ ECH 只暴露状态（第 2.5 节）：桌面端 Chromium 的 `EchMode` 恒为 `
 
 提案没有登记、也不应等 v9 的三项：`headers={"User-Agent": None}` 的删除语义、
 `tools/audit-python-stubs.py` 的硬编码清单、`bindings/python36` 的空壳门禁与 `include` 路径。
-## 待办：把协商协议暴露到 ABI（v9）
+## 已定位：`unittest discover` 的两条失败记录都不成立，真正的问题是运行时长
 
-`http_version` 目前只在状态行能证明时返回协议，其余返回 `None`。原因是 ABI v8 的
-response 回调只有 `(status_code, headers)`，而 Chromium 会把 HTTP/2、HTTP/3 的响应
-规范化成 `HTTP/1.1 200` 的状态行（`net/spdy/spdy_http_utils.cc`），绑定层无法从
-现有数据推出真实协议。
+第五轮把前四轮留下的两条「已知缺陷」查到底了。**两条都不是产品缺陷，也不是测试缺陷**，
+而是我自己诊断时的环境错误。如实记录，避免下次再被同样的假信号带走。
 
-真正的修法是加 ABI 字段而不是继续猜：在 `mn_request_callbacks` 增加
-`on_response_info`，或新增 `mn_request_negotiated_protocol(mn_request_t*,`
-`mn_http_version_t*)`，由 Core 从 `net::HttpResponseInfo`（`WasFetchedViaSpdy()` /
-QUIC 标记 / ALPN）填写。这需要 ABI v8 → v9：头文件、`crates/minicronet-sys` 的布局
-测试、三份导出表、8 个平台产物与 manifest 全部同步，并走一次完整发布验收。
-在此之前绑定层必须继续返回 `None`——错报的指纹比缺失的指纹更糟。
+### 1. `test_process_pool` 的 `BrokenPipeError` —— 我的 env 缺 `PATH`
+
+现象：该测试反复 `BrokenPipeError`，`resource_tracker._fd` 是 `None`，看起来像
+「导入 `chrome_client` 破坏了资源追踪器」。
+
+**实际原因**：`multiprocessing` 的 `spawn` 子进程靠 `sys.executable` 重新启动解释器，
+而我传给 `execFile` 的 `env` 是 `{ ...process.env, ... }` —— 这个沙箱里 `process.env`
+是**空对象**，于是子进程拿到一个没有 `PATH`/`HOME` 的环境，`spawn` 起不来，父进程写管道
+就得到 `BrokenPipeError`。追踪器 `_fd` 为 `None` 只是「还没成功启动」的后果，不是原因。
+
+**判定实验**（同一脚本、同一目录、只改 env）：
+
+| env | 结果 |
+| --- | --- |
+| `{}` | FAIL FAIL FAIL FAIL |
+| `{PATH, HOME, LANG}` | OK OK OK OK |
+| 真实测试 + 完整 env | OK OK OK OK OK |
+
+**结论**：`test_process_pool` 是健康的。之前所有「5/5 失败」「稳定复现」都是我把空环境
+传下去造成的。
+
+### 2. `discover` 的「挂起」—— 不是挂起，是慢
+
+368 个测试串行跑，八个模块分别运行合计约 130 秒，`discover` 一个进程里更久。它超过
+工具单次调用上限后被 SIGKILL，看起来像挂起。
+
+排查过程中我还犯了一个会自我印证的错误：用 `loadTestsFromNames` 写的诊断脚本**没有
+`__main__` 保护**，而 `spawn` 子进程会重新执行 `__main__`，于是子进程又去建进程池——
+那是我脚本的递归缺陷，不是仓库的问题。加上保护后，同一批测试、同一顺序全部通过
+（352 个前缀 + 挂起测试）。
+
+**结论**：`discover` 没有挂起；它只是比单次工具调用预算更长。八个模块分别运行全部通过，
+`discover` 需要更长的运行窗口或拆分执行。
+
+### 3. 留下的教训（写进本节而不是只写在脑子里）
+
+1. 传 `env` 给子进程时，**必须显式构造完整环境**；这个沙箱的 `process.env` 是空的，
+   `{...process.env}` 等于什么都不传。
+2. 任何会 `spawn` 的诊断脚本都要有 `if __name__ == "__main__":`。
+3. 「稳定复现」也可能是自己的错误稳定复现——**先换环境对照一次**，再下结论。
+
+## 已完成（ABI v9）：协商协议由 Core 报告## 已完成（ABI v9）：协商协议由 Core 报告
+
+`mn_request_negotiated_protocol` 已随 ABI v9 落地，Core 从
+`HttpResponseInfo::connection_info` 填写，经 `HttpConnectionInfoToCoarse` 分类，
+因此 draft HTTP/2 与各 QUIC 版本都被覆盖（`core/source/request.cc` 的
+`OnResponseStarted`）。四层全部接通：Core → `minicronet` 的
+`Request::negotiated_protocol()` / `Response::http_version` → pyo3 的
+`PyResponse.http_version` 与 `PyRequest.http_version()` → facade 的
+`Response.http_version`。
+
+**实测**：本地 h1 服务端上 `pin=None` 与 `pin=v1` 都报 `HTTP/1.1`；在此之前两者都
+报 `None`，因为 facade 只从状态行推断。
+
+两个诚实性要求仍然成立，且都由实现保证：
+
+- `MN_HTTP_VERSION_UNKNOWN` 是 Core 自己的答案（命中 HTTP 缓存时如此），facade 如实
+  报 `None`，不升级成 `HTTP/1.1`——头文件把这一点写成契约。
+- 重定向中间跳没有 Core 响应可问，`_finalize` 保留状态行回退，而回退只在能证明时
+  给出协议。
+
+**仍未接通**：`mn_request_ech_status`（ECH 是否实际使用）还没有对应 getter。它与
+协议同属 v9 新增的查询面，接法相同，是下一件可做的事。
 
 ## 已完成（facade 层）：默认请求头 = profile 抓包；Core 注入仍属 ABI v9
 

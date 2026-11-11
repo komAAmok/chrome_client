@@ -372,11 +372,14 @@ normal/H2 才对 h2 抓包**；拿 `v1` 去对 h2 抓包必然只报这两处。
 `Accept-Language`。72 个 profile 全部如此，`bindings/python/tests/test_client_hints.py`
 逐个比对，`tools/audit-client-hints.py` 在提交前重新从抓包推导整张表。
 
-这些头由 facade 注入，不是 Core 发的：Chrome 自己是在 `services/network` 的
-URLLoader 工厂层生成它们的，而 `net::URLRequestContextBuilder` 只暴露
-`set_user_agent` / `set_accept_language`。要 Core 自己产出它们仍需 ABI v9
-（见 [`docs/NEXT_STEPS.md`](https://github.com/komAAmok/chrome_client/blob/main/docs/NEXT_STEPS.md)）；
-facade 注入的代价是这些头不在 Chromium 的 `net` 层，而在请求的 extra headers 里。
+**这些头现在由 Core 自己发。** ABI v9 把这 3 组不同的头集合（9 / 11 / 12 个字段，
+按 profile 去重后共 39 KB）编进了 `libminicronet`，由
+`Request::StartOnNetworkThread` 经 `SetExtraRequestHeaders` 送出——与 Chrome 在
+`services/network` 的 URLLoader 工厂层生成它们的位置相同，而不是在绑定层拼好再塞进去。
+`mn_engine_config_t.inject_client_hints` 可以关掉它（默认 1）。
+
+为什么这一层重要：`Accept-CH` 协商看到的是 `net` 层组装出的请求；facade 注入时这些头
+停在 extra headers 里，`net` 自己不知道它们存在。
 
 **平台跟随宿主，不跟随抓包。** 抓包来自 Windows 桌面，但客户端不能声称一个
 套接字并不在的平台。`User-Agent` 的括号组与 `sec-ch-ua-platform` 都按宿主重写，
@@ -567,7 +570,7 @@ Cookie 会按 URL 匹配后附加到握手上。
 
 | 路径 | 内容 |
 | --- | --- |
-| `core/abi/` | 稳定 C ABI v8 |
+| `core/abi/` | 稳定 C ABI v9 |
 | `core/binaries/` | 9 个已审计平台 Core |
 | `crates/minicronet/` | Rust 安全层、流和生命周期 |
 | `bindings/python/` | Python 3.9–3.15 绑定与共享 facade |

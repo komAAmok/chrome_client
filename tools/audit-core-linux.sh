@@ -20,15 +20,20 @@ CHROMIUM_SRC=$(resolve_chromium_src)
 # and Digest need to decode a realm -- without it every realm-carrying challenge
 # silently skipped authentication.
 #
-# Re-baselined for the 153 -> 156.0.8078.31 upgrade and again after the size
-# pass, and again after the chrome_86..chrome_98 profiles joined the table. The
-# rule has not changed: the largest artifact plus 2%, rounded up to 10,000. The
-# four committed artifacts are now 8,367,664 (x86_64) / 8,062,952 (x86) /
-# 8,012,448 (arm64) / 6,081,560 (armv7), so the largest, 8,367,664, times 1.02
-# is 8,535,017 and rounds up to the 8,540,000 below. Quote the artifacts, not an
-# earlier build: the number is derived from them, and a comment naming a
-# superseded size reads as if the ceiling had drifted from its own rule.
-MAX_BYTES=${MAX_BYTES:-8540000}
+# Re-baselined for the 153 -> 156.0.8078.31 upgrade, after the size pass, after
+# the chrome_86..chrome_98 profiles joined the table, and again for ABI v9. The
+# rule has not changed: the largest artifact plus 2%, rounded up to 10,000.
+#
+# v9 adds the cookie store bridge, the protocol/ECH getters, the client
+# certificate setters and eight config fields, then the captured request
+# header set for all 72 profiles (+~70 KB on x86_64, which is the largest
+# single addition: 3 distinct header sets, 39 KB of text, and the accessor).
+# The four committed artifacts are 8,256,760 (x86) / 8,654,384 (x86_64) /
+# 8,301,280 (arm64) / 6,245,872 (armv7), so 8,654,384 x 1.02 = 8,827,472
+# rounds up to the 8,830,000 below. Quote the artifacts, not an earlier
+# build: the number is derived from them, and a comment naming a superseded
+# size reads as if the ceiling had drifted from its own rule.
+MAX_BYTES=${MAX_BYTES:-8830000}
 LIB=$OUT_DIR/libminicronet.so
 READELF=$CHROMIUM_SRC/third_party/llvm-build/Release+Asserts/bin/llvm-readelf
 NM=$CHROMIUM_SRC/third_party/llvm-build/Release+Asserts/bin/llvm-nm

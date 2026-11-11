@@ -13,13 +13,14 @@ CHROMIUM_SRC=$(resolve_chromium_src)
 # two plus 2% so a regression on either architecture fails here rather than in a
 # release.
 #
-# Re-baselined for the 153 -> 156.0.8078.31 upgrade and again after the size
-# pass. Re-baselined again after BoringSSL stopped being the one target still
-# built at -O2 while the rest of the dylib was at -Oz. The two committed
-# artifacts are now 7,958,968 (x86_64) and 7,310,880 (arm64), so
-# 7,958,968 * 1.02 = 8,118,147 rounds up to the 8,120,000 below. The rule is
-# unchanged: the larger architecture plus 2%, rounded up to 10,000.
-MAX_BYTES=${MAX_BYTES:-8120000}
+# Re-baselined for the 153 -> 156.0.8078.31 upgrade, again after the size pass,
+# again after BoringSSL stopped being the one target still built at -O2 while
+# the rest of the dylib was at -Oz, and again for ABI v9 including the captured
+# request header set for all 72 profiles. The two committed artifacts are now
+# 8,131,568 (x86_64) and 7,476,544 (arm64), so 8,131,568 * 1.02 = 8,294,199
+# rounds up to the 8,300,000 below. The rule is unchanged: the larger
+# architecture plus 2%, rounded up to 10,000.
+MAX_BYTES=${MAX_BYTES:-8300000}
 ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 # require_rg also installs the rg() wrapper, which turns a ripgrep *error*
 # (status 2: unreadable path, bad pattern) into a failure instead of the "no
@@ -105,5 +106,9 @@ if ((bytes > MAX_BYTES)); then
   exit 1
 fi
 
-printf 'Audited %s: %s bytes, twenty public ABI symbols (%s)\n' \
-  "$LIB" "$bytes" "$target_label"
+# The count is derived from the export list rather than written out, so the
+# message cannot go stale the next time the ABI grows: it said "twenty" while
+# the diff above was already checking twenty-eight.
+symbol_count=$(sed '/^[[:space:]]*$/d' "$ROOT_DIR/core/exports/minicronet.exports" | wc -l | tr -d ' ')
+printf 'Audited %s: %s bytes, %s public ABI symbols (%s)\n' \
+  "$LIB" "$bytes" "$symbol_count" "$target_label"

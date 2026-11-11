@@ -3,7 +3,7 @@
 
 use core::ffi::c_void;
 
-pub const MN_ABI_VERSION: u32 = 8;
+pub const MN_ABI_VERSION: u32 = 9;
 
 #[repr(C)]
 pub struct mn_engine_t {
@@ -71,6 +71,17 @@ impl mn_tls_verify_mode_t {
     pub const MN_TLS_VERIFY_INSECURE: Self = Self(2);
 }
 
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct mn_platform_t(pub i32);
+
+impl mn_platform_t {
+    pub const MN_PLATFORM_AUTO: Self = Self(0);
+    pub const MN_PLATFORM_WINDOWS: Self = Self(1);
+    pub const MN_PLATFORM_MACOS: Self = Self(2);
+    pub const MN_PLATFORM_LINUX: Self = Self(3);
+}
+
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct mn_engine_config_t {
@@ -95,6 +106,24 @@ pub struct mn_engine_config_t {
     pub tls_verify_mode: mn_tls_verify_mode_t,
     pub custom_ca_pem: *const u8,
     pub custom_ca_pem_length: usize,
+    // ---- v9 appends --------------------------------------------------
+    pub host_mapping_rules: *const i8,
+    pub host_mapping_rules_length: usize,
+    pub dns_nameservers: *const i8,
+    pub dns_nameservers_length: usize,
+    pub doh_template: *const i8,
+    pub doh_template_length: usize,
+    pub hsts_bypass_list: *const i8,
+    pub hsts_bypass_list_length: usize,
+    pub proxy_chain: *const i8,
+    pub proxy_chain_length: usize,
+    pub dns_secure_mode: u8,
+    pub dns_over_tls: u8,
+    pub dns_rotate: u8,
+    pub dns_padding: u8,
+    pub cookie_samesite_override: u8,
+    pub inject_client_hints: u8,
+    pub platform: mn_platform_t,
 }
 
 #[repr(C)]
@@ -111,6 +140,60 @@ pub struct mn_header_t {
 pub struct mn_string_t {
     pub data: *const i8,
     pub length: usize,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct mn_cookie_t {
+    pub size: u32,
+    pub version: u32,
+    pub name: *const i8,
+    pub name_length: usize,
+    pub value: *const i8,
+    pub value_length: usize,
+    pub domain: *const i8,
+    pub domain_length: usize,
+    pub path: *const i8,
+    pub path_length: usize,
+    pub expiry_unix_seconds: i64,
+    pub has_expiry: u8,
+    pub secure: u8,
+    pub http_only: u8,
+    pub same_site: u8,
+}
+
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct mn_cookie_same_site_t(pub i32);
+
+impl mn_cookie_same_site_t {
+    pub const MN_COOKIE_SAME_SITE_UNSPECIFIED: Self = Self(0);
+    pub const MN_COOKIE_SAME_SITE_NO_RESTRICTION: Self = Self(1);
+    pub const MN_COOKIE_SAME_SITE_LAX: Self = Self(2);
+    pub const MN_COOKIE_SAME_SITE_STRICT: Self = Self(3);
+}
+
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct mn_http_version_t(pub i32);
+
+impl mn_http_version_t {
+    pub const MN_HTTP_VERSION_UNKNOWN: Self = Self(0);
+    pub const MN_HTTP_VERSION_0_9: Self = Self(1);
+    pub const MN_HTTP_VERSION_1_0: Self = Self(2);
+    pub const MN_HTTP_VERSION_1_1: Self = Self(3);
+    pub const MN_HTTP_VERSION_2: Self = Self(4);
+    pub const MN_HTTP_VERSION_3: Self = Self(5);
+}
+
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct mn_ech_status_t(pub i32);
+
+impl mn_ech_status_t {
+    pub const MN_ECH_NOT_ATTEMPTED: Self = Self(0);
+    pub const MN_ECH_SUCCESS: Self = Self(1);
+    pub const MN_ECH_FAILED: Self = Self(2);
 }
 
 #[repr(transparent)]
@@ -301,6 +384,56 @@ extern "C" {
     ) -> mn_result_t;
     pub fn mn_request_follow_redirect(request: *mut mn_request_t) -> mn_result_t;
     pub fn mn_request_resume_read(request: *mut mn_request_t) -> mn_result_t;
+    pub fn mn_engine_cookies_get(
+        engine: *mut mn_engine_t,
+        url: *const i8,
+        url_length: usize,
+        out_cookies: *mut mn_cookie_t,
+        capacity: usize,
+        out_count: *mut usize,
+    ) -> mn_result_t;
+    pub fn mn_engine_cookies_set(
+        engine: *mut mn_engine_t,
+        cookie: *const mn_cookie_t,
+        source_url: *const i8,
+        source_url_length: usize,
+        creation_unix_seconds: i64,
+    ) -> mn_result_t;
+    pub fn mn_engine_cookies_delete(
+        engine: *mut mn_engine_t,
+        domain: *const i8,
+        domain_length: usize,
+        path: *const i8,
+        path_length: usize,
+        name: *const i8,
+        name_length: usize,
+        out_removed: *mut usize,
+    ) -> mn_result_t;
+    pub fn mn_engine_cookies_clear(engine: *mut mn_engine_t) -> mn_result_t;
+    pub fn mn_engine_set_client_certificate(
+        engine: *mut mn_engine_t,
+        host: *const i8,
+        host_length: usize,
+        port: u16,
+        cert_pem: *const u8,
+        cert_pem_length: usize,
+        key_pem: *const u8,
+        key_pem_length: usize,
+    ) -> mn_result_t;
+    pub fn mn_engine_clear_client_certificate(
+        engine: *mut mn_engine_t,
+        host: *const i8,
+        host_length: usize,
+        port: u16,
+    ) -> mn_result_t;
+    pub fn mn_request_negotiated_protocol(
+        request: *mut mn_request_t,
+        out_version: *mut mn_http_version_t,
+    ) -> mn_result_t;
+    pub fn mn_request_ech_status(
+        request: *mut mn_request_t,
+        out_status: *mut mn_ech_status_t,
+    ) -> mn_result_t;
     pub fn mn_websocket_create(
         engine: *mut mn_engine_t,
         config: *const mn_websocket_config_t,
@@ -790,13 +923,17 @@ mod abi_layout_tests {
     #[test]
     fn sizes_and_enum_values_match_public_header() {
         if cfg!(target_pointer_width = "64") {
-            assert_eq!(size_of::<mn_engine_config_t>(), 152);
+            assert_eq!(size_of::<mn_engine_config_t>(), 248);
             assert_eq!(size_of::<mn_request_callbacks_t>(), 48);
             assert_eq!(size_of::<mn_request_config_t>(), 144);
             assert_eq!(size_of::<mn_websocket_callbacks_t>(), 56);
             assert_eq!(size_of::<mn_websocket_config_t>(), 136);
             assert_eq!(size_of::<mn_header_t>(), 32);
             assert_eq!(size_of::<mn_string_t>(), 16);
+            // Both sizes below were produced by the C compiler reading
+            // core/abi/minicronet.h, not by arithmetic: 88 on x86_64, 52 on
+            // i686 (the tail pads to the i64 alignment).
+            assert_eq!(size_of::<mn_cookie_t>(), 88);
         } else {
             // Verified against the header itself: compiling core/abi/minicronet.h
             // for a 32-bit target (gcc -m32, size_t = unsigned int) yields
@@ -806,13 +943,14 @@ mod abi_layout_tests {
             // struct assertions disagreed with the header on the very platforms
             // this branch covers (linux-x86, windows-x86). Nothing caught it
             // because CI only runs the 64-bit branch.
-            assert_eq!(size_of::<mn_engine_config_t>(), 84);
+            assert_eq!(size_of::<mn_engine_config_t>(), 136);
             assert_eq!(size_of::<mn_request_callbacks_t>(), 28);
             assert_eq!(size_of::<mn_request_config_t>(), 92);
             assert_eq!(size_of::<mn_websocket_callbacks_t>(), 32);
             assert_eq!(size_of::<mn_websocket_config_t>(), 80);
             assert_eq!(size_of::<mn_header_t>(), 16);
             assert_eq!(size_of::<mn_string_t>(), 8);
+            assert_eq!(size_of::<mn_cookie_t>(), 52);
         }
         assert_eq!(mn_result_t::MN_OK.0, 0);
         assert_eq!(mn_result_t::MN_ERROR_PROFILE_UNSUPPORTED.0, 15);
@@ -824,11 +962,63 @@ mod abi_layout_tests {
         assert_eq!(mn_redirect_mode_t::MN_REDIRECT_ERROR.0, 2);
         assert_eq!(mn_read_disposition_t::MN_READ_PAUSE.0, 0);
         assert_eq!(mn_read_disposition_t::MN_READ_CONTINUE.0, 1);
-        assert_eq!(MN_ABI_VERSION, 8);
+        assert_eq!(MN_ABI_VERSION, 9);
         assert_eq!(mn_request_priority_t::MN_REQUEST_PRIORITY_IDLE.0, 5);
         assert_eq!(
             mn_websocket_message_type_t::MN_WEBSOCKET_MESSAGE_BINARY.0,
             2
         );
+        assert_eq!(mn_platform_t::MN_PLATFORM_LINUX.0, 3);
+        assert_eq!(mn_cookie_same_site_t::MN_COOKIE_SAME_SITE_STRICT.0, 3);
+        assert_eq!(mn_http_version_t::MN_HTTP_VERSION_3.0, 5);
+        assert_eq!(mn_ech_status_t::MN_ECH_FAILED.0, 2);
+    }
+
+    // The size assertions above still pass if the appended fields are
+    // reordered among themselves, because the total does not change. These pin
+    // each field: a caller reading platform from the old offset would get a
+    // silently wrong value, not a crash.
+    #[test]
+    fn v9_engine_config_tail_matches_header_offsets() {
+        if cfg!(target_pointer_width = "64") {
+            assert_eq!(offset_of!(mn_engine_config_t, host_mapping_rules), 152);
+            assert_eq!(
+                offset_of!(mn_engine_config_t, host_mapping_rules_length),
+                160
+            );
+            assert_eq!(offset_of!(mn_engine_config_t, dns_nameservers), 168);
+            assert_eq!(offset_of!(mn_engine_config_t, doh_template), 184);
+            assert_eq!(offset_of!(mn_engine_config_t, hsts_bypass_list), 200);
+            assert_eq!(offset_of!(mn_engine_config_t, proxy_chain), 216);
+            assert_eq!(offset_of!(mn_engine_config_t, dns_secure_mode), 232);
+            assert_eq!(offset_of!(mn_engine_config_t, dns_padding), 235);
+            assert_eq!(
+                offset_of!(mn_engine_config_t, cookie_samesite_override),
+                236
+            );
+            assert_eq!(offset_of!(mn_engine_config_t, inject_client_hints), 237);
+            // platform sits at 240, not 238: an enum is int-sized, so the two
+            // trailing u8 fields are followed by two bytes of padding.
+            assert_eq!(offset_of!(mn_engine_config_t, platform), 240);
+            // dns_padding is what makes the DNS flag group four bytes wide.
+            // Dropping it would move cookie_samesite_override onto the padding
+            // byte, where a reader of the DNS mode group would then read a
+            // cookie policy.
+            assert_eq!(
+                offset_of!(mn_engine_config_t, cookie_samesite_override)
+                    - offset_of!(mn_engine_config_t, dns_secure_mode),
+                4
+            );
+            assert_eq!(offset_of!(mn_cookie_t, expiry_unix_seconds), 72);
+            assert_eq!(offset_of!(mn_cookie_t, has_expiry), 80);
+            assert_eq!(offset_of!(mn_cookie_t, same_site), 83);
+        } else {
+            // Measured with cc -m32 -ffreestanding against the real header.
+            assert_eq!(offset_of!(mn_engine_config_t, host_mapping_rules), 84);
+            assert_eq!(offset_of!(mn_engine_config_t, platform), 132);
+            assert_eq!(offset_of!(mn_cookie_t, expiry_unix_seconds), 40);
+            assert_eq!(offset_of!(mn_cookie_t, has_expiry), 48);
+            assert_eq!(offset_of!(mn_cookie_t, same_site), 51);
+        }
     }
 }

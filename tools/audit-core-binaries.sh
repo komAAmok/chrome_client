@@ -21,6 +21,10 @@ symbols=(
   mn_request_create mn_request_retain mn_request_release
   mn_request_start mn_request_cancel mn_request_upload_write
   mn_request_follow_redirect mn_request_resume_read
+  mn_request_negotiated_protocol mn_request_ech_status
+  mn_engine_cookies_get mn_engine_cookies_set mn_engine_cookies_delete
+  mn_engine_cookies_clear mn_engine_set_client_certificate
+  mn_engine_clear_client_certificate
   mn_websocket_create mn_websocket_retain mn_websocket_release
   mn_websocket_start mn_websocket_send mn_websocket_close
   mn_websocket_cancel
@@ -51,8 +55,8 @@ workspace_version="$(python3 "$ROOT/tools/version.py")" \
   || die "cannot read the workspace version from tools/version.py"
 [[ -n "$workspace_version" ]] || die "empty workspace version"
 
-grep -Eq '^#define MN_ABI_VERSION 8u$' "$HEADER" \
-  || die "header ABI version is not 8"
+grep -Eq '^#define MN_ABI_VERSION 9u$' "$HEADER" \
+  || die "header ABI version is not 9"
 
 [[ -f "$TARGETS_JSON" ]] \
   || die "missing core/binaries/targets.json; the per-target catalog is gone"
@@ -90,7 +94,7 @@ if missing:
     raise SystemExit(f"missing fields: {', '.join(missing)}")
 if data["project"] != "chrome_client" or data["core"] != "minicronet":
     raise SystemExit("unexpected project/core")
-if data["abi_version"] != 8 or data["target"] != expected_target:
+if data["abi_version"] != 9 or data["target"] != expected_target:
     raise SystemExit("ABI or target mismatch")
 if data["chromium_revision"] != pinned_revision:
     raise SystemExit(
@@ -100,9 +104,9 @@ if data["chromium_revision"] != pinned_revision:
 if not isinstance(data["runtime_dependencies"], list):
     raise SystemExit("runtime_dependencies must be an array")
 catalog = json.loads(pathlib.Path(targets_json).read_text())
-if catalog.get("abi_version") != 8:
+if catalog.get("abi_version") != 9:
     raise SystemExit(
-        f"targets.json abi_version is {catalog.get('abi_version')}, not 8; it "
+        f"targets.json abi_version is {catalog.get('abi_version')}, not 9; it "
         "describes a different ABI than the one this audit certifies")
 entry = catalog.get("targets", {}).get(expected_target)
 if entry is None:

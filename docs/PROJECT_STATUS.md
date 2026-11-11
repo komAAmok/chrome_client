@@ -8,7 +8,7 @@
 用真实 Chromium 网络栈实现的 HTTP/WebSocket 客户端，提供 requests / curl-cffi 风格
 的 Python API，同时让 TLS 指纹、HTTP/2 SETTINGS、QUIC 参数与真实 Chrome 一致。
 
-分层：`libminicronet`（Chromium C++，唯一协议实现）→ C ABI v8（20 个导出符号）→
+分层：`libminicronet`（Chromium C++，唯一协议实现）→ C ABI v9（28 个导出符号）→
 `minicronet-sys`（手写 FFI 声明）→ `minicronet`（Rust 安全层）→ 各语言薄绑定。
 
 - Chromium revision：`58bcc148f76b8975bbe59f1a6012d4ae409d62a9`（Chrome 156.0.8078.31 stable）
@@ -795,8 +795,9 @@ pinned profile」改为**抛 `ImpersonateError`**，必须给出精确的 `chrom
 - `core_version()` 返回了一个早已过期的 `0.4.0`：Core 的版本串改为构建期从根
   `Cargo.toml` 注入（`tools/version.py` + `tools/sync-core.sh`），并把
   `docs/PROJECT_STATUS.md` 纳入版本门禁的扫描范围。
-- `http_version` 对 h2/h3 谎报 `HTTP/1.1`：改为只在能证明时返回协议，否则
-  `None`；真正的修法（ABI v9 暴露协商协议）记入 `NEXT_STEPS.md`。
+- `http_version` 对 h2/h3 谎报 `HTTP/1.1`：先改为只在能证明时返回 `None`，ABI v9 后
+  改由 `mn_request_negotiated_protocol` 报告真值——状态行不再参与，`UNKNOWN` 仍如实
+  报 `None`。四层（Core/Rust/pyo3/facade）已全部接通。
 - 异步流式响应在 `allow_redirects=False` 或较紧的 `max_redirects` 下静默丢 body：
   流式响应现在始终挂载 reader，与同步路径一致。
 - `discard_cookies=True` 仍会发出 Core 存储里的 cookie：改为切换到空 cookie store 的

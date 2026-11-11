@@ -130,10 +130,42 @@ pub struct Redirect {
     pub new_method: String,
 }
 
-#[derive(Debug)]
+/// The protocol a response arrived over.
+///
+/// Mirrors `mn_http_version_t`. `Unknown` is produced by Chromium itself, so it
+/// is reported rather than guessed away.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum HttpVersion {
+    Unknown,
+    Http09,
+    Http10,
+    Http11,
+    Http2,
+    Http3,
+}
+
+impl From<sys::mn_http_version_t> for HttpVersion {
+    fn from(value: sys::mn_http_version_t) -> Self {
+        match value.0 {
+            1 => Self::Http09,
+            2 => Self::Http10,
+            3 => Self::Http11,
+            4 => Self::Http2,
+            5 => Self::Http3,
+            _ => Self::Unknown,
+        }
+    }
+}
+
 pub struct Response {
     pub status_code: i32,
     pub headers: Vec<u8>,
+    /// The protocol the connection actually used.
+    ///
+    /// `Unknown` is a real answer, not a placeholder: Chromium reports
+    /// `kUNKNOWN` when it genuinely does not know (a response served from the
+    /// HTTP cache), and reporting HTTP/1.1 there would be a lie.
+    pub http_version: HttpVersion,
     pub body: ResponseStream,
 }
 
@@ -303,6 +335,21 @@ impl Drop for RequestInner {
 pub struct Request(Arc<RequestInner>);
 
 impl Request {
+    /// The Core's handle, for the ABI getters that take one.
+    pub(crate) fn raw(&self) -> *mut sys::mn_request_t {
+        self.0.raw.as_ptr()
+    }
+
+    /// The protocol the connection used, or `None` when the Core does not know.
+    ///
+    /// Readable from the response onwards; before that the Core answers
+    /// `MN_ERROR_INVALID_STATE` and this returns `None`.
+    pub fn negotiated_protocol(&self) -> Option<HttpVersion> {
+        let mut value = sys::mn_http_version_t::MN_HTTP_VERSION_UNKNOWN;
+        let result = unsafe { sys::mn_request_negotiated_protocol(self.raw(), &mut value) };
+        (result == sys::mn_result_t::MN_OK).then(|| HttpVersion::from(value))
+    }
+
     pub(crate) fn new(engine: &Engine, config: RequestConfig) -> Result<Self, Error> {
         let shared = Arc::new(RequestShared::new());
         let user_data = Arc::into_raw(Arc::clone(&shared));
@@ -609,9 +656,21 @@ fn take_response(
     if !state.response_taken {
         if let Some((status_code, headers)) = state.response.take() {
             state.response_taken = true;
+            // Read before the response is handed over: the Core keeps it
+            // readable after completion, but this is where the request still
+            // carries the state that proves it.
+            let mut http_version = sys::mn_http_version_t::MN_HTTP_VERSION_UNKNOWN;
+            let negotiated =
+                unsafe { sys::mn_request_negotiated_protocol(request.raw(), &mut http_version) };
+            let http_version = if negotiated == sys::mn_result_t::MN_OK {
+                HttpVersion::from(http_version)
+            } else {
+                HttpVersion::Unknown
+            };
             return Some(Ok(Response {
                 status_code,
                 headers,
+                http_version,
                 body: ResponseStream {
                     shared: Arc::clone(shared),
                     request: request.clone(),

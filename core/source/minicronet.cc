@@ -11,7 +11,10 @@
 #include "base/containers/span.h"
 #include "base/i18n/streaming_utf8_validator.h"
 #include "build/build_config.h"
+#include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
+#include "net/base/host_mapping_rules.h"
+#include "net/dns/public/dns_over_https_config.h"
 #include "minicronet/engine.h"
 #include "minicronet/minicronet_version_generated.h"
 #include "minicronet/profile_context.h"
@@ -25,6 +28,13 @@
 struct mn_engine {
   std::atomic_uint32_t refs{1};
   scoped_refptr<minicronet::Engine> impl;
+  // Backs the pointers mn_engine_cookies_get hands out. The ABI promises a
+  // cookie's strings stay readable while the caller holds the result, and a
+  // stack frame inside the Core cannot outlive the call that produced it. The
+  // lifetime is therefore "until the next cookies_get on this engine, or until
+  // release", which the header states; a caller that keeps a cookie copies the
+  // bytes, the same rule the response header strings use.
+  minicronet::CookieView cookie_storage;
 };
 
 struct mn_request {
@@ -44,10 +54,23 @@ namespace {
 // release bump cannot leave a stale copy behind: the hand-written "0.4.0" this
 // replaced was still being reported by chrome_client.core_version() long after
 // the workspace had moved on.
-constexpr char kVersion[] = MINICRONET_VERSION;
-constexpr char kDefaultUserAgent[] = "minicronet/" MINICRONET_VERSION;
-
-// Caller-supplied counts and lengths are untrusted. Every one of them reaches a
+//
+// The literal carries the "minicronet/" prefix because
+// tools/audit-core-binaries.sh reads exactly that shape out of the artifact with
+// strings(1) to prove which build shipped. mn_version_string() returns the
+// pointer past the prefix, so callers still see a bare version number.
+//
+// [[gnu::used]] because the marker is read out of the artifact by
+// tools/audit-core-binaries.sh, not by any caller: -Oz with LTO drops a
+// constant whose only reader is a compile-time expression, and then the gate
+// fails on a perfectly good build.
+//
+// This literal used to be the default User-Agent. That changed when the default
+// UA became a browser identity, so the marker moved here -- leaving it nowhere
+// would have quietly disabled the version gate.
+[[gnu::used]] constexpr char kVersionMarker[] =
+    "minicronet/" MINICRONET_VERSION;
+constexpr size_t kVersionPrefixLength = sizeof("minicronet/") - 1;// Caller-supplied counts and lengths are untrusted. Every one of them reaches a
 // std::string/vector constructor or a base::span before Chromium sees it, and
 // this build is compiled -fno-exceptions, so an over-long value does not throw
 // -- it aborts the host process (measured: header_count = 2^60 aborted with
@@ -67,7 +90,91 @@ constexpr size_t kMaxHeaderFieldLength = 64u * 1024u;
 constexpr size_t kMaxUploadBodyLength = 256u * 1024u * 1024u;
 constexpr size_t kMaxWebSocketProtocolCount = 64u;
 
-std::string HistoricalUserAgent(const minicronet::ProfileContext& profile) {
+// The newest Chrome profile the generated table carries. This is the Chromium
+// the Core is compiled from, so it is also the version the default User-Agent
+// announces. Kept next to the platform token because the two are the only
+// inputs to a browser identity.
+constexpr int kCurrentChromiumMajor = 157;
+
+// The User-Agent group, sec-ch-ua-platform and sec-ch-ua-mobile are three
+// statements of one fact, so all three derive from mn_platform_t here and in
+// the facade (bindings/python/chrome_client/_python_impl/browser_headers.py).
+// Deriving them separately lets a caller send a Windows User-Agent next to a
+// Linux platform hint, which is a louder contradiction than either alone.
+const char *PlatformToken(mn_platform_t platform) {
+  switch (platform) {
+  case MN_PLATFORM_WINDOWS:
+    return "Windows NT 10.0; Win64; x64";
+  case MN_PLATFORM_MACOS:
+    return "Macintosh; Intel Mac OS X 10_15_7";
+  case MN_PLATFORM_LINUX:
+    // Which Linux token is decided by the architecture the Core was built
+    // for, exactly as a real Chrome build decides it. The override selects
+    // the family, not a fabricated machine type.
+#if defined(ARCH_CPU_ARM64)
+    return "X11; Linux aarch64";
+#elif defined(ARCH_CPU_X86)
+    return "X11; Linux i686";
+#else
+    return "X11; Linux x86_64";
+#endif
+  case MN_PLATFORM_AUTO:
+    break;
+  }
+#if BUILDFLAG(IS_WIN)
+  return "Windows NT 10.0; Win64; x64";
+#elif BUILDFLAG(IS_MAC)
+  return "Macintosh; Intel Mac OS X 10_15_7";
+#elif defined(ARCH_CPU_ARM64)
+  return "X11; Linux aarch64";
+#elif defined(ARCH_CPU_X86)
+  return "X11; Linux i686";
+#else
+  return "X11; Linux x86_64";
+#endif
+}
+
+// The User-Agent an engine sends when no historical profile supplies one. It
+// names a browser because that is what this library is: a build that reports
+// "minicronet/<version>" identifies itself to every origin, which is a worse
+// default than announcing the Chromium it actually is.
+std::string DefaultUserAgent(mn_platform_t platform) {
+  return std::string("Mozilla/5.0 (") + PlatformToken(platform) +
+         ") AppleWebKit/537.36 (KHTML, like Gecko) Chrome/" +
+         std::to_string(kCurrentChromiumMajor) + ".0.0.0 Safari/537.36";
+}
+
+// The version portion of a Mozilla/5.0 User-Agent string. The profile conflict
+// check uses it so that changing only the platform group is not mistaken for
+// claiming a different browser version.
+std::string_view UserAgentVersion(std::string_view user_agent) {
+  constexpr std::string_view kMarker = "Chrome/";
+  const size_t at = user_agent.find(kMarker);
+  if (at == std::string_view::npos) {
+    return std::string_view();
+  }
+  const size_t begin = at + kMarker.size();
+  size_t end = begin;
+  while (end < user_agent.size() &&
+         (user_agent[end] == '.' ||
+          (user_agent[end] >= '0' && user_agent[end] <= '9'))) {
+    ++end;
+  }
+  return user_agent.substr(begin, end - begin);
+}
+
+// TransportSecurityState matches its bypass list against a hostname and only
+// supports single-label entries: its constructor DCHECKs that
+// (net/http/transport_security_state.cc:246-248) and a release build then
+// ignores anything else. Rejecting here is the only way the caller learns the
+// entry would not apply.
+bool IsValidHstsBypassEntry(std::string_view entry) {
+  return !entry.empty() && entry.find('.') == std::string_view::npos &&
+         entry.find(' ') == std::string_view::npos;
+}
+
+std::string HistoricalUserAgent(const minicronet::ProfileContext& profile,
+                                mn_platform_t platform) {
   // Chrome 86-104 and Chrome >=105 send structurally different User-Agent
   // strings, and the difference is the browser's own behaviour, not a capture
   // artefact:
@@ -139,18 +246,7 @@ std::string HistoricalUserAgent(const minicronet::ProfileContext& profile) {
   // socket is not on: the token follows the host this Core is running on, the
   // way a real Chrome build does. The version number is the part the profile
   // actually owns.
-#if BUILDFLAG(IS_WIN)
-  static constexpr char kPlatform[] = "Windows NT 10.0; Win64; x64";
-#elif BUILDFLAG(IS_MAC)
-  static constexpr char kPlatform[] = "Macintosh; Intel Mac OS X 10_15_7";
-#elif defined(ARCH_CPU_ARM64)
-  static constexpr char kPlatform[] = "X11; Linux aarch64";
-#elif defined(ARCH_CPU_X86)
-  static constexpr char kPlatform[] = "X11; Linux i686";
-#else
-  static constexpr char kPlatform[] = "X11; Linux x86_64";
-#endif
-  return std::string("Mozilla/5.0 (") + kPlatform +
+  return std::string("Mozilla/5.0 (") + PlatformToken(platform) +
          ") AppleWebKit/537.36 (KHTML, like Gecko) Chrome/" + version +
          " Safari/537.36";
 }
@@ -202,7 +298,13 @@ template <typename T> void Retain(T *object) {
 
 uint32_t MN_CALL mn_abi_version(void) { return MN_ABI_VERSION; }
 
-const char *MN_CALL mn_version_string(void) { return kVersion; }
+const char *MN_CALL mn_version_string(void) {
+  // The suffix inside the marker, addressed with the escape hatch this codebase
+  // uses wherever a static bound is provable: kVersionPrefixLength is the exact
+  // prefix size, so the result points at the first version character.
+  return UNSAFE_BUFFERS(kVersionMarker + kVersionPrefixLength);
+}
+
 
 mn_result_t MN_CALL mn_engine_create(const mn_engine_config_t *config,
                                      mn_engine_t **out_engine) {
@@ -217,7 +319,9 @@ mn_result_t MN_CALL mn_engine_create(const mn_engine_config_t *config,
                                              : MN_ERROR_INVALID_ARGUMENT;
   }
 
-  std::string user_agent(kDefaultUserAgent);
+  // Default to a browser identity this build can actually claim. The platform
+  // group is overridable; the version names the Chromium underneath.
+  std::string user_agent = DefaultUserAgent(config->platform);
   std::string accept_language;
   net::ProxyConfig proxy_config;
   if (config->user_agent_length && !config->user_agent) {
@@ -337,6 +441,11 @@ mn_result_t MN_CALL mn_engine_create(const mn_engine_config_t *config,
                                                    : profile_id)) {
     return MN_ERROR_PROFILE_CONFLICT;
   }
+  if (config->platform < MN_PLATFORM_AUTO ||
+      config->platform > MN_PLATFORM_LINUX) {
+    return MN_ERROR_INVALID_ARGUMENT;
+  }
+
   minicronet::ProfileContext profile;
   if (!minicronet::ProfileContext::Create(std::move(profile_id),
                                           std::move(profile_namespace),
@@ -354,13 +463,121 @@ mn_result_t MN_CALL mn_engine_create(const mn_engine_config_t *config,
     return MN_ERROR_PROFILE_UNSUPPORTED;
   }
   if (!profile.is_current()) {
-    std::string profile_user_agent = HistoricalUserAgent(profile);
-    if (config->user_agent && user_agent != profile_user_agent) {
+    std::string profile_user_agent =
+        HistoricalUserAgent(profile, config->platform);
+    // A platform override changes the User-Agent group on purpose, so the
+    // conflict check compares the version and not the whole string. Without
+    // this, platform=windows on a chrome_124 engine would be rejected as a
+    // profile conflict even though it is exactly what was asked for.
+    if (config->user_agent && user_agent != profile_user_agent &&
+        UserAgentVersion(user_agent) !=
+            UserAgentVersion(profile_user_agent)) {
       return MN_ERROR_PROFILE_CONFLICT;
     }
     if (!profile_user_agent.empty()) {
       user_agent = std::move(profile_user_agent);
     }
+  }
+
+  // ---- v9 options. Every field below either takes effect or fails here; none
+  // is accepted and then ignored (AGENTS §8).
+  minicronet::EngineOptions options;
+  if ((config->host_mapping_rules_length && !config->host_mapping_rules) ||
+      (config->dns_nameservers_length && !config->dns_nameservers) ||
+      (config->doh_template_length && !config->doh_template) ||
+      (config->hsts_bypass_list_length && !config->hsts_bypass_list) ||
+      (config->proxy_chain_length && !config->proxy_chain)) {
+    return MN_ERROR_INVALID_ARGUMENT;
+  }
+  if (config->host_mapping_rules) {
+    options.host_mapping_rules.assign(config->host_mapping_rules,
+                                      config->host_mapping_rules_length);
+    if (options.host_mapping_rules.find('\0') != std::string::npos) {
+      return MN_ERROR_INVALID_ARGUMENT;
+    }
+    // Parsed by Chromium's HostMappingRules, never here: a second parser would
+    // have to track its syntax and would silently disagree with it.
+    // AddRuleFromString reports an unparsable rule
+    // (net/base/host_mapping_rules.cc:107-132), so a typo cannot become an
+    // engine whose mapping quietly matches nothing.
+    net::HostMappingRules rules;
+    for (const auto &rule : base::SplitStringPiece(
+             options.host_mapping_rules, ",", base::TRIM_WHITESPACE,
+             base::SPLIT_WANT_NONEMPTY)) {
+      if (!rules.AddRuleFromString(std::string(rule))) {
+        return MN_ERROR_INVALID_ARGUMENT;
+      }
+    }
+  }
+  if (config->dns_nameservers) {
+    options.dns_nameservers.assign(config->dns_nameservers,
+                                   config->dns_nameservers_length);
+    if (options.dns_nameservers.find('\0') != std::string::npos) {
+      return MN_ERROR_INVALID_ARGUMENT;
+    }
+  }
+  if (config->doh_template) {
+    options.doh_template.assign(config->doh_template,
+                                config->doh_template_length);
+    if (options.doh_template.find('\0') != std::string::npos) {
+      return MN_ERROR_INVALID_ARGUMENT;
+    }
+    if (!net::DnsOverHttpsConfig::FromString(options.doh_template)
+             .has_value()) {
+      return MN_ERROR_INVALID_ARGUMENT;
+    }
+  }
+  if (config->dns_secure_mode > 2) {
+    return MN_ERROR_INVALID_ARGUMENT;
+  }
+  options.dns_secure_mode = config->dns_secure_mode;
+  options.dns_over_tls = config->dns_over_tls;
+  options.dns_rotate = config->dns_rotate;
+  options.dns_padding = config->dns_padding;
+  // A DoH template with secure DNS off is a contradiction: one says DoH may be
+  // used, the other says it must not.
+  if (!options.doh_template.empty() && options.dns_secure_mode == 0) {
+    return MN_ERROR_INVALID_ARGUMENT;
+  }
+  if (config->hsts_bypass_list) {
+    std::string bypass(config->hsts_bypass_list,
+                       config->hsts_bypass_list_length);
+    if (bypass.find('\0') != std::string::npos) {
+      return MN_ERROR_INVALID_ARGUMENT;
+    }
+    for (const auto &entry : base::SplitStringPiece(
+             bypass, ",", base::TRIM_WHITESPACE, base::SPLIT_WANT_NONEMPTY)) {
+      if (!IsValidHstsBypassEntry(entry)) {
+        return MN_ERROR_INVALID_ARGUMENT;
+      }
+      options.hsts_bypass_list.emplace_back(entry);
+    }
+  }
+  if (config->proxy_chain) {
+    options.proxy_chain.assign(config->proxy_chain, config->proxy_chain_length);
+    if (options.proxy_chain.find('\0') != std::string::npos) {
+      return MN_ERROR_INVALID_ARGUMENT;
+    }
+    // proxy_rules and proxy_chain describe the same connection path twice;
+    // picking one silently is the kind of accepted-and-ignored input this ABI
+    // refuses.
+    if (!proxy_config.proxy_rules().empty()) {
+      return MN_ERROR_INVALID_ARGUMENT;
+    }
+  }
+  options.platform = config->platform;
+  // The Core now owns the captured request-header set, so the switch is
+  // meaningful: 1 asks for it (the default behaviour for a historical
+  // profile), 0 suppresses it and leaves only the caller's headers. There is
+  // nothing to reject any more -- the data exists and is compiled in.
+  if (config->inject_client_hints > 1) {
+    return MN_ERROR_INVALID_ARGUMENT;
+  }
+  options.inject_client_hints = config->inject_client_hints != 0;
+  // 0 is Chrome's own default semantics, which the Core already has. 1..3
+  // would be a policy engine of our own.
+  if (config->cookie_samesite_override != 0) {
+    return MN_ERROR_INVALID_ARGUMENT;
   }
 
   scoped_refptr<minicronet::Engine> impl = minicronet::Engine::Create(
@@ -369,7 +586,7 @@ mn_result_t MN_CALL mn_engine_create(const mn_engine_config_t *config,
       std::move(proxy_username), std::move(proxy_password),
       config->http_cache_mode == MN_HTTP_CACHE_ENABLED, config->protocol_mode,
       config->tls_verify_mode, std::move(custom_ca_pem),
-      std::move(profile));
+      std::move(profile), std::move(options));
   if (!impl) {
     return MN_ERROR_INITIALIZATION_FAILED;
   }
@@ -396,6 +613,137 @@ void MN_CALL mn_engine_release(mn_engine_t *engine) {
   if (engine->refs.fetch_sub(1, std::memory_order_acq_rel) == 1) {
     delete engine;
   }
+}
+
+mn_result_t MN_CALL mn_engine_cookies_get(mn_engine_t *engine, const char *url,
+                                          size_t url_length,
+                                          mn_cookie_t *out_cookies,
+                                          size_t capacity, size_t *out_count) {
+  if (!engine || (url_length && !url) || (capacity && !out_cookies)) {
+    return MN_ERROR_INVALID_ARGUMENT;
+  }
+  std::string url_text;
+  if (url) {
+    url_text.assign(url, url_length);
+    if (url_text.find('\0') != std::string::npos) {
+      return MN_ERROR_INVALID_ARGUMENT;
+    }
+  }
+  // Filled directly into storage owned by the handle, never into a local: the
+  // ABI promises a cookie's bytes are readable while the caller holds the
+  // result, and a value on this stack frame dies with the call.
+  minicronet::CookieView &view = engine->cookie_storage;
+  const mn_result_t result =
+      engine->impl->GetCookies(url ? &url_text : nullptr, &view);
+  if (result != MN_OK) {
+    return result;
+  }
+  if (out_count) {
+    *out_count = view.cookies.size();
+  }
+  // capacity == 0 is how a caller asks for the count alone, so it succeeds
+  // with whatever the store holds. A capacity that is too small for a
+  // non-zero request is a sizing error the caller has to fix, and it is only
+  // reported after the count is written so one call is enough to find out how
+  // many entries are needed.
+  if (capacity == 0) {
+    return MN_OK;
+  }
+  if (view.cookies.size() > capacity) {
+    return MN_ERROR_INVALID_ARGUMENT;
+  }
+  // The entries already point into engine->cookie_storage, so copying the
+  // structs copies valid pointers.
+  auto destination = UNSAFE_BUFFERS(base::span(out_cookies, capacity));
+  std::copy(view.cookies.begin(), view.cookies.end(), destination.begin());
+  return MN_OK;
+}
+
+mn_result_t MN_CALL mn_engine_cookies_set(mn_engine_t *engine,
+                                          const mn_cookie_t *cookie,
+                                          const char *source_url,
+                                          size_t source_url_length,
+                                          int64_t creation_unix_seconds) {
+  if (!engine || !cookie || !source_url ||
+      cookie->size != sizeof(mn_cookie_t) ||
+      cookie->version != MN_ABI_VERSION) {
+    return MN_ERROR_INVALID_ARGUMENT;
+  }
+  std::string source(source_url, source_url_length);
+  if (source.find('\0') != std::string::npos) {
+    return MN_ERROR_INVALID_ARGUMENT;
+  }
+  return engine->impl->SetCookie(*cookie, source, creation_unix_seconds);
+}
+
+mn_result_t MN_CALL mn_engine_cookies_delete(mn_engine_t *engine,
+                                             const char *domain,
+                                             size_t domain_length,
+                                             const char *path, size_t path_length,
+                                             const char *name, size_t name_length,
+                                             size_t *out_removed) {
+  if (!engine || (domain_length && !domain) || (path_length && !path) ||
+      (name_length && !name)) {
+    return MN_ERROR_INVALID_ARGUMENT;
+  }
+  const std::string domain_text(domain ? domain : "", domain_length);
+  const std::string path_text(path ? path : "", path_length);
+  const std::string name_text(name ? name : "", name_length);
+  if (domain_text.find('\0') != std::string::npos ||
+      path_text.find('\0') != std::string::npos ||
+      name_text.find('\0') != std::string::npos) {
+    return MN_ERROR_INVALID_ARGUMENT;
+  }
+  size_t removed = 0;
+  const mn_result_t result = engine->impl->DeleteCookie(
+      domain_text, path_text, name_text, &removed);
+  if (result == MN_OK && out_removed) {
+    *out_removed = removed;
+  }
+  return result;
+}
+
+mn_result_t MN_CALL mn_engine_cookies_clear(mn_engine_t *engine) {
+  return engine ? engine->impl->ClearCookies() : MN_ERROR_INVALID_ARGUMENT;
+}
+
+mn_result_t MN_CALL mn_engine_set_client_certificate(
+    mn_engine_t *engine, const char *host, size_t host_length, uint16_t port,
+    const uint8_t *cert_pem, size_t cert_pem_length, const uint8_t *key_pem,
+    size_t key_pem_length) {
+  if (!engine || !host || host_length == 0 ||
+      (cert_pem_length && !cert_pem) || (key_pem_length && !key_pem)) {
+    return MN_ERROR_INVALID_ARGUMENT;
+  }
+  std::string host_text(host, host_length);
+  if (host_text.find('\0') != std::string::npos) {
+    return MN_ERROR_INVALID_ARGUMENT;
+  }
+  std::vector<uint8_t> cert;
+  if (cert_pem_length) {
+    auto span = UNSAFE_BUFFERS(base::span(cert_pem, cert_pem_length));
+    cert.assign(span.begin(), span.end());
+  }
+  std::vector<uint8_t> key;
+  if (key_pem_length) {
+    auto span = UNSAFE_BUFFERS(base::span(key_pem, key_pem_length));
+    key.assign(span.begin(), span.end());
+  }
+  return engine->impl->SetClientCertificate(host_text, port, cert, key);
+}
+
+mn_result_t MN_CALL mn_engine_clear_client_certificate(mn_engine_t *engine,
+                                                       const char *host,
+                                                       size_t host_length,
+                                                       uint16_t port) {
+  if (!engine || !host || host_length == 0) {
+    return MN_ERROR_INVALID_ARGUMENT;
+  }
+  std::string host_text(host, host_length);
+  if (host_text.find('\0') != std::string::npos) {
+    return MN_ERROR_INVALID_ARGUMENT;
+  }
+  return engine->impl->ClearClientCertificate(host_text, port);
 }
 
 mn_result_t MN_CALL mn_request_create(mn_engine_t *engine,
@@ -568,6 +916,22 @@ mn_result_t MN_CALL mn_request_follow_redirect(mn_request_t *request) {
 
 mn_result_t MN_CALL mn_request_resume_read(mn_request_t *request) {
   return request ? request->impl->ResumeRead() : MN_ERROR_INVALID_ARGUMENT;
+}
+
+mn_result_t MN_CALL mn_request_negotiated_protocol(
+    mn_request_t *request, mn_http_version_t *out_version) {
+  if (!request || !out_version) {
+    return MN_ERROR_INVALID_ARGUMENT;
+  }
+  return request->impl->NegotiatedProtocol(out_version);
+}
+
+mn_result_t MN_CALL mn_request_ech_status(mn_request_t *request,
+                                          mn_ech_status_t *out_status) {
+  if (!request || !out_status) {
+    return MN_ERROR_INVALID_ARGUMENT;
+  }
+  return request->impl->EchStatus(out_status);
 }
 
 mn_result_t MN_CALL mn_websocket_create(mn_engine_t *engine,

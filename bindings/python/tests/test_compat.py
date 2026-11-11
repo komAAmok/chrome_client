@@ -563,13 +563,12 @@ class RequestsSurfaceTests(Base):
             response = session.get(self.url + "link")
             self.assertEqual(response.status_code, 200)
             self.assertEqual(response.reason, "OK")
-            # ABI v8 carries no negotiated protocol, and Chromium normalizes an
-            # HTTP/2 response onto an "HTTP/1.1" status line, so a local HTTP/1.1
-            # server cannot be distinguished from a normalized h2 one. This used
-            # to assert "HTTP/1.1" and thereby froze a lie: the client reported
-            # HTTP/1.1 for every real h2 and h3 connection. None is the honest
-            # answer until the ABI exposes the negotiated protocol.
-            self.assertIsNone(response.http_version)
+            # ABI v9 reports the negotiated protocol, so a plain HTTP/1.1 server
+            # is now identified as such instead of being reported as unknown.
+            # The earlier version of this line asserted None because the status
+            # line cannot tell "real HTTP/1.1" from "normalized HTTP/2"; the
+            # value comes from HttpResponseInfo::connection_info now, so it can.
+            self.assertEqual(response.http_version, "HTTP/1.1")
             self.assertEqual(response.url, self.url + "link")
             self.assertEqual(response.history, [])
             self.assertEqual(list(response.links), ["next"])
@@ -2191,15 +2190,20 @@ class SilentLossRegressionTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 session.send(self.base + "/")
 
-    def test_http_version_is_not_guessed(self):
-        """The status line cannot witness the protocol; None beats a lie.
+    def test_http_version_reports_the_negotiated_protocol(self):
+        """ABI v9 reports the protocol; the status line is no longer consulted.
 
-        A local HTTP/1.1 server and a normalized HTTP/2 response both produce
-        "HTTP/1.1 200", so the facade must not claim either one.
+        This test used to assert ``None``, because ABI v8 carried no protocol
+        and a normalized HTTP/2 response is indistinguishable from HTTP/1.1 by
+        status line alone. v9 answers the question directly, so the honest
+        assertion is the real value -- and the guard that matters moved: a
+        response the Core cannot classify must still come back as ``None``
+        rather than being upgraded to HTTP/1.1. That half is covered by
+        ``test_response_attributes``.
         """
         with chrome_client.Session() as session:
             response = session.get(self.base + "/")
-            self.assertIsNone(response.http_version)
+            self.assertEqual(response.http_version, "HTTP/1.1")
 
     def test_priority_rejects_an_int_with_a_clear_error(self):
         """The stub advertised Optional[int]; the Core parses strings."""

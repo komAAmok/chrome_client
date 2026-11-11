@@ -261,9 +261,34 @@ class RequestsCookieJar(cookielib.CookieJar, MutableMapping):
     that clears each expired cookie through ``clear()``.
     """
 
-    def __init__(self, policy=None):
+    def __init__(self, policy=None, sink=None):
+        """Creates the jar.
+
+        Args:
+            policy: The ``cookielib`` policy; ``None`` uses the default.
+            sink: Optional write-through target. When set, every mutation is
+                pushed into it so the jar and the thing requests actually send
+                from cannot disagree. The sink must provide
+                ``write_cookie(cookie, source_url)``,
+                ``remove_cookie(domain, path, name)`` and ``clear_cookies()``.
+        """
         cookielib.CookieJar.__init__(self, policy)
         self.revision = 0
+        #: Write-through target, or ``None`` when this jar stands alone.
+        self._sink = sink
+        #: The URL a caller assignment is recorded as coming from. ``set()``
+        #: does not carry one, and the store needs a source to apply its own
+        #: domain rules, so the assignment falls back to a URL built from the
+        #: cookie's own domain. Empty means "no source known".
+        self.source_url = ""
+        #: The last URL this jar served, used as the source for a caller
+        #: assignment that names no domain. Empty until a request has run.
+        self.default_source = ""
+        #: When true, mutations stay in the jar and are not written through.
+        #: ``discard_cookies`` sets this for the duration of its request: the
+        #: response's cookies reach the jar (a caller reads them there) but must
+        #: not reach the store, which is the "nor record" half of the promise.
+        self.writing_suppressed = False
 
     # -- mutation bookkeeping ------------------------------------------------
     def set_cookie(self, cookie, *args, **kwargs):
@@ -287,7 +312,81 @@ class RequestsCookieJar(cookielib.CookieJar, MutableMapping):
                 and cookie.value.endswith('"'):
             cookie.value = cookie.value.replace('\\"', "").strip('"')
         self.revision += 1
-        return cookielib.CookieJar.set_cookie(self, cookie, *args, **kwargs)
+        stored = cookielib.CookieJar.set_cookie(self, cookie, *args, **kwargs)
+        try:
+            self._write_through(cookie, self._source_for(cookie))
+        except Exception:
+            # The store rejected it, so the jar must not keep it either: a
+            # caller that saw the exception would otherwise find the cookie in
+            # ``session.cookies`` and conclude the assignment worked while the
+            # wire never carried it. Measured: ``set(..., domain="not a
+            # domain")`` raised and left the entry in the jar.
+            cookielib.CookieJar.clear(self, cookie.domain, cookie.path,
+                                      cookie.name)
+            raise
+        return stored
+
+    # -- write-through -------------------------------------------------------
+    def _source_for(self, cookie):
+        """Returns the URL a store write for *cookie* should claim.
+
+        A server ``Set-Cookie`` already knows its URL; a caller assignment via
+        ``set()`` does not, so it falls back to the cookie's own domain. That is
+        the same source a browser records for a script-set cookie, and it keeps
+        the store's domain checks running instead of bypassing them.
+
+        Args:
+            cookie: The cookie about to be written.
+
+        Returns:
+            The source URL, or an empty string when none can be derived.
+        """
+        if self.source_url:
+            return self.source_url
+        domain = getattr(cookie, "domain", "") or ""
+        if not domain:
+            # A caller assignment with no domain means "for whatever this
+            # session is talking to". The store needs a concrete source to run
+            # its own domain check, so the last URL served fills in.
+            return self.default_source or ""
+        return "%s://%s%s" % (
+            "https" if getattr(cookie, "secure", False) else "http",
+            domain.lstrip("."),
+            getattr(cookie, "path", "/") or "/")
+
+    def _write_through(self, cookie, source_url):
+        """Pushes one cookie into the sink, when one is attached.
+
+        A rejected write is not silent: the store's own validation decides, and
+        its error propagates to the caller (AGENTS §8). What the jar holds stays
+        as ``cookielib`` recorded it, so a caller can still inspect the jar; the
+        store is the authority for what goes on the wire.
+
+        Args:
+            cookie: The cookie that was just stored.
+            source_url: The URL it came from.
+        """
+        if self._sink is None or self.writing_suppressed or not source_url:
+            return
+        self._sink.write_cookie(cookie, source_url)
+
+    def _delete_through(self, domain, path, name):
+        """Removes one cookie from the sink, when one is attached.
+
+        Args:
+            domain: Cookie domain.
+            path: Cookie path.
+            name: Cookie name.
+        """
+        if self._sink is None or self.writing_suppressed:
+            return
+        self._sink.remove_cookie(domain, path, name)
+
+    def _clear_through(self):
+        """Empties the sink, when one is attached."""
+        if self._sink is None or self.writing_suppressed:
+            return
+        self._sink.clear_cookies()
 
     def _retire_replaced(self, cookie):
         """Clears the entries a *caller assignment* supersedes.
@@ -307,12 +406,37 @@ class RequestsCookieJar(cookielib.CookieJar, MutableMapping):
                 continue
             cookielib.CookieJar.clear(self, existing.domain, existing.path,
                                       existing.name)
+            # Retiring is a deletion too: the store must lose the old value
+            # before the replacement lands, or it would keep sending both.
+            self._delete_through(existing.domain, existing.path,
+                                 existing.name)
 
     def clear(self, domain=None, path=None, name=None):
+        """Removes cookies, writing the removal through to the sink.
+
+        ``cookielib.CookieJar.clear`` only drops one exact triple, so a partial
+        clear is widened here to "every entry this scope covers":
+        ``clear(domain="example.com")`` must also drop ``.example.com`` from the
+        store, or the store would keep sending a cookie the jar no longer has.
+        """
         self.revision += 1
         if domain is None and path is None and name is None:
-            return cookielib.CookieJar.clear(self)
-        return cookielib.CookieJar.clear(self, domain, path, name)
+            cookielib.CookieJar.clear(self)
+            self._clear_through()
+            return None
+        triples = []
+        for cookie in list(iter(self)):
+            if domain is not None and cookie.domain != domain:
+                continue
+            if path is not None and cookie.path != path:
+                continue
+            if name is not None and cookie.name != name:
+                continue
+            triples.append((cookie.domain, cookie.path, cookie.name))
+        result = cookielib.CookieJar.clear(self, domain, path, name)
+        for triple in triples:
+            self._delete_through(*triple)
+        return result
 
     def clear_expired_cookies(self):
         # Deliberately not a revision bump: `cookielib.add_cookie_header` calls
@@ -321,6 +445,9 @@ class RequestsCookieJar(cookielib.CookieJar, MutableMapping):
 
     def clear_session_cookies(self):
         self.revision += 1
+        for cookie in list(iter(self)):
+            if cookie.expires is None:
+                self._delete_through(cookie.domain, cookie.path, cookie.name)
         return cookielib.CookieJar.clear_session_cookies(self)
 
     # -- requests dict interface --------------------------------------------
@@ -463,6 +590,7 @@ class RequestsCookieJar(cookielib.CookieJar, MutableMapping):
             if path is not None and cookie.path != path:
                 continue
             cookielib.CookieJar.clear(self, cookie.domain, cookie.path, cookie.name)
+            self._delete_through(cookie.domain, cookie.path, cookie.name)
             removed = True
         if removed:
             self.revision += 1

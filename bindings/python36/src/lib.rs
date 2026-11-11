@@ -16,7 +16,7 @@ use std::time::{Duration, Instant};
 
 use minicronet::{
     CacheMode, CloseInfo, Engine as CoreEngine, EngineConfig, Header, HttpCacheMode, MessageType,
-    ProtocolMode, Redirect, RedirectMode, RequestConfig, RequestPriority, ResponseFuture,
+    Platform, ProtocolMode, Redirect, RedirectMode, RequestConfig, RequestPriority, ResponseFuture,
     ResponseStream, TlsVerifyMode, Upload, WebSocketConfig, WebSocketEvent, WebSocketEvents,
 };
 use pyo3::{exceptions::PyRuntimeError, prelude::*, types::PyBytes};
@@ -633,6 +633,19 @@ impl PyEngine {
             protocol: protocol_mode(http_version.as_deref())?,
             tls_verify,
             custom_ca_pem: ca_pem,
+            // The v9 options are not exposed through the Python 3.6 wheel: that
+            // extension exists to keep an older interpreter working on the same
+            // Core, and every field here defaults to "behave as v8 did".
+            host_mapping_rules: None,
+            dns_nameservers: None,
+            doh_template: None,
+            hsts_bypass_list: None,
+            proxy_chain: None,
+            dns_secure_mode: 0,
+            dns_over_tls: 0,
+            dns_rotate: 0,
+            dns_padding: 0,
+            platform: Platform::Auto,
         };
         Ok(PyEngine {
             inner: CoreEngine::new(config).map_err(error)?,

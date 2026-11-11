@@ -37,6 +37,11 @@ public:
   mn_result_t UploadWrite(std::vector<uint8_t> data, bool final_chunk);
   mn_result_t FollowRedirect();
   mn_result_t ResumeRead();
+  // v9. Both report MN_ERROR_INVALID_STATE until a response has started, and
+  // both keep working after the request completes, which is why they read state
+  // captured on the network thread rather than request_ itself.
+  mn_result_t NegotiatedProtocol(mn_http_version_t *out_version) const;
+  mn_result_t EchStatus(mn_ech_status_t *out_status) const;
 
   void OnReceivedRedirect(net::URLRequest *request,
                           const net::RedirectInfo &redirect_info,
@@ -84,6 +89,12 @@ private:
   scoped_refptr<Request> keep_alive_;
   std::atomic_bool started_{false};
   std::atomic_bool completed_{false};
+  // Set on the network thread once a response header block has arrived. The v9
+  // getters read these instead of response_info(), because request_ is reset
+  // when the request completes and a caller may still ask afterwards.
+  std::atomic_bool response_started_{false};
+  std::atomic<int> negotiated_protocol_{MN_HTTP_VERSION_UNKNOWN};
+  std::atomic<int> ech_status_{MN_ECH_NOT_ATTEMPTED};
   base::Lock upload_lock_;
   bool upload_finished_ = false;
   std::atomic_bool redirect_deferred_{false};

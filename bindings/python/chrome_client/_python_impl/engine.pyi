@@ -14,7 +14,7 @@ Two rules follow from that:
   engine on every later request instead of building a new one.
 """
 
-from typing import Any, Optional, Tuple
+from typing import Any, List, Optional, Tuple
 
 from .cookies import RequestsCookieJar
 from .impersonate import ChromeProfileName, HttpVersionNormalized
@@ -176,9 +176,8 @@ class SessionBinding:
 class EngineConfig:
     """Hashable Engine configuration.
 
-    ``generation`` is not a Core setting.  Bumping it asks for a structurally
-    identical engine with an empty cookie store, which is the only way to drop
-    cookies the Core already accepted.
+    There is no cookie-store generation: the store is writable in place since
+    ABI v9, so a cookie edit never asks for another engine.
 
     Attributes:
         impersonate: Canonical profile name, or ``None``.
@@ -192,7 +191,6 @@ class EngineConfig:
         http_version: Pinned ``"v1"``/``"v2"``/``"v3"``, or ``None``.
         cache: Whether the Chromium HTTP cache is enabled.
         profile_namespace: Reserved isolation key for the profile.
-        generation: Cookie-store generation counter.
         key: The hashable tuple of every field above.
     """
 
@@ -210,7 +208,6 @@ class EngineConfig:
     http_version: Optional[HttpVersionNormalized]
     cache: bool
     profile_namespace: Optional[str]
-    generation: int
 
     def __init__(
         self,
@@ -225,7 +222,6 @@ class EngineConfig:
         http_version: Optional[str] = None,
         cache: bool = True,
         profile_namespace: Optional[str] = None,
-        generation: int = 0,
     ) -> None:
         """Describes one engine.
 
@@ -241,7 +237,6 @@ class EngineConfig:
             http_version: Pinned protocol.
             cache: Enable the HTTP cache; coerced to ``bool``.
             profile_namespace: Reserved isolation key.
-            generation: Cookie-store generation.
         """
         ...
 
@@ -264,8 +259,8 @@ class EngineConfig:
             A new :class:`EngineConfig`.
 
         Example:
-            >>> config.replace(generation=1).generation
-            1
+            >>> EngineConfig(proxy="http://h:1").replace(proxy="http://h:2").proxy
+            'http://h:2'
         """
         ...
 
@@ -331,23 +326,22 @@ class EngineConfig:
 
 
 class EngineSlot:
-    """One engine plus the cookie bookkeeping tied to its store.
+    """One engine plus the cookie store tied to it.
+
+    There is no mirror any more: the store is readable and writable through the
+    ABI since v9, so this class forwards to it instead of keeping a copy to
+    compare against.
 
     Attributes:
         engine: The native engine.
         config: The configuration that produced it.
-        mirror: Copy of what this engine's Chromium cookie store has accepted.
-            The store itself is unreachable through ABI v8 and overrides any
-            caller-supplied ``Cookie`` header for URLs it has a cookie for, so
-            the facade keeps its own copy to know when the two disagree.
     """
 
     engine: Any
     config: EngineConfig
-    mirror: RequestsCookieJar
 
     def __init__(self, engine: Any, config: EngineConfig) -> None:
-        """Pairs an engine with a fresh mirror jar.
+        """Pairs an engine with its configuration.
 
         Args:
             engine: The native engine.
@@ -360,7 +354,7 @@ class EngineSlot:
         """The transport context this slot reproduces.
 
         Returns:
-            The :class:``SessionBinding`` of the configuration it was built from.
+            The :class:`SessionBinding` of the configuration it was built from.
         """
         ...
 
@@ -373,26 +367,65 @@ class EngineSlot:
         """
         ...
 
-    def cookie_header(self, url: str) -> Optional[str]:
-        """Returns the ``Cookie`` line the Core's store would emit for ``url``.
+    def cookies(
+        self, url: Optional[str] = None
+    ) -> List[Tuple[str, str, str, str, int, bool, bool, bool, str]]:
+        """Returns the cookies the store holds.
 
         Args:
-            url: The request URL.
+            url: Restrict to the cookies a request to this URL would carry.
 
         Returns:
-            The header value, or ``None`` when the store holds no cookie for it.
+            ``(name, value, domain, path, expiry, has_expiry, secure,
+            http_only, same_site)`` tuples.
         """
         ...
 
-    def absorb(self, url: str, lines: Any) -> None:
-        """Records ``Set-Cookie`` lines the Core accepted for ``url``.
+    def set_cookie(self, cookie: Tuple[Any, ...], source_url: str) -> None:
+        """Writes one cookie through the store's own validation.
 
         Args:
-            url: The URL the response came from.
-            lines: The raw ``Set-Cookie`` field values.
+            cookie: ``(name, value, domain, path, expires, secure, http_only,
+                same_site)``.
+            source_url: The URL the cookie is being set from.
         """
         ...
 
+    def delete_cookie(self, domain: str, path: str, name: str) -> int:
+        """Deletes every matching cookie.
+
+        Args:
+            domain: Cookie domain.
+            path: Cookie path.
+            name: Cookie name.
+
+        Returns:
+            How many cookies were deleted.
+        """
+        ...
+
+    def clear_cookies(self) -> None:
+        """Empties the store."""
+        ...
+
+    def write_cookie(self, cookie: Any, source_url: str) -> None:
+        """Mirrors one jar cookie into the store.
+
+        Args:
+            cookie: A ``cookielib.Cookie``.
+            source_url: The URL the cookie came from.
+        """
+        ...
+
+    def remove_cookie(self, domain: str, path: str, name: str) -> None:
+        """Mirrors one jar removal into the store.
+
+        Args:
+            domain: Cookie domain.
+            path: Cookie path.
+            name: Cookie name.
+        """
+        ...
 
 class EngineCache:
     """Per-session, bounded, insertion-ordered engine cache.
@@ -472,6 +505,17 @@ class EngineCache:
 
         Example:
             >>> slot = cache.get(EngineConfig(proxy="http://127.0.0.1:8080"))
+        """
+        ...
+
+    def slots(self) -> List[EngineSlot]:
+        """Returns the slots the cache currently holds.
+
+        A snapshot, not a view: the caller iterates it while another thread may
+        evict, and a live view would raise mid-iteration.
+
+        Returns:
+            A list of the live :class:`EngineSlot` objects.
         """
         ...
 

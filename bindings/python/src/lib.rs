@@ -18,11 +18,13 @@ use std::sync::{
 use std::time::{Duration, Instant};
 
 use minicronet::{
-    CacheMode, CloseInfo, Engine, EngineConfig, Header, HttpCacheMode, MessageType, ProtocolMode,
-    Redirect, RedirectMode, RequestConfig, RequestPriority, ResponseFuture, ResponseStream,
-    TlsVerifyMode, Upload, WebSocketConfig, WebSocketEvent, WebSocketEvents,
+    CacheMode, CloseInfo, Cookie, CookieSameSite, Engine, EngineConfig, Header, HttpCacheMode,
+    HttpVersion, MessageType, Platform, ProtocolMode, Redirect, RedirectMode, RequestConfig,
+    RequestPriority, ResponseFuture, ResponseStream, TlsVerifyMode, Upload, WebSocketConfig,
+    WebSocketEvent, WebSocketEvents,
 };
-use pyo3::{exceptions::PyRuntimeError, prelude::*};
+use pyo3::exceptions::{PyRuntimeError, PyValueError};
+use pyo3::prelude::*;
 
 fn native_error(error: impl std::fmt::Display) -> PyErr {
     PyRuntimeError::new_err(error.to_string())
@@ -94,6 +96,108 @@ fn redirect_mode(name: Option<&str>) -> PyResult<RedirectMode> {
     })
 }
 
+/// Parses the platform identity name.
+///
+/// The three values that are not "auto" exist so a caller can present one
+/// consistent platform across User-Agent and client hints; an unknown name is
+/// an error rather than a silent fallback to "auto", because a silent fallback
+/// is exactly how the UA and the hints end up disagreeing.
+/// One cookie, flattened for Python.
+///
+/// `(name, value, domain, path, expiry_unix_seconds, has_expiry, secure,
+/// http_only, same_site)`.
+type PyCookie = (
+    String,
+    String,
+    String,
+    String,
+    i64,
+    bool,
+    bool,
+    bool,
+    &'static str,
+);
+
+/// Maps the Core's cookie view onto the tuple the facade reads.
+///
+/// A tuple rather than a dict because the field order is fixed by the ABI and
+/// the facade unpacks it once; a dict would let a rename pass silently.
+fn cookie_tuple(
+    cookie: Cookie,
+) -> (
+    String,
+    String,
+    String,
+    String,
+    i64,
+    bool,
+    bool,
+    bool,
+    &'static str,
+) {
+    (
+        cookie.name,
+        cookie.value,
+        cookie.domain,
+        cookie.path,
+        cookie.expiry_unix_seconds,
+        cookie.has_expiry,
+        cookie.secure,
+        cookie.http_only,
+        cookie_same_site_name(cookie.same_site),
+    )
+}
+
+/// Maps the negotiated protocol onto the string the facade reports.
+///
+/// The facade's vocabulary is the one `curl_cffi` uses, so a caller comparing
+/// against that library's values needs no translation. `None` for `Unknown`:
+/// the ABI documents that value as "Chromium does not know", and inventing
+/// HTTP/1.1 there is exactly the misreport v9 removed.
+fn http_version_name(value: HttpVersion) -> Option<&'static str> {
+    match value {
+        HttpVersion::Http09 => Some("HTTP/0.9"),
+        HttpVersion::Http10 => Some("HTTP/1.0"),
+        HttpVersion::Http11 => Some("HTTP/1.1"),
+        HttpVersion::Http2 => Some("HTTP/2"),
+        HttpVersion::Http3 => Some("HTTP/3"),
+        HttpVersion::Unknown => None,
+    }
+}
+
+fn cookie_same_site_name(value: CookieSameSite) -> &'static str {
+    match value {
+        CookieSameSite::NoRestriction => "none",
+        CookieSameSite::Lax => "lax",
+        CookieSameSite::Strict => "strict",
+        CookieSameSite::Unspecified => "",
+    }
+}
+
+fn cookie_same_site(name: &str) -> PyResult<CookieSameSite> {
+    match name {
+        "" | "unspecified" => Ok(CookieSameSite::Unspecified),
+        "none" | "no_restriction" => Ok(CookieSameSite::NoRestriction),
+        "lax" => Ok(CookieSameSite::Lax),
+        "strict" => Ok(CookieSameSite::Strict),
+        other => Err(PyValueError::new_err(format!(
+            "unknown SameSite value {other:?}; expected none, lax, strict or empty"
+        ))),
+    }
+}
+
+fn platform_mode(name: &str) -> PyResult<Platform> {
+    match name {
+        "auto" => Ok(Platform::Auto),
+        "windows" => Ok(Platform::Windows),
+        "macos" => Ok(Platform::Macos),
+        "linux" => Ok(Platform::Linux),
+        _ => Err(PyValueError::new_err(
+            "unknown platform; expected one of auto, windows, macos, linux",
+        )),
+    }
+}
+
 fn protocol_mode(name: Option<&str>) -> PyResult<ProtocolMode> {
     Ok(match name {
         None | Some("native") | Some("auto") => ProtocolMode::Native,
@@ -110,6 +214,12 @@ struct PyResponse {
     status_code: i32,
     headers: Vec<u8>,
     body: Vec<u8>,
+    /// The negotiated protocol, as the Core reported it.
+    ///
+    /// `None` means Chromium itself does not know (a cache hit), which the
+    /// facade reports as `None` rather than guessing HTTP/1.1.
+    #[pyo3(get)]
+    http_version: Option<&'static str>,
 }
 
 #[pymethods]
@@ -332,6 +442,16 @@ impl PyRequest {
         py.detach(|| self.inner.upload_finish().map_err(native_error))
     }
 
+    /// The protocol the connection used, or `None` when the Core does not know.
+    ///
+    /// Readable from the response event onwards. The async pump calls this when
+    /// it sees that event, rather than widening the event tuple: the tuple is
+    /// unpacked positionally in several places, and a sixth element would break
+    /// every one of them for a value only the head needs.
+    fn http_version(&self) -> Option<&'static str> {
+        http_version_name(self.inner.negotiated_protocol()?)
+    }
+
     fn resume_read(&self) -> PyResult<()> {
         self.inner.resume_read().map_err(native_error)
     }
@@ -436,6 +556,7 @@ impl PyRequest {
                 status_code: response.status_code,
                 headers: response.headers,
                 body: Vec::new(),
+                http_version: http_version_name(response.http_version),
             })
         })
     }
@@ -469,6 +590,7 @@ impl PyRequest {
                 status_code: response.status_code,
                 headers: response.headers,
                 body: Vec::new(),
+                http_version: http_version_name(response.http_version),
             })
         })
     }
@@ -705,6 +827,16 @@ impl PyEngine {
         http_version=None,
         cache=true,
         profile_namespace=None,
+        host_mapping=None,
+        dns_nameservers=None,
+        doh_template=None,
+        dns_secure_mode=0,
+        dns_over_tls=false,
+        dns_rotate=false,
+        dns_padding=false,
+        hsts_bypass=None,
+        proxy_chain=None,
+        platform="auto",
     ))]
     #[allow(clippy::too_many_arguments)]
     fn new(
@@ -719,6 +851,16 @@ impl PyEngine {
         http_version: Option<&str>,
         cache: bool,
         profile_namespace: Option<String>,
+        host_mapping: Option<String>,
+        dns_nameservers: Option<String>,
+        doh_template: Option<String>,
+        dns_secure_mode: u8,
+        dns_over_tls: bool,
+        dns_rotate: bool,
+        dns_padding: bool,
+        hsts_bypass: Option<String>,
+        proxy_chain: Option<String>,
+        platform: &str,
     ) -> PyResult<Self> {
         let tls_verify = if !verify {
             TlsVerifyMode::Insecure
@@ -743,10 +885,77 @@ impl PyEngine {
             protocol: protocol_mode(http_version)?,
             tls_verify,
             custom_ca_pem: ca_pem,
+            host_mapping_rules: host_mapping,
+            dns_nameservers,
+            doh_template,
+            hsts_bypass_list: hsts_bypass,
+            proxy_chain,
+            dns_secure_mode,
+            dns_over_tls: u8::from(dns_over_tls),
+            dns_rotate: u8::from(dns_rotate),
+            dns_padding: u8::from(dns_padding),
+            platform: platform_mode(platform)?,
         };
         Ok(Self {
             inner: Engine::new(config).map_err(native_error)?,
         })
+    }
+
+    // ---- cookie store (ABI v9).
+    //
+    // Each returns plain Python data: the facade builds its own jar from
+    // these instead of mirroring what it thinks the store holds, which is the
+    // compensation the Core replaced.
+
+    /// Reads the store. `url=None` returns everything; otherwise the cookies a
+    /// request to that URL would carry.
+    #[pyo3(signature = (url=None))]
+    fn cookies(&self, url: Option<String>) -> PyResult<Vec<PyCookie>> {
+        let cookies = self.inner.cookies(url.as_deref()).map_err(native_error)?;
+        Ok(cookies.into_iter().map(cookie_tuple).collect())
+    }
+
+    /// Writes one cookie through the store's own validation.
+    #[allow(clippy::too_many_arguments)]
+    fn set_cookie(
+        &self,
+        name: String,
+        value: String,
+        domain: String,
+        path: String,
+        source_url: String,
+        secure: bool,
+        http_only: bool,
+        same_site: &str,
+        has_expiry: bool,
+        expiry_unix_seconds: i64,
+    ) -> PyResult<()> {
+        let cookie = Cookie {
+            name,
+            value,
+            domain,
+            path,
+            expiry_unix_seconds,
+            has_expiry,
+            secure,
+            http_only,
+            same_site: cookie_same_site(same_site)?,
+        };
+        self.inner
+            .set_cookie(&cookie, &source_url)
+            .map_err(native_error)
+    }
+
+    /// Deletes every cookie matching the triple; returns how many went.
+    fn delete_cookie(&self, domain: String, path: String, name: String) -> PyResult<usize> {
+        self.inner
+            .delete_cookie(&domain, &path, &name)
+            .map_err(native_error)
+    }
+
+    /// Empties the store.
+    fn clear_cookies(&self) -> PyResult<()> {
+        self.inner.clear_cookies().map_err(native_error)
     }
 
     #[staticmethod]

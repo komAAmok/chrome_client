@@ -29,6 +29,9 @@ FFI = ROOT / "crates" / "minicronet-sys" / "src" / "lib.rs"
 #: The structs the Rust side declares with #[repr(C)] and a C caller sees.
 STRUCTS = [
     "mn_engine_config_t",
+    # The cookie view crosses the boundary by value into a caller-owned array,
+    # so its layout is as much a contract as the config structs.
+    "mn_cookie_t",
     "mn_header_t",
     "mn_string_t",
     "mn_request_callbacks_t",
@@ -104,6 +107,19 @@ def rust_fields(source, struct):
     return fields
 
 
+def strip_comments(text):
+    """Removes C and C++ comments.
+
+    The struct-body pattern below excludes braces and parentheses so a function
+    prototype cannot be swallowed into a field list. That made the pattern
+    depend on comments not containing parentheses, which held until a field
+    gained a documented example ("8.8.8.8:53,1.1.1.1"). Stripping first removes
+    the dependency instead of restating it as a rule the next author must know:
+    a comment is not part of the ABI either way.
+    """
+    return re.sub(r"/\*.*?\*/|//[^\n]*", " ", text, flags=re.S)
+
+
 def c_header_structs(header_text):
     """Returns {struct: [(name, c_type)]} for the typedef structs in the header."""
     found = {}
@@ -175,7 +191,9 @@ def main():
         raise SystemExit("audit-abi-layout: missing header or Rust FFI source")
 
     rust_source = FFI.read_text()
-    header_text = HEADER.read_text()
+    # Comments carry no ABI and may contain parentheses, so they are removed
+    # before the structure is parsed rather than after.
+    header_text = strip_comments(HEADER.read_text())
     header_structs = c_header_structs(header_text)
 
     errors = []

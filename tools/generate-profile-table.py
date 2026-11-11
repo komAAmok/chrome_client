@@ -143,6 +143,88 @@ def emit_array(name, values, out, field):
     out.append("};")
 
 
+
+def load_captured_headers():
+    """Reads the h1 capture header sets, one per profile major.
+
+    The capture stores each field as a single {{"Name: value"}} string. Two of
+    them are dropped here rather than filtered later: Host is derived from the
+    URL by the Core, and Connection is a hop-by-hop field the ABI refuses
+    outright (core/abi/minicronet.h). Sending either from a captured value would
+    describe the machine the capture ran on, which is the one thing this table
+    must not do.
+
+    Deliberately the same source the facade's client_hints.py comes from: two
+    tables built from one capture cannot drift apart, and a capture that stopped
+    agreeing with its five siblings already fails tools/audit-client-hints.py.
+    """
+    skipped = {"host", "connection"}
+    result = {}
+    for directory in sorted((ROOT / "profiles").glob("chrome_*")):
+        if not directory.is_dir():
+            continue
+        capture = directory / "h1" / "captures.json"
+        if not capture.is_file():
+            continue
+        major = int(directory.name.split("_", 1)[1])
+        pairs = None
+        for line in capture.read_text().splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            record = json.loads(line)
+            fields = (record.get("http1") or {}).get("headers")
+            if not fields:
+                continue
+            collected = []
+            for field in fields:
+                name, sep, value = field.partition(": ")
+                if not sep:
+                    name, sep, value = field.partition(":")
+                    value = value.strip()
+                if name.lower() in skipped:
+                    continue
+                collected.append((name, value))
+            pairs = tuple(collected)
+            break
+        if pairs:
+            result[major] = pairs
+    return result
+
+def emit_header_sets(captured_headers, out):
+    """Emits the captured browser request headers as interned sets.
+
+    Input shape matches the facade's table: {major: ((name, value), ...)} in wire
+    order, taken from the same h1 captures. Returns {major: set index} so a
+    profile entry can name its set by position instead of repeating 12 strings
+    per profile.
+
+    """
+    if not captured_headers:
+        raise SystemExit("no captured request headers for any profile")
+    order = []
+    index_of = {}
+    per_major = {}
+    for major in sorted(captured_headers):
+        pairs = tuple(captured_headers[major])
+        if pairs not in index_of:
+            index_of[pairs] = len(order)
+            order.append(pairs)
+        per_major[major] = index_of[pairs]
+    for position, pairs in enumerate(order):
+        out.append("inline constexpr BrowserHeader kBrowserHeaderSet_%d[] = {" % position)
+        for name, value in pairs:
+            out.append("    {%s, %s}," % (c(name), c(value)))
+        out.append("};")
+    out.append("")
+    out.append("inline constexpr BrowserHeaderSet kBrowserHeaderSets[] = {")
+    for position, pairs in enumerate(order):
+        out.append("    {base::span(kBrowserHeaderSet_%d)}," % position)
+    out.append("};")
+    out.append("")
+    return per_major
+
+
 def main():
     profiles = json.loads(INPUT.read_text())["profiles"]
     effective = json.loads(EFFECTIVE.read_text())["profiles"]
@@ -299,6 +381,14 @@ def main():
         "  base::span<const uint16_t> settings_order;",
         "};",
         "",
+        "struct BrowserHeader {",
+        "  const char* name;",
+        "  const char* value;",
+        "};",
+        "struct BrowserHeaderSet {",
+        "  base::span<const BrowserHeader> headers;",
+        "};",
+        "",
         "struct RuntimeProfileData {",
         "  const char* id;",
         "  base::span<const uint16_t> cipher_suites;",
@@ -331,6 +421,26 @@ def main():
         "  // reference evidence. A forced H3 request against such a profile must fail",
         "  // closed instead of sending a QUIC ClientHello the release never sent.",
         "  bool h3_supported;",
+        "  // ---- HTTP/2 framing, from the h2 captures (6 per profile, 432 total).",
+        "  //",
+        "  // The three knobs below are field-trial and command-line switch",
+        "  // controls in Chromium, all defaulting to off",
+        "  // (components/network_session_configurator/browser/",
+        "  // network_session_configurator.cc:146-183). A build that turned any of",
+        "  // them on would show it on the wire -- a SETTINGS id that is not one of",
+        "  // the six defined ones, a frame of reserved type, or DATA frames where a",
+        "  // request with no body would otherwise end in HEADERS. Every one of the",
+        "  // 432 captured connections shows none of that, so all three are false for",
+        "  // all 72 profiles and are recorded rather than left to the C++ default:",
+        "  // the default is what a *browser* build happens to ship, not what the",
+        "  // evidence says, and a future Chromium default flip must fail an audit",
+        "  // rather than silently change the fingerprint.", 
+        "  bool enable_http2_settings_grease;",
+        "  bool greased_http2_frame;",
+        "  bool http2_end_stream_with_data_frame;",
+        "  // Index into kBrowserHeaderSets: the request headers this release's",
+        "  // own build sends, in wire order. See GetBrowserHeaderSet().",
+        "  uint8_t browser_header_set;",
         "  // TLS version range this release advertised, and what the Core applies",
         "  // to the socket. Chrome 86..97 set kDefaultSSLVersionMin = TLS1, so their",
         "  // supported_versions lists 1.3/1.2/1.1/1.0; 98 raised the floor to TLS1_2",
@@ -470,6 +580,25 @@ def main():
         "}",
         "",
     ])
+    # ---- Browser request headers, per profile.
+    #
+    # These are the headers a real Chrome build of that release sends, taken
+    # from the same six h1 captures that already back the facade's table
+    # (profiles/chrome_<major>/h1/captures.json). Emitting them here is what
+    # lets the Core set them through SetExtraRequestHeaders instead of the
+    # facade assembling them request by request: the proposal's goal is that
+    # Accept-CH negotiation sees a real request rather than one the binding
+    # patched up afterwards.
+    #
+    # Three facts make this compact and auditable: the captured set is
+    # identical across the six connections per release, there are only three
+    # distinct header-name sets in the whole 86..157 range (9, 11 and 12
+    # headers), and the two fields that must follow the host rather than the
+    # capture -- the User-Agent group and sec-ch-ua-platform -- are marked so
+    # the Core rewrites them at request time.
+    header_set_of = emit_header_sets(load_captured_headers(), out)
+    out.append("")
+
     out.append("inline constexpr RuntimeProfileData kRuntimeProfiles[] = {")
 
     def anchor_span(profile):
@@ -555,6 +684,14 @@ def main():
             # Collapsing them made chrome_93..122 look incapable of H3 although
             # each has six passing H3 captures.
             f"    {'false' if p.get('activation', {}).get('h3_unsupported') else 'true'},",
+            # See the struct comment: the captures prove all three are off. The
+            # values are bare so tools/audit-h3-profile-support.py can read the
+            # positional boolean run: it matches a line that is exactly true/false,
+            # so a trailing comment would silently drop three fields from its count.
+            "    false,",
+            "    false,",
+            "    false,",
+            f"    {header_set_of[major]},",
             # TLS1_0 = 0x0301, TLS1_2 = 0x0303, TLS1_3 = 0x0304. The floor moved at
             # 98, which is exactly where supported_versions loses 1.1 and 1.0.
             f"    0x{0x0301 if major <= 97 else 0x0303:04x},",
@@ -577,6 +714,22 @@ def main():
         out.append("  },")
     out.extend([
         "};",
+        "// (kRuntimeProfileCount is emitted below the header-set accessor.)",
+        "",
+        "// The captured browser header set for a profile, in wire order.",
+        "//",
+        "// browser_header_set_index points into kBrowserHeaderSets. Two entries are",
+        "// placeholders the Core replaces per request, because they describe the",
+        "// host rather than the release:",
+        "//   user_agent              the parenthesised platform group comes from",
+        "//                           mn_platform_t and the version from the profile",
+        "//   sec-ch-ua-platform      likewise",
+        "// Everything else is the release's own value and is sent verbatim.",
+        "inline const BrowserHeaderSet& GetBrowserHeaderSet(uint8_t index) {",
+        "  // Through a span: indexing a raw array is an unsafe buffer access in this",
+        "  // build, and the bound is exactly the array the index was validated against.",
+        "  return base::span(kBrowserHeaderSets)[index];",
+        "}",
         "inline constexpr size_t kRuntimeProfileCount = std::size(kRuntimeProfiles);",
         "}  // namespace minicronet",
         "#endif  // MINICRONET_CORE_PROFILE_TABLE_GENERATED_H_",

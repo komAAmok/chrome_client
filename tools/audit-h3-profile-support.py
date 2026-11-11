@@ -85,7 +85,12 @@ def main():
     # Non-bool fields must be listed here or the position of the H3 flags shifts.
     NON_BOOL = {'id', 'key_share_count', 'h2_params_index',
                 'tls_extension_order_policy', 'client_hello_padding_length',
-                'network_feature_flags', 'tls_version_min', 'tls_version_max'}
+                'network_feature_flags', 'tls_version_min', 'tls_version_max',
+                # A uint8_t index into the captured request-header sets. Listed
+                # here because the reader below counts bare true/false tokens
+                # positionally; a non-bool field missing from this set shifts the
+                # HTTP/3 flags by one and the audit fails on a good table.
+                'browser_header_set'}
     bool_fields = [name for name in names if name not in NON_BOOL]
     h3_index = bool_fields.index('h3_supported')
     datagram_index = bool_fields.index('advertise_h3_datagram')

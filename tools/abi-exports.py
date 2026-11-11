@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Prove the ABI header declares exactly the frozen v8 export set.
+"""Prove the ABI header declares exactly the frozen v9 export set.
 
 `tools/audit-abi.sh` checks one direction: every symbol in its list appears in
 the header, the Rust FFI, the Core implementation and the three export tables.
@@ -44,14 +44,14 @@ def main():
     missing = sorted(expected - declared)
     if extra:
         raise SystemExit(
-            "header declares exports that are not part of ABI v8: "
+            "header declares exports that are not part of ABI v9: "
             + ", ".join(extra))
     if missing:
-        raise SystemExit("header is missing ABI v8 exports: " + ", ".join(missing))
+        raise SystemExit("header is missing ABI v9 exports: " + ", ".join(missing))
     if len(declared) != len(expected):
         raise SystemExit(
-            f"header declares {len(declared)} exports, ABI v8 has {len(expected)}")
-    print(f"ABI header declares exactly the {len(expected)} v8 exports")
+            f"header declares {len(declared)} exports, ABI v9 has {len(expected)}")
+    print(f"ABI header declares exactly the {len(expected)} v9 exports")
 
 
 if __name__ == "__main__":

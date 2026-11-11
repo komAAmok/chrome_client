@@ -15,16 +15,20 @@ CHROMIUM_SRC=$(resolve_chromium_src)
 # honouring it costs more here than -Oz does anywhere else -- x86 is -1,119,232
 # (-12.36%), x86_64 -1,203,200 (-10.56%), arm64 -630,272 (-6.71%).
 #
-# Re-baselined for the 153 -> 156.0.8078.31 upgrade and again after the size
-# pass. Re-baselined again after BoringSSL stopped being the one target still
-# built at /O2 while the rest of the DLL was at -Oz. The three committed
-# artifacts are now 9,416,192 (x86_64) / 8,118,272 (arm64) / 7,501,312 (x86), so
-# 9,416,192 * 1.02 = 9,604,516 rounds up to the 9,610,000 below. The rule is
-# unchanged: the largest artifact plus 2%, rounded up to 10,000. Note that
-# 9,600,000 was already too low for this rule once the chrome_86..chrome_98
-# profiles were compiled in -- headroom had fallen to 1.91% -- which is what the
-# re-quote caught.
-MAX_BYTES=${MAX_BYTES:-9610000}
+# Re-baselined for the 153 -> 156.0.8078.31 upgrade, again after the size pass,
+# again after BoringSSL stopped being the one target still built at /O2 while
+# the rest of the DLL was at -Oz, and again for ABI v9 (the cookie store
+# bridge, the protocol/ECH getters and the client certificate setters), and
+# again after the three HTTP/2 framing booleans joined RuntimeProfileData for
+# all 72 profiles, and once more after the captured request header set was
+# compiled in (+~34 KB on x86_64; 3 distinct header sets, 39 KB of text). The
+# three committed artifacts are now 9,622,016 (x86_64) / 8,319,488 (arm64) /
+# 7,660,032 (x86), so 9,622,016 * 1.02 = 9,814,456 rounds up to the 9,820,000
+# below. The rule is unchanged: the largest artifact plus 2%, rounded up to
+# 10,000. Note that 9,600,000 was too low for this rule once the
+# chrome_86..chrome_98 profiles were compiled in -- headroom had fallen to
+# 1.91% -- which is what the re-quote caught.
+MAX_BYTES=${MAX_BYTES:-9820000}
 ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 # require_rg also installs the rg() wrapper, which turns a ripgrep *error*
 # (status 2: unreadable path, bad pattern) into a failure instead of the "no

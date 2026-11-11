@@ -22,6 +22,7 @@
 #include "base/functional/bind.h"
 #include "base/i18n/icu_util.h"
 #include "base/message_loop/message_pump_type.h"
+#include "base/run_loop.h"
 #include "base/no_destructor.h"
 #include "base/synchronization/lock.h"
 #include "base/synchronization/waitable_event.h"
@@ -29,6 +30,8 @@
 #include "base/time/time.h"
 #include "base/task/thread_pool/thread_pool_instance.h"
 #include "base/threading/thread.h"
+#include "net/base/ip_address.h"
+#include "net/base/ip_endpoint.h"
 #include "net/base/network_change_notifier.h"
 #include "net/cert/caching_cert_verifier.h"
 #include "net/cert/coalescing_cert_verifier.h"
@@ -36,6 +39,7 @@
 #include "net/cert/cert_verify_result.h"
 #include "net/cert/x509_util.h"
 #include "net/http/http_network_session.h"
+#include "net/http/http_transaction_factory.h"
 #include "net/proxy_resolution/proxy_config_service_fixed.h"
 #include "net/proxy_resolution/proxy_config_with_annotation.h"
 #include "net/quic/quic_context.h"
@@ -44,7 +48,6 @@
 #include "net/base/host_port_pair.h"
 #include "net/base/proxy_chain.h"
 #include "net/base/proxy_server.h"
-#include "net/http/http_transaction_factory.h"
 #include "net/socket/client_socket_pool.h"
 #include "net/socket/socket_pool_additional_capacity.h"
 #include "net/socket/ssl_client_socket.h"
@@ -56,6 +59,24 @@
 #endif
 #include "net/url_request/url_request_context.h"
 #include "net/url_request/url_request_context_builder.h"
+#include <deque>
+
+#include "base/strings/string_split.h"
+#include "net/base/host_mapping_rules.h"
+#include "net/cert/x509_certificate.h"
+#include "net/cookies/canonical_cookie.h"
+#include "net/cookies/cookie_access_result.h"
+#include "net/cookies/cookie_options.h"
+#include "net/cookies/cookie_store.h"
+#include "net/cookies/cookie_util.h"
+#include "net/dns/public/dns_config_overrides.h"
+#include "net/dns/public/dns_over_https_config.h"
+#include "net/dns/public/secure_dns_mode.h"
+#include "net/ssl/openssl_private_key.h"
+#include "third_party/boringssl/src/include/openssl/bio.h"
+#include "third_party/boringssl/src/include/openssl/evp.h"
+#include "third_party/boringssl/src/include/openssl/pem.h"
+#include "third_party/boringssl/src/include/openssl/x509.h"
 #include "third_party/boringssl/src/pki/pem.h"
 #include "url/gurl.h"
 #include "url/scheme_host_port.h"
@@ -426,7 +447,8 @@ scoped_refptr<Engine> Engine::Create(std::string user_agent,
                                      mn_protocol_mode_t protocol_mode,
                                      mn_tls_verify_mode_t tls_verify_mode,
                                      std::string custom_ca_pem,
-                                     ProfileContext profile) {
+                                     ProfileContext profile,
+                                     EngineOptions options) {
   // A fork() child of a process that had already created the Runtime cannot be
   // served: Chromium's process-wide singletons died with the parent's threads
   // and have no rebuild path.  Fail here rather than block on a dead thread.
@@ -443,7 +465,7 @@ scoped_refptr<Engine> Engine::Create(std::string user_agent,
       std::move(proxy_config), std::move(proxy_username),
       std::move(proxy_password), http_cache_enabled, protocol_mode,
       tls_verify_mode, std::move(custom_ca_pem),
-      std::move(profile)));
+      std::move(profile), std::move(options)));
   return engine->Start() ? engine : nullptr;
 }
 
@@ -457,7 +479,7 @@ Engine::Engine(std::string user_agent, std::string accept_language,
                mn_protocol_mode_t protocol_mode,
                mn_tls_verify_mode_t tls_verify_mode,
                std::string custom_ca_pem,
-               ProfileContext profile)
+               ProfileContext profile, EngineOptions options)
     : user_agent_(std::move(user_agent)),
       accept_language_(std::move(accept_language)),
       proxy_config_(std::move(proxy_config)),
@@ -465,7 +487,8 @@ Engine::Engine(std::string user_agent, std::string accept_language,
       proxy_password_(std::move(proxy_password)),
       http_cache_enabled_(http_cache_enabled), protocol_mode_(protocol_mode),
       tls_verify_mode_(tls_verify_mode), custom_ca_pem_(std::move(custom_ca_pem)),
-      profile_(std::move(profile)), fork_generation_(CurrentForkGeneration()) {}
+      profile_(std::move(profile)), options_(std::move(options)),
+      fork_generation_(CurrentForkGeneration()) {}
 
 Engine::~Engine() {
   if (!context_) {
@@ -608,6 +631,24 @@ void Engine::InitializeOnNetworkThread() {
     session_params.randomize_proxy_socket_pool_limit =
         profile->randomize_proxy_socket_pool_limit;
     session_params.send_priority_header = profile->send_priority_header;
+    // HTTP/2 framing knobs. All three are false for every profile (see the
+    // struct comment in the generated header): the 432 captured connections
+    // carry no greased SETTINGS id, no reserved-type frame, and no DATA frame
+    // on a bodyless request. They are written from profile data rather than
+    // left at the C++ default because a browser build's default is not the
+    // same claim as the evidence -- if a future Chromium flipped one, the
+    // fingerprint would change silently.
+    session_params.enable_http2_settings_grease =
+        profile->enable_http2_settings_grease;
+    session_params.http2_end_stream_with_data_frame =
+        profile->http2_end_stream_with_data_frame;
+    if (profile->greased_http2_frame) {
+      // The frame contents are randomised by Chromium; only the presence is
+      // profile data, and no captured profile has it. Enabling it without a
+      // frame description would send nothing, so it stays a hard error to ask
+      // for it until a capture shows what the release actually sent.
+      return;
+    }
     session_params.enable_websocket_over_http3 = false;
 #if defined(MINICRONET_PROFILE_VERIFICATION)
     if (std::getenv("MINICRONET_FORCE_H3_WEBSOCKET")) {
@@ -652,6 +693,9 @@ void Engine::InitializeOnNetworkThread() {
     // keeps these session params identical to the historical-profile path.
     session_params.ignore_certificate_errors =
         tls_verify_mode_ == MN_TLS_VERIFY_INSECURE;
+    // chromium_current keeps Chromium's own defaults for the three HTTP/2
+    // framing knobs: that is what "current" means, and overriding them here
+    // would make the default profile disagree with the Chromium it names.
     builder.set_http_network_session_params(session_params);
 
     // The historical-profile path also arms force_quic_everywhere for a forced
@@ -668,10 +712,145 @@ void Engine::InitializeOnNetworkThread() {
     }
   }
 
+  // ---- v9 options. All of these are context-construction parameters, so they
+  // must be applied before Build() reads them.
+
+  // Host mapping rewrites only the resolution result: the TCP destination
+  // changes while SNI, the Host header and certificate verification keep using
+  // the URL host (net/dns/mapped_host_resolver.cc:70-78 against
+  // net/socket/ssl_client_socket_impl.cc:720). That is what makes a CDN
+  // address reachable without turning its certificate into an IP-SAN one.
+  const bool custom_resolver = !options_.dns_nameservers.empty() ||
+                              !options_.doh_template.empty() ||
+                              options_.dns_secure_mode != 0 ||
+                              options_.dns_over_tls != 0 ||
+                              options_.dns_rotate != 0;
+  // The builder DCHECKs that a client-supplied resolver and
+  // set_host_mapping_rules() are not combined
+  // (url_request_context_builder.cc:359-362), so mapping rules travel through
+  // the resolver when one is created.
+  if (!options_.host_mapping_rules.empty() && !custom_resolver) {
+    builder.set_host_mapping_rules(options_.host_mapping_rules);
+  }
+  if (!options_.hsts_bypass_list.empty()) {
+    builder.set_hsts_policy_bypass_list(options_.hsts_bypass_list);
+  }
+
+  // Proxy chain: the rules have to be rewritten before the config service is
+  // handed to the builder, because the builder snapshots proxy_config_ at
+  // Build() time. Reversing the two would accept the field and change nothing.
+  if (!options_.proxy_chain.empty()) {
+    net::ProxyConfig::ProxyRules rules;
+    rules.type = net::ProxyConfig::ProxyRules::Type::PROXY_LIST;
+    for (const auto &entry : base::SplitStringPiece(
+             options_.proxy_chain, ",", base::TRIM_WHITESPACE,
+             base::SPLIT_WANT_NONEMPTY)) {
+      const std::string text(entry);
+      // "scheme://host:port". ProxyServer parses the three parts itself, so a
+      // malformed entry is rejected here rather than becoming a chain that
+      // resolves to nothing.
+      const size_t scheme_end = text.find("://");
+      if (scheme_end == std::string::npos) {
+        return;
+      }
+      const std::string_view scheme = std::string_view(text).substr(0, scheme_end);
+      const std::string_view rest =
+          std::string_view(text).substr(scheme_end + 3);
+      const size_t colon = rest.rfind(':');
+      if (colon == std::string_view::npos) {
+        return;
+      }
+      net::ProxyServer::Scheme parsed_scheme = net::ProxyServer::SCHEME_HTTP;
+      if (base::EqualsCaseInsensitiveASCII(scheme, "socks5")) {
+        parsed_scheme = net::ProxyServer::SCHEME_SOCKS5;
+      } else if (base::EqualsCaseInsensitiveASCII(scheme, "socks4")) {
+        parsed_scheme = net::ProxyServer::SCHEME_SOCKS4;
+      } else if (base::EqualsCaseInsensitiveASCII(scheme, "https")) {
+        parsed_scheme = net::ProxyServer::SCHEME_HTTPS;
+      } else if (!base::EqualsCaseInsensitiveASCII(scheme, "http")) {
+        return;
+      }
+      const net::ProxyServer server = net::ProxyServer::FromSchemeHostAndPort(
+          parsed_scheme, rest.substr(0, colon), rest.substr(colon + 1));
+      if (!server.is_valid()) {
+        return;
+      }
+      rules.single_proxies.AddProxyServer(server);
+    }
+    proxy_config_.proxy_rules() = rules;
+  }
+
   builder.set_proxy_config_service(
       std::make_unique<net::ProxyConfigServiceFixed>(
           net::ProxyConfigWithAnnotation(proxy_config_,
                                          kProxyTrafficAnnotation)));
+
+  // DNS overrides reach the resolver the builder creates, because
+  // DnsConfigOverrides is a HostResolverManager parameter and the context has
+  // no other injection point (net/dns/host_resolver.h:361-362).
+  if (!options_.dns_nameservers.empty() || !options_.doh_template.empty() ||
+      options_.dns_secure_mode != 0 || options_.dns_over_tls != 0 ||
+      options_.dns_rotate != 0) {
+    net::DnsConfigOverrides overrides;
+    if (!options_.dns_nameservers.empty()) {
+      std::vector<net::IPEndPoint> endpoints;
+      for (const auto &entry : base::SplitStringPiece(
+               options_.dns_nameservers, ",", base::TRIM_WHITESPACE,
+               base::SPLIT_WANT_NONEMPTY)) {
+        // "8.8.8.8:53" or "1.1.1.1". IPEndPoint has no text parser, so the
+        // address and the optional port are split and parsed separately; an
+        // unparsable entry fails the whole engine rather than leaving the
+        // resolver on the system configuration.
+        const std::string text(entry);
+        const size_t colon = text.rfind(':');
+        const std::string_view host =
+            colon == std::string::npos
+                ? std::string_view(text)
+                : std::string_view(text).substr(0, colon);
+        std::optional<net::IPAddress> address =
+            net::IPAddress::FromIPLiteral(host);
+        if (!address.has_value()) {
+          return;
+        }
+        uint16_t port = 53;
+        if (colon != std::string::npos) {
+          const std::string_view port_text =
+              std::string_view(text).substr(colon + 1);
+          unsigned value = 0;
+          for (char digit : port_text) {
+            if (digit < '0' || digit > '9') {
+              return;
+            }
+            value = value * 10 + static_cast<unsigned>(digit - '0');
+            if (value > 65535) {
+              return;
+            }
+          }
+          port = static_cast<uint16_t>(value);
+        }
+        endpoints.emplace_back(*address, port);
+      }
+      overrides.nameservers = std::move(endpoints);
+    }
+    overrides.secure_dns_mode =
+        static_cast<net::SecureDnsMode>(options_.dns_secure_mode);
+    overrides.dns_over_tls_active = options_.dns_over_tls != 0;
+    overrides.rotate = options_.dns_rotate != 0;
+    if (!options_.doh_template.empty()) {
+      std::optional<net::DnsOverHttpsConfig> doh =
+          net::DnsOverHttpsConfig::FromString(options_.doh_template);
+      if (!doh.has_value()) {
+        return;
+      }
+      overrides.dns_over_https_config = std::move(*doh);
+    }
+    net::HostResolver::ManagerOptions resolver_options;
+    resolver_options.dns_config_overrides = std::move(overrides);
+    builder.set_host_resolver(net::HostResolver::CreateStandaloneResolver(
+        net::NetLog::Get(), std::move(resolver_options),
+        options_.host_mapping_rules, true /* enable_caching */,
+        false /* enable_stale */));
+  }
   if (http_cache_enabled_) {
     net::URLRequestContextBuilder::HttpCacheParams cache_params;
     cache_params.type =
@@ -708,6 +887,471 @@ void Engine::InitializeOnNetworkThread() {
                profile->randomize_proxy_socket_pool_limit);
     }
   }
+#endif
+}
+
+namespace {
+
+// Runs |task| on the network thread and waits for it. Returns false when the
+// context is already gone, which is the only case where the result is not the
+// task's own.
+//
+// Waiting here is safe: the only thing the network thread does for these calls
+// is the CookieMonster closure, which this build runs inline (see the note in
+// engine.h), and SetClientCertificate, which takes no lock this thread holds.
+template <typename Task> void RunOnNetworkThread(Engine *engine, Task task) {
+  auto runner = engine->task_runner();
+  if (runner->RunsTasksInCurrentSequence()) {
+    task();
+    return;
+  }
+  base::WaitableEvent done;
+  runner->PostTask(FROM_HERE, base::BindOnce(
+                                  [](Task task, base::WaitableEvent *done) {
+                                    task();
+                                    done->Signal();
+                                  },
+                                  std::move(task), base::Unretained(&done)));
+  done.Wait();
+}
+
+// Appends |value| to |storage| and points |out| at it.
+//
+// storage must be a container whose push_back cannot move existing elements:
+// every mn_cookie_t field points into it, so a std::vector would leave those
+// pointers dangling the moment it grows. A deque allocates a fresh block per
+// element growth and never relocates what it already handed out, which is
+// exactly the guarantee this needs. Measured with a vector: the name field read
+// back empty because the fourth push_back had moved the first string.
+void StoreString(const std::string &value, std::deque<std::string> *storage,
+                 const char **out, size_t *out_length) {
+  storage->push_back(value);
+  const std::string &stored = storage->back();
+  *out = stored.data();
+  *out_length = stored.size();
+}
+
+} // namespace
+
+mn_result_t Engine::GetCookies(const std::string *url, CookieView *out) {
+  if (!out) {
+    return MN_ERROR_INVALID_ARGUMENT;
+  }
+  mn_result_t result = MN_ERROR_INVALID_STATE;
+  RunOnNetworkThread(this, [this, url, out, &result] {
+    result = GetCookiesOnNetworkThread(url, out);
+  });
+  return result;
+}
+
+mn_result_t Engine::GetCookiesOnNetworkThread(const std::string *url,
+                                              CookieView *out) {
+  net::CookieStore *store = context_ ? context_->cookie_store() : nullptr;
+  if (!store) {
+    return MN_ERROR_INVALID_STATE;
+  }
+  // The view is reused across calls (it lives on the engine handle so the
+  // returned pointers stay valid), so each call must start from empty.
+  out->cookies.clear();
+  out->storage.clear();
+  net::CookieList list;
+  base::WaitableEvent done;
+  if (url) {
+    GURL gurl(*url);
+    if (!gurl.is_valid()) {
+      return MN_ERROR_INVALID_ARGUMENT;
+    }
+    net::CookieOptions options;
+    options.set_include_httponly();
+    options.set_same_site_cookie_context(
+        net::CookieOptions::SameSiteCookieContext::MakeInclusive());
+    store->GetCookieListWithOptionsAsync(
+        gurl, options, net::CookiePartitionKeyCollection::ContainsAll(),
+        base::BindOnce(
+            [](net::CookieList *out_list, base::WaitableEvent *done,
+               const net::CookieAccessResultList &included,
+               const net::CookieAccessResultList &) {
+              for (const auto &entry : included) {
+                out_list->push_back(entry.cookie);
+              }
+              done->Signal();
+            },
+            &list, &done));
+  } else {
+    store->GetAllCookiesAsync(base::BindOnce(
+        [](net::CookieList *out_list, base::WaitableEvent *done,
+           const net::CookieList &cookies) {
+          *out_list = cookies;
+          done->Signal();
+        },
+        &list, &done));
+  }
+  done.Wait();
+
+  out->cookies.reserve(list.size());
+  // No reserve() on storage: a deque has none, and reserving in a vector is
+  // exactly the reallocation that would dangle the pointers it backs., and reserving in a vector is exactly the
+  // reallocation that used to dangle the pointers this container backs.
+  for (const net::CanonicalCookie &cookie : list) {
+    mn_cookie_t entry{};
+    entry.size = sizeof(mn_cookie_t);
+    entry.version = MN_ABI_VERSION;
+    StoreString(cookie.Name(), &out->storage, &entry.name, &entry.name_length);
+    StoreString(cookie.Value(), &out->storage, &entry.value,
+                &entry.value_length);
+    StoreString(cookie.Domain(), &out->storage, &entry.domain,
+                &entry.domain_length);
+    StoreString(cookie.Path(), &out->storage, &entry.path, &entry.path_length);
+    entry.has_expiry = cookie.IsPersistent() ? 1 : 0;
+    entry.expiry_unix_seconds =
+        cookie.IsPersistent() ? cookie.ExpiryDate().InSecondsFSinceUnixEpoch()
+                              : 0;
+    entry.secure = cookie.SecureAttribute() ? 1 : 0;
+    entry.http_only = cookie.IsHttpOnly() ? 1 : 0;
+    switch (cookie.SameSite()) {
+    case net::CookieSameSite::NO_RESTRICTION:
+      entry.same_site = MN_COOKIE_SAME_SITE_NO_RESTRICTION;
+      break;
+    case net::CookieSameSite::LAX_MODE:
+      entry.same_site = MN_COOKIE_SAME_SITE_LAX;
+      break;
+    case net::CookieSameSite::STRICT_MODE:
+      entry.same_site = MN_COOKIE_SAME_SITE_STRICT;
+      break;
+    case net::CookieSameSite::UNSPECIFIED:
+      entry.same_site = MN_COOKIE_SAME_SITE_UNSPECIFIED;
+      break;
+    }
+    out->cookies.push_back(entry);
+  }
+  return MN_OK;
+}
+
+mn_result_t Engine::SetCookie(const mn_cookie_t &cookie,
+                              const std::string &source_url,
+                              int64_t creation_unix_seconds) {
+  mn_result_t result = MN_ERROR_INVALID_STATE;
+  RunOnNetworkThread(this, [this, &cookie, &source_url, creation_unix_seconds,
+                            &result] {
+    result =
+        SetCookieOnNetworkThread(cookie, source_url, creation_unix_seconds);
+  });
+  return result;
+}
+
+mn_result_t Engine::SetCookieOnNetworkThread(const mn_cookie_t &cookie,
+                                             const std::string &source_url,
+                                             int64_t creation_unix_seconds) {
+  net::CookieStore *store = context_ ? context_->cookie_store() : nullptr;
+  if (!store) {
+    return MN_ERROR_INVALID_STATE;
+  }
+  GURL url(source_url);
+  if (!url.is_valid() || !url.SchemeIsHTTPOrHTTPS()) {
+    return MN_ERROR_INVALID_ARGUMENT;
+  }
+  if (!cookie.name || !cookie.value || !cookie.domain || !cookie.path) {
+    return MN_ERROR_INVALID_ARGUMENT;
+  }
+  const std::string name(cookie.name, cookie.name_length);
+  const std::string value(cookie.value, cookie.value_length);
+  const std::string domain(cookie.domain, cookie.domain_length);
+  const std::string path(cookie.path, cookie.path_length);
+  net::CookieSameSite same_site = net::CookieSameSite::UNSPECIFIED;
+  switch (cookie.same_site) {
+  case MN_COOKIE_SAME_SITE_NO_RESTRICTION:
+    same_site = net::CookieSameSite::NO_RESTRICTION;
+    break;
+  case MN_COOKIE_SAME_SITE_LAX:
+    same_site = net::CookieSameSite::LAX_MODE;
+    break;
+  case MN_COOKIE_SAME_SITE_STRICT:
+    same_site = net::CookieSameSite::STRICT_MODE;
+    break;
+  case MN_COOKIE_SAME_SITE_UNSPECIFIED:
+    break;
+  default:
+    return MN_ERROR_INVALID_ARGUMENT;
+  }
+  base::Time creation = creation_unix_seconds > 0
+                            ? base::Time::FromSecondsSinceUnixEpoch(
+                                  static_cast<double>(creation_unix_seconds))
+                            : base::Time::Now();
+  base::Time expiry =
+      cookie.has_expiry
+          ? base::Time::FromSecondsSinceUnixEpoch(
+                static_cast<double>(cookie.expiry_unix_seconds))
+          : base::Time();
+  net::CookieInclusionStatus status;
+  std::unique_ptr<net::CanonicalCookie> canonical =
+      net::CanonicalCookie::CreateSanitizedCookie(
+          url, name, value, domain, path, creation, expiry, creation,
+          cookie.secure != 0, cookie.http_only != 0, same_site,
+          net::COOKIE_PRIORITY_DEFAULT, std::nullopt, &status);
+  if (!canonical) {
+    return MN_ERROR_INVALID_ARGUMENT;
+  }
+  net::CookieOptions options;
+  if (cookie.http_only != 0) {
+    options.set_include_httponly();
+  }
+  options.set_same_site_cookie_context(
+      net::CookieOptions::SameSiteCookieContext::MakeInclusive());
+  bool accepted = false;
+  base::WaitableEvent done;
+  store->SetCanonicalCookieAsync(
+      std::move(canonical), url, options,
+      base::BindOnce(
+          [](bool *accepted, base::WaitableEvent *done,
+             net::CookieAccessResult result) {
+            *accepted = result.status.IsInclude();
+            done->Signal();
+          },
+          &accepted, &done),
+      std::nullopt);
+  done.Wait();
+  return accepted ? MN_OK : MN_ERROR_INVALID_ARGUMENT;
+}
+
+mn_result_t Engine::DeleteCookie(const std::string &domain,
+                                 const std::string &path,
+                                 const std::string &name,
+                                 size_t *out_removed) {
+  mn_result_t result = MN_ERROR_INVALID_STATE;
+  RunOnNetworkThread(this, [this, &domain, &path, &name, out_removed,
+                            &result] {
+    result = DeleteCookieOnNetworkThread(domain, path, name, out_removed);
+  });
+  return result;
+}
+
+mn_result_t Engine::DeleteCookieOnNetworkThread(const std::string &domain,
+                                                const std::string &path,
+                                                const std::string &name,
+                                                size_t *out_removed) {
+  net::CookieStore *store = context_ ? context_->cookie_store() : nullptr;
+  if (!store) {
+    return MN_ERROR_INVALID_STATE;
+  }
+  // Counted by the predicate, not by the completion callback.
+  //
+  // DeleteMatchingCookies runs the predicate once per cookie and deletes exactly
+  // the ones it returned true for
+  // (net/cookies/cookie_monster.cc:951-993), then calls FlushStore. FlushStore
+  // posts its callback when there is no backing store
+  // (net/cookies/cookie_monster.cc:511-520), and that task runs on this same
+  // runner, so the callback's count can never be observed here without
+  // deadlocking. The predicate runs synchronously, so counting there gives the
+  // same number without waiting for anything.
+  //
+  // CanonicalCookie::Domain() encodes the host-only flag as a leading dot
+  // (net/cookies/cookie_base.h:84-86), while a caller names the host the way it
+  // wrote it, so both spellings are accepted.
+  size_t removed = 0;
+  store->DeleteMatchingCookiesAsync(
+      base::BindRepeating(
+          [](const std::string &domain, const std::string &path,
+             const std::string &name, size_t *removed,
+             const net::CanonicalCookie &cookie) {
+            const bool domain_matches =
+                cookie.Domain() == domain || cookie.DomainWithoutDot() == domain;
+            if (!domain_matches || cookie.Path() != path ||
+                cookie.Name() != name) {
+              return false;
+            }
+            ++*removed;
+            return true;
+          },
+          domain, path, name, &removed),
+      base::BindOnce([](uint32_t) {}));
+  // The predicate has already run for every cookie by the time
+  // DeleteMatchingCookiesAsync returns: DoCookieCallback dispatches inline when
+  // there is no backing store to load keys from.
+  if (out_removed) {
+    *out_removed = removed;
+  }
+  return MN_OK;
+}
+
+mn_result_t Engine::ClearCookies() {
+  mn_result_t result = MN_ERROR_INVALID_STATE;
+  RunOnNetworkThread(this, [this, &result] {
+    result = ClearCookiesOnNetworkThread();
+  });
+  return result;
+}
+
+mn_result_t Engine::ClearCookiesOnNetworkThread() {
+  net::CookieStore *store = context_ ? context_->cookie_store() : nullptr;
+  if (!store) {
+    return MN_ERROR_INVALID_STATE;
+  }
+  // Same shape as DeleteCookie: DeleteAllAsync deletes inline and then posts
+  // its completion through FlushStore, so the deletion is done when this
+  // returns and only the callback is deferred.
+  store->DeleteAllAsync(base::BindOnce([](uint32_t) {}));
+  return MN_OK;
+}
+namespace {
+
+// Reads every PEM block of one type out of |pem| and returns the DER encoding
+// of each. Returns an empty vector when the input is not one or more PEM blocks
+// of that type, which the caller turns into MN_ERROR_INVALID_ARGUMENT.
+std::vector<std::string> PemBlocksToDer(const std::vector<uint8_t> &pem,
+                                        bool private_key) {
+  std::vector<std::string> out;
+  if (pem.empty()) {
+    return out;
+  }
+  bssl::UniquePtr<BIO> bio(
+      BIO_new_mem_buf(pem.data(), static_cast<int>(pem.size())));
+  if (!bio) {
+    return out;
+  }
+  for (;;) {
+    if (private_key) {
+      EVP_PKEY *key = PEM_read_bio_PrivateKey(
+          bio.get(), nullptr,
+          // A passphrase-protected key reaches this callback with an empty
+          // buffer. Returning 0 makes PEM_read_bio_PrivateKey fail instead of
+          // hanging or guessing, which is the fail-closed behaviour the header
+          // documents.
+          [](char *, int, int, void *) { return 0; }, nullptr);
+      if (!key) {
+        break;
+      }
+      bssl::UniquePtr<EVP_PKEY> owned(key);
+      uint8_t *der = nullptr;
+      const int length = i2d_PrivateKey(owned.get(), &der);
+      if (length <= 0) {
+        OPENSSL_free(der);
+        return std::vector<std::string>();
+      }
+      out.emplace_back(reinterpret_cast<const char *>(der),
+                       static_cast<size_t>(length));
+      OPENSSL_free(der);
+      // A private key file holds exactly one key.
+      break;
+    }
+    X509 *cert = PEM_read_bio_X509(bio.get(), nullptr, nullptr, nullptr);
+    if (!cert) {
+      break;
+    }
+    bssl::UniquePtr<X509> owned(cert);
+    uint8_t *der = nullptr;
+    const int length = i2d_X509(owned.get(), &der);
+    if (length <= 0) {
+      OPENSSL_free(der);
+      return std::vector<std::string>();
+    }
+    out.emplace_back(reinterpret_cast<const char *>(der),
+                     static_cast<size_t>(length));
+    OPENSSL_free(der);
+  }
+  return out;
+}
+
+// http_network_session() on URLRequestContext is private, so the only public
+// route to the SSLClientContext is through the transaction factory, which
+// needs its own definition for the virtual call to resolve.
+net::SSLClientContext *SSLContextOf(net::URLRequestContext *context) {
+  if (!context || !context->http_transaction_factory()) {
+    return nullptr;
+  }
+  net::HttpNetworkSession *session =
+      context->http_transaction_factory()->GetSession();
+  return session ? session->ssl_client_context() : nullptr;
+}
+
+} // namespace
+
+mn_result_t Engine::SetClientCertificate(
+    const std::string &host, uint16_t port,
+    const std::vector<uint8_t> &cert_pem,
+    const std::vector<uint8_t> &key_pem) {
+  mn_result_t result = MN_ERROR_INVALID_STATE;
+  RunOnNetworkThread(this, [this, &host, port, &cert_pem, &key_pem, &result] {
+    result = SetClientCertificateOnNetworkThread(host, port, cert_pem, key_pem);
+  });
+  return result;
+}
+
+mn_result_t Engine::SetClientCertificateOnNetworkThread(
+    const std::string &host, uint16_t port,
+    const std::vector<uint8_t> &cert_pem,
+    const std::vector<uint8_t> &key_pem) {
+  net::SSLClientContext *ssl = SSLContextOf(context_.get());
+  if (!ssl) {
+    return MN_ERROR_INVALID_STATE;
+  }
+  std::vector<std::string> chain = PemBlocksToDer(cert_pem, false);
+  if (chain.empty()) {
+    return MN_ERROR_INVALID_ARGUMENT;
+  }
+  std::vector<std::string> key_der = PemBlocksToDer(key_pem, true);
+  if (key_der.size() != 1) {
+    return MN_ERROR_INVALID_ARGUMENT;
+  }
+  std::vector<std::string_view> chain_views;
+  chain_views.reserve(chain.size());
+  for (const std::string &der : chain) {
+    chain_views.emplace_back(der);
+  }
+  scoped_refptr<net::X509Certificate> certificate =
+      net::X509Certificate::CreateFromDERCertChain(chain_views);
+  if (!certificate) {
+    return MN_ERROR_INVALID_ARGUMENT;
+  }
+  const uint8_t *key_bytes =
+      reinterpret_cast<const uint8_t *>(key_der[0].data());
+  bssl::UniquePtr<EVP_PKEY> key(
+      d2i_AutoPrivateKey(nullptr, &key_bytes, static_cast<long>(key_der[0].size())));
+  if (!key) {
+    return MN_ERROR_INVALID_ARGUMENT;
+  }
+  // SetClientCertificate flushes this server's TLS session cache, which is what
+  // stops a resumed session from skipping client-certificate negotiation.
+  ssl->SetClientCertificate(net::HostPortPair(host, port), std::move(certificate),
+                            net::WrapOpenSSLPrivateKey(std::move(key)));
+  return MN_OK;
+}
+
+mn_result_t Engine::ClearClientCertificate(const std::string &host,
+                                           uint16_t port) {
+  mn_result_t result = MN_ERROR_INVALID_STATE;
+  RunOnNetworkThread(this, [this, &host, port, &result] {
+    result = ClearClientCertificateOnNetworkThread(host, port);
+  });
+  return result;
+}
+
+mn_result_t Engine::ClearClientCertificateOnNetworkThread(
+    const std::string &host, uint16_t port) {
+  net::SSLClientContext *ssl = SSLContextOf(context_.get());
+  if (!ssl) {
+    return MN_ERROR_INVALID_STATE;
+  }
+  ssl->ClearClientCertificate(net::HostPortPair(host, port));
+  return MN_OK;
+}
+
+const char *Engine::platform_hint() const {
+  switch (options_.platform) {
+  case MN_PLATFORM_WINDOWS:
+    return "\"Windows\"";
+  case MN_PLATFORM_MACOS:
+    return "\"macOS\"";
+  case MN_PLATFORM_LINUX:
+    return "\"Linux\"";
+  case MN_PLATFORM_AUTO:
+    break;
+  }
+#if BUILDFLAG(IS_WIN)
+  return "\"Windows\"";
+#elif BUILDFLAG(IS_MAC)
+  return "\"macOS\"";
+#else
+  return "\"Linux\"";
 #endif
 }
 

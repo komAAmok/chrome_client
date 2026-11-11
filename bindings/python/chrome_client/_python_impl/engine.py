@@ -12,9 +12,8 @@ Three objects, three jobs, and the split is the whole design:
 ``EngineSlot``
     One live ``URLRequestContext`` -- its own socket pools, TLS session cache,
     HTTP/2 and HTTP/3 session pools, Alt-Svc cache, DNS cache, HTTP cache and
-    cookie store -- plus the cookie mirror that makes the Core's store readable
-    through ABI v8, plus the in-flight count that keeps the context alive while
-    work is still running on it.
+    cookie store, all reachable through the ABI since v9, plus the in-flight
+    count that keeps the context alive while work is still running on it.
 
 ``EngineCache``
     The bounded registry of slots one session owns.  Bounded because a slot is
@@ -222,12 +221,13 @@ class SessionBinding(object):
 
 
 class EngineConfig(object):
-    """A binding plus the cookie-store generation an engine was built for.
+    """The transport context one engine reproduces.
 
-    ``generation`` is not a Core setting.  Bumping it asks for a structurally
-    identical engine with an empty cookie store, which is the only way to drop
-    cookies the Core already accepted: ABI v8 exposes no entry point that clears
-    ``CookieMonster``.
+    There is no cookie-store generation any more. It existed because ABI v8
+    could not clear ``CookieMonster``, so the only way to drop cookies the Core
+    had accepted was a structurally identical engine with an empty store -- and
+    that engine became a cache key of its own. v9 clears the store in place, so
+    the counter, the key dimension and everything that bumped it are gone.
 
     Attributes:
         impersonate: Canonical profile name, or ``None``.
@@ -241,16 +241,15 @@ class EngineConfig(object):
         http_version: Pinned ``"v1"``/``"v2"``/``"v3"``, or ``None``.
         cache: Whether the Chromium HTTP cache is enabled.
         profile_namespace: Reserved isolation key for the profile.
-        generation: Cookie-store generation counter.
         key: The hashable tuple of every field above.
     """
 
-    __slots__ = BINDING_FIELDS + ("generation", "_key")
+    __slots__ = BINDING_FIELDS + ("_key",)
 
     def __init__(self, impersonate=None, proxy=None, verify=True, ca_pem=None,
                  user_agent=None, accept_language=None, proxy_username=None,
                  proxy_password=None, http_version=None, cache=True,
-                 profile_namespace=None, generation=0):
+                 profile_namespace=None):
         """Describes one engine.
 
         Args:
@@ -265,7 +264,6 @@ class EngineConfig(object):
             http_version: Pinned protocol.
             cache: Enable the HTTP cache; coerced to ``bool``.
             profile_namespace: Reserved isolation key.
-            generation: Cookie-store generation.
         """
         self.impersonate = impersonate
         self.proxy = proxy
@@ -278,15 +276,14 @@ class EngineConfig(object):
         self.http_version = http_version
         self.cache = bool(cache)
         self.profile_namespace = profile_namespace
-        self.generation = generation
-        self._key = tuple(getattr(self, name) for name in BINDING_FIELDS) + (generation,)
+        self._key = tuple(getattr(self, name) for name in BINDING_FIELDS)
 
     @property
     def binding(self):
         """The transport context this engine reproduces.
 
         Returns:
-            A :class:`SessionBinding` built from every field except ``generation``.
+            A :class:`SessionBinding` built from every field.
         """
         return SessionBinding(**{name: getattr(self, name) for name in BINDING_FIELDS})
 
@@ -294,7 +291,7 @@ class EngineConfig(object):
         """Returns a copy with fields replaced.
 
         Args:
-            **changes: Field names to change, including ``generation``.
+            **changes: Field names to change.
 
         Returns:
             A new :class:`EngineConfig`.
@@ -302,12 +299,11 @@ class EngineConfig(object):
         Raises:
             TypeError: A field name is not part of the configuration.
         """
-        allowed = set(BINDING_FIELDS) | {"generation"}
+        allowed = set(BINDING_FIELDS)
         unknown = sorted(set(changes) - allowed)
         if unknown:
             raise TypeError("unknown engine field(s): %s" % ", ".join(unknown))
         values = {name: getattr(self, name) for name in BINDING_FIELDS}
-        values["generation"] = self.generation
         values.update(changes)
         return EngineConfig(**values)
 
@@ -358,7 +354,7 @@ class EngineConfig(object):
             e.g. ``"EngineConfig(impersonate='chrome_155', cache=True)"``.
         """
         parts = ", ".join("%s=%r" % (name, getattr(self, name))
-                         for name in BINDING_FIELDS + ("generation",)
+                         for name in BINDING_FIELDS
                          if getattr(self, name) not in (None, False))
         return "EngineConfig(%s)" % parts
 
@@ -392,40 +388,34 @@ class EngineConfig(object):
 
 
 class EngineSlot(object):
-    """One engine, its cookie mirror, and its in-flight count.
+    """One engine, its cookie store, and its in-flight count.
 
     The count is what makes graceful teardown possible: a slot that still has
-    work running on it must not be dropped, because dropping the last reference
-    tears down the ``URLRequestContext`` that work is using.
+    work running on it must not be dropped, because dropping the last
+    reference tears down the ``URLRequestContext`` that work is using.
+
+    There is no mirror any more. ABI v8 could not read ``CookieMonster``, so the
+    facade kept a copy and compared it against the jar to guess when the Core
+    would send something else. v9 reads and writes the store directly, so the
+    copy had nothing left to reconcile -- every question it answered is now a
+    question for the store itself.
 
     Attributes:
         engine: The native engine.
         config: The configuration that produced it.
-        mirror: Copy of what this engine's Chromium cookie store has accepted.
-            The store itself is unreachable through ABI v8 and overrides any
-            caller-supplied ``Cookie`` header for URLs it has a cookie for, so
-            the facade keeps its own copy to know when the two disagree.
     """
 
-    __slots__ = ("engine", "config", "mirror", "_lock", "_inflight")
+    __slots__ = ("engine", "config", "_lock", "_inflight")
 
     def __init__(self, engine, config):
-        """Pairs an engine with a fresh mirror jar.
+        """Pairs an engine with its configuration.
 
         Args:
             engine: The native engine.
             config: The configuration it was built from.
         """
-        from .cookies import RequestsCookieJar
-
         self.engine = engine
         self.config = config
-        self.mirror = RequestsCookieJar()
-        #: Guards the compound mirror operations.  ``cookielib`` already locks a
-        #: single jar, but "read the outgoing header, compare it with the store,
-        #: decide whether the store has to be replaced" is three steps over two
-        #: jars, and two workers interleaving them can pick different
-        #: generations for the same request.
         self._lock = threading.RLock()
         self._inflight = 0
 
@@ -448,28 +438,91 @@ class EngineSlot(object):
         with self._lock:
             return self._inflight
 
-    def cookie_header(self, url):
-        """Returns the ``Cookie`` line the Core's store would emit for *url*.
+    def cookies(self, url=None):
+        """Returns the store's cookies as 9-tuples, or raises ``RequestException``.
 
         Args:
-            url: The request URL.
+            url: Restrict to the cookies a request to this URL would carry.
 
         Returns:
-            The header value, or ``None`` when the store holds no cookie for it.
+            A list of ``(name, value, domain, path, expiry, has_expiry,
+            secure, http_only, same_site)``.
         """
-        with self._lock:
-            return self.mirror.cookie_header(url)
+        try:
+            return self.engine.cookies(url)
+        except RuntimeError as error:
+            raise map_native_error(error)
 
-    def absorb(self, url, lines):
-        """Records ``Set-Cookie`` lines the Core accepted for *url*.
+    def set_cookie(self, cookie, source_url):
+        """Writes one cookie through the store's own validation.
 
         Args:
-            url: The URL the response came from.
-            lines: The raw ``Set-Cookie`` field values.
+            cookie: ``(name, value, domain, path, expires, secure, http_only,
+                same_site)``. ``expires`` is Unix seconds or ``None``.
+            source_url: The URL the cookie is being set from.
         """
-        with self._lock:
-            self.mirror.absorb_set_cookie(url, lines)
+        name, value, domain, path, expires, secure, http_only, same_site = cookie
+        try:
+            self.engine.set_cookie(
+                name, value, domain, path, source_url,
+                bool(secure), bool(http_only), same_site or "",
+                expires is not None, int(expires or 0))
+        except RuntimeError as error:
+            raise map_native_error(error)
 
+    def delete_cookie(self, domain, path, name):
+        """Deletes every cookie matching the triple; returns the count.
+
+        Args:
+            domain: The cookie domain.
+            path: The cookie path.
+            name: The cookie name.
+        """
+        try:
+            return self.engine.delete_cookie(domain, path, name)
+        except RuntimeError as error:
+            raise map_native_error(error)
+
+    # -- jar write-through ---------------------------------------------------
+    #
+    # The jar owns the caller's view; the store owns what goes on the wire.
+    # These three are the seam between them: every jar mutation calls one, so
+    # the two cannot drift. That is what replaced the old compare-and-replace
+    # in _resolve_cookies -- a reconciliation only exists once something has
+    # already diverged.
+
+    def write_cookie(self, cookie, source_url):
+        """Mirrors one jar cookie into the store.
+
+        Args:
+            cookie: A ``cookielib.Cookie``.
+            source_url: The URL the cookie came from.
+        """
+        expires = cookie.expires
+        self.set_cookie(
+            (cookie.name, cookie.value, cookie.domain or "", cookie.path or "/",
+             expires, cookie.secure, cookie.has_nonstandard_attr("HttpOnly")
+             or bool(getattr(cookie, "_rest", {}).get("HttpOnly")),
+             (cookie._rest.get("SameSite", "") if isinstance(
+                 getattr(cookie, "_rest", None), dict) else "")),
+            source_url)
+
+    def remove_cookie(self, domain, path, name):
+        """Mirrors one jar removal into the store.
+
+        Args:
+            domain: Cookie domain.
+            path: Cookie path.
+            name: Cookie name.
+        """
+        self.delete_cookie(domain, path, name)
+
+    def clear_cookies(self):
+        """Empties the store."""
+        try:
+            self.engine.clear_cookies()
+        except RuntimeError as error:
+            raise map_native_error(error)
     def _retain(self):
         with self._lock:
             self._inflight += 1
@@ -574,14 +627,26 @@ class EngineCache(object):
         """
         return _SlotLease(self, config)
 
+    def slots(self):
+        """Returns the slots the cache currently holds.
+
+        A snapshot, not a view: the caller iterates it while another thread may
+        evict, and a live view would raise mid-iteration.
+
+        Returns:
+            A list of the live :class:`EngineSlot` objects.
+        """
+        with self._lock:
+            return list(self._slots.values())
+
     def discard(self, config):
         """Removes an engine from the cache.
 
         The engine itself stays alive through whoever still holds its slot: a
         response, a WebSocket, or the Core request that is reading from it.
-        Discarding only makes the slot unreachable for *future* lookups, which
-        is what a superseded cookie-store generation needs -- it must not be
-        selected again, and it must not occupy one of the bounded cache slots.
+        Discarding only makes the slot unreachable for *future* lookups. It is
+        how a configuration that is no longer wanted stops occupying one of the
+        bounded cache slots while the work already using it finishes.
 
         Args:
             config: The configuration to drop. Dropping an absent key is a no-op.
@@ -666,7 +731,7 @@ class _SlotLease(object):
     The pin is what tells an eviction that the slot is still in use.  A
     streaming response keeps reading from the slot's context after the lease
     ends -- the Core request holds its own reference to the Chromium context --
-    but the facade's mirror and in-flight count belong to the lease, so the
+    but the in-flight count belongs to the lease, so the
     window the lease covers is exactly the window in which the facade still
     reads or writes slot state.
 

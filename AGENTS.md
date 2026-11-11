@@ -33,7 +33,7 @@ Node (N-API) ──┘
 
 ## 2. ABI 规则
 
-- `core/abi/minicronet.h` 是**唯一** ABI 来源。当前 ABI v8，**20** 个导出符号。
+- `core/abi/minicronet.h` 是**唯一** ABI 来源。当前 ABI v9，**28** 个导出符号。
 - 结构体变更必须同时更新：头文件、`crates/minicronet-sys/src/lib.rs` 的 `#[repr(C)]`
   声明与布局测试、`core/exports/minicronet.{def,exports,lds}`。
 - 每个 config 结构体以 `size` + `version` 开头，两者都要校验。
@@ -102,6 +102,21 @@ python3 tools/audit-padding-rule.py
 python3 tools/audit-tls-version-range.py
 python3 tools/audit-h1-alps-absence.py
 python3 tools/audit-h3-profile-support.py
+# The Core writes the three HTTP/2 framing knobs from profile data instead of
+# inheriting Chromium's C++ default, because a browser build's default and the
+# captures are different claims. This gate checks both directions: no captured
+# connection may carry a greased SETTINGS id or a reserved frame type, and the
+# compiled table must say so for every profile.
+python3 tools/audit-h2-framing.py
+# Every profile gate above compares the compiled table with the captures this
+# repository imported, so an importer that dropped a field would leave both
+# agreeing and both wrong. This cross-checks the nine v9 profile fields against
+# a second, independently collected run of the same protocol: the boundaries it
+# can witness are ECH (119), the ALPS codepoint (135), H3 datagram (120) and the
+# absence of HTTP/2 grease everywhere. The second set is 19 MiB of raw captures
+# and stays outside the repository, so the gate reports 'unavailable' and exits 0
+# without --evidence-dir rather than passing silently.
+python3 tools/audit-v9-profile-fields.py --evidence-dir $PROFILE_EVIDENCE_DIR
 # A new profile is only accepted when all three evidence levels pass: the
 # release's own source at its latest tag, six captured connections per
 # protocol, and the built artifact reproducing them. See section 9.

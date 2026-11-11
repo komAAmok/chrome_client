@@ -123,10 +123,19 @@ class BindingTests(unittest.TestCase):
         self.assertEqual(config.binding,
                          SessionBinding(impersonate="chrome_151", proxy="http://h:1"))
 
-    def test_generation_is_not_part_of_the_transport_binding(self):
+    def test_the_engine_key_is_the_binding_and_nothing_else(self):
+        # ABI v9 removed the cookie-store generation: the store can be read,
+        # written and cleared in place, so a cookie edit no longer asks for a
+        # structurally identical engine. The cache key is therefore exactly the
+        # binding, and two configurations that describe the same transport share
+        # one engine.
         config = EngineConfig(impersonate="chrome_151")
-        self.assertEqual(config.binding, config.replace(generation=7).binding)
-        self.assertNotEqual(config.key, config.replace(generation=7).key)
+        twin = EngineConfig(impersonate="chrome_151")
+        self.assertEqual(config.key, twin.key)
+        self.assertEqual(config.binding, twin.binding)
+        # A field that does change the transport still forks the key.
+        other = EngineConfig(impersonate="chrome_151", proxy="http://h:1")
+        self.assertNotEqual(config.key, other.key)
 
 
 class LeaseTests(unittest.TestCase):
@@ -143,8 +152,8 @@ class LeaseTests(unittest.TestCase):
 
     def test_rebinding_moves_the_pin(self):
         cache = EngineCache(max_engines=4)
-        first = EngineConfig(generation=0)
-        second = EngineConfig(generation=1)
+        first = EngineConfig(impersonate="chrome_151")
+        second = EngineConfig(impersonate="chrome_152")
         lease = cache.acquire(first)
         lease.__enter__()
         try:
@@ -158,11 +167,11 @@ class LeaseTests(unittest.TestCase):
 
     def test_an_eviction_of_a_pinned_slot_is_reported_as_deferred(self):
         cache = EngineCache(max_engines=1)
-        pinned = EngineConfig(generation=0)
+        pinned = EngineConfig(impersonate="chrome_151")
         lease = cache.acquire(pinned)
         lease.__enter__()
         try:
-            cache.get(EngineConfig(generation=1))
+            cache.get(EngineConfig(impersonate="chrome_152"))
             self.assertEqual(cache.stats["evictions"], 1)
             self.assertEqual(cache.stats["deferred"], 1)
         finally:
@@ -215,12 +224,12 @@ class SessionStatsTests(unittest.TestCase):
             with self.assertRaises(chrome_client.InvalidProxyURL):
                 session.binding()
 
-    def test_binding_is_the_engine_cache_key_without_the_generation(self):
+    def test_binding_is_the_engine_cache_key(self):
         with chrome_client.Session() as session:
             binding = session.binding("http://example.invalid/")
             config = session._engine_config(None, None, None, None)
             self.assertEqual(config.binding, binding)
-            self.assertEqual(config.generation, session.stats["generation"])
+            self.assertNotIn("generation", session.stats)
 
     def test_the_sync_path_rebinds_when_cookie_resolution_replaces_the_engine(self):
         """The sync call site must move the pin too -- same reason as async."""
@@ -230,7 +239,7 @@ class SessionStatsTests(unittest.TestCase):
         original = _SlotLease.rebind
 
         def watched(self, slot):
-            calls.append(slot.config.generation)
+            calls.append(slot.config.key)
             return original(self, slot)
 
         _SlotLease.rebind = watched
@@ -243,13 +252,21 @@ class SessionStatsTests(unittest.TestCase):
             _SlotLease.rebind = original
         self.assertTrue(calls, "the sync path never rebound the lease")
 
-    def test_stats_reports_the_generation_the_session_is_on(self):
+    def test_a_caller_jar_edit_does_not_rebuild_the_engine(self):
+        # The measurement that started ABI v9's cookie work: twenty jar edits
+        # used to build twenty engines (builds=20, generation=19) because the
+        # only way to drop a cookie was a fresh store. The store is writable in
+        # place now, so the engine survives the edits.
         with chrome_client.Session() as session:
             session.get(self.base + "/set=sid")
-            session.cookies.clear()
-            session.get(self.base + "/echo")
+            for value in range(5):
+                session.cookies.clear()
+                session.cookies.set("sid", str(value), domain="127.0.0.1",
+                                     path="/")
+                session.get(self.base + "/echo")
             stats = session.stats
-        self.assertGreaterEqual(stats["generation"], 1)
+        self.assertEqual(stats["builds"], 1, stats)
+        self.assertNotIn("generation", stats)
 
     def test_a_closed_session_still_reports_its_last_counters(self):
         session = chrome_client.Session()
@@ -304,37 +321,36 @@ class ConcurrentCookieTests(unittest.TestCase):
         finally:
             session.close()
 
-    def test_cookie_resolution_never_runs_in_parallel(self):
-        """Two threads must not be inside cookie resolution at the same time.
+    def test_cookie_store_writes_never_overlap(self):
+        """Two threads must not be inside a jar-to-store write at once.
 
-        The sequence is read the jar, read the engine's mirror, compare, and
-        possibly replace the engine with a new cookie-store generation.  Two
-        workers interleaving it can each bump the generation and end up on
-        different engines for the same jar, so one of them sends a Cookie
-        header its own engine's store then overrides.  The lock is what makes
-        the sequence atomic, and this measures it directly instead of hoping a
-        lost update shows up as a missing cookie.
+        The write path is several store calls that only make sense together:
+        retire the superseded scopes, then write the new one. ABI v9 removed
+        the read-compare-replace this test used to guard, but the lock still
+        has to cover the pair, so the probe moved to the write itself instead
+        of disappearing with the code it watched.
+
+        The probe sleeps rather than spins: a busy loop keeps the GIL, so two
+        unsynchronised threads would still look serialised and this check
+        would pass on a broken implementation. Sleeping releases the GIL, so a
+        second thread reaches the probe if and only if nothing serialises the
+        callers.
         """
-        from chrome_client._python_impl.cookies import RequestsCookieJar
+        from chrome_client._python_impl import engine as engine_module
 
         state = {"active": 0, "peak": 0}
-        original = RequestsCookieJar.cookie_header
+        original = engine_module.EngineSlot.write_cookie
 
-        def watched(self, url, headers=None):
+        def watched(self, cookie, source_url):
             state["active"] += 1
             state["peak"] = max(state["peak"], state["active"])
             try:
-                # A real yield, not a busy loop: a busy loop keeps the GIL, so
-                # two unsynchronised threads would still look serialised and
-                # this check would pass on a broken implementation.  Sleeping
-                # releases the GIL, so a second thread reaches this point if and
-                # only if nothing serialises the callers.
                 time.sleep(0.002)
-                return original(self, url, headers)
+                return original(self, cookie, source_url)
             finally:
                 state["active"] -= 1
 
-        RequestsCookieJar.cookie_header = watched
+        engine_module.EngineSlot.write_cookie = watched
         session = chrome_client.Session()
         try:
             session.get(self.base + "/set=sid")
@@ -351,18 +367,11 @@ class ConcurrentCookieTests(unittest.TestCase):
             for thread in threads:
                 thread.join(timeout=60)
         finally:
-            RequestsCookieJar.cookie_header = original
+            engine_module.EngineSlot.write_cookie = original
             session.close()
         self.assertEqual(state["peak"], 1,
-                         "cookie resolution overlapped in %d threads"
+                         "cookie store writes overlapped in %d threads"
                          % state["peak"])
-
-    def test_the_cookie_lock_is_not_the_engine_cache_lock(self):
-        session = chrome_client.Session()
-        try:
-            self.assertIsNot(session._cookie_lock, session._engines._lock)
-        finally:
-            session.close()
 
 
 class ExportTests(unittest.TestCase):
@@ -546,7 +555,7 @@ class AsyncParityTests(unittest.TestCase):
         original = _SlotLease.rebind
 
         def watched(self, slot):
-            calls.append(slot.config.generation)
+            calls.append(slot.config.key)
             return original(self, slot)
 
         _SlotLease.rebind = watched

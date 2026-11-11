@@ -264,8 +264,9 @@ ABI v9 item in `docs/NEXT_STEPS.md`.
 | Option | Why |
 | --- | --- |
 | `ja3`, `akamai`, `perk`, TLS/HTTP2 `extra_fp` fields | The profile owns the fingerprint |
-| `cert` (client certificates) | No ABI v8 field |
-| `interface`, `doh_url` | No ABI v8 field |
+| `cert` (client certificates) | **ABI v9 支持**：`mn_engine_set_client_certificate` / `mn_engine_clear_client_certificate`。带口令的私钥仍拒绝 |
+| `interface` | 仍无 ABI 字段，继续抛 `UnsupportedFeature` |
+| `doh_url` | **ABI v9 支持**：`doh_template` + `dns_secure_mode`（模板非空而模式为 0 会被拒绝） |
 | `curl_options` | No libcurl handle exists |
 | `max_recv_speed` | Chromium owns transfer pacing |
 | `referer=` or a `Referer` header | Routed to `URLRequest::SetReferrer`, so it is sent like a real Chrome's |
@@ -563,15 +564,19 @@ this build does not enforce, and the lie would surface later as an unexplained
   The standard table is the fallback for a status line that carries no phrase at
   all. (An earlier revision of this document claimed the opposite -- that the
   phrase was not visible -- which the measurement above contradicts.)
-- `http_version` is `None` unless the status line proves the protocol. ABI v8
-  reports a numeric status plus the header block, and Chromium normalizes every
-  HTTP/2 and HTTP/3 response onto an `HTTP/1.1` status line
-  (`net/spdy/spdy_http_utils.cc` builds `"HTTP/1.1 " + status`), so the status
-  line cannot witness the protocol. Only `HTTP/1.0` is unambiguous (nothing
-  normalizes down to 1.0). Reporting `HTTP/1.1` for an h2 connection -- which is
-  what parsing the status line did -- claimed a fidelity this build cannot
-  observe, so the field reports "not knowable" instead. Exposing the real value
-  needs a new ABI field; it is tracked in `NEXT_STEPS.md`.
+- `http_version` 现在是真值，不再靠状态行推断。ABI v9 的
+  `mn_request_negotiated_protocol` 读 `HttpResponseInfo::connection_info`
+  （`net/http/http_response_info.h:161`），经 `HttpConnectionInfoToCoarse`
+  （`net/http/http_connection_info.cc:127`）归类，所以 h2 与 h3 各自可辨。
+  0.9/1.0/1.1 三个值读原始枚举，因为粗化会把它们并成一个。
+
+  仍然返回 `None` 的情形只有一种：`connection_info` 是 `kUNKNOWN`，那是 Chromium
+  自己不知道（命中 HTTP 缓存时如此）。把它报成 `HTTP/1.1` 才是这条边界要消除的谎报，
+  所以 `MN_HTTP_VERSION_UNKNOWN` 被单独定义并原样透出。
+
+- `ech_status` 的 `FAILED` 不可达：`net/ssl/ssl_info.h` 只记录一个
+  `encrypted_client_hello` 布尔值，「尝试后被拒」与「没尝试」都是 false。桌面端实际
+  返回 `not_attempted`，含义是「没有 ECHConfigList」，不是「平台关闭了 ECH」。
 - `Response.raw` is a small file-like view over the Core body stream, not a
   urllib3 `HTTPResponse`.
 

@@ -21,11 +21,14 @@
 #include "net/base/net_errors.h"
 #include "net/base/request_priority.h"
 #include "net/base/upload_bytes_element_reader.h"
+#include "net/http/http_connection_info.h"
 #include "net/http/http_request_headers.h"
+#include "net/http/http_response_info.h"
 #include "net/http/http_response_headers.h"
 #include "net/ssl/ssl_info.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
 #include "net/url_request/redirect_info.h"
+#include "minicronet/profile_table_generated.h"
 #include "net/url_request/url_request_context.h"
 #include "url/gurl.h"
 #include "url/origin.h"
@@ -237,7 +240,44 @@ void Request::StartOnNetworkThread() {
     }
     headers.SetHeader(name, value);
   }
-  request_->SetExtraRequestHeaders(headers);
+  // The captured browser header set for this profile, applied through the same
+  // channel the caller's own headers use. This is the hook the proposal names:
+  // SetExtraRequestHeaders is what URLRequestHttpJob merges into the request,
+  // so Accept-CH negotiation sees a request a real browser would have sent
+  // rather than one the binding patched up after the fact.
+  //
+  // The caller's headers win: they were set above, so a value here only fills a
+  // field the caller left alone. That ordering is the whole precedence rule --
+  // captured set lowest, then session headers, then request headers.
+  const RuntimeProfileData *profile = engine_->profile().data();
+  if (profile && engine_->inject_client_hints()) {
+    const BrowserHeaderSet &set = GetBrowserHeaderSet(profile->browser_header_set);
+    net::HttpRequestHeaders captured;
+    for (const BrowserHeader &entry : set.headers) {
+      const std::string_view name(entry.name);
+      // Two fields describe the host, not the release, so they are rewritten
+      // from the same mn_platform_t that decides the User-Agent group. Sending
+      // the captured value would announce the Windows machine the capture ran
+      // on from a Linux build -- a louder contradiction than a missing hint.
+      if (base::EqualsCaseInsensitiveASCII(name, "user-agent")) {
+        captured.SetHeader(name, engine_->user_agent());
+        continue;
+      }
+      if (base::EqualsCaseInsensitiveASCII(name, "sec-ch-ua-platform")) {
+        captured.SetHeader(name, engine_->platform_hint());
+        continue;
+      }
+      captured.SetHeader(name, entry.value);
+    }
+    // Merge rather than replace: HttpRequestHeaders::MergeFrom keeps every
+    // header the caller already set and only adds the ones still missing.
+    captured.MergeFrom(headers);
+    request_->SetExtraRequestHeaders(captured);
+  } else {
+    // chromium_current has no captured set; the caller's headers are the whole
+    // request header block, exactly as before v9.
+    request_->SetExtraRequestHeaders(headers);
+  }
   if (upload_mode_ == MN_UPLOAD_FIXED) {
     auto reader = std::make_unique<net::UploadBytesElementReader>(
         base::span<const uint8_t>(body_));
@@ -365,6 +405,51 @@ void Request::OnResponseStarted(net::URLRequest *request, int net_error) {
     return;
   }
 
+  // Capture what the v9 getters report, before anything can reset request_.
+  // connection_info's default is kUNKNOWN, which is a real answer: Chromium
+  // reports it when it genuinely does not know (a cache hit, for example), and
+  // calling that HTTP/1.1 would be the misreport these getters exist to end.
+  //
+  // 0.9/1.0/1.1 keep their own values because coarsening folds them into one;
+  // everything above HTTP/1.1 goes through HttpConnectionInfoToCoarse so draft
+  // HTTP/2 and every QUIC version are classified without a switch here.
+  const net::HttpConnectionInfo connection_info =
+      request->response_info().connection_info;
+  switch (connection_info) {
+  case net::HttpConnectionInfo::kHTTP0_9:
+    negotiated_protocol_.store(MN_HTTP_VERSION_0_9);
+    break;
+  case net::HttpConnectionInfo::kHTTP1_0:
+    negotiated_protocol_.store(MN_HTTP_VERSION_1_0);
+    break;
+  case net::HttpConnectionInfo::kHTTP1_1:
+    negotiated_protocol_.store(MN_HTTP_VERSION_1_1);
+    break;
+  default:
+    switch (net::HttpConnectionInfoToCoarse(connection_info)) {
+    case net::HttpConnectionInfoCoarse::kHTTP1:
+      negotiated_protocol_.store(MN_HTTP_VERSION_1_1);
+      break;
+    case net::HttpConnectionInfoCoarse::kHTTP2:
+      negotiated_protocol_.store(MN_HTTP_VERSION_2);
+      break;
+    case net::HttpConnectionInfoCoarse::kQUIC:
+      negotiated_protocol_.store(MN_HTTP_VERSION_3);
+      break;
+    case net::HttpConnectionInfoCoarse::kOTHER:
+      negotiated_protocol_.store(MN_HTTP_VERSION_UNKNOWN);
+      break;
+    }
+    break;
+  }
+  // MN_ECH_FAILED is unreachable by construction: SSLInfo carries one boolean,
+  // false both for "tried and rejected" and for "never tried". The two values
+  // here are the whole reachable range.
+  ech_status_.store(request->response_info().ssl_info.encrypted_client_hello
+                        ? MN_ECH_SUCCESS
+                        : MN_ECH_NOT_ATTEMPTED);
+  response_started_.store(true);
+
   int status_code = request->GetResponseCode();
   std::string headers;
   if (net::HttpResponseHeaders *response_headers =
@@ -461,6 +546,24 @@ void Request::PauseRead() {
   // pending resume and keep reading.
   read_state_.store(kReadReading);
   PostReadMore();
+}
+
+mn_result_t Request::NegotiatedProtocol(
+    mn_http_version_t *out_version) const {
+  if (!response_started_.load()) {
+    return MN_ERROR_INVALID_STATE;
+  }
+  *out_version =
+      static_cast<mn_http_version_t>(negotiated_protocol_.load());
+  return MN_OK;
+}
+
+mn_result_t Request::EchStatus(mn_ech_status_t *out_status) const {
+  if (!response_started_.load()) {
+    return MN_ERROR_INVALID_STATE;
+  }
+  *out_status = static_cast<mn_ech_status_t>(ech_status_.load());
+  return MN_OK;
 }
 
 mn_result_t Request::ResumeRead() {

@@ -27,7 +27,7 @@ from http.cookiejar import Cookie as Cookie
 from http.cookies import Morsel
 from typing import Any, Dict, Iterable, Iterator, List, Mapping, MutableMapping, Optional, Tuple, Union
 
-from typing_extensions import TypeAlias
+from typing_extensions import Protocol, TypeAlias
 
 from ._types import HeadersLike
 
@@ -262,6 +262,20 @@ def morsel_to_cookie(morsel: Morsel) -> cookielib.Cookie:
     ...
 
 
+class _CookieSink(Protocol):
+    """What a write-through target must provide.
+
+    ``RequestsCookieJar`` calls exactly these three; each mirrors one kind of
+    mutation so no jar edit can be visible to the caller and invisible to the
+    store.
+    """
+
+    def write_cookie(self, cookie: cookielib.Cookie, source_url: str) -> None: ...
+
+    def remove_cookie(self, domain: str, path: str, name: str) -> None: ...
+
+    def clear_cookies(self) -> None: ...
+
 class RequestsCookieJar(  # type: ignore[misc]  # cookielib and Mapping disagree on __iter__; requests has the same shape
     cookielib.CookieJar, MutableMapping[str, str]
 ):
@@ -287,12 +301,19 @@ class RequestsCookieJar(  # type: ignore[misc]  # cookielib and Mapping disagree
 
     revision: int
 
-    def __init__(self, policy: Optional[Any] = None) -> None:
-        """Creates an empty jar.
+    def __init__(
+        self,
+        policy: Optional[Any] = None,
+        sink: Optional[_CookieSink] = None,
+    ) -> None:
+        """Creates the jar.
 
         Args:
             policy: A ``cookielib`` cookie policy; the default policy is used
                 when omitted.
+            sink: Write-through target. When set, every mutation is pushed into
+                it so the jar and the store requests actually send from cannot
+                disagree; the session installs a write-through sink on it.
         """
         ...
 
