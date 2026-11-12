@@ -273,6 +273,14 @@ class SessionOptions(TypedDict, total=False):
     ``chrome_client.session(**kwargs)`` and ``async_session(**kwargs)`` forward
     to those constructors, so unpacking this TypedDict gives the same
     completion there.
+
+    ``max_clients`` is **not** listed here even though ``async_session`` accepts
+    it: this TypedDict is shared by both constructors, and ``Session`` has no
+    such parameter. Listing it made ``Session(**options)`` type-check and then
+    raise ``TypeError: BaseSession.__init__() got an unexpected keyword
+    argument 'max_clients'`` at run time. It lives on
+    ``AsyncSession.max_clients`` and in ``async_session``'s own signature
+    instead.
     """
 
     impersonate: Optional[Impersonate]
@@ -312,4 +320,3 @@ class SessionOptions(TypedDict, total=False):
     curl_options: Optional[Mapping[Any, Any]]
     max_engines: int
     response_class: ResponseClass
-    max_clients: Optional[int]

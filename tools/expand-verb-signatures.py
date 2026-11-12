@@ -287,8 +287,20 @@ def main() -> int:
 
     api_jobs = [(None, verb, "def ", "Response", api_spec, api_docs, leading, None)
                 for verb, leading in LEADING_API.items()]
+    # async_session() forwards to AsyncSession, which accepts one keyword that
+    # BaseSession does not: max_clients. Driving this signature from init_spec
+    # alone made the stub omit it, so a caller following the stub hit
+    # "TypeError: unexpected keyword argument 'max_clients'" on the only
+    # constructor documented to take it.
+    async_init_spec = init_spec + [
+        ("max_clients", "Optional[int]", "None")]
+    async_init_docs = dict(init_docs)
+    async_init_docs["max_clients"] = (
+        "Maximum concurrently in-flight requests, or None for unbounded. "
+        "Only AsyncSession accepts it; Session has no such limit.")
     api_jobs.append((None, "async_session", "def ", "AsyncSession",
-                     init_spec, init_docs, [p[0] for p in init_spec], None))
+                     async_init_spec, async_init_docs,
+                     [p[0] for p in async_init_spec], None))
     api_jobs.append((None, "session", "def ", "Session",
                      init_spec, init_docs, [p[0] for p in init_spec], None))
 

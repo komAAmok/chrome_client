@@ -307,6 +307,26 @@ def proxy_bypass(host: str) -> bool:
     ...
 
 
+def environ_proxy_map() -> Optional[Dict[str, str]]:
+    """Returns every ``*_proxy`` environment variable, keyed by scheme.
+
+    One scan serves both the guard and the lookup: they used to be separate
+    functions that each walked the environment, so a request with a proxy set
+    paid for two passes.
+
+    Returns:
+        ``{scheme: url}``, or ``None`` when no proxy variable carries a value. A
+        variable set to the empty string is treated as absent, and ``None``
+        rather than ``{}`` keeps that distinguishable from "nothing configured".
+
+    Example:
+        >>> environ_proxy_map()      # doctest: +SKIP
+        {'http': 'http://127.0.0.1:8080'}
+    """
+    ...
+
+
+
 def get_environ_proxies(url: str, no_proxy: Optional[str] = None) -> Dict[str, str]:
     """Returns the proxy environment variables that apply to a URL.
 

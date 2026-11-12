@@ -105,7 +105,7 @@ whole thing, including why the four-assertion chain was an artefact of running t
 wrong command.
 
 **A manifest `sha256` is a reproducibility claim**, given the toolchain above:
-`0.2.10` was rebuilt from scratch on all nine platforms from this commit.
+`0.2.11` was rebuilt from scratch on all nine platforms from this commit.
 `core/build-args/<target>.snapshot.txt` and
 `python3 tools/record-core-build-args.py --check` guard against a rebuild that
 silently changes the configuration.

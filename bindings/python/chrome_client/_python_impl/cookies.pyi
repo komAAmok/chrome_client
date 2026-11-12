@@ -643,11 +643,19 @@ class RequestsCookieJar(  # type: ignore[misc]  # cookielib and Mapping disagree
         """
         ...
 
-    def absorb_set_cookie(self, url: str, lines: Iterable[str]) -> "RequestsCookieJar":
+    def absorb_set_cookie(
+        self, url: str, lines: Iterable[str], mirror: bool = True
+    ) -> "RequestsCookieJar":
         """Records ``Set-Cookie`` lines observed for ``url``.
 
         Args:
             url: The URL the response came from.
+            mirror: Whether to also build and return a jar holding what this
+                response set. Defaults to ``True``, which is the documented
+                contract. The session jar passes ``False``: it needs the
+                store write, not a throwaway copy nothing reads, and that
+                second extraction measured 47 us on a plain jar and
+                270-500 us with a write-through sink attached.
             lines: One string per ``Set-Cookie`` field.
 
         Deletions land on this jar, not on the returned one: ``cookielib``

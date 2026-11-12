@@ -788,6 +788,23 @@ class RedirectTests(Base):
             session.get(self.url + "redirect/2")
             self.assertEqual(session.cookies.get_dict(), {"hop2": "y", "hop1": "y"})
 
+    def test_every_hop_reports_the_request_that_produced_it(self):
+        """history[i].request must describe hop i, not the original request.
+
+        ``Response.history`` in requests is a list of responses, each carrying the
+        request that produced it, so a caller can tell which hop set which cookie.
+        Every entry used to share the caller's ``PreparedRequest``, so a 3-hop
+        chain reported the same url three times -- measured: request.url was
+        "redirect?n=3" on all three hops.
+        """
+        with chrome_client.Session() as session:
+            response = session.get(self.url + "redirect/3")
+            self.assertEqual(
+                [hop.request.url for hop in response.history],
+                [self.url + "redirect/3", self.url + "redirect/2",
+                 self.url + "redirect/1"])
+            self.assertEqual(response.request.url, self.url + "redirect/3")
+
     def test_allow_redirects_false_returns_the_redirect(self):
         with chrome_client.Session() as session:
             response = session.get(self.url + "redirect/1", allow_redirects=False)

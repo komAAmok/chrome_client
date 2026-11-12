@@ -20,7 +20,7 @@
 | Chromium 检出 | `58bcc148f76b8975bbe59f1a6012d4ae409d62a9` = `CHROMIUM_REVISION` | `git -C $CHROMIUM_SRC rev-parse HEAD` |
 | 九个 out 目录 | 全部存在且有 `build.ninja`（1.1–1.3 GB 各自） | `ls $CHROMIUM_SRC/out` |
 | 热重建代价 | 只改 `core/source/minicronet/*` 时 48.6 秒（20 步，含重编 `engine.o` 与 SOLINK） | `ninja -C out/MiniCronet-linux-x86_64 libminicronet.so` |
-| 交叉工具链 | `toolchains/{osxcross,macos-sdk}`、`xwin-winsysroot` 均在 | `ls /home/sj/chromium` |
+| 交叉工具链 | `toolchains/{osxcross,macos-sdk}`、`xwin-winsysroot` 均在 | `ls $CHROMIUM_TOOLCHAIN` |
 | Rust | `cargo/rustc 1.99.1`，在 `$HOME/.cargo/bin`（`~/.profile` 里那行 `. "$HOME/.cargo/env"` 指向不存在的文件，所以交互 shell 里 `cargo` 不在 PATH） | `$HOME/.cargo/bin/cargo --version` |
 | 32 位布局 | `cc -m32 -S` 可用（freestanding），但**完整 `cc -m32` 编译缺 multilib 头**（`bits/libc-header-start.h` 不存在）。因此 32 位结构体尺寸只能用不依赖 libc 头的探针核对，不能跑 `-m32` 的完整编译 | `cc -m32 -c /tmp/probe32.c` |
 

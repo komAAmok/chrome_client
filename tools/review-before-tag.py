@@ -113,12 +113,24 @@ STEPS = [
     ("leaks", "leak-probe", ["python3", "tools/leak-probe.py",
                              "--out", "{release}/leak.json"],
      "needs the linux-x86_64 Core on the build host"),
+    # leak-probe compares two batches, which is what a release gate needs, but the
+    # cyclic collector runs between those batches: a reference cycle is collected
+    # and the growth disappears. Measured before the fix in docs/PERF_TEST_AND_LEAK.md
+    # section 5: 200 create/request/close cycles leaked 401 descriptors with the
+    # collector disabled and looked flat with it enabled. leak-hunt runs the same
+    # shapes with a per-request slope, a descriptor-kind breakdown and one shape
+    # (churn-nogc) that turns the collector off on purpose.
+    ("leaks", "leak-hunt", ["python3", "tools/leak-hunt.py",
+                            "--requests", "20", "--batches", "6",
+                            "--repeat", "2",
+                            "--out", "{release}/leak-hunt.json"],
+     "needs the linux-x86_64 Core on the build host"),
 ]
 
 #: Steps that need the Core on the dynamic loader path.
 NEEDS_CORE = {
     "rust-check", "rust-clippy", "rust-tests", "python36-artifact", "python-tests",
-    "wire-smoke", "bench", "leak-probe",
+    "wire-smoke", "bench", "leak-probe", "leak-hunt",
 }
 
 
@@ -241,10 +253,23 @@ def main():
         # other's numbers, and so the numbers a tag was cut on stay attributable
         # to that tag.
         "release": "docs/review-%s" % release_tag(),
+        # The path a step is actually given. It has to be absolute, because the
+        # step runs from the repository root and the binary lives in a Chromium
+        # tree that may be anywhere.
         "smoke_binary": str(smoke_binary()),
     }
+    # The context that gets COMMITTED, with the one absolute path replaced by a
+    # placeholder. AGENTS.md section 4 forbids a developer's home directory in
+    # anything committed, and this file is committed: the 0.2.9 report carried
+    # /home/<user>/chromium/... because no gate reads a JSON blob, which is
+    # exactly how a rule survives in prose and dies in a data file. Two dicts
+    # rather than one, because substituting the placeholder would break the
+    # step that needs the real path.
+    recorded_context = dict(context)
+    recorded_context["smoke_binary"] = "$CHROMIUM_SRC/out/%s/%s" % (
+        smoke_binary().parent.name, smoke_binary().name)
     report = {"environment": environment(), "groups": {}, "started": time.time(),
-              "context": context}
+              "context": recorded_context}
     failures = 0
     for group, name, argv, reason in STEPS:
         if args.only and name not in args.only:

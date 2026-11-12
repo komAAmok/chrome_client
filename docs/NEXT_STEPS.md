@@ -19,7 +19,7 @@
 
 ## 阶段 0：Core 重建链（已完成）
 
-**结论**：九个平台已全部重建成功，产物带 `minicronet/0.2.10` 版本串。
+**结论**：九个平台已全部重建成功，产物带 `minicronet/0.2.11` 版本串。
 这一节原本断言「产物不可从零重建」，那个结论是错的，错在哪儿写在下面。
 
 ### 更正：gn gen 一直可以跑通，缺的是 pkg-config
@@ -55,7 +55,7 @@ See //build/config/linux/nss/BUILD.gn:11:3: whence pkg_config was called.
 | --- | --- | --- |
 | pkgconf 1.8.1 | Linux 目标解析 NSS（`//build/config/linux/nss/BUILD.gn:11`） | `apt-get download pkgconf pkgconf-bin libpkgconf3` 后 `dpkg-deb -x` 到 `/tmp/pkgconf/root` |
 | ripgrep 14.1.0 | Windows 脚本的 Android/Java/JNI 泄漏检查 | `apt-get download ripgrep` 后解包，`PATH` 加进去 |
-| xwin-winsysroot | Windows 三目标的 MSVC 头文件与库 | 本机已有 `/home/sj/chromium/xwin-winsysroot`（1.5 GB） |
+| xwin-winsysroot | Windows 三目标的 MSVC 头文件与库 | 放在 `$CHROMIUM_TOOLCHAIN/xwin-winsysroot`（约 1.5 GB） |
 | Chromium 检出 + 已生成的 `build.ninja` | 全部九个 | `CHROMIUM_SRC`；缺 `build.ninja` 时用上面的 gn 命令生成 |
 
 完整流程（`docs/BUILD.md` 有更详细的版本）：
@@ -63,9 +63,9 @@ See //build/config/linux/nss/BUILD.gn:11:3: whence pkg_config was called.
 ```bash
 export PATH=/tmp/rgpkg/root/usr/bin:/tmp/pkgconf/root/usr/bin:$PATH
 export LD_LIBRARY_PATH=/tmp/pkgconf/root/usr/lib/x86_64-linux-gnu
-export CHROMIUM_SRC=/home/sj/chromium/src
-export CHROMIUM_TOOLCHAIN=/home/sj/chromium
-export XWIN_ROOT=/home/sj/chromium/xwin-winsysroot
+export CHROMIUM_SRC=$HOME/chromium/src
+export CHROMIUM_TOOLCHAIN=$HOME/chromium
+export XWIN_ROOT=$CHROMIUM_TOOLCHAIN/xwin-winsysroot
 
 tools/sync-core.sh                       # 应用 15 个补丁 + 写版本头
 
@@ -90,21 +90,29 @@ python3 tools/audit-core-payloads.py
 python3 tools/record-core-build-args.py --check
 ```
 
-### 0.2.10 的实测结果
+### 0.2.11 的实测结果
 
 | 平台 | 产物 | 大小 |
 | --- | --- | --- |
-| linux-x86 | `libminicronet.so` | 8,063,628 |
-| linux-x86_64 | `libminicronet.so` | 8,368,280 |
-| linux-armv7 | `libminicronet.so` | 6,082,252 |
-| linux-arm64 | `libminicronet.so` | 8,013,312 |
-| macos-x86_64 | `libminicronet.dylib` | 7,958,968 |
-| macos-arm64 | `libminicronet.dylib` | 7,310,880 |
-| windows-x86 | `minicronet.dll` | 7,501,312 |
-| windows-x86_64 | `minicronet.dll` | 9,416,192 |
-| windows-arm64 | `minicronet.dll` | 8,118,784 |
+| linux-x86 | `libminicronet.so` | 8,256,760 |
+| linux-x86_64 | `libminicronet.so` | 8,654,384 |
+| linux-armv7 | `libminicronet.so` | 6,245,872 |
+| linux-arm64 | `libminicronet.so` | 8,301,280 |
+| macos-x86_64 | `libminicronet.dylib` | 8,131,568 |
+| macos-arm64 | `libminicronet.dylib` | 7,476,544 |
+| windows-x86 | `minicronet.dll` | 7,660,032 |
+| windows-x86_64 | `minicronet.dll` | 9,622,016 |
+| windows-arm64 | `minicronet.dll` | 8,319,488 |
 
-九个产物 `strings` 逐个核对，版本串都是 `minicronet/0.2.10`，ABI 8 不变。
+九个产物 `strings` 逐个核对，版本串都是 `minicronet/0.2.11`，ABI 9 不变。
+
+**0.2.11 的重建还修掉了一个门禁缺陷**：`tools/audit-core-linux.sh` 与
+`tools/audit-core-windows.sh` 各自手写了一份导出符号表，ABI v9 只更新了
+`audit-core-binaries.sh` 与 `audit-core-macos.sh`，于是这两份还停在 v8 的 20 个符号，
+对任何正确的 v9 产物都会失败——v9 的 Linux/Windows 产物因此从未被这两个脚本审计过。
+现在三处都改为读 `core/exports/minicronet.exports`（唯一声明处），符号数也从列表推导
+而不是写死「twenty」。变异测试：从 exports 删一个符号、加一个不存在的符号，两个方向都
+以 exit 1 失败。
 
 ### 配置快照
 
@@ -430,6 +438,10 @@ CI 确实存在，必须指出它跑了哪些审计。
 7. CI 和发布包验收
 ```
 
+性能相关的两项 ABI 改动不在上面这条链里，它们各自是一次独立的 ABI 版本推进：
+「合并首包等待」可先做（只增不改、风险集中在一处），「批量唤醒投递」要等它的观测
+数据稳定后再动。详见本文「提案：两项性能 ABI 改动」。
+
 ## 打 tag 前必须跑 review-before-tag.py（§13）
 
 `AGENTS.md` §13 现在要求每次打 tag 前跑一次全量 review，产出的 `summary.json`、
@@ -625,6 +637,123 @@ ECH 只暴露状态（第 2.5 节）：桌面端 Chromium 的 `EchMode` 恒为 `
 
 提案没有登记、也不应等 v9 的三项：`headers={"User-Agent": None}` 的删除语义、
 `tools/audit-python-stubs.py` 的硬编码清单、`bindings/python36` 的空壳门禁与 `include` 路径。
+
+## 提案：两项性能 ABI 改动（合并首包等待 / 批量唤醒投递）
+
+这两项来自同步与异步两侧的压测结论（`docs/SYNC_CONCURRENCY.md`、
+`docs/ASYNC_CONCURRENCY.md`），它们的共同点是：**瓶颈已经不在绑定层**。
+绑定层能做的都做完了——cookie 路径、代理解析、netrc 展开、header 解析都已优化并
+有回归测试；剩下的开销在 ABI 的调用形状里。
+
+登记在这里是为了让它们可被检索、可被排期，而不是留在两份性能文档的末尾。
+**两项都不改变现有语义**，只减少每请求的往返次数；都按 ABI v9 的方式同步
+`MN_ABI_VERSION`、三份导出表与九个平台产物。
+
+### 一、现状：每请求两次阻塞等待
+
+同步路径实测（`docs/SYNC_CONCURRENCY.md` §5.5，1 KiB 响应，300 请求）：
+
+| 步骤 | p50 | 占请求 |
+| --- | --- | --- |
+| `start_stream`（等响应头） | 1.12 ms | **51%** |
+| `read_body`（等 body） | 0.56 ms | **26%** |
+| Python 侧全部 | 0.24 ms | 11% |
+
+两次等待是 `mn_request_start` 之后 `PyRequest::start_stream` 与 `read_body` 各自
+`Condvar::wait_timeout(WAIT_SLICE)` 一次。响应头与 body 在 Core 侧由同一个
+`OnCompleted`/`OnReadCompleted` 序列驱动，绑定层却要醒来两次。
+
+异步侧同理：`notify_scheduled` 是每请求一个 `AtomicBool`，每次 Core 事件唤醒一次
+`call_soon_threadsafe`，实测每请求 1.7 次唤醒、`notify()` p50 18.7 us，
+`notify` 之间的间隔总计 583 ms / 512 请求。
+
+### 二、提案 1：一次调用取回首包 + 首块 body
+
+```c
+/* 新增，不改变既有符号语义 */
+typedef struct mn_response_head {
+  uint32_t size;            /* = sizeof(mn_response_head_t) */
+  uint32_t version;         /* = MN_ABI_VERSION */
+  int32_t  status_code;
+  int32_t  http_version;
+  size_t   header_bytes;
+  const uint8_t *headers;   /* 仅本次调用期间有效 */
+  size_t   body_bytes;      /* 首个 body 块，可能为 0 */
+  const uint8_t *body;      /* 仅本次调用期间有效 */
+  int32_t  body_complete;   /* 1 = 整个响应已结束 */
+} mn_response_head_t;
+
+MN_EXPORT mn_result_t MN_CALL
+mn_request_await_head(mn_request_t *request, uint64_t timeout_ms,
+                      mn_response_head_t *out_head);
+```
+
+语义：等价于「等到 `on_response` 与第一次 `on_body`（或完成）都到达」，
+在 Core 的网络线程上一次装好，只唤醒等待线程一次。
+
+**收益**：同步单请求约 **0.5 ms**（两次等待合并为一次，`read_body` 在首块已到的
+情况下退化为一次 `try_next`）。按当前 2.1 ms 的 p50 计，约 **-24%**。
+
+**代价与风险**：
+
+- 需要 Core 记录「首块是否已随头一起到达」，`Request::StartOnNetworkThread` 里
+  的 `OnResponseStarted` 回调要缓存首块。
+- `body` 指针只在调用期间有效，与现有 `on_body` 的契约一致，不新增生命周期规则。
+- 流式路径（`stream=True`）不受影响：它本来就不该等 body。
+- 不改任何既有导出符号，旧调用方零改动。
+
+### 三、提案 2：批量唤醒投递
+
+```c
+/* 新增 */
+typedef void(MN_CALL *mn_engine_wakeup_fn)(void *user_data,
+                                           mn_request_t **requests,
+                                           size_t count);
+
+MN_EXPORT mn_result_t MN_CALL
+mn_engine_set_wakeup_batch(mn_engine_t *engine,
+                           mn_engine_wakeup_fn callback, void *user_data,
+                           uint32_t max_batch);
+```
+
+语义：Engine 把多个请求的就绪事件攒到一个批次里投递，绑定层一次
+`call_soon_threadsafe` 唤醒多个 `_AsyncState`。批次由 Core 侧的空闲判定驱动
+（例如队列为空或达到 `max_batch` 时投递），不引入固定延迟。
+
+**收益**：异步 512 并发下唤醒次数从约 1.7 次/请求降到接近 1 次/批。按实测
+`notify` 总耗时 22.4 ms、间隔总计 583 ms 计，**循环停摆峰值有望从 105 ms 降到
+数十毫秒量级**。这是目前异步侧唯一还没被消除的结构性开销。
+
+**代价与风险**：
+
+- `notify_scheduled` 的语义从「每请求一个」变成「每批次一个」，Rust 侧的去重逻辑
+  要重写；这是**最大的一处风险**，需要单独设计而不是顺手改。
+- 引入批次意味着单请求的唤醒可能被延迟到同批其它请求就绪，**必须实测尾部延迟**
+  （p99/p999）是否退化，退化则不可接受。
+- 批次投递失败（loop 已关闭）时要有降级路径，不能丢事件。
+
+### 四、建议顺序与判据
+
+| 顺序 | 项 | 前置条件 | 验收判据 |
+| --- | --- | --- | --- |
+| 1 | 提案 1（合并首包等待） | 无。不改既有符号 | 同步 p50 下降 ≥ 15%；`stalled_consumer_isolation` 不退步；五种泄漏形态仍 flat |
+| 2 | 提案 2（批量唤醒） | 提案 1 落地并观测稳定 | 512 并发循环停摆峰值下降 ≥ 40%，**且 p99 不退化** |
+
+提案 1 先做，因为它只增不改、收益确定、风险集中在 Core 一处。提案 2 的批次语义
+会影响所有异步请求的唤醒时机，应当在提案 1 的观测数据稳定后再动。
+
+### 五、明确不在本提案内的事
+
+- **不**为了性能放宽任何 `fail-closed` 行为（`UnsupportedFeature` 的触发条件不变）。
+- **不**引入固定延迟来「攒批」（那会直接抬高 p50）。
+- **不**改变 `mn_request_callbacks_t` 的既有回调语义；新入口是并存的第二条路径。
+- 绑定层内部那点剩余开销（`os.getpid()` 5.3 us 做 fork 检测、`engines.get` 7 us）
+  **不值得**为此改 ABI：`os.register_at_fork` 能省掉 `getpid()`，但 `EngineCache` 是
+  每会话实例，注册/注销回调与「缓存已销毁」的竞态要处理的复杂度远大于 5.3 us 的收益。
+  这条写在这里是为了避免以后有人重复评估。
+
+---
+
 ## 已定位：`unittest discover` 的两条失败记录都不成立，真正的问题是运行时长
 
 第五轮把前四轮留下的两条「已知缺陷」查到底了。**两条都不是产品缺陷，也不是测试缺陷**，

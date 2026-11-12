@@ -245,6 +245,11 @@ class PreparedRequest(object):
         self.body = None
         self.hooks = {"response": []}
         self._cookies = None
+        #: Cookies the caller supplied for THIS request only, as opposed to the
+        #: session jar merged into _cookies for requests-compatibility. The store
+        #: already holds the session own, so only these are written through per
+        #: request (see BaseSession._resolve_cookies).
+        self._cookie_additions = None
         #: Set when ``body`` must be uploaded chunk by chunk.
         self.stream_body = False
         #: Emission order for headers, when a caller pins one.
@@ -261,6 +266,8 @@ class PreparedRequest(object):
         clone.url = self.url
         clone.headers = self.headers.copy() if self.headers is not None else None
         clone._cookies = self._cookies.copy() if self._cookies is not None else None
+        clone._cookie_additions = (list(self._cookie_additions)
+                                   if self._cookie_additions is not None else None)
         clone.body = self.body
         clone.hooks = self.hooks
         clone.stream_body = self.stream_body

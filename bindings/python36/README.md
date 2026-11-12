@@ -472,7 +472,10 @@ async def main():
 asyncio.run(main())
 ```
 
-`max_clients` 限制同时在途的请求数。进程池请使用 `spawn` 或 `forkserver`：Engine
+`max_clients` 限制**同时被准入的请求数**：`stream=False` 时它覆盖整个响应，
+`stream=True` 时只覆盖到响应头，之后的 body 读取在门外（详见
+[兼容边界](https://github.com/komAAmok/chrome_client/blob/main/docs/COMPATIBILITY_BOUNDARY.md)）。
+进程池请使用 `spawn` 或 `forkserver`：Engine
 存在后进程已是多线程且 Chromium 线程持锁，`fork()` 可能在子进程执行任何 Python
 代码之前就死锁。
 

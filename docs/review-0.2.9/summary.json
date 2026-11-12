@@ -1,7 +1,7 @@
 {
   "context": {
     "release": "docs/review-0.2.9",
-    "smoke_binary": "/home/sj/chromium/src/out/MiniCronet-linux-x86_64/minicronet_smoke"
+    "smoke_binary": "$CHROMIUM_SRC/out/MiniCronet-linux-x86_64/minicronet_smoke"
   },
   "environment": {
     "core": "core/binaries/linux-x86_64",

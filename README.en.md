@@ -452,9 +452,12 @@ async def main():
 asyncio.run(main())
 ```
 
-`max_clients` bounds in-flight requests. Use `spawn` or `forkserver` for process
-pools: once an Engine exists the process is multi-threaded with Chromium threads
-holding locks, so `fork()` can deadlock the child before it runs any Python.
+`max_clients` bounds **admitted requests**. With `stream=False` it covers the whole
+response; with `stream=True` it covers only up to the headers, and the body is
+read outside the gate (see [the compatibility boundary](https://github.com/komAAmok/chrome_client/blob/main/docs/COMPATIBILITY_BOUNDARY.md)).
+Use `spawn` or `forkserver` for process pools: once an Engine exists the process is
+multi-threaded with Chromium threads holding locks, so `fork()` can deadlock the
+child before it runs any Python.
 
 Chromium allows at most 6 concurrent HTTP/1.1 connections per host group
 (measured: exactly 6 sockets in flight against one host, and throughput rises

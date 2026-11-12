@@ -1,0 +1,25 @@
+# Core build configuration snapshot: windows-x86_64
+#
+# THIS IS A HISTORICAL RECORD, NOT A RECIPE.
+#
+# The committed args.gn cannot pass gn gen (docs/LESSONS.md #48,
+# stage 0 in docs/NEXT_STEPS.md). This file records what the
+# artifact was actually built with, recovered from the generated
+# buildflag headers in the gn output directory.
+#
+# Reproduce with: python3 tools/record-core-build-args.py
+
+[target]
+name = windows-x86_64
+target_cpu = x64
+target_os = win
+
+[compile_flags]
+CAN_UNWIND_WITH_FRAME_POINTERS = 0
+CFI_CAST_CHECK = 0
+CFI_DIAG = 0
+CFI_ICALL_CHECK = 0
+DCHECK_IS_CONFIGURABLE = 0
+ENABLE_PROFILING = 0
+EXCLUDE_UNWIND_TABLES = 1
+EXPENSIVE_DCHECKS_ARE_ON = 0

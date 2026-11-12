@@ -56,6 +56,24 @@ BUILDFLAG_HEADERS = (
 #: Per-target identity. The rest of args.gn is shared by all nine builds;
 #: these two are the only ones that differ, so they are recorded explicitly
 #: instead of being copied from one target to another.
+def _build_dir_name(target):
+    """Returns the gn output directory name for *target*.
+
+    Kept beside TARGETS rather than derived, because the mapping is not a rule:
+    Linux and macOS spell it out in full, Windows abbreviates the platform.
+    tools/install-core-binaries.py holds the same table; if the two disagree the
+    audit reads a directory the installer never wrote, and both stay quiet.
+
+    Args:
+        target: A key of TARGETS, e.g. "windows-x86_64".
+
+    Returns:
+        The directory name under $CHROMIUM_SRC/out, e.g. "MiniCronet-win-x86_64".
+    """
+    if target.startswith("windows-"):
+        return "MiniCronet-win-" + target[len("windows-"):]
+    return "MiniCronet-" + target
+
 TARGETS = {
     "linux-x86": ("x86", "linux"),
     "linux-x86_64": ("x64", "linux"),
@@ -135,7 +153,13 @@ def main(argv):
     skipped = []
 
     for target in sorted(TARGETS):
-        out_dir = chromium / "out" / ("MiniCronet-" + target)
+        # The build directory is not "MiniCronet-<target>": Windows uses
+        # "MiniCronet-win-<arch>", so the three Windows targets resolved to a
+        # directory that never exists and were reported as "skipped" on every
+        # run. A skip that is really a wrong path is indistinguishable from a
+        # machine that never built them, which is how a gate keeps passing
+        # while covering six of nine artifacts.
+        out_dir = chromium / "out" / _build_dir_name(target)
         if not out_dir.is_dir():
             skipped.append(target)
             continue

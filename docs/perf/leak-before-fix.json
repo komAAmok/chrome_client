@@ -1,0 +1,165 @@
+{
+  "batches": 5,
+  "failures": 1,
+  "requests_per_batch": 20,
+  "shapes": [
+    {
+      "batches": 5,
+      "fd_kinds_last": {
+        "anon-inode": 1,
+        "eventfd": 2,
+        "eventpoll": 2,
+        "file": 2,
+        "socket": 122
+      },
+      "fd_kinds_per_request": {
+        "anon-inode": 0.0,
+        "eventfd": 0.0,
+        "eventpoll": 0.0,
+        "file": 0.0,
+        "socket": 1.0
+      },
+      "fd_per_request": 1.0,
+      "fd_series": [
+        29,
+        49,
+        69,
+        89,
+        109,
+        129
+      ],
+      "late": {
+        "fd_per_request": 1.0,
+        "rss_kib_per_request": 522.3,
+        "threads_per_request": 0.0
+      },
+      "late_abs": {
+        "fd": 40,
+        "rss_kib": 20892,
+        "threads": 0
+      },
+      "reproduced": true,
+      "requests_per_batch": 20,
+      "rss_kib_per_request": 522.3714,
+      "rss_kib_series": [
+        46852,
+        57296,
+        67748,
+        78196,
+        88640,
+        99088
+      ],
+      "runs": [
+        {
+          "fd_per_request": 1.0,
+          "fd_series": [
+            29,
+            49,
+            69,
+            89,
+            109,
+            129
+          ],
+          "late_abs": {
+            "fd": 40,
+            "rss_kib": 20892,
+            "threads": 0
+          },
+          "rss_kib_per_request": 522.3714,
+          "verdict": "grows:fd,rss"
+        }
+      ],
+      "shape": "churn-nogc",
+      "status": "ok",
+      "threads_per_request": 0.0,
+      "threads_series": [
+        9,
+        9,
+        9,
+        9,
+        9,
+        9
+      ],
+      "verdict": "grows:fd,rss"
+    },
+    {
+      "batches": 5,
+      "fd_kinds_last": {
+        "anon-inode": 1,
+        "eventfd": 2,
+        "eventpoll": 2,
+        "file": 2,
+        "socket": 6
+      },
+      "fd_kinds_per_request": {
+        "anon-inode": 0.0,
+        "eventfd": 0.0,
+        "eventpoll": 0.0,
+        "file": 0.0,
+        "socket": -0.001429
+      },
+      "fd_per_request": -0.001429,
+      "fd_series": [
+        12,
+        13,
+        14,
+        11,
+        12,
+        13
+      ],
+      "late": {
+        "fd_per_request": 0.05,
+        "rss_kib_per_request": 27.4,
+        "threads_per_request": 0.0
+      },
+      "late_abs": {
+        "fd": 2,
+        "rss_kib": 1096,
+        "threads": 0
+      },
+      "reproduced": true,
+      "requests_per_batch": 20,
+      "rss_kib_per_request": -0.1371,
+      "rss_kib_series": [
+        37012,
+        37404,
+        37992,
+        36392,
+        37112,
+        37488
+      ],
+      "runs": [
+        {
+          "fd_per_request": -0.001429,
+          "fd_series": [
+            12,
+            13,
+            14,
+            11,
+            12,
+            13
+          ],
+          "late_abs": {
+            "fd": 2,
+            "rss_kib": 1096,
+            "threads": 0
+          },
+          "rss_kib_per_request": -0.1371,
+          "verdict": "flat"
+        }
+      ],
+      "shape": "session-churn",
+      "status": "ok",
+      "threads_per_request": 0.0,
+      "threads_series": [
+        11,
+        11,
+        11,
+        11,
+        11,
+        11
+      ],
+      "verdict": "flat"
+    }
+  ]
+}

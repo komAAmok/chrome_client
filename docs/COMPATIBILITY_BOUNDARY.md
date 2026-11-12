@@ -622,12 +622,25 @@ Chromium allows at most 6 concurrent HTTP/1.1 connections per host group. That
 bounds per-host throughput regardless of how many requests are outstanding, and
 it is browser semantics rather than a binding limit.
 
-`max_clients` bounds in-flight requests, but only the ones whose body the facade
-reads itself: a `stream=True` request returns at the headers and then streams
-outside the gate. Measured with `max_clients=1` and two concurrent streaming
-requests, the server saw both at once. The gate is a bound on buffered responses,
-not on sockets, and the six-connection ceiling above is what actually limits
-per-host concurrency.
+`max_clients` gates **request admission**, not sockets. The gate is acquired when
+a request is admitted and released when the facade stops waiting on that request,
+which is not the same instant in the two modes:
+
+- a buffered call (`stream=False`) is released after the **whole response** has
+  arrived, so it is bounded end to end;
+- a `stream=True` call is released **right after the headers**, so only its
+  header phase is bounded and its body is read outside the gate.
+
+Measured with `max_clients=1` against a server that sends headers immediately and
+then trickles the body: two concurrent streaming requests were both open on the
+server at once (peak 2) and the pair finished in the time of one, while the same
+pair without `stream=True` never exceeded 1 and took twice as long. Locked by
+`bindings/python/tests/test_max_clients_gate.py`, which counts concurrent requests
+on the server for the whole response -- a gauge that only counts the pre-header
+phase reports 1 in every mode and would prove nothing.
+
+The six-connection ceiling above is what actually limits per-host concurrency;
+`max_clients` is backpressure for the far end, not a connection count.
 
 An engine is torn down with its `Session`: `close()` is the intended path and
 `__del__` is only a safety net. A session that is never closed leaves one

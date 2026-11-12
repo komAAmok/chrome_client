@@ -226,6 +226,7 @@ def async_session(
     curl_options: Optional[Mapping[Any, Any]] = None,
     max_engines: int = 8,
     response_class: ResponseClass = None,
+    max_clients: Optional[int] = None,
 ) -> AsyncSession:
     """Creates an :class:`~chrome_client.AsyncSession`.
 
@@ -287,6 +288,8 @@ def async_session(
             per-request overrides.
         response_class: Subclass to instantiate instead of
             :class:`~chrome_client.Response`/``AsyncResponse``.
+        max_clients: Maximum concurrently in-flight requests, or None for unbounded.
+            Only AsyncSession accepts it; Session has no such limit.
 
     Returns:
         The new session; ``await`` its ``aclose()`` or use it as an async

@@ -206,27 +206,13 @@ fi
 
 actual=$($NM -D --defined-only --format=posix "$LIB" |
   awk '{sub(/@@.*/, "", $1); print $1}' | sort)
-expected=$(printf '%s\n' \
-  mn_abi_version \
-  mn_engine_create \
-  mn_engine_release \
-  mn_engine_retain \
-  mn_request_cancel \
-  mn_request_create \
-  mn_request_follow_redirect \
-  mn_request_resume_read \
-  mn_request_release \
-  mn_request_retain \
-  mn_request_start \
-  mn_request_upload_write \
-  mn_websocket_cancel \
-  mn_websocket_close \
-  mn_websocket_create \
-  mn_websocket_release \
-  mn_websocket_retain \
-  mn_websocket_send \
-  mn_websocket_start \
-  mn_version_string | sort)
+# Read the export set from the one file that declares it. The list used to be
+# written out here a second time, and ABI v9 updated audit-core-binaries.sh and
+# audit-core-macos.sh but not this script: it kept the v8 set of 20 symbols and
+# failed on every correct v9 artifact, which is why the v9 rebuild could not be
+# audited on this platform at all. A second literal copy of a list that has an
+# owner is the defect, not the omission from it.
+expected=$(sed 's/^_//' "$ROOT_DIR/core/exports/minicronet.exports" | sort -u)
 diff -u <(printf '%s\n' "$expected") <(printf '%s\n' "$actual")
 
 actual_deps=$($READELF -d "$LIB" |
@@ -256,5 +242,8 @@ if ((bytes > MAX_BYTES)); then
   exit 1
 fi
 
-printf 'Audited %s: %s bytes, twenty public ABI symbols (%s)\n' \
-  "$LIB" "$bytes" "$target_label"
+# Derived from the export list, not written out: this said "twenty" while the
+# diff above was already checking twenty-eight.
+symbol_count=$(sed '/^[[:space:]]*$/d' "$ROOT_DIR/core/exports/minicronet.exports" | wc -l | tr -d ' ')
+printf 'Audited %s: %s bytes, %s public ABI symbols (%s)\n' \
+  "$LIB" "$bytes" "$symbol_count" "$target_label"

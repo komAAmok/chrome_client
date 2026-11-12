@@ -28,6 +28,7 @@ from .._python_impl.utils import (
     address_in_network as address_in_network,
     should_bypass_proxies as should_bypass_proxies,
     proxy_bypass as proxy_bypass,
+    environ_proxy_map as environ_proxy_map,
     get_environ_proxies as get_environ_proxies,
     resolve_proxies as resolve_proxies,
     get_netrc_auth as get_netrc_auth,

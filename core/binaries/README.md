@@ -22,7 +22,7 @@ size, Chromium revision, ABI version, version marker and runtime dependency list
 agree with the other eight, and `tools/audit-core-payloads.py` finds every profile
 payload byte-for-byte inside it.
 
-It is also a reproducibility claim. `0.2.10` was rebuilt from scratch on all nine
+It is also a reproducibility claim. `0.2.11` was rebuilt from scratch on all nine
 platforms from the same commit; `docs/BUILD.md` records the host tools that rebuild
 needs (pkgconf, ripgrep, xwin) and the exact `gn gen` invocation.
 

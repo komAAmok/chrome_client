@@ -1,0 +1,1823 @@
+{
+  "cells": [
+    {
+      "concurrency": 1,
+      "distinct_urls": true,
+      "errors": {},
+      "latency": {
+        "count": 64,
+        "max_ms": 7.194,
+        "mean_ms": 2.73,
+        "min_ms": 1.724,
+        "p50_ms": 2.386,
+        "p90_ms": 4.274,
+        "p999_ms": 7.194,
+        "p99_ms": 6.54,
+        "stdev_ms": 1.039
+      },
+      "mode": "sync",
+      "path": "/small?size=1024",
+      "qps": 350.9,
+      "queue_latency": {
+        "count": 64,
+        "max_ms": 176.038,
+        "mean_ms": 90.509,
+        "min_ms": 7.265,
+        "p50_ms": 90.838,
+        "p90_ms": 162.372,
+        "p999_ms": 176.038,
+        "p99_ms": 173.387,
+        "stdev_ms": 51.416
+      },
+      "requests": 64,
+      "resources": {
+        "cpu_cores_used": 0.92,
+        "cpu_s": 0.14,
+        "duration_s": 0.165,
+        "fd_first": 11,
+        "fd_last": 13,
+        "fd_peak": 13,
+        "rss_kib_first": 39352,
+        "rss_kib_last": 39700,
+        "rss_kib_peak": 39700,
+        "samples": 4,
+        "threads_last": 13,
+        "threads_peak": 13
+      },
+      "seconds": 0.182,
+      "shape": "small-1k",
+      "statuses": {
+        "200": 64
+      },
+      "wall_seconds": 0.202
+    },
+    {
+      "concurrency": 1,
+      "distinct_urls": true,
+      "errors": {},
+      "latency": {
+        "count": 64,
+        "max_ms": 17.244,
+        "mean_ms": 3.254,
+        "min_ms": 1.916,
+        "p50_ms": 2.797,
+        "p90_ms": 4.542,
+        "p999_ms": 17.244,
+        "p99_ms": 7.501,
+        "stdev_ms": 2.055
+      },
+      "mode": "async",
+      "path": "/small?size=1024",
+      "qps": 303.0,
+      "queue_latency": {
+        "count": 64,
+        "max_ms": 197.855,
+        "mean_ms": 112.979,
+        "min_ms": 0.011,
+        "p50_ms": 119.067,
+        "p90_ms": 185.562,
+        "p999_ms": 197.855,
+        "p99_ms": 195.887,
+        "stdev_ms": 55.966
+      },
+      "requests": 64,
+      "resources": {
+        "cpu_cores_used": 0.91,
+        "cpu_s": 0.19,
+        "duration_s": 0.217,
+        "fd_first": 14,
+        "fd_last": 12,
+        "fd_peak": 16,
+        "rss_kib_first": 39704,
+        "rss_kib_last": 39404,
+        "rss_kib_peak": 39788,
+        "samples": 5,
+        "threads_last": 12,
+        "threads_peak": 12
+      },
+      "seconds": 0.211,
+      "shape": "small-1k",
+      "statuses": {
+        "200": 64
+      },
+      "wall_seconds": 0.216
+    },
+    {
+      "concurrency": 8,
+      "distinct_urls": true,
+      "errors": {},
+      "latency": {
+        "count": 64,
+        "max_ms": 25.742,
+        "mean_ms": 12.371,
+        "min_ms": 3.863,
+        "p50_ms": 11.714,
+        "p90_ms": 18.547,
+        "p999_ms": 25.742,
+        "p99_ms": 25.525,
+        "stdev_ms": 4.353
+      },
+      "mode": "sync",
+      "path": "/small?size=1024",
+      "qps": 585.0,
+      "queue_latency": {
+        "count": 64,
+        "max_ms": 95.122,
+        "mean_ms": 55.435,
+        "min_ms": 12.299,
+        "p50_ms": 54.99,
+        "p90_ms": 93.7,
+        "p999_ms": 95.122,
+        "p99_ms": 95.082,
+        "stdev_ms": 24.605
+      },
+      "requests": 64,
+      "resources": {
+        "cpu_cores_used": 1.82,
+        "cpu_s": 0.2,
+        "duration_s": 0.115,
+        "fd_first": 11,
+        "fd_last": 23,
+        "fd_peak": 23,
+        "rss_kib_first": 39400,
+        "rss_kib_last": 40264,
+        "rss_kib_peak": 40264,
+        "samples": 3,
+        "threads_last": 26,
+        "threads_peak": 26
+      },
+      "seconds": 0.109,
+      "shape": "small-1k",
+      "statuses": {
+        "200": 64
+      },
+      "wall_seconds": 0.119
+    },
+    {
+      "concurrency": 8,
+      "distinct_urls": true,
+      "errors": {},
+      "latency": {
+        "count": 64,
+        "max_ms": 20.731,
+        "mean_ms": 9.106,
+        "min_ms": 3.101,
+        "p50_ms": 7.871,
+        "p90_ms": 15.332,
+        "p999_ms": 20.731,
+        "p99_ms": 19.621,
+        "stdev_ms": 4.088
+      },
+      "mode": "async",
+      "path": "/small?size=1024",
+      "qps": 702.2,
+      "queue_latency": {
+        "count": 64,
+        "max_ms": 78.448,
+        "mean_ms": 41.176,
+        "min_ms": 0.007,
+        "p50_ms": 43.9,
+        "p90_ms": 71.74,
+        "p999_ms": 78.448,
+        "p99_ms": 75.615,
+        "stdev_ms": 24.325
+      },
+      "requests": 64,
+      "resources": {
+        "cpu_cores_used": 1.93,
+        "cpu_s": 0.11,
+        "duration_s": 0.058,
+        "fd_first": 14,
+        "fd_last": 26,
+        "fd_peak": 26,
+        "rss_kib_first": 39620,
+        "rss_kib_last": 40172,
+        "rss_kib_peak": 40172,
+        "samples": 2,
+        "threads_last": 20,
+        "threads_peak": 20
+      },
+      "seconds": 0.091,
+      "shape": "small-1k",
+      "statuses": {
+        "200": 64
+      },
+      "wall_seconds": 0.092
+    },
+    {
+      "concurrency": 32,
+      "distinct_urls": true,
+      "errors": {},
+      "latency": {
+        "count": 64,
+        "max_ms": 63.109,
+        "mean_ms": 26.043,
+        "min_ms": 6.545,
+        "p50_ms": 23.223,
+        "p90_ms": 47.409,
+        "p999_ms": 63.109,
+        "p99_ms": 59.882,
+        "stdev_ms": 13.966
+      },
+      "mode": "sync",
+      "path": "/small?size=1024",
+      "qps": 321.6,
+      "queue_latency": {
+        "count": 64,
+        "max_ms": 177.707,
+        "mean_ms": 81.191,
+        "min_ms": 12.966,
+        "p50_ms": 72.706,
+        "p90_ms": 164.863,
+        "p999_ms": 177.707,
+        "p99_ms": 176.546,
+        "stdev_ms": 53.119
+      },
+      "requests": 64,
+      "resources": {
+        "cpu_cores_used": 1.34,
+        "cpu_s": 0.25,
+        "duration_s": 0.195,
+        "fd_first": 15,
+        "fd_last": 23,
+        "fd_peak": 23,
+        "rss_kib_first": 40216,
+        "rss_kib_last": 40808,
+        "rss_kib_peak": 40808,
+        "samples": 3,
+        "threads_last": 50,
+        "threads_peak": 50
+      },
+      "seconds": 0.199,
+      "shape": "small-1k",
+      "statuses": {
+        "200": 64
+      },
+      "wall_seconds": 0.211
+    },
+    {
+      "concurrency": 32,
+      "distinct_urls": true,
+      "errors": {},
+      "latency": {
+        "count": 64,
+        "max_ms": 48.65,
+        "mean_ms": 24.096,
+        "min_ms": 4.979,
+        "p50_ms": 23.896,
+        "p90_ms": 39.56,
+        "p999_ms": 48.65,
+        "p99_ms": 47.985,
+        "stdev_ms": 12.193
+      },
+      "mode": "async",
+      "path": "/small?size=1024",
+      "qps": 635.3,
+      "queue_latency": {
+        "count": 64,
+        "max_ms": 49.195,
+        "mean_ms": 13.165,
+        "min_ms": 0.007,
+        "p50_ms": 4.055,
+        "p90_ms": 38.71,
+        "p999_ms": 49.195,
+        "p99_ms": 48.671,
+        "stdev_ms": 15.949
+      },
+      "requests": 64,
+      "resources": {
+        "cpu_cores_used": 1.8,
+        "cpu_s": 0.11,
+        "duration_s": 0.063,
+        "fd_first": 14,
+        "fd_last": 26,
+        "fd_peak": 26,
+        "rss_kib_first": 39792,
+        "rss_kib_last": 40376,
+        "rss_kib_peak": 40376,
+        "samples": 2,
+        "threads_last": 20,
+        "threads_peak": 20
+      },
+      "seconds": 0.101,
+      "shape": "small-1k",
+      "statuses": {
+        "200": 64
+      },
+      "wall_seconds": 0.102
+    },
+    {
+      "concurrency": 64,
+      "distinct_urls": true,
+      "errors": {},
+      "latency": {
+        "count": 64,
+        "max_ms": 45.553,
+        "mean_ms": 19.852,
+        "min_ms": 4.416,
+        "p50_ms": 18.981,
+        "p90_ms": 30.911,
+        "p999_ms": 45.553,
+        "p99_ms": 44.792,
+        "stdev_ms": 9.069
+      },
+      "mode": "sync",
+      "path": "/small?size=1024",
+      "qps": 449.2,
+      "queue_latency": {
+        "count": 64,
+        "max_ms": 0.0,
+        "mean_ms": 0.0,
+        "min_ms": 0.0,
+        "p50_ms": 0.0,
+        "p90_ms": 0.0,
+        "p999_ms": 0.0,
+        "p99_ms": 0.0,
+        "stdev_ms": 0.0
+      },
+      "requests": 64,
+      "resources": {
+        "cpu_cores_used": 1.64,
+        "cpu_s": 0.19,
+        "duration_s": 0.127,
+        "fd_first": 13,
+        "fd_last": 23,
+        "fd_peak": 23,
+        "rss_kib_first": 40428,
+        "rss_kib_last": 40848,
+        "rss_kib_peak": 40848,
+        "samples": 2,
+        "threads_last": 49,
+        "threads_peak": 49
+      },
+      "seconds": 0.142,
+      "shape": "small-1k",
+      "statuses": {
+        "200": 64
+      },
+      "wall_seconds": 0.157
+    },
+    {
+      "concurrency": 64,
+      "distinct_urls": true,
+      "errors": {},
+      "latency": {
+        "count": 64,
+        "max_ms": 59.085,
+        "mean_ms": 44.666,
+        "min_ms": 32.961,
+        "p50_ms": 46.853,
+        "p90_ms": 56.479,
+        "p999_ms": 59.085,
+        "p99_ms": 57.581,
+        "stdev_ms": 8.536
+      },
+      "mode": "async",
+      "path": "/small?size=1024",
+      "qps": 640.4,
+      "queue_latency": {
+        "count": 64,
+        "max_ms": 0.015,
+        "mean_ms": 0.008,
+        "min_ms": 0.007,
+        "p50_ms": 0.007,
+        "p90_ms": 0.008,
+        "p999_ms": 0.015,
+        "p99_ms": 0.011,
+        "stdev_ms": 0.001
+      },
+      "requests": 64,
+      "resources": {
+        "cpu_cores_used": 1.62,
+        "cpu_s": 0.12,
+        "duration_s": 0.082,
+        "fd_first": 14,
+        "fd_last": 26,
+        "fd_peak": 26,
+        "rss_kib_first": 40028,
+        "rss_kib_last": 41160,
+        "rss_kib_peak": 41160,
+        "samples": 2,
+        "threads_last": 20,
+        "threads_peak": 20
+      },
+      "seconds": 0.1,
+      "shape": "small-1k",
+      "statuses": {
+        "200": 64
+      },
+      "wall_seconds": 0.101
+    },
+    {
+      "concurrency": 1,
+      "distinct_urls": true,
+      "errors": {},
+      "latency": {
+        "count": 64,
+        "max_ms": 7.014,
+        "mean_ms": 3.718,
+        "min_ms": 2.374,
+        "p50_ms": 3.659,
+        "p90_ms": 4.887,
+        "p999_ms": 7.014,
+        "p99_ms": 6.795,
+        "stdev_ms": 0.967
+      },
+      "mode": "sync",
+      "path": "/small?size=65536",
+      "qps": 263.5,
+      "queue_latency": {
+        "count": 64,
+        "max_ms": 237.429,
+        "mean_ms": 127.885,
+        "min_ms": 6.475,
+        "p50_ms": 132.37,
+        "p90_ms": 219.021,
+        "p999_ms": 237.429,
+        "p99_ms": 234.579,
+        "stdev_ms": 67.4
+      },
+      "requests": 64,
+      "resources": {
+        "cpu_cores_used": 0.93,
+        "cpu_s": 0.19,
+        "duration_s": 0.215,
+        "fd_first": 13,
+        "fd_last": 13,
+        "fd_peak": 13,
+        "rss_kib_first": 40860,
+        "rss_kib_last": 44380,
+        "rss_kib_peak": 44380,
+        "samples": 5,
+        "threads_last": 17,
+        "threads_peak": 21
+      },
+      "seconds": 0.243,
+      "shape": "body-64k",
+      "statuses": {
+        "200": 64
+      },
+      "wall_seconds": 0.26
+    },
+    {
+      "concurrency": 1,
+      "distinct_urls": true,
+      "errors": {},
+      "latency": {
+        "count": 64,
+        "max_ms": 12.262,
+        "mean_ms": 4.103,
+        "min_ms": 2.795,
+        "p50_ms": 3.697,
+        "p90_ms": 5.642,
+        "p999_ms": 12.262,
+        "p99_ms": 7.904,
+        "stdev_ms": 1.475
+      },
+      "mode": "async",
+      "path": "/small?size=65536",
+      "qps": 240.4,
+      "queue_latency": {
+        "count": 64,
+        "max_ms": 255.585,
+        "mean_ms": 134.873,
+        "min_ms": 0.009,
+        "p50_ms": 138.731,
+        "p90_ms": 231.421,
+        "p999_ms": 255.585,
+        "p99_ms": 251.445,
+        "stdev_ms": 72.163
+      },
+      "requests": 64,
+      "resources": {
+        "cpu_cores_used": 1.05,
+        "cpu_s": 0.27,
+        "duration_s": 0.266,
+        "fd_first": 16,
+        "fd_last": 16,
+        "fd_peak": 16,
+        "rss_kib_first": 40580,
+        "rss_kib_last": 45164,
+        "rss_kib_peak": 45164,
+        "samples": 6,
+        "threads_last": 16,
+        "threads_peak": 16
+      },
+      "seconds": 0.266,
+      "shape": "body-64k",
+      "statuses": {
+        "200": 64
+      },
+      "wall_seconds": 0.27
+    },
+    {
+      "concurrency": 8,
+      "distinct_urls": true,
+      "errors": {},
+      "latency": {
+        "count": 64,
+        "max_ms": 51.663,
+        "mean_ms": 27.506,
+        "min_ms": 6.837,
+        "p50_ms": 27.045,
+        "p90_ms": 41.241,
+        "p999_ms": 51.663,
+        "p99_ms": 50.846,
+        "stdev_ms": 10.549
+      },
+      "mode": "sync",
+      "path": "/small?size=65536",
+      "qps": 258.6,
+      "queue_latency": {
+        "count": 64,
+        "max_ms": 219.077,
+        "mean_ms": 120.949,
+        "min_ms": 11.631,
+        "p50_ms": 131.443,
+        "p90_ms": 207.488,
+        "p999_ms": 219.077,
+        "p99_ms": 219.037,
+        "stdev_ms": 66.255
+      },
+      "requests": 64,
+      "resources": {
+        "cpu_cores_used": 1.71,
+        "cpu_s": 0.43,
+        "duration_s": 0.253,
+        "fd_first": 12,
+        "fd_last": 23,
+        "fd_peak": 23,
+        "rss_kib_first": 40688,
+        "rss_kib_last": 47008,
+        "rss_kib_peak": 47008,
+        "samples": 5,
+        "threads_last": 29,
+        "threads_peak": 29
+      },
+      "seconds": 0.247,
+      "shape": "body-64k",
+      "statuses": {
+        "200": 64
+      },
+      "wall_seconds": 0.261
+    },
+    {
+      "concurrency": 8,
+      "distinct_urls": true,
+      "errors": {},
+      "latency": {
+        "count": 64,
+        "max_ms": 116.801,
+        "mean_ms": 37.139,
+        "min_ms": 10.299,
+        "p50_ms": 28.123,
+        "p90_ms": 72.983,
+        "p999_ms": 116.801,
+        "p99_ms": 108.09,
+        "stdev_ms": 25.523
+      },
+      "mode": "async",
+      "path": "/small?size=65536",
+      "qps": 187.7,
+      "queue_latency": {
+        "count": 64,
+        "max_ms": 310.625,
+        "mean_ms": 170.331,
+        "min_ms": 0.007,
+        "p50_ms": 225.547,
+        "p90_ms": 285.788,
+        "p999_ms": 310.625,
+        "p99_ms": 308.298,
+        "stdev_ms": 108.102
+      },
+      "requests": 64,
+      "resources": {
+        "cpu_cores_used": 1.61,
+        "cpu_s": 0.57,
+        "duration_s": 0.362,
+        "fd_first": 15,
+        "fd_last": 11,
+        "fd_peak": 26,
+        "rss_kib_first": 42456,
+        "rss_kib_last": 42688,
+        "rss_kib_peak": 46816,
+        "samples": 6,
+        "threads_last": 17,
+        "threads_peak": 21
+      },
+      "seconds": 0.341,
+      "shape": "body-64k",
+      "statuses": {
+        "200": 64
+      },
+      "wall_seconds": 0.359
+    },
+    {
+      "concurrency": 32,
+      "distinct_urls": true,
+      "errors": {},
+      "latency": {
+        "count": 64,
+        "max_ms": 91.828,
+        "mean_ms": 59.025,
+        "min_ms": 12.399,
+        "p50_ms": 63.617,
+        "p90_ms": 79.264,
+        "p999_ms": 91.828,
+        "p99_ms": 89.215,
+        "stdev_ms": 19.022
+      },
+      "mode": "sync",
+      "path": "/small?size=65536",
+      "qps": 255.4,
+      "queue_latency": {
+        "count": 64,
+        "max_ms": 161.525,
+        "mean_ms": 90.346,
+        "min_ms": 60.493,
+        "p50_ms": 83.185,
+        "p90_ms": 138.608,
+        "p999_ms": 161.525,
+        "p99_ms": 159.444,
+        "stdev_ms": 27.212
+      },
+      "requests": 64,
+      "resources": {
+        "cpu_cores_used": 1.69,
+        "cpu_s": 0.43,
+        "duration_s": 0.277,
+        "fd_first": 11,
+        "fd_last": 23,
+        "fd_peak": 24,
+        "rss_kib_first": 42652,
+        "rss_kib_last": 50776,
+        "rss_kib_peak": 50776,
+        "samples": 5,
+        "threads_last": 39,
+        "threads_peak": 53
+      },
+      "seconds": 0.251,
+      "shape": "body-64k",
+      "statuses": {
+        "200": 64
+      },
+      "wall_seconds": 0.286
+    },
+    {
+      "concurrency": 32,
+      "distinct_urls": true,
+      "errors": {},
+      "latency": {
+        "count": 64,
+        "max_ms": 67.424,
+        "mean_ms": 52.955,
+        "min_ms": 34.963,
+        "p50_ms": 52.031,
+        "p90_ms": 64.576,
+        "p999_ms": 67.424,
+        "p99_ms": 66.965,
+        "stdev_ms": 8.697
+      },
+      "mode": "async",
+      "path": "/small?size=65536",
+      "qps": 397.6,
+      "queue_latency": {
+        "count": 64,
+        "max_ms": 57.005,
+        "mean_ms": 16.789,
+        "min_ms": 0.007,
+        "p50_ms": 1.931,
+        "p90_ms": 47.442,
+        "p999_ms": 57.005,
+        "p99_ms": 56.129,
+        "stdev_ms": 21.139
+      },
+      "requests": 64,
+      "resources": {
+        "cpu_cores_used": 1.8,
+        "cpu_s": 0.27,
+        "duration_s": 0.163,
+        "fd_first": 14,
+        "fd_last": 26,
+        "fd_peak": 26,
+        "rss_kib_first": 45544,
+        "rss_kib_last": 49788,
+        "rss_kib_peak": 49788,
+        "samples": 3,
+        "threads_last": 21,
+        "threads_peak": 21
+      },
+      "seconds": 0.161,
+      "shape": "body-64k",
+      "statuses": {
+        "200": 64
+      },
+      "wall_seconds": 0.163
+    },
+    {
+      "concurrency": 64,
+      "distinct_urls": true,
+      "errors": {},
+      "latency": {
+        "count": 64,
+        "max_ms": 47.468,
+        "mean_ms": 27.393,
+        "min_ms": 11.536,
+        "p50_ms": 28.426,
+        "p90_ms": 39.498,
+        "p999_ms": 47.468,
+        "p99_ms": 45.405,
+        "stdev_ms": 8.566
+      },
+      "mode": "sync",
+      "path": "/small?size=65536",
+      "qps": 363.1,
+      "queue_latency": {
+        "count": 64,
+        "max_ms": 0.0,
+        "mean_ms": 0.0,
+        "min_ms": 0.0,
+        "p50_ms": 0.0,
+        "p90_ms": 0.0,
+        "p999_ms": 0.0,
+        "p99_ms": 0.0,
+        "stdev_ms": 0.0
+      },
+      "requests": 64,
+      "resources": {
+        "cpu_cores_used": 1.83,
+        "cpu_s": 0.35,
+        "duration_s": 0.191,
+        "fd_first": 23,
+        "fd_last": 23,
+        "fd_peak": 23,
+        "rss_kib_first": 50644,
+        "rss_kib_last": 50604,
+        "rss_kib_peak": 50644,
+        "samples": 4,
+        "threads_last": 29,
+        "threads_peak": 45
+      },
+      "seconds": 0.176,
+      "shape": "body-64k",
+      "statuses": {
+        "200": 64
+      },
+      "wall_seconds": 0.195
+    },
+    {
+      "concurrency": 64,
+      "distinct_urls": true,
+      "errors": {},
+      "latency": {
+        "count": 64,
+        "max_ms": 108.169,
+        "mean_ms": 66.641,
+        "min_ms": 29.109,
+        "p50_ms": 66.82,
+        "p90_ms": 101.466,
+        "p999_ms": 108.169,
+        "p99_ms": 108.14,
+        "stdev_ms": 23.573
+      },
+      "mode": "async",
+      "path": "/small?size=65536",
+      "qps": 434.8,
+      "queue_latency": {
+        "count": 64,
+        "max_ms": 0.105,
+        "mean_ms": 0.011,
+        "min_ms": 0.006,
+        "p50_ms": 0.007,
+        "p90_ms": 0.01,
+        "p999_ms": 0.105,
+        "p99_ms": 0.087,
+        "stdev_ms": 0.017
+      },
+      "requests": 64,
+      "resources": {
+        "cpu_cores_used": 1.94,
+        "cpu_s": 0.26,
+        "duration_s": 0.142,
+        "fd_first": 14,
+        "fd_last": 26,
+        "fd_peak": 26,
+        "rss_kib_first": 46004,
+        "rss_kib_last": 51056,
+        "rss_kib_peak": 51056,
+        "samples": 3,
+        "threads_last": 21,
+        "threads_peak": 21
+      },
+      "seconds": 0.147,
+      "shape": "body-64k",
+      "statuses": {
+        "200": 64
+      },
+      "wall_seconds": 0.155
+    },
+    {
+      "concurrency": 1,
+      "distinct_urls": true,
+      "errors": {},
+      "latency": {
+        "count": 64,
+        "max_ms": 102.899,
+        "mean_ms": 73.19,
+        "min_ms": 56.331,
+        "p50_ms": 72.785,
+        "p90_ms": 88.418,
+        "p999_ms": 102.899,
+        "p99_ms": 100.307,
+        "stdev_ms": 10.837
+      },
+      "mode": "sync",
+      "path": "/chunked?chunks=64&size=65536",
+      "qps": 13.6,
+      "queue_latency": {
+        "count": 64,
+        "max_ms": 4688.605,
+        "mean_ms": 2367.908,
+        "min_ms": 56.505,
+        "p50_ms": 2384.377,
+        "p90_ms": 4274.268,
+        "p999_ms": 4688.605,
+        "p99_ms": 4607.084,
+        "stdev_ms": 1379.545
+      },
+      "requests": 64,
+      "resources": {
+        "cpu_cores_used": 1.09,
+        "cpu_s": 5.2,
+        "duration_s": 4.761,
+        "fd_first": 11,
+        "fd_last": 13,
+        "fd_peak": 13,
+        "rss_kib_first": 46436,
+        "rss_kib_last": 108776,
+        "rss_kib_peak": 113664,
+        "samples": 94,
+        "threads_last": 17,
+        "threads_peak": 17
+      },
+      "seconds": 4.694,
+      "shape": "chunked-4m",
+      "statuses": {
+        "200": 64
+      },
+      "wall_seconds": 4.791
+    },
+    {
+      "concurrency": 1,
+      "distinct_urls": true,
+      "errors": {},
+      "latency": {
+        "count": 64,
+        "max_ms": 177.033,
+        "mean_ms": 95.008,
+        "min_ms": 69.231,
+        "p50_ms": 93.958,
+        "p90_ms": 113.712,
+        "p999_ms": 177.033,
+        "p99_ms": 133.891,
+        "stdev_ms": 17.9
+      },
+      "mode": "async",
+      "path": "/chunked?chunks=64&size=65536",
+      "qps": 10.5,
+      "queue_latency": {
+        "count": 64,
+        "max_ms": 5982.69,
+        "mean_ms": 2985.918,
+        "min_ms": 0.009,
+        "p50_ms": 3033.826,
+        "p90_ms": 5451.323,
+        "p999_ms": 5982.69,
+        "p99_ms": 5872.195,
+        "stdev_ms": 1761.784
+      },
+      "requests": 64,
+      "resources": {
+        "cpu_cores_used": 1.09,
+        "cpu_s": 6.64,
+        "duration_s": 6.073,
+        "fd_first": 14,
+        "fd_last": 16,
+        "fd_peak": 16,
+        "rss_kib_first": 58316,
+        "rss_kib_last": 116608,
+        "rss_kib_peak": 121036,
+        "samples": 118,
+        "threads_last": 16,
+        "threads_peak": 16
+      },
+      "seconds": 6.085,
+      "shape": "chunked-4m",
+      "statuses": {
+        "200": 64
+      },
+      "wall_seconds": 6.102
+    },
+    {
+      "concurrency": 8,
+      "distinct_urls": true,
+      "errors": {},
+      "latency": {
+        "count": 64,
+        "max_ms": 624.703,
+        "mean_ms": 372.942,
+        "min_ms": 235.737,
+        "p50_ms": 370.14,
+        "p90_ms": 440.937,
+        "p999_ms": 624.703,
+        "p99_ms": 604.344,
+        "stdev_ms": 68.96
+      },
+      "mode": "sync",
+      "path": "/chunked?chunks=64&size=65536",
+      "qps": 20.7,
+      "queue_latency": {
+        "count": 64,
+        "max_ms": 3067.232,
+        "mean_ms": 1727.468,
+        "min_ms": 442.239,
+        "p50_ms": 1736.206,
+        "p90_ms": 2893.64,
+        "p999_ms": 3067.232,
+        "p99_ms": 3053.882,
+        "stdev_ms": 843.604
+      },
+      "requests": 64,
+      "resources": {
+        "cpu_cores_used": 1.52,
+        "cpu_s": 4.75,
+        "duration_s": 3.136,
+        "fd_first": 11,
+        "fd_last": 23,
+        "fd_peak": 23,
+        "rss_kib_first": 66172,
+        "rss_kib_last": 202104,
+        "rss_kib_peak": 203396,
+        "samples": 62,
+        "threads_last": 29,
+        "threads_peak": 29
+      },
+      "seconds": 3.087,
+      "shape": "chunked-4m",
+      "statuses": {
+        "200": 64
+      },
+      "wall_seconds": 3.185
+    },
+    {
+      "concurrency": 8,
+      "distinct_urls": true,
+      "errors": {},
+      "latency": {
+        "count": 64,
+        "max_ms": 732.799,
+        "mean_ms": 461.998,
+        "min_ms": 261.409,
+        "p50_ms": 447.764,
+        "p90_ms": 607.881,
+        "p999_ms": 732.799,
+        "p99_ms": 696.054,
+        "stdev_ms": 113.652
+      },
+      "mode": "async",
+      "path": "/chunked?chunks=64&size=65536",
+      "qps": 16.8,
+      "queue_latency": {
+        "count": 64,
+        "max_ms": 3460.939,
+        "mean_ms": 1635.318,
+        "min_ms": 0.007,
+        "p50_ms": 1746.809,
+        "p90_ms": 3115.787,
+        "p999_ms": 3460.939,
+        "p99_ms": 3437.291,
+        "stdev_ms": 1077.652
+      },
+      "requests": 64,
+      "resources": {
+        "cpu_cores_used": 1.68,
+        "cpu_s": 6.36,
+        "duration_s": 3.801,
+        "fd_first": 15,
+        "fd_last": 26,
+        "fd_peak": 26,
+        "rss_kib_first": 149388,
+        "rss_kib_last": 219652,
+        "rss_kib_peak": 222636,
+        "samples": 69,
+        "threads_last": 21,
+        "threads_peak": 21
+      },
+      "seconds": 3.813,
+      "shape": "chunked-4m",
+      "statuses": {
+        "200": 64
+      },
+      "wall_seconds": 3.833
+    },
+    {
+      "concurrency": 32,
+      "distinct_urls": true,
+      "errors": {},
+      "latency": {
+        "count": 64,
+        "max_ms": 3870.296,
+        "mean_ms": 2164.442,
+        "min_ms": 265.054,
+        "p50_ms": 2392.441,
+        "p90_ms": 3598.575,
+        "p999_ms": 3870.296,
+        "p99_ms": 3859.359,
+        "stdev_ms": 1097.438
+      },
+      "mode": "sync",
+      "path": "/chunked?chunks=64&size=65536",
+      "qps": 11.6,
+      "queue_latency": {
+        "count": 64,
+        "max_ms": 5415.682,
+        "mean_ms": 2874.331,
+        "min_ms": 567.197,
+        "p50_ms": 2579.064,
+        "p90_ms": 5247.395,
+        "p999_ms": 5415.682,
+        "p99_ms": 5387.814,
+        "stdev_ms": 1695.394
+      },
+      "requests": 64,
+      "resources": {
+        "cpu_cores_used": 1.46,
+        "cpu_s": 8.11,
+        "duration_s": 5.574,
+        "fd_first": 11,
+        "fd_last": 23,
+        "fd_peak": 23,
+        "rss_kib_first": 168720,
+        "rss_kib_last": 476504,
+        "rss_kib_peak": 476504,
+        "samples": 101,
+        "threads_last": 32,
+        "threads_peak": 53
+      },
+      "seconds": 5.51,
+      "shape": "chunked-4m",
+      "statuses": {
+        "200": 64
+      },
+      "wall_seconds": 5.581
+    },
+    {
+      "concurrency": 32,
+      "distinct_urls": true,
+      "errors": {},
+      "latency": {
+        "count": 64,
+        "max_ms": 2383.392,
+        "mean_ms": 1631.005,
+        "min_ms": 285.579,
+        "p50_ms": 1895.064,
+        "p90_ms": 2233.405,
+        "p999_ms": 2383.392,
+        "p99_ms": 2372.915,
+        "stdev_ms": 638.261
+      },
+      "mode": "async",
+      "path": "/chunked?chunks=64&size=65536",
+      "qps": 15.1,
+      "queue_latency": {
+        "count": 64,
+        "max_ms": 2105.055,
+        "mean_ms": 549.807,
+        "min_ms": 0.007,
+        "p50_ms": 234.76,
+        "p90_ms": 1746.621,
+        "p999_ms": 2105.055,
+        "p99_ms": 2014.99,
+        "stdev_ms": 679.154
+      },
+      "requests": 64,
+      "resources": {
+        "cpu_cores_used": 1.59,
+        "cpu_s": 6.65,
+        "duration_s": 4.201,
+        "fd_first": 15,
+        "fd_last": 26,
+        "fd_peak": 26,
+        "rss_kib_first": 425688,
+        "rss_kib_last": 480584,
+        "rss_kib_peak": 483368,
+        "samples": 74,
+        "threads_last": 21,
+        "threads_peak": 21
+      },
+      "seconds": 4.233,
+      "shape": "chunked-4m",
+      "statuses": {
+        "200": 64
+      },
+      "wall_seconds": 4.248
+    },
+    {
+      "concurrency": 64,
+      "distinct_urls": true,
+      "errors": {},
+      "latency": {
+        "count": 64,
+        "max_ms": 6328.992,
+        "mean_ms": 3064.112,
+        "min_ms": 238.716,
+        "p50_ms": 3033.187,
+        "p90_ms": 6118.526,
+        "p999_ms": 6328.992,
+        "p99_ms": 6321.476,
+        "stdev_ms": 2064.415
+      },
+      "mode": "sync",
+      "path": "/chunked?chunks=64&size=65536",
+      "qps": 9.8,
+      "queue_latency": {
+        "count": 64,
+        "max_ms": 0.0,
+        "mean_ms": 0.0,
+        "min_ms": 0.0,
+        "p50_ms": 0.0,
+        "p90_ms": 0.0,
+        "p999_ms": 0.0,
+        "p99_ms": 0.0,
+        "stdev_ms": 0.0
+      },
+      "requests": 64,
+      "resources": {
+        "cpu_cores_used": 1.34,
+        "cpu_s": 8.74,
+        "duration_s": 6.522,
+        "fd_first": 13,
+        "fd_last": 23,
+        "fd_peak": 23,
+        "rss_kib_first": 427480,
+        "rss_kib_last": 656628,
+        "rss_kib_peak": 656628,
+        "samples": 122,
+        "threads_last": 85,
+        "threads_peak": 85
+      },
+      "seconds": 6.498,
+      "shape": "chunked-4m",
+      "statuses": {
+        "200": 64
+      },
+      "wall_seconds": 6.579
+    },
+    {
+      "concurrency": 64,
+      "distinct_urls": true,
+      "errors": {},
+      "latency": {
+        "count": 64,
+        "max_ms": 5058.649,
+        "mean_ms": 2829.288,
+        "min_ms": 285.91,
+        "p50_ms": 2718.413,
+        "p90_ms": 4769.421,
+        "p999_ms": 5058.649,
+        "p99_ms": 5045.602,
+        "stdev_ms": 1399.062
+      },
+      "mode": "async",
+      "path": "/chunked?chunks=64&size=65536",
+      "qps": 12.5,
+      "queue_latency": {
+        "count": 64,
+        "max_ms": 0.011,
+        "mean_ms": 0.007,
+        "min_ms": 0.007,
+        "p50_ms": 0.007,
+        "p90_ms": 0.008,
+        "p999_ms": 0.011,
+        "p99_ms": 0.01,
+        "stdev_ms": 0.001
+      },
+      "requests": 64,
+      "resources": {
+        "cpu_cores_used": 1.47,
+        "cpu_s": 7.52,
+        "duration_s": 5.112,
+        "fd_first": 15,
+        "fd_last": 26,
+        "fd_peak": 26,
+        "rss_kib_first": 605160,
+        "rss_kib_last": 659012,
+        "rss_kib_peak": 662356,
+        "samples": 94,
+        "threads_last": 21,
+        "threads_peak": 21
+      },
+      "seconds": 5.136,
+      "shape": "chunked-4m",
+      "statuses": {
+        "200": 64
+      },
+      "wall_seconds": 5.151
+    },
+    {
+      "concurrency": 1,
+      "distinct_urls": true,
+      "errors": {},
+      "latency": {
+        "count": 64,
+        "max_ms": 17.544,
+        "mean_ms": 13.633,
+        "min_ms": 12.227,
+        "p50_ms": 13.328,
+        "p90_ms": 15.009,
+        "p999_ms": 17.544,
+        "p99_ms": 17.048,
+        "stdev_ms": 1.199
+      },
+      "mode": "sync",
+      "path": "/delay?ms=10&size=1024",
+      "qps": 72.9,
+      "queue_latency": {
+        "count": 64,
+        "max_ms": 873.239,
+        "mean_ms": 453.603,
+        "min_ms": 18.056,
+        "p50_ms": 460.802,
+        "p90_ms": 796.034,
+        "p999_ms": 873.239,
+        "p99_ms": 860.731,
+        "stdev_ms": 252.539
+      },
+      "requests": 64,
+      "resources": {
+        "cpu_cores_used": 0.27,
+        "cpu_s": 0.23,
+        "duration_s": 0.87,
+        "fd_first": 11,
+        "fd_last": 13,
+        "fd_peak": 13,
+        "rss_kib_first": 606288,
+        "rss_kib_last": 606412,
+        "rss_kib_peak": 606412,
+        "samples": 18,
+        "threads_last": 17,
+        "threads_peak": 17
+      },
+      "seconds": 0.878,
+      "shape": "delay-10ms",
+      "statuses": {
+        "200": 64
+      },
+      "wall_seconds": 0.896
+    },
+    {
+      "concurrency": 1,
+      "distinct_urls": true,
+      "errors": {},
+      "latency": {
+        "count": 64,
+        "max_ms": 22.741,
+        "mean_ms": 14.731,
+        "min_ms": 12.731,
+        "p50_ms": 14.063,
+        "p90_ms": 18.15,
+        "p999_ms": 22.741,
+        "p99_ms": 20.662,
+        "stdev_ms": 2.146
+      },
+      "mode": "async",
+      "path": "/delay?ms=10&size=1024",
+      "qps": 67.6,
+      "queue_latency": {
+        "count": 64,
+        "max_ms": 927.31,
+        "mean_ms": 451.434,
+        "min_ms": 0.009,
+        "p50_ms": 442.055,
+        "p90_ms": 845.809,
+        "p999_ms": 927.31,
+        "p99_ms": 914.47,
+        "stdev_ms": 277.163
+      },
+      "requests": 64,
+      "resources": {
+        "cpu_cores_used": 0.26,
+        "cpu_s": 0.24,
+        "duration_s": 0.934,
+        "fd_first": 14,
+        "fd_last": 16,
+        "fd_peak": 16,
+        "rss_kib_first": 606296,
+        "rss_kib_last": 606408,
+        "rss_kib_peak": 606408,
+        "samples": 19,
+        "threads_last": 16,
+        "threads_peak": 16
+      },
+      "seconds": 0.947,
+      "shape": "delay-10ms",
+      "statuses": {
+        "200": 64
+      },
+      "wall_seconds": 0.949
+    },
+    {
+      "concurrency": 8,
+      "distinct_urls": true,
+      "errors": {},
+      "latency": {
+        "count": 64,
+        "max_ms": 28.362,
+        "mean_ms": 18.596,
+        "min_ms": 13.878,
+        "p50_ms": 18.254,
+        "p90_ms": 22.849,
+        "p999_ms": 28.362,
+        "p99_ms": 24.505,
+        "stdev_ms": 3.006
+      },
+      "mode": "sync",
+      "path": "/delay?ms=10&size=1024",
+      "qps": 388.4,
+      "queue_latency": {
+        "count": 64,
+        "max_ms": 144.44,
+        "mean_ms": 76.613,
+        "min_ms": 19.427,
+        "p50_ms": 75.992,
+        "p90_ms": 138.694,
+        "p999_ms": 144.44,
+        "p99_ms": 143.54,
+        "stdev_ms": 39.667
+      },
+      "requests": 64,
+      "resources": {
+        "cpu_cores_used": 1.2,
+        "cpu_s": 0.19,
+        "duration_s": 0.164,
+        "fd_first": 11,
+        "fd_last": 23,
+        "fd_peak": 23,
+        "rss_kib_first": 606412,
+        "rss_kib_last": 606652,
+        "rss_kib_peak": 606652,
+        "samples": 4,
+        "threads_last": 29,
+        "threads_peak": 29
+      },
+      "seconds": 0.165,
+      "shape": "delay-10ms",
+      "statuses": {
+        "200": 64
+      },
+      "wall_seconds": 0.186
+    },
+    {
+      "concurrency": 8,
+      "distinct_urls": true,
+      "errors": {},
+      "latency": {
+        "count": 64,
+        "max_ms": 28.33,
+        "mean_ms": 18.947,
+        "min_ms": 13.861,
+        "p50_ms": 18.643,
+        "p90_ms": 22.041,
+        "p999_ms": 28.33,
+        "p99_ms": 25.756,
+        "stdev_ms": 2.611
+      },
+      "mode": "async",
+      "path": "/delay?ms=10&size=1024",
+      "qps": 373.0,
+      "queue_latency": {
+        "count": 64,
+        "max_ms": 137.804,
+        "mean_ms": 63.872,
+        "min_ms": 0.007,
+        "p50_ms": 61.172,
+        "p90_ms": 125.007,
+        "p999_ms": 137.804,
+        "p99_ms": 134.192,
+        "stdev_ms": 43.136
+      },
+      "requests": 64,
+      "resources": {
+        "cpu_cores_used": 1.36,
+        "cpu_s": 0.16,
+        "duration_s": 0.13,
+        "fd_first": 14,
+        "fd_last": 26,
+        "fd_peak": 26,
+        "rss_kib_first": 606392,
+        "rss_kib_last": 606480,
+        "rss_kib_peak": 606480,
+        "samples": 3,
+        "threads_last": 21,
+        "threads_peak": 21
+      },
+      "seconds": 0.172,
+      "shape": "delay-10ms",
+      "statuses": {
+        "200": 64
+      },
+      "wall_seconds": 0.175
+    },
+    {
+      "concurrency": 32,
+      "distinct_urls": true,
+      "errors": {},
+      "latency": {
+        "count": 64,
+        "max_ms": 78.192,
+        "mean_ms": 52.262,
+        "min_ms": 18.425,
+        "p50_ms": 54.264,
+        "p90_ms": 66.538,
+        "p999_ms": 78.192,
+        "p99_ms": 78.185,
+        "stdev_ms": 13.648
+      },
+      "mode": "sync",
+      "path": "/delay?ms=10&size=1024",
+      "qps": 309.5,
+      "queue_latency": {
+        "count": 64,
+        "max_ms": 114.513,
+        "mean_ms": 76.924,
+        "min_ms": 50.136,
+        "p50_ms": 75.191,
+        "p90_ms": 102.526,
+        "p999_ms": 114.513,
+        "p99_ms": 113.744,
+        "stdev_ms": 17.86
+      },
+      "requests": 64,
+      "resources": {
+        "cpu_cores_used": 1.21,
+        "cpu_s": 0.26,
+        "duration_s": 0.218,
+        "fd_first": 11,
+        "fd_last": 23,
+        "fd_peak": 23,
+        "rss_kib_first": 606300,
+        "rss_kib_last": 607204,
+        "rss_kib_peak": 607204,
+        "samples": 4,
+        "threads_last": 45,
+        "threads_peak": 53
+      },
+      "seconds": 0.207,
+      "shape": "delay-10ms",
+      "statuses": {
+        "200": 64
+      },
+      "wall_seconds": 0.225
+    },
+    {
+      "concurrency": 32,
+      "distinct_urls": true,
+      "errors": {},
+      "latency": {
+        "count": 64,
+        "max_ms": 78.481,
+        "mean_ms": 57.004,
+        "min_ms": 22.731,
+        "p50_ms": 66.101,
+        "p90_ms": 71.727,
+        "p999_ms": 78.481,
+        "p99_ms": 74.066,
+        "stdev_ms": 15.975
+      },
+      "mode": "async",
+      "path": "/delay?ms=10&size=1024",
+      "qps": 384.6,
+      "queue_latency": {
+        "count": 64,
+        "max_ms": 66.998,
+        "mean_ms": 17.073,
+        "min_ms": 0.006,
+        "p50_ms": 0.537,
+        "p90_ms": 54.16,
+        "p999_ms": 66.998,
+        "p99_ms": 63.979,
+        "stdev_ms": 22.109
+      },
+      "requests": 64,
+      "resources": {
+        "cpu_cores_used": 1.19,
+        "cpu_s": 0.19,
+        "duration_s": 0.169,
+        "fd_first": 14,
+        "fd_last": 26,
+        "fd_peak": 26,
+        "rss_kib_first": 606372,
+        "rss_kib_last": 606676,
+        "rss_kib_peak": 606676,
+        "samples": 4,
+        "threads_last": 21,
+        "threads_peak": 21
+      },
+      "seconds": 0.166,
+      "shape": "delay-10ms",
+      "statuses": {
+        "200": 64
+      },
+      "wall_seconds": 0.173
+    },
+    {
+      "concurrency": 64,
+      "distinct_urls": true,
+      "errors": {},
+      "latency": {
+        "count": 64,
+        "max_ms": 81.087,
+        "mean_ms": 54.074,
+        "min_ms": 16.549,
+        "p50_ms": 58.668,
+        "p90_ms": 72.479,
+        "p999_ms": 81.087,
+        "p99_ms": 78.453,
+        "stdev_ms": 16.16
+      },
+      "mode": "sync",
+      "path": "/delay?ms=10&size=1024",
+      "qps": 335.7,
+      "queue_latency": {
+        "count": 64,
+        "max_ms": 0.0,
+        "mean_ms": 0.0,
+        "min_ms": 0.0,
+        "p50_ms": 0.0,
+        "p90_ms": 0.0,
+        "p999_ms": 0.0,
+        "p99_ms": 0.0,
+        "stdev_ms": 0.0
+      },
+      "requests": 64,
+      "resources": {
+        "cpu_cores_used": 1.34,
+        "cpu_s": 0.24,
+        "duration_s": 0.184,
+        "fd_first": 11,
+        "fd_last": 23,
+        "fd_peak": 23,
+        "rss_kib_first": 606292,
+        "rss_kib_last": 607468,
+        "rss_kib_peak": 607468,
+        "samples": 4,
+        "threads_last": 62,
+        "threads_peak": 62
+      },
+      "seconds": 0.191,
+      "shape": "delay-10ms",
+      "statuses": {
+        "200": 64
+      },
+      "wall_seconds": 0.21
+    },
+    {
+      "concurrency": 64,
+      "distinct_urls": true,
+      "errors": {},
+      "latency": {
+        "count": 64,
+        "max_ms": 110.212,
+        "mean_ms": 69.724,
+        "min_ms": 41.304,
+        "p50_ms": 65.269,
+        "p90_ms": 102.154,
+        "p999_ms": 110.212,
+        "p99_ms": 108.832,
+        "stdev_ms": 21.474
+      },
+      "mode": "async",
+      "path": "/delay?ms=10&size=1024",
+      "qps": 386.2,
+      "queue_latency": {
+        "count": 64,
+        "max_ms": 0.039,
+        "mean_ms": 0.008,
+        "min_ms": 0.006,
+        "p50_ms": 0.007,
+        "p90_ms": 0.009,
+        "p999_ms": 0.039,
+        "p99_ms": 0.016,
+        "stdev_ms": 0.004
+      },
+      "requests": 64,
+      "resources": {
+        "cpu_cores_used": 1.46,
+        "cpu_s": 0.15,
+        "duration_s": 0.117,
+        "fd_first": 20,
+        "fd_last": 26,
+        "fd_peak": 26,
+        "rss_kib_first": 606320,
+        "rss_kib_last": 606892,
+        "rss_kib_peak": 606900,
+        "samples": 3,
+        "threads_last": 21,
+        "threads_peak": 21
+      },
+      "seconds": 0.166,
+      "shape": "delay-10ms",
+      "statuses": {
+        "200": 64
+      },
+      "wall_seconds": 0.169
+    }
+  ],
+  "control_group": [
+    {
+      "concurrency": 1,
+      "mode": "control/http.client",
+      "qps": 2733.2,
+      "requests": 200,
+      "seconds": 0.073
+    },
+    {
+      "concurrency": 8,
+      "mode": "control/http.client",
+      "qps": 1020.1,
+      "requests": 320,
+      "seconds": 0.314
+    },
+    {
+      "concurrency": 32,
+      "mode": "control/http.client",
+      "qps": 1207.9,
+      "requests": 1280,
+      "seconds": 1.06
+    },
+    {
+      "concurrency": 64,
+      "mode": "control/http.client",
+      "qps": 1089.9,
+      "requests": 2560,
+      "seconds": 2.349
+    }
+  ],
+  "cpu_count": 8,
+  "faults": [
+    {
+      "deadline_s": 10.0,
+      "fd_after": 13,
+      "fd_before": 11,
+      "fd_growth": 2,
+      "hangs": 5,
+      "kind": "stall-timeout",
+      "latency": {
+        "count": 5,
+        "max_ms": 10012.324,
+        "mean_ms": 10009.822,
+        "min_ms": 10006.313,
+        "p50_ms": 10011.785,
+        "p90_ms": 10012.324,
+        "p999_ms": 10012.324,
+        "p99_ms": 10012.324,
+        "stdev_ms": 2.68
+      },
+      "outcomes": {
+        "Timeout": 5
+      },
+      "repeats": 5,
+      "url": "http://127.0.0.1:45917/stall?ms=30000"
+    },
+    {
+      "deadline_s": 10.0,
+      "fd_after": 13,
+      "fd_before": 13,
+      "fd_growth": 0,
+      "hangs": 0,
+      "kind": "reset",
+      "latency": {
+        "count": 5,
+        "max_ms": 5.794,
+        "mean_ms": 2.9,
+        "min_ms": 2.09,
+        "p50_ms": 2.171,
+        "p90_ms": 5.794,
+        "p999_ms": 5.794,
+        "p99_ms": 5.794,
+        "stdev_ms": 1.449
+      },
+      "outcomes": {
+        "ConnectionError": 5
+      },
+      "repeats": 5,
+      "url": "http://127.0.0.1:45917/reset"
+    },
+    {
+      "deadline_s": 10.0,
+      "fd_after": 13,
+      "fd_before": 13,
+      "fd_growth": 0,
+      "hangs": 0,
+      "kind": "truncated-body",
+      "latency": {
+        "count": 5,
+        "max_ms": 7.001,
+        "mean_ms": 3.976,
+        "min_ms": 2.423,
+        "p50_ms": 2.921,
+        "p90_ms": 7.001,
+        "p999_ms": 7.001,
+        "p99_ms": 7.001,
+        "stdev_ms": 1.728
+      },
+      "outcomes": {
+        "IncompleteRead": 5
+      },
+      "repeats": 5,
+      "url": "http://127.0.0.1:45917/truncate?size=1024"
+    },
+    {
+      "deadline_s": 10.0,
+      "fd_after": 13,
+      "fd_before": 13,
+      "fd_growth": 0,
+      "hangs": 0,
+      "kind": "refused-port",
+      "latency": {
+        "count": 5,
+        "max_ms": 4.187,
+        "mean_ms": 1.663,
+        "min_ms": 0.844,
+        "p50_ms": 1.027,
+        "p90_ms": 4.187,
+        "p999_ms": 4.187,
+        "p99_ms": 4.187,
+        "stdev_ms": 1.268
+      },
+      "outcomes": {
+        "InvalidURL": 5
+      },
+      "repeats": 5,
+      "url": "http://127.0.0.1:1/"
+    },
+    {
+      "deadline_s": 10.0,
+      "fd_after": 14,
+      "fd_before": 13,
+      "fd_growth": 1,
+      "hangs": 0,
+      "kind": "status-503",
+      "latency": {
+        "count": 5,
+        "max_ms": 6.931,
+        "mean_ms": 3.019,
+        "min_ms": 1.929,
+        "p50_ms": 2.032,
+        "p90_ms": 6.931,
+        "p999_ms": 6.931,
+        "p99_ms": 6.931,
+        "stdev_ms": 1.96
+      },
+      "outcomes": {
+        "HTTP 503": 5
+      },
+      "repeats": 5,
+      "url": "http://127.0.0.1:45917/status?code=503"
+    },
+    {
+      "deadline_s": 10.0,
+      "fd_after": 14,
+      "fd_before": 14,
+      "fd_growth": 0,
+      "hangs": 0,
+      "kind": "redirect-loop",
+      "latency": {
+        "count": 5,
+        "max_ms": 26.747,
+        "mean_ms": 21.227,
+        "min_ms": 15.679,
+        "p50_ms": 21.514,
+        "p90_ms": 26.747,
+        "p999_ms": 26.747,
+        "p99_ms": 26.747,
+        "stdev_ms": 4.535
+      },
+      "outcomes": {
+        "TooManyRedirects": 5
+      },
+      "repeats": 5,
+      "url": "http://127.0.0.1:45917/redirect?n=50"
+    }
+  ],
+  "fixture": "http://127.0.0.1:45917",
+  "ladder": [
+    1,
+    8,
+    32,
+    64
+  ],
+  "native_module": "chrome_client",
+  "python": "3.12.3",
+  "single_url": false
+}

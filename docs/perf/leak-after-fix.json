@@ -1,0 +1,1140 @@
+{
+  "batches": 6,
+  "failures": 0,
+  "requests_per_batch": 20,
+  "shapes": [
+    {
+      "batches": 6,
+      "fd_kinds_last": {
+        "anon-inode": 1,
+        "eventfd": 2,
+        "eventpoll": 2,
+        "file": 2,
+        "socket": 2
+      },
+      "fd_kinds_per_request": {
+        "anon-inode": 0.0,
+        "eventfd": 0.0,
+        "eventpoll": 0.0,
+        "file": 0.0,
+        "socket": 0.0
+      },
+      "fd_per_request": 0.0,
+      "fd_series": [
+        9,
+        9,
+        9,
+        9,
+        9,
+        9
+      ],
+      "late": {
+        "fd_per_request": 0.0,
+        "rss_kib_per_request": 0.1,
+        "threads_per_request": 0.0
+      },
+      "late_abs": {
+        "fd": 0,
+        "rss_kib": 4,
+        "threads": 0
+      },
+      "ok_count": 2,
+      "reproduced": true,
+      "requests_per_batch": 20,
+      "rss_kib_per_request": 0.2914,
+      "rss_kib_series": [
+        36736,
+        36756,
+        36756,
+        36764,
+        36768,
+        36768
+      ],
+      "run_count": 2,
+      "runs": [
+        {
+          "fd_per_request": 0.0,
+          "fd_series": [
+            9,
+            9,
+            9,
+            9,
+            9,
+            9
+          ],
+          "late_abs": {
+            "fd": 0,
+            "rss_kib": 4,
+            "threads": 0
+          },
+          "reason": null,
+          "rss_kib_per_request": 0.2914,
+          "status": "ok",
+          "verdict": "flat"
+        },
+        {
+          "fd_per_request": 0.0,
+          "fd_series": [
+            9,
+            9,
+            9,
+            9,
+            9,
+            9
+          ],
+          "late_abs": {
+            "fd": 0,
+            "rss_kib": -28,
+            "threads": 0
+          },
+          "reason": null,
+          "rss_kib_per_request": 0.48,
+          "status": "ok",
+          "verdict": "flat"
+        }
+      ],
+      "shape": "sync-get",
+      "status": "ok",
+      "threads_per_request": 0.0,
+      "threads_series": [
+        11,
+        11,
+        11,
+        11,
+        11,
+        11
+      ],
+      "verdict": "flat"
+    },
+    {
+      "batches": 6,
+      "fd_kinds_last": {
+        "anon-inode": 1,
+        "eventfd": 2,
+        "eventpoll": 2,
+        "file": 2,
+        "socket": 3
+      },
+      "fd_kinds_per_request": {
+        "anon-inode": 0.0,
+        "eventfd": 0.0,
+        "eventpoll": 0.0,
+        "file": 0.0,
+        "socket": 0.0
+      },
+      "fd_per_request": 0.0,
+      "fd_series": [
+        9,
+        9,
+        9,
+        9,
+        9,
+        9
+      ],
+      "late": {
+        "fd_per_request": 0.0,
+        "rss_kib_per_request": 0.4,
+        "threads_per_request": 0.0
+      },
+      "late_abs": {
+        "fd": 0,
+        "rss_kib": 16,
+        "threads": 0
+      },
+      "ok_count": 2,
+      "reproduced": true,
+      "requests_per_batch": 20,
+      "rss_kib_per_request": 0.0343,
+      "rss_kib_series": [
+        34952,
+        35008,
+        34960,
+        34960,
+        34976,
+        34976
+      ],
+      "run_count": 2,
+      "runs": [
+        {
+          "fd_per_request": 0.0,
+          "fd_series": [
+            9,
+            9,
+            9,
+            9,
+            9,
+            9
+          ],
+          "late_abs": {
+            "fd": 0,
+            "rss_kib": 16,
+            "threads": 0
+          },
+          "reason": null,
+          "rss_kib_per_request": 0.0343,
+          "status": "ok",
+          "verdict": "flat"
+        },
+        {
+          "fd_per_request": -0.004286,
+          "fd_series": [
+            9,
+            10,
+            9,
+            9,
+            9,
+            9
+          ],
+          "late_abs": {
+            "fd": 0,
+            "rss_kib": 108,
+            "threads": 0
+          },
+          "reason": null,
+          "rss_kib_per_request": -0.7029,
+          "status": "ok",
+          "verdict": "flat"
+        }
+      ],
+      "shape": "sync-stream",
+      "status": "ok",
+      "threads_per_request": 0.0,
+      "threads_series": [
+        10,
+        10,
+        10,
+        10,
+        10,
+        10
+      ],
+      "verdict": "flat"
+    },
+    {
+      "batches": 6,
+      "fd_kinds_last": {
+        "anon-inode": 1,
+        "eventfd": 2,
+        "eventpoll": 2,
+        "file": 2,
+        "socket": 2
+      },
+      "fd_kinds_per_request": {
+        "anon-inode": 0.0,
+        "eventfd": 0.0,
+        "eventpoll": 0.0,
+        "file": 0.0,
+        "socket": 0.002857
+      },
+      "fd_per_request": 0.007143,
+      "fd_series": [
+        9,
+        9,
+        9,
+        9,
+        9,
+        10
+      ],
+      "late": {
+        "fd_per_request": 0.025,
+        "rss_kib_per_request": 0.3,
+        "threads_per_request": 0.0
+      },
+      "late_abs": {
+        "fd": 1,
+        "rss_kib": 12,
+        "threads": 0
+      },
+      "ok_count": 2,
+      "reproduced": true,
+      "requests_per_batch": 20,
+      "rss_kib_per_request": 2.8457,
+      "rss_kib_series": [
+        35256,
+        34992,
+        34992,
+        35352,
+        35356,
+        35364
+      ],
+      "run_count": 2,
+      "runs": [
+        {
+          "fd_per_request": 0.007143,
+          "fd_series": [
+            9,
+            9,
+            9,
+            9,
+            9,
+            10
+          ],
+          "late_abs": {
+            "fd": 1,
+            "rss_kib": 12,
+            "threads": 0
+          },
+          "reason": null,
+          "rss_kib_per_request": 2.8457,
+          "status": "ok",
+          "verdict": "flat"
+        },
+        {
+          "fd_per_request": 0.001429,
+          "fd_series": [
+            9,
+            9,
+            9,
+            10,
+            9,
+            9
+          ],
+          "late_abs": {
+            "fd": -1,
+            "rss_kib": 12,
+            "threads": 0
+          },
+          "reason": null,
+          "rss_kib_per_request": 0.9257,
+          "status": "ok",
+          "verdict": "flat"
+        }
+      ],
+      "shape": "sync-abandon",
+      "status": "ok",
+      "threads_per_request": 0.0,
+      "threads_series": [
+        11,
+        11,
+        11,
+        11,
+        11,
+        11
+      ],
+      "verdict": "flat"
+    },
+    {
+      "batches": 6,
+      "fd_kinds_last": {
+        "anon-inode": 1,
+        "eventfd": 2,
+        "eventpoll": 2,
+        "file": 2,
+        "socket": 2
+      },
+      "fd_kinds_per_request": {
+        "anon-inode": 0.0,
+        "eventfd": 0.0,
+        "eventpoll": 0.0,
+        "file": 0.0,
+        "socket": 0.0
+      },
+      "fd_per_request": 0.0,
+      "fd_series": [
+        9,
+        9,
+        9,
+        9,
+        9,
+        9
+      ],
+      "late": {
+        "fd_per_request": 0.0,
+        "rss_kib_per_request": 0.3,
+        "threads_per_request": 0.0
+      },
+      "late_abs": {
+        "fd": 0,
+        "rss_kib": 12,
+        "threads": 0
+      },
+      "ok_count": 2,
+      "reproduced": true,
+      "requests_per_batch": 20,
+      "rss_kib_per_request": 0.2057,
+      "rss_kib_series": [
+        34828,
+        34868,
+        34852,
+        34852,
+        34856,
+        34864
+      ],
+      "run_count": 2,
+      "runs": [
+        {
+          "fd_per_request": 0.0,
+          "fd_series": [
+            9,
+            9,
+            9,
+            9,
+            9,
+            9
+          ],
+          "late_abs": {
+            "fd": 0,
+            "rss_kib": 12,
+            "threads": 0
+          },
+          "reason": null,
+          "rss_kib_per_request": 0.2057,
+          "status": "ok",
+          "verdict": "flat"
+        },
+        {
+          "fd_per_request": 0.0,
+          "fd_series": [
+            9,
+            9,
+            9,
+            9,
+            9,
+            9
+          ],
+          "late_abs": {
+            "fd": 0,
+            "rss_kib": -12,
+            "threads": 0
+          },
+          "reason": null,
+          "rss_kib_per_request": 0.1143,
+          "status": "ok",
+          "verdict": "flat"
+        }
+      ],
+      "shape": "sync-error",
+      "status": "ok",
+      "threads_per_request": 0.0,
+      "threads_series": [
+        10,
+        10,
+        10,
+        10,
+        10,
+        10
+      ],
+      "verdict": "flat"
+    },
+    {
+      "batches": 6,
+      "fd_kinds_last": {
+        "anon-inode": 1,
+        "eventfd": 2,
+        "eventpoll": 2,
+        "file": 2,
+        "socket": 2
+      },
+      "fd_kinds_per_request": {
+        "anon-inode": 0.0,
+        "eventfd": 0.0,
+        "eventpoll": 0.0,
+        "file": 0.0,
+        "socket": 0.0
+      },
+      "fd_per_request": 0.0,
+      "fd_series": [
+        9,
+        9,
+        9,
+        9,
+        9,
+        9
+      ],
+      "late": {
+        "fd_per_request": 0.0,
+        "rss_kib_per_request": 0.3,
+        "threads_per_request": 0.0
+      },
+      "late_abs": {
+        "fd": 0,
+        "rss_kib": 12,
+        "threads": 0
+      },
+      "ok_count": 2,
+      "reproduced": true,
+      "requests_per_batch": 20,
+      "rss_kib_per_request": 0.2343,
+      "rss_kib_series": [
+        34840,
+        34884,
+        34868,
+        34868,
+        34872,
+        34880
+      ],
+      "run_count": 2,
+      "runs": [
+        {
+          "fd_per_request": 0.0,
+          "fd_series": [
+            9,
+            9,
+            9,
+            9,
+            9,
+            9
+          ],
+          "late_abs": {
+            "fd": 0,
+            "rss_kib": 12,
+            "threads": 0
+          },
+          "reason": null,
+          "rss_kib_per_request": 0.2343,
+          "status": "ok",
+          "verdict": "flat"
+        },
+        {
+          "fd_per_request": 0.0,
+          "fd_series": [
+            9,
+            9,
+            9,
+            9,
+            9,
+            9
+          ],
+          "late_abs": {
+            "fd": 0,
+            "rss_kib": 12,
+            "threads": 0
+          },
+          "reason": null,
+          "rss_kib_per_request": 0.2343,
+          "status": "ok",
+          "verdict": "flat"
+        }
+      ],
+      "shape": "sync-timeout",
+      "status": "ok",
+      "threads_per_request": 0.0,
+      "threads_series": [
+        11,
+        11,
+        11,
+        11,
+        11,
+        11
+      ],
+      "verdict": "flat"
+    },
+    {
+      "batches": 6,
+      "fd_kinds_last": {
+        "anon-inode": 1,
+        "eventfd": 2,
+        "eventpoll": 2,
+        "file": 2,
+        "socket": 8
+      },
+      "fd_kinds_per_request": {
+        "anon-inode": 0.0,
+        "eventfd": 0.0,
+        "eventpoll": 0.0,
+        "file": 0.0,
+        "socket": -0.025714
+      },
+      "fd_per_request": 0.0,
+      "fd_series": [
+        9,
+        9,
+        9,
+        9,
+        9,
+        9
+      ],
+      "late": {
+        "fd_per_request": 0.0,
+        "rss_kib_per_request": 0.1,
+        "threads_per_request": 0.0
+      },
+      "late_abs": {
+        "fd": 0,
+        "rss_kib": 4,
+        "threads": 0
+      },
+      "ok_count": 2,
+      "reproduced": true,
+      "requests_per_batch": 20,
+      "rss_kib_per_request": 0.0514,
+      "rss_kib_series": [
+        35576,
+        35660,
+        35608,
+        35608,
+        35612,
+        35612
+      ],
+      "run_count": 2,
+      "runs": [
+        {
+          "fd_per_request": 0.0,
+          "fd_series": [
+            9,
+            9,
+            9,
+            9,
+            9,
+            9
+          ],
+          "late_abs": {
+            "fd": 0,
+            "rss_kib": 4,
+            "threads": 0
+          },
+          "reason": null,
+          "rss_kib_per_request": 0.0514,
+          "status": "ok",
+          "verdict": "flat"
+        },
+        {
+          "fd_per_request": 0.0,
+          "fd_series": [
+            9,
+            9,
+            9,
+            9,
+            9,
+            9
+          ],
+          "late_abs": {
+            "fd": 0,
+            "rss_kib": -24,
+            "threads": 0
+          },
+          "reason": null,
+          "rss_kib_per_request": 0.7771,
+          "status": "ok",
+          "verdict": "flat"
+        }
+      ],
+      "shape": "async-gather",
+      "status": "ok",
+      "threads_per_request": 0.0,
+      "threads_series": [
+        13,
+        13,
+        13,
+        13,
+        13,
+        13
+      ],
+      "verdict": "flat"
+    },
+    {
+      "batches": 6,
+      "fd_kinds_last": {
+        "anon-inode": 1,
+        "eventfd": 2,
+        "eventpoll": 2,
+        "file": 2,
+        "socket": 3
+      },
+      "fd_kinds_per_request": {
+        "anon-inode": 0.0,
+        "eventfd": 0.0,
+        "eventpoll": 0.0,
+        "file": 0.0,
+        "socket": 0.008571
+      },
+      "fd_per_request": 0.012857,
+      "fd_series": [
+        9,
+        9,
+        9,
+        10,
+        10,
+        10
+      ],
+      "late": {
+        "fd_per_request": 0.0,
+        "rss_kib_per_request": 0.3,
+        "threads_per_request": 0.0
+      },
+      "late_abs": {
+        "fd": 0,
+        "rss_kib": 12,
+        "threads": 0
+      },
+      "ok_count": 2,
+      "reproduced": true,
+      "requests_per_batch": 20,
+      "rss_kib_per_request": 1.0057,
+      "rss_kib_series": [
+        35336,
+        35412,
+        35424,
+        35440,
+        35448,
+        35452
+      ],
+      "run_count": 2,
+      "runs": [
+        {
+          "fd_per_request": 0.012857,
+          "fd_series": [
+            9,
+            9,
+            9,
+            10,
+            10,
+            10
+          ],
+          "late_abs": {
+            "fd": 0,
+            "rss_kib": 12,
+            "threads": 0
+          },
+          "reason": null,
+          "rss_kib_per_request": 1.0057,
+          "status": "ok",
+          "verdict": "flat"
+        },
+        {
+          "fd_per_request": -0.011429,
+          "fd_series": [
+            10,
+            10,
+            10,
+            10,
+            9,
+            9
+          ],
+          "late_abs": {
+            "fd": -1,
+            "rss_kib": -332,
+            "threads": 0
+          },
+          "reason": null,
+          "rss_kib_per_request": -2.4514,
+          "status": "ok",
+          "verdict": "flat"
+        }
+      ],
+      "shape": "async-abandon",
+      "status": "ok",
+      "threads_per_request": 0.0,
+      "threads_series": [
+        11,
+        11,
+        11,
+        11,
+        11,
+        11
+      ],
+      "verdict": "flat"
+    },
+    {
+      "batches": 6,
+      "fd_kinds_last": {
+        "anon-inode": 1,
+        "eventfd": 2,
+        "eventpoll": 2,
+        "file": 2,
+        "socket": 2
+      },
+      "fd_kinds_per_request": {
+        "anon-inode": 0.0,
+        "eventfd": 0.0,
+        "eventpoll": 0.0,
+        "file": 0.0,
+        "socket": 0.0
+      },
+      "fd_per_request": 0.0,
+      "fd_series": [
+        9,
+        9,
+        9,
+        9,
+        9,
+        9
+      ],
+      "late": {
+        "fd_per_request": 0.0,
+        "rss_kib_per_request": 0.6,
+        "threads_per_request": 0.0
+      },
+      "late_abs": {
+        "fd": 0,
+        "rss_kib": 24,
+        "threads": 0
+      },
+      "ok_count": 2,
+      "reproduced": true,
+      "requests_per_batch": 20,
+      "rss_kib_per_request": 1.9486,
+      "rss_kib_series": [
+        35084,
+        35300,
+        35304,
+        35316,
+        35324,
+        35340
+      ],
+      "run_count": 2,
+      "runs": [
+        {
+          "fd_per_request": 0.0,
+          "fd_series": [
+            9,
+            9,
+            9,
+            9,
+            9,
+            9
+          ],
+          "late_abs": {
+            "fd": 0,
+            "rss_kib": 24,
+            "threads": 0
+          },
+          "reason": null,
+          "rss_kib_per_request": 1.9486,
+          "status": "ok",
+          "verdict": "flat"
+        },
+        {
+          "fd_per_request": 0.0,
+          "fd_series": [
+            9,
+            9,
+            9,
+            9,
+            9,
+            9
+          ],
+          "late_abs": {
+            "fd": 0,
+            "rss_kib": 8,
+            "threads": 0
+          },
+          "reason": null,
+          "rss_kib_per_request": 1.9886,
+          "status": "ok",
+          "verdict": "flat"
+        }
+      ],
+      "shape": "session-churn",
+      "status": "ok",
+      "threads_per_request": 0.0,
+      "threads_series": [
+        11,
+        11,
+        11,
+        11,
+        11,
+        11
+      ],
+      "verdict": "flat"
+    },
+    {
+      "batches": 6,
+      "fd_kinds_last": {
+        "anon-inode": 1,
+        "eventfd": 2,
+        "eventpoll": 2,
+        "file": 2,
+        "socket": 2
+      },
+      "fd_kinds_per_request": {
+        "anon-inode": 0.0,
+        "eventfd": 0.0,
+        "eventpoll": 0.0,
+        "file": 0.0,
+        "socket": 0.0
+      },
+      "fd_per_request": 0.0,
+      "fd_series": [
+        9,
+        9,
+        9,
+        9,
+        9,
+        9
+      ],
+      "late": {
+        "fd_per_request": 0.0,
+        "rss_kib_per_request": 1.0,
+        "threads_per_request": 0.0
+      },
+      "late_abs": {
+        "fd": 0,
+        "rss_kib": 40,
+        "threads": 0
+      },
+      "ok_count": 2,
+      "reproduced": true,
+      "requests_per_batch": 20,
+      "rss_kib_per_request": 1.9314,
+      "rss_kib_series": [
+        35004,
+        35232,
+        35220,
+        35220,
+        35256,
+        35260
+      ],
+      "run_count": 2,
+      "runs": [
+        {
+          "fd_per_request": 0.0,
+          "fd_series": [
+            9,
+            9,
+            9,
+            9,
+            9,
+            9
+          ],
+          "late_abs": {
+            "fd": 0,
+            "rss_kib": 40,
+            "threads": 0
+          },
+          "reason": null,
+          "rss_kib_per_request": 1.9314,
+          "status": "ok",
+          "verdict": "flat"
+        },
+        {
+          "fd_per_request": 0.0,
+          "fd_series": [
+            9,
+            9,
+            9,
+            9,
+            9,
+            9
+          ],
+          "late_abs": {
+            "fd": 0,
+            "rss_kib": 12,
+            "threads": 0
+          },
+          "reason": null,
+          "rss_kib_per_request": 1.9029,
+          "status": "ok",
+          "verdict": "flat"
+        }
+      ],
+      "shape": "churn-nogc",
+      "status": "ok",
+      "threads_per_request": 0.0,
+      "threads_series": [
+        10,
+        10,
+        10,
+        10,
+        10,
+        10
+      ],
+      "verdict": "flat"
+    },
+    {
+      "batches": 6,
+      "fd_kinds_last": {
+        "anon-inode": 1,
+        "eventfd": 2,
+        "eventpoll": 2,
+        "file": 2,
+        "socket": 2
+      },
+      "fd_kinds_per_request": {
+        "anon-inode": 0.0,
+        "eventfd": 0.0,
+        "eventpoll": 0.0,
+        "file": 0.0,
+        "socket": 0.0
+      },
+      "fd_per_request": 0.0,
+      "fd_series": [
+        9,
+        9,
+        9,
+        9,
+        9,
+        9
+      ],
+      "late": {
+        "fd_per_request": 0.0,
+        "rss_kib_per_request": 1.0,
+        "threads_per_request": 0.0
+      },
+      "late_abs": {
+        "fd": 0,
+        "rss_kib": 40,
+        "threads": 0
+      },
+      "ok_count": 2,
+      "reproduced": true,
+      "requests_per_batch": 20,
+      "rss_kib_per_request": 3.3314,
+      "rss_kib_series": [
+        34952,
+        34952,
+        35016,
+        35184,
+        35220,
+        35224
+      ],
+      "run_count": 2,
+      "runs": [
+        {
+          "fd_per_request": 0.0,
+          "fd_series": [
+            9,
+            9,
+            9,
+            9,
+            9,
+            9
+          ],
+          "late_abs": {
+            "fd": 0,
+            "rss_kib": 40,
+            "threads": 0
+          },
+          "reason": null,
+          "rss_kib_per_request": 3.3314,
+          "status": "ok",
+          "verdict": "flat"
+        },
+        {
+          "fd_per_request": 0.0,
+          "fd_series": [
+            9,
+            9,
+            9,
+            9,
+            9,
+            9
+          ],
+          "late_abs": {
+            "fd": 0,
+            "rss_kib": 16,
+            "threads": 0
+          },
+          "reason": null,
+          "rss_kib_per_request": 2.7314,
+          "status": "ok",
+          "verdict": "flat"
+        }
+      ],
+      "shape": "config-rotation",
+      "status": "ok",
+      "threads_per_request": 0.0,
+      "threads_series": [
+        11,
+        11,
+        11,
+        11,
+        11,
+        11
+      ],
+      "verdict": "flat"
+    },
+    {
+      "batches": 6,
+      "fd_kinds_last": {
+        "anon-inode": 1,
+        "eventfd": 2,
+        "eventpoll": 2,
+        "file": 2,
+        "socket": 2
+      },
+      "fd_kinds_per_request": {
+        "anon-inode": 0.0,
+        "eventfd": 0.0,
+        "eventpoll": 0.0,
+        "file": 0.0,
+        "socket": 0.0
+      },
+      "fd_per_request": 0.0,
+      "fd_series": [
+        9,
+        9,
+        9,
+        9,
+        9,
+        9
+      ],
+      "late": {
+        "fd_per_request": 0.0,
+        "rss_kib_per_request": 1.0,
+        "threads_per_request": 0.0
+      },
+      "late_abs": {
+        "fd": 0,
+        "rss_kib": 40,
+        "threads": 0
+      },
+      "ok_count": 2,
+      "reproduced": true,
+      "requests_per_batch": 20,
+      "rss_kib_per_request": 0.0171,
+      "rss_kib_series": [
+        34864,
+        34924,
+        34848,
+        34848,
+        34888,
+        34888
+      ],
+      "run_count": 2,
+      "runs": [
+        {
+          "fd_per_request": 0.0,
+          "fd_series": [
+            9,
+            9,
+            9,
+            9,
+            9,
+            9
+          ],
+          "late_abs": {
+            "fd": 0,
+            "rss_kib": 40,
+            "threads": 0
+          },
+          "reason": null,
+          "rss_kib_per_request": 0.0171,
+          "status": "ok",
+          "verdict": "flat"
+        },
+        {
+          "fd_per_request": 0.0,
+          "fd_series": [
+            9,
+            9,
+            9,
+            9,
+            9,
+            9
+          ],
+          "late_abs": {
+            "fd": 0,
+            "rss_kib": 12,
+            "threads": 0
+          },
+          "reason": null,
+          "rss_kib_per_request": 0.0171,
+          "status": "ok",
+          "verdict": "flat"
+        }
+      ],
+      "shape": "discard-cookies",
+      "status": "ok",
+      "threads_per_request": 0.0,
+      "threads_series": [
+        10,
+        10,
+        10,
+        10,
+        10,
+        10
+      ],
+      "verdict": "flat"
+    }
+  ]
+}
