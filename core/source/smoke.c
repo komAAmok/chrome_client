@@ -35,6 +35,10 @@ typedef struct request_state {
   char body[16385];
   size_t headers_stored;
   char headers[4097];
+  /* The structured form the callback carries alongside the raw block. */
+  size_t header_field_count;
+  size_t reason_phrase_stored;
+  char reason_phrase[256];
   mn_result_t result;
   int net_error;
   int redirect_count;
@@ -43,10 +47,30 @@ typedef struct request_state {
 } request_state_t;
 
 static void MN_CALL on_response(void *user_data, mn_request_t *request,
-                                int status_code, const char *headers,
-                                size_t headers_length) {
+                                int status_code, const char *reason_phrase,
+                                size_t reason_phrase_length,
+                                const mn_header_t *header_fields,
+                                size_t header_field_count,
+                                const char *headers, size_t headers_length) {
   request_state_t *state = user_data;
   state->status_code = status_code;
+  /* The reason phrase is a separate parameter now, so it can be checked
+   * without parsing the status line out of the raw block. */
+  size_t reason_copied = reason_phrase_length < sizeof(state->reason_phrase) - 1
+                             ? reason_phrase_length
+                             : sizeof(state->reason_phrase) - 1;
+  if (reason_phrase != NULL && reason_copied > 0) {
+    memcpy(state->reason_phrase, reason_phrase, reason_copied);
+  }
+  state->reason_phrase[reason_copied] = '\0';
+  state->reason_phrase_stored = reason_copied;
+  /* Every field must be a valid name/value pair; a null name with a length
+   * would mean the array outlived its storage. */
+  state->header_field_count = header_field_count;
+  for (size_t i = 0; i < header_field_count; ++i) {
+    CHECK(header_fields[i].name != NULL || header_fields[i].name_length == 0);
+    CHECK(header_fields[i].value != NULL || header_fields[i].value_length == 0);
+  }
   CHECK(headers || headers_length == 0);
   size_t copied = headers_length < sizeof(state->headers) - 1
                       ? headers_length

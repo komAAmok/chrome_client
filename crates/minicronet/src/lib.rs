@@ -17,7 +17,7 @@ use minicronet_sys as sys;
 
 pub use request::{
     CacheMode, Header, HttpVersion, Redirect, RedirectMode, Request, RequestConfig, RequestError,
-    RequestPriority, Response, ResponseFuture, ResponseStream, Upload,
+    RequestPriority, Response, ResponseFuture, ResponseHeader, ResponseStream, Upload,
 };
 pub use websocket::{
     CloseInfo, MessageType, WebSocket, WebSocketConfig, WebSocketEvent, WebSocketEvents,

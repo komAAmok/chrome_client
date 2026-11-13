@@ -214,6 +214,12 @@ struct PyResponse {
     status_code: i32,
     headers: Vec<u8>,
     body: Vec<u8>,
+    /// The reason phrase the Core extracted from the status line.
+    #[pyo3(get)]
+    reason_phrase: String,
+    /// Parsed header fields as (name, value) pairs, duplicates preserved.
+    #[pyo3(get)]
+    header_fields: Vec<(String, String)>,
     /// The negotiated protocol, as the Core reported it.
     ///
     /// `None` means Chromium itself does not know (a cache hit), which the
@@ -448,6 +454,21 @@ impl PyRequest {
     /// it sees that event, rather than widening the event tuple: the tuple is
     /// unpacked positionally in several places, and a sixth element would break
     /// every one of them for a value only the head needs.
+    /// The parsed header fields of the response head, duplicates preserved.
+    fn header_fields(&self) -> Option<Vec<(String, String)>> {
+        self.inner.response_head().map(|head| {
+            head.header_fields
+                .into_iter()
+                .map(|field| (field.name, field.value))
+                .collect()
+        })
+    }
+
+    /// The reason phrase the Core extracted, if a response has started.
+    fn reason_phrase(&self) -> Option<String> {
+        self.inner.response_head().map(|head| head.reason_phrase)
+    }
+
     fn http_version(&self) -> Option<&'static str> {
         http_version_name(self.inner.negotiated_protocol()?)
     }
@@ -556,6 +577,12 @@ impl PyRequest {
                 status_code: response.status_code,
                 headers: response.headers,
                 body: Vec::new(),
+                reason_phrase: response.reason_phrase,
+                header_fields: response
+                    .header_fields
+                    .into_iter()
+                    .map(|field| (field.name, field.value))
+                    .collect(),
                 http_version: http_version_name(response.http_version),
             })
         })
@@ -590,6 +617,12 @@ impl PyRequest {
                 status_code: response.status_code,
                 headers: response.headers,
                 body: Vec::new(),
+                reason_phrase: response.reason_phrase,
+                header_fields: response
+                    .header_fields
+                    .into_iter()
+                    .map(|field| (field.name, field.value))
+                    .collect(),
                 http_version: http_version_name(response.http_version),
             })
         })

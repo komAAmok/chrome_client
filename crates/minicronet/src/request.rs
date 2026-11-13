@@ -104,6 +104,48 @@ impl RequestConfig {
     }
 }
 
+/// One response header field, owned.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ResponseHeader {
+    pub name: String,
+    pub value: String,
+}
+
+/// Everything the response callback delivered about the head.
+#[derive(Clone, Debug)]
+pub struct ResponseHead {
+    pub status_code: i32,
+    /// The reason phrase as the Core extracted it; empty when the peer sent none.
+    pub reason_phrase: String,
+    /// Parsed fields, duplicates and arrival order preserved.
+    pub header_fields: Vec<ResponseHeader>,
+    /// The raw block, for callers that reproduce bytes rather than fields.
+    pub raw_headers: Vec<u8>,
+}
+
+/// Copies a Core-owned UTF-8 string that is valid for the current call only.
+fn copy_utf8(data: *const i8, length: usize) -> String {
+    if data.is_null() || length == 0 {
+        return String::new();
+    }
+    let bytes = unsafe { std::slice::from_raw_parts(data.cast::<u8>(), length) };
+    String::from_utf8_lossy(bytes).into_owned()
+}
+
+/// Copies the Core's header array, whose strings live only for the call.
+fn copy_header_fields(data: *const sys::mn_header_t, count: usize) -> Vec<ResponseHeader> {
+    if data.is_null() || count == 0 {
+        return Vec::new();
+    }
+    let raw = unsafe { std::slice::from_raw_parts(data, count) };
+    raw.iter()
+        .map(|field| ResponseHeader {
+            name: copy_utf8(field.name, field.name_length),
+            value: copy_utf8(field.value, field.value_length),
+        })
+        .collect()
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RequestError {
     pub error: Error,
@@ -160,6 +202,10 @@ impl From<sys::mn_http_version_t> for HttpVersion {
 pub struct Response {
     pub status_code: i32,
     pub headers: Vec<u8>,
+    /// The reason phrase the peer sent, empty when it sent none.
+    pub reason_phrase: String,
+    /// Parsed header fields, duplicates and arrival order preserved.
+    pub header_fields: Vec<ResponseHeader>,
     /// The protocol the connection actually used.
     ///
     /// `Unknown` is a real answer, not a placeholder: Chromium reports
@@ -171,7 +217,7 @@ pub struct Response {
 
 #[derive(Default)]
 struct RequestState {
-    response: Option<(i32, Vec<u8>)>,
+    response: Option<ResponseHead>,
     response_taken: bool,
     body: VecDeque<Vec<u8>>,
     body_bytes: usize,
@@ -344,6 +390,14 @@ impl Request {
     ///
     /// Readable from the response onwards; before that the Core answers
     /// `MN_ERROR_INVALID_STATE` and this returns `None`.
+    /// The response head the callback delivered, or `None` before it arrives.
+    ///
+    /// Readable after completion as well: the state keeps it until the response
+    /// is taken, which is why this clones rather than moving.
+    pub fn response_head(&self) -> Option<ResponseHead> {
+        lock(&self.0.shared.state).response.clone()
+    }
+
     pub fn negotiated_protocol(&self) -> Option<HttpVersion> {
         let mut value = sys::mn_http_version_t::MN_HTTP_VERSION_UNKNOWN;
         let result = unsafe { sys::mn_request_negotiated_protocol(self.raw(), &mut value) };
@@ -654,7 +708,7 @@ fn take_response(
     state: &mut RequestState,
 ) -> Option<Result<Response, RequestError>> {
     if !state.response_taken {
-        if let Some((status_code, headers)) = state.response.take() {
+        if let Some(head) = state.response.take() {
             state.response_taken = true;
             // Read before the response is handed over: the Core keeps it
             // readable after completion, but this is where the request still
@@ -668,8 +722,10 @@ fn take_response(
                 HttpVersion::Unknown
             };
             return Some(Ok(Response {
-                status_code,
-                headers,
+                status_code: head.status_code,
+                headers: head.raw_headers,
+                header_fields: head.header_fields,
+                reason_phrase: head.reason_phrase,
                 http_version,
                 body: ResponseStream {
                     shared: Arc::clone(shared),
@@ -757,13 +813,26 @@ unsafe extern "C" fn on_response(
     user_data: *mut std::ffi::c_void,
     _request: *mut sys::mn_request_t,
     status_code: i32,
+    reason_phrase: *const i8,
+    reason_phrase_length: usize,
+    header_fields: *const sys::mn_header_t,
+    header_field_count: usize,
     headers: *const i8,
     headers_length: usize,
 ) {
     let shared = unsafe { shared(user_data) };
+    // Copy before the callback returns: the Core borrows all three for the call.
+    let reason = copy_utf8(reason_phrase, reason_phrase_length);
+    let fields = copy_header_fields(header_fields, header_field_count);
+    let raw = copy_bytes(headers.cast(), headers_length);
     if catch_unwind(AssertUnwindSafe(|| {
         let mut state = lock(&shared.state);
-        state.response = Some((status_code, copy_bytes(headers.cast(), headers_length)));
+        state.response = Some(ResponseHead {
+            status_code,
+            reason_phrase: reason,
+            header_fields: fields,
+            raw_headers: raw,
+        });
         let wakeups = shared.notify(&mut state);
         drop(state);
         wakeups.wake();
@@ -892,12 +961,31 @@ mod tests {
     #[test]
     fn response_and_body_preserve_callback_order() {
         let shared = Arc::new(RequestShared::new());
+        // Two fields, one of them duplicated: the array must survive both.
+        let fields = [
+            sys::mn_header_t {
+                name: b"Set-Cookie".as_ptr().cast(),
+                name_length: 10,
+                value: b"a=1".as_ptr().cast(),
+                value_length: 3,
+            },
+            sys::mn_header_t {
+                name: b"Set-Cookie".as_ptr().cast(),
+                name_length: 10,
+                value: b"b=2".as_ptr().cast(),
+                value_length: 3,
+            },
+        ];
         let user_data = Arc::into_raw(Arc::clone(&shared)).cast_mut().cast();
         unsafe {
             on_response(
                 user_data,
                 std::ptr::null_mut(),
                 200,
+                b"OK".as_ptr().cast(),
+                2,
+                fields.as_ptr(),
+                fields.len(),
                 b"h\n".as_ptr().cast(),
                 2,
             );
@@ -908,9 +996,16 @@ mod tests {
         // building one needs a live Core request handle, which these offline
         // tests do not have.
         let mut state = lock(&shared.state);
-        let (status_code, headers) = state.response.take().unwrap();
-        assert_eq!(status_code, 200);
-        assert_eq!(headers, b"h\n");
+        let head = state.response.take().unwrap();
+        assert_eq!(head.status_code, 200);
+        assert_eq!(head.raw_headers, b"h\n");
+        // The reason phrase is its own ABI parameter now.
+        assert_eq!(head.reason_phrase, "OK");
+        // Duplicates and order both survive: Set-Cookie depends on them.
+        assert_eq!(head.header_fields.len(), 2);
+        assert_eq!(head.header_fields[0].name, "Set-Cookie");
+        assert_eq!(head.header_fields[0].value, "a=1");
+        assert_eq!(head.header_fields[1].value, "b=2");
         assert_eq!(take_body(&mut state).unwrap().unwrap().unwrap(), b"body");
         assert!(take_body(&mut state).unwrap().is_none());
         drop(state);

@@ -54,6 +54,23 @@ HistoryHeaders: TypeAlias = List[Tuple[str, Headers]]
 HeaderLink: TypeAlias = Dict[str, str]
 
 
+def compose_status_line(status_code: int, reason_phrase: Optional[str]) -> str:
+    """Builds ``HTTP/1.1 NNN Reason`` from the fields the Core sends.
+
+    Chromium normalizes every protocol onto an HTTP/1.1 status line, so this
+    reproduces what the raw block used to carry. The response callback no
+    longer forwards the line itself: the reason phrase is its own parameter.
+
+    Args:
+        status_code: The numeric status.
+        reason_phrase: The reason the Core extracted, or ``None``/empty.
+
+    Returns:
+        e.g. ``"HTTP/1.1 200 OK"``.
+    """
+    ...
+
+
 def parse_raw_headers(
     raw: RawHeaderBlock, encoding: str = ...
 ) -> Tuple[str, Headers]:

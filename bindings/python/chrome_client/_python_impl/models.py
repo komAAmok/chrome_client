@@ -115,6 +115,26 @@ def _decode_failure(error, response):
     return error
 
 
+def compose_status_line(status_code, reason_phrase):
+    """Builds ``HTTP/1.1 NNN Reason`` from the fields the Core sends.
+
+    Chromium normalizes every protocol onto an HTTP/1.1 status line
+    (``net/spdy/spdy_http_utils.cc``), so this reproduces exactly what the raw
+    block used to carry. It exists because ``Response.status_line`` is public
+    surface and the response callback no longer forwards the line itself --
+    the reason phrase is now its own ABI parameter.
+
+    Args:
+        status_code: The numeric status.
+        reason_phrase: The reason the Core extracted, or ``None``/empty.
+
+    Returns:
+        e.g. ``"HTTP/1.1 200 OK"``.
+    """
+    phrase = reason_phrase or ""
+    return ("HTTP/1.1 %d %s" % (status_code, phrase)).strip()
+
+
 def _negotiated_http_version(status_line):
     """The protocol the response actually arrived over, or ``None``.
 

@@ -390,9 +390,27 @@ typedef enum mn_read_disposition {
   MN_READ_CONTINUE = 1,
 } mn_read_disposition_t;
 
+/* The header block reaches the caller twice on purpose:
+ *
+ *   `headers` / `headers_length` is HttpResponseHeaders::raw_headers() with NUL
+ *   bytes turned into newlines. It is the status line plus the fields as they
+ *   arrived, which is what a caller reproducing a browser's byte stream wants.
+ *
+ *   `header_fields` / `header_field_count` is the same information already
+ *   parsed. Every binding used to split the raw block itself, which meant four
+ *   implementations of one grammar and a status line kept as a string so the
+ *   reason phrase could be re-derived from it. The reason phrase is now its own
+ *   parameter, and the fields are name/value pairs with duplicates preserved in
+ *   arrival order -- Set-Cookie depends on that.
+ *
+ * Both are borrowed for the duration of the call. */
 typedef void(MN_CALL *mn_request_response_fn)(void *user_data,
                                               mn_request_t *request,
                                               int status_code,
+                                              const char *reason_phrase,
+                                              size_t reason_phrase_length,
+                                              const mn_header_t *header_fields,
+                                              size_t header_field_count,
                                               const char *headers,
                                               size_t headers_length);
 typedef mn_read_disposition_t(MN_CALL *mn_request_body_fn)(void *user_data,

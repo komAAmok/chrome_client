@@ -42,7 +42,7 @@ from .impersonate import (default_priority, normalize_http_version,
                           normalize_impersonate, reject_fingerprint_overrides,
                           validate_extra_fp)
 from .models import (PreparedRequest, Request, Response, AsyncResponse,
-                     _negotiated_http_version, parse_raw_headers,
+                     _negotiated_http_version, compose_status_line, parse_raw_headers,
                      reason_from_status_line)
 from .structures import CaseInsensitiveDict, Headers
 from .utils import (default_headers as _default_headers, get_netrc_auth,
@@ -893,7 +893,7 @@ class _AsyncState(object):
     __slots__ = ("request", "loop", "future", "chunks", "buffered", "done", "error",
                  "status", "raw_headers", "body", "stream", "limit", "total",
                  "wake", "timer", "closed", "throttled", "hops", "follow",
-                 "http_version")
+                 "http_version", "header_fields", "reason_phrase")
 
     def __init__(self, request, loop, stream, limit, timeout, follow=True):
         self.request = request
@@ -910,6 +910,10 @@ class _AsyncState(object):
         self.raw_headers = b""
         #: The protocol the Core reported, or ``None`` when it did not know.
         self.http_version = None
+        #: Parsed header fields from the Core, or ``None`` before a response.
+        self.header_fields = None
+        #: Reason phrase from the Core, or ``None`` before a response.
+        self.reason_phrase = None
         self.body = None if stream else []
         self.wake = asyncio.Event() if stream else None
         self.closed = False
@@ -949,6 +953,8 @@ class _AsyncState(object):
                 # event tuple: only the head needs it, and widening the tuple
                 # would change a shape several places unpack positionally.
                 self.http_version = self.request.http_version()
+                self.header_fields = self.request.header_fields()
+                self.reason_phrase = self.request.reason_phrase()
                 if self.stream:
                     self._signal()
             elif kind == "redirect":
@@ -2149,14 +2155,27 @@ class BaseSession(object):
         return AsyncResponse() if async_mode else Response()
 
     def _finalize(self, response, prepared, status_code, raw_headers, hops, started,
-                  slot, discard_cookies=False, body=None, http_version=None):
-        status_line, headers = parse_raw_headers(raw_headers)
+                  slot, discard_cookies=False, body=None, http_version=None,
+                  header_fields=None, reason_phrase=None):
+        if header_fields is not None:
+            # The Core already split the block; building Headers from it is a
+            # copy, not a parse. That is the point of the ABI change: Chromium
+            # owns the grammar once, for every binding.
+            headers = Headers()
+            for name, value in header_fields:
+                headers.add(name, value)
+            status_line = compose_status_line(status_code, reason_phrase)
+        else:
+            # Only for a hop the Core never saw: a redirect assembled from the
+            # redirect callback, which carries the raw block and nothing else.
+            status_line, headers = parse_raw_headers(raw_headers)
         if body is not None:
             response.content = body
         response.status_code = status_code
         response.headers = headers
         response.status_line = status_line
-        response.reason = reason_from_status_line(status_line, status_code)
+        response.reason = (reason_phrase if reason_phrase is not None
+                           else reason_from_status_line(status_line, status_code))
         # ABI v9 reports the negotiated protocol, so this is the Core's answer
         # whenever the caller supplied one. Chromium normalizes an HTTP/2
         # response onto "HTTP/1.1 200" (net/spdy/spdy_http_utils.cc), so the
@@ -2697,9 +2716,12 @@ class Session(BaseSession):
         # connection actually used. It is None only on the paths that never got
         # a header block, where _finalize falls back to the status line.
         negotiated = getattr(head, "http_version", None) if head is not None else None
+        fields = getattr(head, "header_fields", None) if head is not None else None
+        reason = getattr(head, "reason_phrase", None) if head is not None else None
         return self._finalize(response, prepared, status_code, raw_headers,
                               hops, started, slot, discard,
-                              http_version=negotiated)
+                              http_version=negotiated, header_fields=fields,
+                              reason_phrase=reason)
 
     # -- verbs --------------------------------------------------------------
     def get(self, url, **kwargs):
@@ -3092,7 +3114,9 @@ class AsyncSession(BaseSession):
                 callback(response.content)
         return self._finalize(response, prepared, state.status, state.raw_headers,
                               state.hops, started, slot, discard,
-                              http_version=state.http_version)
+                              http_version=state.http_version,
+                              header_fields=state.header_fields,
+                              reason_phrase=state.reason_phrase)
 
     @staticmethod
     async def _await_headers(state):

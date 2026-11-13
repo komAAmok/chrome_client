@@ -41,8 +41,12 @@ constexpr int kReadBufferSize = 32 * 1024;
 DISABLE_CFI_ICALL void
 InvokeResponseCallback(mn_request_response_fn callback, void *user_data,
                        mn_request_t *request, int status_code,
-                       const char *headers, size_t headers_length) {
-  callback(user_data, request, status_code, headers, headers_length);
+                       const char *reason_phrase, size_t reason_phrase_length,
+                       const mn_header_t *header_fields,
+                       size_t header_field_count, const char *headers,
+                       size_t headers_length) {
+  callback(user_data, request, status_code, reason_phrase, reason_phrase_length,
+           header_fields, header_field_count, headers, headers_length);
 }
 
 DISABLE_CFI_ICALL mn_read_disposition_t
@@ -452,25 +456,77 @@ void Request::OnResponseStarted(net::URLRequest *request, int net_error) {
 
   int status_code = request->GetResponseCode();
   std::string headers;
+  std::string reason_phrase;
+  // The names and values the mn_header_t array points at. They cannot live in
+  // the loop's `name`/`value`: EnumerateHeaderLines overwrites those on every
+  // iteration, so the array would point at one recycled buffer. Each string is
+  // owned here and the pointers are filled in after the loop, when the deque
+  // can no longer reallocate them out from under the array.
+  std::deque<std::string> header_storage;
   if (net::HttpResponseHeaders *response_headers =
           request->response_headers()) {
     headers = response_headers->raw_headers();
     std::replace(headers.begin(), headers.end(), '\0', '\n');
+
+    // Split here, once, for every binding. The fields keep arrival order and
+    // duplicates, because Set-Cookie depends on both.
+    size_t iter = 0;
+    std::string name;
+    std::string value;
+    while (response_headers->EnumerateHeaderLines(&iter, &name, &value)) {
+      header_storage.push_back(name);
+      header_storage.push_back(value);
+    }
+    // The array itself is built inside the callback task, from storage that has
+    // already reached its final address. Filling it here would mean carrying
+    // pointers across a std::move, and a moved-from deque gives no guarantee
+    // that its elements stayed put -- measured: the array pointed at freed
+    // strings and the binding read a length of 3 PB.
+
+    // The reason phrase is part of the status line and not otherwise on the
+    // ABI. Extract it here so no binding has to re-derive it from the line.
+    const std::string status_line = response_headers->GetStatusLine();
+    const size_t first_space = status_line.find(' ');
+    if (first_space != std::string::npos) {
+      const size_t second_space = status_line.find(' ', first_space + 1);
+      if (second_space != std::string::npos &&
+          second_space > first_space + 1) {
+        reason_phrase = status_line.substr(second_space + 1);
+      }
+    }
   }
   if (callbacks_.on_response) {
     auto callback = callbacks_.on_response;
     void *user_data = callbacks_.user_data;
+    // Copied into the task because the callback runs later on the callback
+    // runner; the vector's storage must outlive the borrow the callback takes.
     callback_runner_->PostTask(
         FROM_HERE,
         base::BindOnce(
             [](mn_request_response_fn callback, void *user_data, Request *self,
-               int status_code, std::string headers) {
+               int status_code, std::string reason_phrase,
+               std::deque<std::string> header_storage, std::string headers) {
+              // Built here, not earlier: header_storage has reached its final
+              // address by the time this task runs, so the pointers cannot be
+              // invalidated by the move that brought it here.
+              std::vector<mn_header_t> header_fields;
+              header_fields.reserve(header_storage.size() / 2);
+              for (size_t i = 0; i + 1 < header_storage.size(); i += 2) {
+                header_fields.push_back(
+                    mn_header_t{header_storage[i].data(),
+                                header_storage[i].size(),
+                                header_storage[i + 1].data(),
+                                header_storage[i + 1].size()});
+              }
               InvokeResponseCallback(callback, user_data, self->public_handle_,
-                                     status_code, headers.data(),
+                                     status_code, reason_phrase.data(),
+                                     reason_phrase.size(), header_fields.data(),
+                                     header_fields.size(), headers.data(),
                                      headers.size());
               self->PostReadMore();
             },
             callback, user_data, base::RetainedRef(this), status_code,
+            std::move(reason_phrase), std::move(header_storage),
             std::move(headers)));
   } else {
     ReadMore();

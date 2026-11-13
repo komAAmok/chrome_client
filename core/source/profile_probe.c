@@ -32,9 +32,16 @@ typedef struct probe_state {
 } probe_state_t;
 
 static void MN_CALL on_response(void *user_data, mn_request_t *request,
-                                int status_code, const char *headers,
-                                size_t headers_length) {
+                                int status_code, const char *reason_phrase,
+                                size_t reason_phrase_length,
+                                const mn_header_t *header_fields,
+                                size_t header_field_count,
+                                const char *headers, size_t headers_length) {
   (void)request;
+  (void)reason_phrase;
+  (void)reason_phrase_length;
+  (void)header_fields;
+  (void)header_field_count;
   (void)headers;
   (void)headers_length;
   ((probe_state_t *)user_data)->status_code = status_code;

@@ -70,9 +70,10 @@ KNOWN = {
         "for a hop the Core never saw."),
     ("bindings/python/chrome_client/_python_impl/sessions.py", 3): (
         "the call site that fills Response.reason; same ABI gap as models.py."),    ("bindings/python/chrome_client/_python_impl/models.py", 0): (
-        "ABI v9 delivers HttpResponseHeaders::raw_headers() and no structured",
-        "header list, so the facade has to split it. Re-check when the response",
-        "callback gains a mn_header_t array (core/abi/minicronet.h:396)."),
+        "the response callback now carries mn_header_t fields, so this is only",
+        "reached for a redirect hop: on_redirect still receives the raw block",
+        "and nothing else. Re-check when mn_request_redirect_fn gains the field",
+        "array (core/abi/minicronet.h, mn_request_redirect_fn)."),
     ("bindings/python/chrome_client/_python_impl/models.py", 1): (
         "kept only for the redirect hops and cache hits where no Core response",
         "exists to ask; the value itself now comes from",
@@ -80,9 +81,8 @@ KNOWN = {
     ("bindings/python/chrome_client/_python_impl/models.py", 2): (
         "same fallback as above: only used when the Core answers UNKNOWN."),
     ("bindings/python/chrome_client/_python_impl/models.py", 3): (
-        "the reason phrase is not on the ABI at all; it can only come from the",
-        "status line. Chromium keeps it in HttpResponseInfo::headers, which the",
-        "callback does not carry yet."),
+        "on_response now passes the reason phrase, so this is only used for a",
+        "redirect hop, which has the raw block but no parsed reason."),
     ("bindings/python/chrome_client/_python_impl/sessions.py", 4): (
         "the Core accepts every header name, so the refusal has to happen",
         "somewhere. Moving it needs mn_request_config to reject the six fields",

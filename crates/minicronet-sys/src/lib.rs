@@ -251,8 +251,21 @@ impl mn_read_disposition_t {
     pub const MN_READ_CONTINUE: Self = Self(1);
 }
 
-pub type mn_request_response_fn =
-    unsafe extern "C" fn(*mut c_void, *mut mn_request_t, i32, *const i8, usize);
+/// The response callback.
+///
+/// Both header forms arrive: the raw block and the parsed fields, plus the
+/// reason phrase. Every pointer is borrowed for the call only.
+pub type mn_request_response_fn = unsafe extern "C" fn(
+    *mut c_void,
+    *mut mn_request_t,
+    i32,
+    *const i8,
+    usize,
+    *const mn_header_t,
+    usize,
+    *const i8,
+    usize,
+);
 pub type mn_request_body_fn =
     unsafe extern "C" fn(*mut c_void, *mut mn_request_t, *const u8, usize) -> mn_read_disposition_t;
 pub type mn_request_complete_fn =
