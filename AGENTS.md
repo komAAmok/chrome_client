@@ -31,6 +31,40 @@ Node (N-API) ──┘
 - Rust 层只负责 C ABI 声明、所有权、回调、取消、超时、错误映射。
 - 禁止引入 Tokio / async-std / 其他执行器。
 
+### 1.1 归属判定：能在 Core 或 Rust 做的，禁止在绑定层做
+
+架构图不是建议，是**归属表**。任何一段逻辑，先问它属于哪一层；只有确认下层
+做不到，才允许写在上层。判据按顺序：
+
+| 序 | 判定 | 归属 |
+| --- | --- | --- |
+| 1 | Chromium 已经知道、只是没经 ABI 送出来 | 扩 **ABI + Core**，不是绑定层猜 |
+| 2 | 需要解析/校验 HTTP、TLS、帧、cookie、字符集等规范 | **Core**（由 Chromium 或其既有工具类承担） |
+| 3 | 需要知道协商结果、连接状态、缓存命中、重定向链 | **Core** 经 ABI 报告 |
+| 4 | 跨语言都要一致的规则（规范表、拒绝条件、错误分类） | **Core**，一处实现 |
+| 5 | 只与语言运行时有关：类型、异常映射、GC、迭代器、`with`/`await` 语法 | **绑定层** |
+
+**反面清单（看到就应当下沉）**：
+
+- 绑定层从原始字节重新解析出 Core 已经解析过的语义。
+- 绑定层维护一份 RFC 规则表、禁止头清单、状态码映射表。
+- 绑定层为了「知道下层状态」而保留一份镜像并做对账。
+- 同一个规范判断在 Python / Go / Node 各写一遍。
+
+**允许留在绑定层的**：requests/curl_cffi 的 API 形状（`session.cookies` 是可变的
+jar、`stream=True` 返回可迭代对象）、Python 异常类型选择、冻结的配置对象、
+参数名与默认值。这些是**对外 API**，不是协议语义。
+
+**下沉时的强制要求**：
+
+- Core 新增的拒绝/解析行为，必须在 ABI 头文件写明契约（哪些值合法、失败返回
+  哪个 `mn_result_t`），并同步 `crates/minicronet-sys` 的布局测试与导出表。
+- 绑定层保留的**唯一**理由是「下层当前做不到」，必须在代码注释里写出**具体的**
+  下层缺口与复核位置（文件:行）；缺口消失后该注释与代码一起删除。
+- 不得以「为了不动 ABI」为由把规范逻辑留在绑定层——ABI 的版本号就是为此存在的。
+- 下沉必须由 `tools/audit-layer-ownership.py` 复核（见第 5 节），该门禁列出所有
+  待迁移项，新增一个就红。
+
 ## 2. ABI 规则
 
 - `core/abi/minicronet.h` 是**唯一** ABI 来源。当前 ABI v9，**28** 个导出符号。
@@ -66,6 +100,12 @@ Node (N-API) ──┘
 ```bash
 tools/audit-abi.sh
 python3 tools/audit-abi-layout.py
+# Section 1.1 is an ownership table, so it needs a check rather than trust: this
+# gate finds bindings that re-parse what the Core already parsed, or keep a spec
+# table the Core could enforce once. Every such site must be listed in the gate's
+# KNOWN map with the specific Core gap that blocks the migration and where to
+# re-check it; a new one fails, and so does an entry that no longer matches.
+python3 tools/audit-layer-ownership.py
 tools/audit-readme.sh
 # It also runs tools/audit-readme-tables.py, which compares the capability
 # tables between README.md and README.en.md: row and column counts plus the

@@ -625,6 +625,47 @@ flush 之前就已就绪。我先写了一条走公开 API 的测试，它**通�
 `tools/leak-probe.py` 五形态结果：`sync-get` / `sync-stream` / `sync-abandon` / `async-gather` /
 `error-path` 全部 PASS（`async-gather` fd +6 在 ≤8 容差内，是既有行为，未改动）。
 
+### 1.13i 按 AGENTS §1.1 重做分层审计：12 处越界，全部有据可查
+
+新增约束 §1.1 后，按它把绑定层重扫了一遍。结论：**12 处逻辑属于下层，仍留在绑定层**。
+每一处都记进了 `tools/audit-layer-ownership.py` 的 `KNOWN`，连同阻塞迁移的**具体**
+下层缺口与复核行号。
+
+| 越界 | 位置 | 阻塞原因（可复核） |
+| --- | --- | --- |
+| 重新解析原始头块 | `models.py` `parse_raw_headers` | ABI 只送 `raw_headers()`，没有结构化头数组（`minicronet.h:396`） |
+| 从状态行推断协议 | `models.py` / `.pyi` / `sessions.py` 调用点 | 仅用于重定向中间跳与缓存命中，此时无 Core 响应可问 |
+| 从状态行取 reason | 同上 | `HttpResponseInfo::headers` 里的 reason 没进回调 |
+| hop-by-hop 头表 | `sessions.py` `_HOP_BY_HOP_HEADERS` | Core 接受任意头名，拒绝只能发生在上层；需 `request.cc:245` 改为返回 `MN_ERROR_INVALID_ARGUMENT` |
+| Core 拥有头表 | `sessions.py` `_CORE_OWNED_HEADERS` | `SetExtraRequestHeaders` 只增不减，删除是 no-op 且 Core 无法报告（`request.cc:275`） |
+| WS 握手保留头表 | `sessions.py` `_FORBIDDEN_WS_HEADERS` | 握手头块在 Chromium 内部构造，ABI 看不到哪些名字是保留的 |
+
+**没有列入的**（判定为归属正确，留个记录避免下次重复讨论）：
+
+- `_split_timeout`：v9 的 `mn_request_config_t` 仍只有一个 `timeout_ms`，
+  所以 `timeout=(connect, read)` 拒绝是正确的 fail-closed，不是越界。
+- `_PROXY_SCHEMES` / `_NATIVE_RULE_KEYS` / `_PROXY_SCHEME_ALIASES`：代理 URI 的**拼写**
+  归一化，属于对外 API 的参数接受面；`ParseFromString` 的语法由 Core 负责。
+- `RequestsCookieJar` 的 dict 接口、`stream=True` 的可迭代形状：requests 的 API 契约。
+
+**门禁的三条判定规则**（都不依赖「看起来像」）：
+
+1. 新增一处未登记的越界 → 失败。
+2. `KNOWN` 里有条目已不再匹配任何代码 → 失败（迁移完成或模式腐烂，都不许留在表里）。
+3. 测试文件不参与扫描：测试可以点名它正在验证的规则，被审计的是发布的绑定。
+
+**变异测试**（三种，全部捕获）：
+
+| 变异 | 结果 |
+| --- | --- |
+| 在 `models.py` 新增 `_STATUS_TEXT = {...}` | 失败 ✓（第一版漏掉了状态码表模式，补 pattern 后才捕获） |
+| 在 `KNOWN` 插入一条指向不存在文件的条目 | 失败 ✓ |
+| 恢复 | 通过 ✓ |
+
+第一条变异一开始**没被捕获**——这暴露了 `PATTERNS` 覆盖不足，而不是门禁正确。补上
+`_STATUS_*` / `_REASON_*` 两个模式后才生效。记在这里，因为「门禁通过」和「门禁能抓」
+是两件事。
+
 ### 1.14 状态总表
 
 | 项 | 状态 | 依据 |
