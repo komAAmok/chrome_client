@@ -569,10 +569,13 @@ def abi_version() -> int:
     """Returns the Core ABI version this build links against.
 
     Returns:
-        The ABI number, ``8`` for this release.
+        The ABI number the loaded Core was built against. It is not repeated as
+        a literal here: a literal did sit in this docstring and drifted two
+        releases behind ``core/abi/minicronet.h``, because nothing runs it.
 
     Example:
-        >>> abi_version()
-        8
+        >>> import chrome_client
+        >>> chrome_client.abi_version() == chrome_client._python_impl.engine.abi_version()
+        True
     """
     ...

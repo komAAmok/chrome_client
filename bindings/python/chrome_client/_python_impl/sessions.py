@@ -925,14 +925,13 @@ class _AsyncState(object):
         self.timer = loop.call_later(timeout, self._expire) if timeout else None
 
     # -- loop-thread callbacks ---------------------------------------------
-    def drain_chunks(self):
-        """Removes and returns every buffered chunk, in arrival order."""
-        chunks = []
-        while self.chunks:
-            chunks.append(self.chunks.popleft())
-        self.buffered = 0
-        self.throttled = False
-        return chunks
+    # There is deliberately no bulk drain-everything helper here. One used to
+    # exist and nothing called it; worse, it cleared the buffered count and the
+    # throttled flag without re-arming the reader. Once a stream is throttled the
+    # Core has already stopped reading and will not post another event, so
+    # clearing that flag is the one operation that cannot be undone by hand: the
+    # request would stay asleep forever. resume() below is the only place that
+    # clears it, and it re-arms with call_soon.
 
     def notify(self):
         if self.closed:

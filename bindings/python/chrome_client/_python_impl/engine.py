@@ -540,9 +540,9 @@ class EngineCache(object):
     workers can race to materialise the same override.
 
     Example:
-        >>> cache = EngineCache(max_engines=2)
-        >>> slot = cache.get(EngineConfig(impersonate="chrome_155"))
-        >>> len(cache)
+        >>> cache = EngineCache(max_engines=2)          # doctest: +SKIP
+        >>> slot = cache.get(EngineConfig(impersonate="chrome_155"))  # doctest: +SKIP
+        >>> len(cache)  # doctest: +SKIP
         1
     """
 
@@ -587,7 +587,7 @@ class EngineCache(object):
             RequestException: The session was closed.
 
         Example:
-            >>> slot = cache.get(EngineConfig(proxy="http://127.0.0.1:8080"))
+            >>> slot = cache.get(EngineConfig(proxy="http://127.0.0.1:8080"))  # doctest: +SKIP
         """
         with self._lock:
             if self._closed:
@@ -808,11 +808,19 @@ def core_version():
 def abi_version():
     """Returns the Core ABI version this build links against.
 
+    The number is whatever ``core/abi/minicronet.h`` declares as
+    ``MN_ABI_VERSION``, and it is deliberately not repeated as a literal here.
+    A literal did sit in this docstring and drifted two releases behind the
+    header -- it still said 8 when the header said 10 -- because nothing runs
+    these examples. The same text is copied into the stub by
+    ``tools/generate-python-stubs.py``, so a wrong number here is wrong in two
+    published files.
+
     Returns:
-        The ABI number, ``8`` for this release.
+        The ABI number the loaded Core was built against.
 
     Example:
-        >>> abi_version()
-        8
+        >>> abi_version() == native.PyEngine.abi_version()
+        True
     """
     return native.PyEngine.abi_version()
