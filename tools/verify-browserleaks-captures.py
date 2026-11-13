@@ -25,6 +25,10 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+
+sys.path.insert(0, str(ROOT / "tools"))
+
+from python_exe import interpreter  # noqa: E402  (needs ROOT above)
 GATE = ROOT / "tools" / "validate-wire-profile.py"
 RAW_ROOT = ROOT / "profiles"
 
@@ -140,7 +144,7 @@ def run_gate(profile_id: str, directory: Path):
                 return False, f"no pcap for response-{index}"
             pcaps.append(found)
 
-    command = [sys.executable, str(GATE), profile_id,
+    command = [interpreter(), str(GATE), profile_id,
                *[str(p) for p in responses],
                "--url", _target_url(responses)]
     for pcap in pcaps:

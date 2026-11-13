@@ -48,6 +48,10 @@ import sys
 import threading
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
+
+sys.path.insert(0, str(ROOT / "tools"))
+
+from python_exe import interpreter  # noqa: E402  (needs ROOT above)
 LEGACY = "chrome_client_native36"
 CANDIDATES = (
     ROOT / "bindings" / "python36" / "target" / "release" / ("lib%s.so" % LEGACY),
@@ -204,7 +208,7 @@ def check_wheel_imports_the_facade(wheel) -> str:
         probe = (
             "import chrome_client\n"
             "print(chrome_client.abi_version())\n")
-        result = subprocess.run([sys.executable, "-c", probe], cwd=scratch,
+        result = subprocess.run([interpreter(), "-c", probe], cwd=scratch,
                                 env=env, capture_output=True, text=True,
                                 timeout=120)
         if result.returncode != 0:

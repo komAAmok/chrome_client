@@ -37,6 +37,10 @@ import re
 import subprocess
 import sys
 
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+
+from python_exe import interpreter
+
 REPO = pathlib.Path(__file__).resolve().parents[1]
 PY_PKG = REPO / "bindings" / "python" / "chrome_client"
 IMPL = PY_PKG / "_python_impl"
@@ -583,7 +587,7 @@ def check_generated(verbose: bool) -> None:
     not, while the more specific checks above still catch the reverse drift.
     """
     result = subprocess.run(
-        [sys.executable, str(GENERATOR), "--check"], capture_output=True, text=True
+        [interpreter(), str(GENERATOR), "--check"], capture_output=True, text=True
     )
     if result.returncode != 0:
         parse_delegated_output(
@@ -608,7 +612,7 @@ def check_verb_signatures(verbose: bool) -> None:
     them.
     """
     result = subprocess.run(
-        [sys.executable, str(EXPANDER), "--check"], capture_output=True, text=True
+        [interpreter(), str(EXPANDER), "--check"], capture_output=True, text=True
     )
     if result.returncode != 0:
         parse_delegated_output(

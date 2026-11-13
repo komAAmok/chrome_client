@@ -38,6 +38,10 @@ import subprocess
 import sys
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
+
+sys.path.insert(0, str(ROOT / "tools"))
+
+from python_exe import interpreter  # noqa: E402  (needs ROOT above)
 PACKAGE = ROOT / "bindings" / "python" / "chrome_client"
 CONSUMER = ROOT / "tools" / "typecheck-consumer.py"
 MYPYPATH = ROOT / "bindings" / "python"
@@ -49,7 +53,7 @@ def have_mypy() -> bool:
 
 def run(label: str, argv: list[str], env: dict[str, str]) -> bool:
     print("== %s" % label)
-    result = subprocess.run([sys.executable, "-m", "mypy"] + argv,
+    result = subprocess.run([interpreter(), "-m", "mypy"] + argv,
                             cwd=str(ROOT), env=env)
     return result.returncode == 0
 

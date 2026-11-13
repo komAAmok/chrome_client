@@ -24,8 +24,34 @@ symbols=(
 die() { printf 'ABI audit: %s\n' "$*" >&2; exit 1; }
 
 [[ -f "$HEADER" && -f "$SYS" && -f "$CORE" ]] || die "missing ABI/FFI/Core source"
-grep -qx '#define MN_ABI_VERSION 10u' "$HEADER" \
-  || die "header ABI version is not 9"
+
+# The version is read out of the header and never written twice. This script
+# used to hardcode the expected macro *and* the number in its own failure and
+# success lines, so bumping the ABI to 10 left it asserting "10u" while still
+# printing "not 9" and "ABI v9 audit passed". A gate whose message disagrees
+# with its own check is how the next reader concludes the message is right.
+abi_version="$(sed -n 's/^#define MN_ABI_VERSION \([0-9]\+\)u$/\1/p' "$HEADER")"
+[[ -n "$abi_version" ]] \
+  || die "header has no '#define MN_ABI_VERSION <n>u'"
+grep -qx "#define MN_ABI_VERSION ${abi_version}u" "$HEADER" \
+  || die "header ABI macro is not in the form '#define MN_ABI_VERSION <n>u'"
+
+# Every other carrier of the number is compared here, because the header alone
+# cannot prove the tree agrees with itself. Both of these drifted once and
+# nothing noticed: core/abi/ABI_VERSION still said 8 two releases after the
+# header said 10, and the FFI constant is hand-written so a bump that misses it
+# leaves the extension reporting the old ABI and refusing every call at create
+# time. The version file is gated rather than deleted because core/abi/README.md
+# publishes it as part of the ABI surface.
+abi_file="$(tr -d '[:space:]' <"$ROOT/core/abi/ABI_VERSION" 2>/dev/null || true)"
+[[ "$abi_file" == "$abi_version" ]] \
+  || die "core/abi/ABI_VERSION says '${abi_file}' but the header declares ${abi_version}; update it with the header"
+
+ffi_abi="$(sed -n 's/^pub const MN_ABI_VERSION: u32 = \([0-9]\+\);$/\1/p' "$SYS")"
+[[ -n "$ffi_abi" ]] \
+  || die "Rust FFI has no 'pub const MN_ABI_VERSION: u32 = <n>;'"
+[[ "$ffi_abi" == "$abi_version" ]] \
+  || die "crates/minicronet-sys declares ABI ${ffi_abi} but the header declares ${abi_version}; the extension would refuse every call at create time"
 
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
@@ -72,15 +98,15 @@ printf '%s\n' "${symbols[@]}" | sort -u >"$tmp/expected"
 
 for format in lds def exports; do
   cmp -s "$tmp/expected" "$tmp/$format" \
-    || die "$format export list differs from ABI v9"
+    || die "$format export list differs from ABI v${abi_version}"
 done
 
 # The loop above proves every listed symbol is present in all four places.
 # It cannot see the opposite direction: an export added to the header, the
 # FFI and the Core while the tables kept 20 entries passed every check and
-# still printed "20 symbols". ABI v9 is frozen, so the header must declare
-# exactly this set.
+# still printed "20 symbols". The exported set is fixed per ABI, so the header
+# must declare exactly this set.
 python3 "$ROOT/tools/abi-exports.py" "$HEADER" "$tmp/expected"
 
-printf 'ABI v9 audit passed: %d symbols, header/FFI/Core/export tables agree.\n' \
-  "${#symbols[@]}"
+printf 'ABI v%s audit passed: %d symbols, header/FFI/Core/export tables agree.\n' \
+  "$abi_version" "${#symbols[@]}"

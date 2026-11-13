@@ -29,10 +29,15 @@ Exit code 0 when every shape is flat, 1 when any shape grows.
 
 import argparse
 import json
+import signal
 import subprocess
 import sys
 import textwrap
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from python_exe import interpreter
 
 #: Descriptor and RSS growth allowed between batch 1 and batch 2, per shape.
 #: Both are absolute rather than proportional because the signal being looked
@@ -94,7 +99,13 @@ CHILD = textwrap.dedent("""
     batch()
     second_fd, second_rss = fds(), rss_kib()
     print(json.dumps({"fd": [warm_fd, first_fd, second_fd],
-                      "rss_kib": [warm_rss, first_rss, second_rss]}))
+                      "rss_kib": [warm_rss, first_rss, second_rss]}), flush=True)
+    # Flushed explicitly because this process has been observed to die during
+    # interpreter teardown. With a block-buffered stdout the samples were lost and
+    # the parent saw a signal with no output at all, which reads as "this shape
+    # measured nothing" instead of "it measured fine and then crashed on exit".
+    sys.stdout.flush()
+    sys.stderr.flush()
 """)
 
 SHAPES = ("sync-get", "sync-stream", "sync-abandon", "async-gather", "error-path")
@@ -105,6 +116,24 @@ def measure(shape, url, count, python, timeout):
                           capture_output=True, text=True, timeout=timeout)
     if done.returncode != 0:
         tail = (done.stderr or done.stdout).strip().splitlines()
+        # A child killed by a signal is not the same failure as a child that
+        # raised: the samples may even be in stdout already, and the process
+        # died during interpreter teardown after doing all its work. Naming the
+        # signal keeps that visible instead of collapsing it into one stderr
+        # line, which is what an abort looked like before: status "error" with a
+        # blank reason, indistinguishable from a missing interpreter or a typo.
+        if done.returncode < 0:
+            signal_number = -done.returncode
+            try:
+                signal_name = signal.Signals(signal_number).name
+            except ValueError:
+                signal_name = "signal %d" % signal_number
+            return {"shape": shape, "status": "error",
+                    "signal": signal_name,
+                    "reason": "child died with %s%s" % (
+                        signal_name,
+                        " after printing its samples" if done.stdout.strip() else ""),
+                    "stdout_tail": done.stdout.strip().splitlines()[-1:] or None}
         return {"shape": shape, "status": "error",
                 "reason": tail[-1] if tail else "child exited %d" % done.returncode}
     samples = json.loads(done.stdout.strip().splitlines()[-1])
@@ -155,7 +184,7 @@ def main():
     try:
         for shape in args.only:
             try:
-                record = measure(shape, url, args.requests, sys.executable,
+                record = measure(shape, url, args.requests, interpreter(),
                                  args.timeout)
             except subprocess.TimeoutExpired:
                 record = {"shape": shape, "status": "error",

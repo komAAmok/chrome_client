@@ -40,6 +40,10 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+
+sys.path.insert(0, str(ROOT / "tools"))
+
+from python_exe import interpreter  # noqa: E402  (needs ROOT above)
 CORE = ROOT / "core/binaries/linux-x86_64"
 
 #: (group, name, command, why-unavailable) in the order a release needs them.
@@ -137,11 +141,65 @@ NEEDS_CORE = {
 def release_tag():
     """The version under review, taken from the same place the crates read it."""
     try:
-        done = subprocess.run([sys.executable, str(ROOT / "tools/version.py")],
+        done = subprocess.run([interpreter(), str(ROOT / "tools/version.py")],
                               cwd=ROOT, capture_output=True, text=True, timeout=60)
     except subprocess.SubprocessError:
         return "unknown"
     return done.stdout.strip() or "unknown"
+
+
+def git(*args):
+    """Runs one git command in the repository; empty string when git fails."""
+    try:
+        done = subprocess.run(["git", *args], cwd=ROOT, capture_output=True,
+                              text=True, timeout=60)
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    return done.stdout.strip() if done.returncode == 0 else ""
+
+
+def release_directory(version):
+    """The per-release evidence directory this run may write into.
+
+    ``docs/review-<version>`` is the evidence for tag ``v<version>``: it is
+    committed with the tag and every number in it describes that one commit.
+    Naming the directory from the workspace version alone is not enough to
+    keep that true, because the version does not change between commits --
+    after v0.2.11 was tagged, the version stayed 0.2.11 while five commits
+    landed, and a second review would have replaced the tagged evidence with
+    numbers measured on a tree no tag points at. The JSON carries no field
+    that would show the difference, so the directory has to.
+
+    Three cases:
+
+    * the directory does not exist -> this is a new release, use it (the normal
+      flow: bump the version, review, commit the evidence, then tag);
+    * it exists, HEAD is the commit that last wrote it, and the tree is clean
+      -> a re-run on the same tree, reuse it;
+    * anything else -> append the distance from the last tag and the dirty
+      flag, so the run lands somewhere that names the tree it measured.
+
+    Args:
+        version: The workspace version, as ``release_tag`` read it.
+
+    Returns:
+        A repository-relative path.
+    """
+    base = "docs/review-%s" % version
+    if not (ROOT / base).exists():
+        return base
+    owner = git("log", "-1", "--format=%H", "--", base)
+    head = git("rev-parse", "HEAD")
+    dirty = bool(git("status", "--porcelain"))
+    if owner and owner == head and not dirty:
+        return base
+    # ``v0.2.11-5-g684c97f`` -> ``5.g684c97f``; a checkout with no tag at all
+    # falls back to the short hash alone.
+    described = git("describe", "--tags", "--long", "--always")
+    suffix = "-".join(described.rsplit("-", 2)[1:]) if described.count("-") >= 2 \
+        else described or "unknown"
+    marker = base + "+" + suffix.replace("-g", ".")
+    return marker + (".dirty" if dirty else "")
 
 
 def smoke_binary():
@@ -229,8 +287,26 @@ def run(argv, name, unavailable_reason, context):
         "exit_code": done.returncode,
     }
     if done.returncode != 0:
+        # Not simply the last line: Python flushes warnings (ResourceWarning,
+        # "Task was destroyed but it is pending") to stderr at interpreter exit,
+        # after the actual failure has been printed. Measured on a run that did
+        # fail: the recorded reason was "ResourceWarning: unclosed <socket ...>"
+        # and the real cause never reached the report, which makes a genuine
+        # failure look like a warning and a warning look like the failure.
+        #
+        # Prefer a line that names a failure, then fall back to the tail.
         tail = (done.stderr or done.stdout).strip().splitlines()
-        record["reason"] = tail[-1] if tail else "(no output)"
+        markers = ("FAILED", "ERROR:", "Traceback", "FAIL:", "error:", "fatal",
+                   "panic", "not found", "No such file")
+        named = [line for line in tail if any(m in line for m in markers)]
+        if named:
+            record["reason"] = named[0].strip()
+            # Keep the tail too: the first marker says what broke, the last line
+            # often says where.
+            if tail and tail[-1].strip() != named[0].strip():
+                record["reason_tail"] = tail[-1].strip()
+        else:
+            record["reason"] = tail[-1] if tail else "(no output)"
     else:
         tail = (done.stdout or "").strip().splitlines()
         record["summary"] = tail[-1] if tail else ""
@@ -248,11 +324,13 @@ def main():
                         help="also write the concurrency baseline here")
     args = parser.parse_args()
 
+    version = release_tag()
     context = {
         # One directory per release so two review runs cannot overwrite each
         # other's numbers, and so the numbers a tag was cut on stay attributable
-        # to that tag.
-        "release": "docs/review-%s" % release_tag(),
+        # to that tag. ``release_directory`` is what enforces the second half:
+        # the version alone cannot, because it does not change between commits.
+        "release": release_directory(version),
         # The path a step is actually given. It has to be absolute, because the
         # step runs from the repository root and the binary lives in a Chromium
         # tree that may be anywhere.
@@ -287,6 +365,7 @@ def main():
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(report, indent=2, sort_keys=True) + chr(10),
                          encoding="utf-8")
+    print("evidence: %s" % context["release"])
     print("report: %s (%d failures)" % (args.out, failures))
     return 1 if failures else 0
 

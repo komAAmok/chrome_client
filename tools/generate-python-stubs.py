@@ -267,13 +267,16 @@ def abi_version() -> int:
     """Core ABI version this build links against.
 
     Returns:
-        The ABI number, ``8`` for this release. The wheel refuses to load a Core
-        whose ABI differs, so this always matches the Core in use.
+        The ABI number the loaded Core was built against. The wheel refuses to
+        load a Core whose ABI differs, so this always matches the Core in use.
+        The value is ``MN_ABI_VERSION`` from ``core/abi/minicronet.h`` and is
+        deliberately not written here: this template said 8 for two releases
+        after the header said 10, and nothing runs it.
 
     Example:
         >>> import chrome_client
-        >>> chrome_client.abi_version()
-        8
+        >>> chrome_client.abi_version() == chrome_client._python_impl.engine.abi_version()
+        True
     """
     ...
 

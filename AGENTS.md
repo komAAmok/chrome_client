@@ -100,14 +100,21 @@ requests/curl_cffi 的 API 形状（`session.cookies` 是可变的 jar、`stream
 
 ## 2. ABI 规则
 
-- `core/abi/minicronet.h` 是**唯一** ABI 来源。当前 ABI v10，**28** 个导出符号。
+- `core/abi/minicronet.h` 是**唯一** ABI 来源。当前 ABI v11，**28** 个导出符号
+  （v11 只追加了 `mn_engine_config_t.max_sockets_per_group`，没有增删符号）。
 - 结构体变更必须同时更新：头文件、`crates/minicronet-sys/src/lib.rs` 的 `#[repr(C)]`
   声明与布局测试、`core/exports/minicronet.{def,exports,lds}`。
 - 每个 config 结构体以 `size` + `version` 开头，两者都要校验。
 - 任何 create 函数的 out-param 必须在**所有**返回路径上先置空。
 - 回调指针只在调用期间有效，不得保留。
-- **Engine 必须比它的 request / WebSocket 活得久**：释放最后一个 engine 引用会拆除
-  `URLRequestContext`，此时若仍有 `URLRequest` 注册，Chromium 会 abort 宿主进程。
+- **Engine 生命周期**：request 与 WebSocket 各自持有创建它们的 `Engine` 的
+  `scoped_refptr`（`core/source/minicronet/request.h`、`websocket.h`），所以释放
+  最后一个 engine 句柄**不会**拆除仍有请求注册的 `URLRequestContext`——实测：
+  `start()` 后立刻 `close()` 会话并 `gc.collect()`，请求照常返回 200。Chromium 那条
+  「仍有 URLRequest 注册就 abort」的断言因此不可达。
+  规则仍在，但它是**调用方的责任**而不是运行期约束：完成或取消在飞的请求再释放
+  engine，否则该上下文只为这一个请求活着，既不在任何缓存里，也复用不到它的 socket
+  池与 TLS session cache。
 - ABI 不携带的信息（例如协商到的协议版本）**不得由绑定层编造**。
 
 ## 3. 版本与常量
@@ -147,6 +154,12 @@ tools/audit-readme.sh
 # English.
 tools/audit-pypi-metadata.sh
 python3 tools/audit-python-stubs.py
+# The facade's docstrings contain executable examples, and nothing ran them: the
+# abi_version() example documented "8" for two releases after the header said 10,
+# and the same text was published in the stub and in the generator's template.
+# An example that cannot run honestly carries "# doctest: +SKIP" and says why.
+LD_LIBRARY_PATH=core/binaries/linux-x86_64 \
+  PYTHONPATH=bindings/python python3 tools/audit-doctests.py
 python3 tools/audit-extra-fp.py
 # The per-profile request header set is generated from the h1 captures, so a
 # stale table or a capture that stopped agreeing with its five siblings has to

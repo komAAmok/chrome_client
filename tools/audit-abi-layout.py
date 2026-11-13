@@ -15,6 +15,7 @@ side declares, then compares that against the same field names parsed out of
 """
 
 import ctypes
+import os
 import re
 import shutil
 import subprocess
@@ -155,8 +156,15 @@ def c_header_structs(header_text):
     return found
 
 
-def compile_probe(fields_by_struct, out_path):
-    """Writes and compiles a C probe that prints every offsetof and sizeof."""
+def compile_probe(fields_by_struct, out_path, compiler):
+    """Writes and compiles a C probe that prints every offsetof and sizeof.
+
+    ``compiler`` is the program name main() resolved, never the literal "cc".
+    That resolution prefers $CC and falls back to cc/gcc, and this call used to
+    ignore it and spell "cc" itself: measured consequence, a host whose cc cannot
+    exec cc1 failed here while the resolved compiler was fine, and CC= had no
+    effect at all -- so the ABI layout went unverified on that host.
+    """
     lines = [
         "#include <stddef.h>",
         "#include <stdio.h>",
@@ -174,19 +182,37 @@ def compile_probe(fields_by_struct, out_path):
     source.write_text("\n".join(lines) + "\n")
     binary = out_path.with_suffix(".bin")
     result = subprocess.run(
-        ["cc", "-I", str(HEADER.parent), str(source), "-o", str(binary)],
+        [compiler, "-I", str(HEADER.parent), str(source), "-o", str(binary)],
         capture_output=True, text=True)
     if result.returncode != 0:
         raise SystemExit("audit-abi-layout: header did not compile:\n" + result.stderr)
     return binary
 
 
+def resolve_compiler():
+    """The C compiler to build the layout probe with.
+
+    $CC wins, then cc, then gcc, all resolved through shutil.which so a
+    nonexistent program is a clear error rather than a FileNotFoundError from
+    subprocess. $CC exists because this gate has to run on hosts where the
+    system cc is a stub: measured, "cc: fatal error: cannot execute 'cc1'"
+    while the toolchain that built the Core compiles the same header fine.
+    """
+    for candidate in (os.environ.get("CC"), "cc", "gcc"):
+        if not candidate:
+            continue
+        found = shutil.which(candidate)
+        if found:
+            return found
+    return None
+
+
 def main():
-    compiler = shutil.which("cc") or shutil.which("gcc")
+    compiler = resolve_compiler()
     if not compiler:
         raise SystemExit(
-            "audit-abi-layout: no C compiler (cc/gcc) on PATH, so the ABI struct "
-            "layouts were not verified")
+            "audit-abi-layout: no C compiler (CC/cc/gcc) on PATH, so the ABI struct "
+            "layouts were not verified. Set CC to the compiler that built the Core.")
     if not HEADER.is_file() or not FFI.is_file():
         raise SystemExit("audit-abi-layout: missing header or Rust FFI source")
 
@@ -244,7 +270,7 @@ def main():
 
     with tempfile.TemporaryDirectory() as tmp:
         probe = compile_probe(
-            {s: rust_by_struct[s] for s in STRUCTS}, Path(tmp) / "probe")
+            {s: rust_by_struct[s] for s in STRUCTS}, Path(tmp) / "probe", compiler)
         measured = subprocess.run([str(probe)], capture_output=True, text=True)
     if measured.returncode != 0:
         raise SystemExit("audit-abi-layout: probe failed to run:\n" + measured.stderr)

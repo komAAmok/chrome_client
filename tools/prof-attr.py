@@ -40,20 +40,11 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import perf_harness as H
+from python_exe import interpreter
 
 THREAD_STATE = {"R": "running", "S": "sleeping", "D": "disk-wait",
                 "Z": "zombie", "T": "stopped", "t": "tracing-stop",
                 "I": "idle", "X": "dead"}
-
-
-def interpreter() -> str:
-    """The interpreter to spawn children with.
-
-    sys.executable is empty when Python was started by a wrapper that did not
-    exec the real binary; passing "" to subprocess is a PermissionError (or, via
-    strace, "Cannot find executable ''") rather than a useful message.
-    """
-    return sys.executable or shutil.which("python3") or "python3"
 
 
 def thread_table(pid: int) -> list:

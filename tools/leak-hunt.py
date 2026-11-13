@@ -37,6 +37,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import perf_harness as H
+from python_exe import interpreter
 
 SHAPES = (
     "sync-get",        # get(), body dropped
@@ -201,16 +202,6 @@ CHILD = textwrap.dedent('''
         samples.append(snapshot())
     print(json.dumps({"samples": samples}))
 ''')
-
-
-def interpreter() -> str:
-    """The interpreter to spawn children with.
-
-    sys.executable is empty when Python was started through a wrapper that did
-    not exec the real binary, and passing "" to subprocess is a PermissionError
-    rather than a useful message. Resolve it once, here.
-    """
-    return sys.executable or shutil.which("python3") or "python3"
 
 
 def measure(shape, url, count, batches, python, timeout):
