@@ -339,14 +339,76 @@ CI 确实存在，必须指出它跑了哪些审计。
 - [ ] 目标机或对应 GitHub runner 完成真实 H1/H2/H3、WS/WSS、代理、取消和
   TLS 验证；交叉编译成功不等于运行时成功。
 
+## 已知缺陷：进程正常退出时偶发 SIGABRT（退出期静态析构竞态）
+
+**现象**：跑 `AsyncSession` + `asyncio.gather` 三个批次（每批 60 并发）后，
+**程序已经打印完所有结果**，在解释器 teardown 阶段约 1.7%（1/60）概率收到
+`Fatal Python error: Aborted`，退出码 134（SIGABRT）。`faulthandler` 只能看到一条
+没有 Python 帧的线程，说明 abort 发生在原生侧。
+
+**复现**（无需本仓库以外的依赖）：
+
+```bash
+LD_LIBRARY_PATH=core/binaries/linux-x86_64 PYTHONPATH=bindings/python \
+  bash -c 'for i in $(seq 1 80); do
+    python3 /tmp/abort_threads.py >/tmp/o.txt 2>&1 || { echo "abort at $i"; break; }; done'
+```
+
+**已做的排除，都带证据**：
+
+- **不是本轮 GIL/detach 改动引入的**。用 `git show HEAD:bindings/python/src/lib.rs`
+  重建未改动的二进制，60 次里同样 abort 1 次。
+- **不是探测脚本的缺陷**。探测在 abort 前已把采样 JSON 写进 stdout，
+  `leak-probe` 才报 `status: error` 而不是 `fail`——它读到的是"没有结果"，而实际是
+  "有结果但进程没干净退出"。
+- **发生在正常退出路径上**。同一程序结尾改 `os._exit(0)`：100 次 0 abort；
+  结尾走正常 `return`：60 次 1 abort。同一 child 用 `os._exit` 30 次 0 abort。
+- **gdb 下不复现**。8 个并行 gdb worker 各 30 轮（共 240 轮）一次都没抓到——插桩改变了
+  时序，这也正是竞态的特征。
+
+**当前状态（更新）**：用 ABI 11 的产物重测 **200 次，signal=0**；把 Core 换回
+改动前的 ABI 11 基线也测 200 次，同样 signal=0。也就是说这个缺陷**在本机当前
+环境下已复现不出来**，不能声称「已修好」，只能记「200 次未复现」。
+
+期间还发生一次假警报，值得记下：我曾跑出「120/120 abort」，原因是复现脚本
+`/tmp/abort_threads.py` 已被清理，`python3` 报 `can't open file` 并返回非零，
+而循环只判断「非零即失败」。**计数正确、判据错误**——与本文档前面记的两次
+归因错误是同一类。之后的测量都改成按信号（`returncode < 0`）判定。
+
+**已做的一件事：让这个缺陷可被自动识别**。`tools/leak-probe.py` 之前把子进程
+被信号杀死和子进程抛异常都记成 `status: error` + 一行 stderr，`SIGABRT` 完全
+看不出来；而且子进程的 stdout 是块缓冲，进程在退出期被信号杀掉时**已算好的采样
+会整段丢失**，父进程只看到一个信号、零输出。现在：
+
+- `returncode < 0` 时按 `signal.Signals` 报到名字（`signal: "SIGABRT"`）；
+- 若 stdout 里已有采样，reason 写 `child died with SIGABRT after printing its samples`，
+  并把最后一行采样放进 `stdout_tail`；
+- 子进程打印采样后显式 `flush`，信号杀进程也丢不掉。
+
+三档行为实测（真实 child + 末尾注入 abort）：干净退出 → `pass`；信号退出且无输出
+→ `child died with SIGABRT`；信号退出且已打印 → `child died with SIGABRT after
+printing its samples`，`stdout_tail` 保留采样。
+
+**尚未定位**：`libminicronet.so` 的静态析构顺序与进程级 Chromium 单例
+（`base::ThreadPoolInstance`、`net::NetworkChangeNotifier`、`base::i18n`）之间的顺序
+假设。`Runtime` 本身是 `new` 出来的、永不释放（`core/source/engine.cc:360-362`），
+所以 `~Runtime` 里的 `AtExitManager` 不参与，真正跑的是 Chromium 自己的静态析构。
+
+**为什么现在不修**：定位它需要带符号的 Core（`is_debug`/`symbol_level`）或 ASan 构建，
+两者都要重跑 Chromium 的完整链接；而且修法在 Core，不在绑定层。在此之前，
+`leak-probe` 的 `async-gather` 形态有约 1.7% 概率误报，重跑即可，但**必须知道它是误报**。
+
 ## 阶段 2：Core 与 ABI 发布闭合
 
-- [x] 以 `core/abi/minicronet.h` 和 `core/abi/ABI_VERSION` 为唯一 ABI 来源，
-  对照 `crates/minicronet-sys/src/lib.rs` 的 FFI 声明和 `core/exports/` 下的
+- [x] 以 `core/abi/minicronet.h` 为唯一 ABI 来源，对照 `core/abi/ABI_VERSION`、
+  `crates/minicronet-sys/src/lib.rs` 的 FFI 常量与声明，以及 `core/exports/` 下的
   `minicronet.def`/`minicronet.exports`/`minicronet.lds` 三份导出表，做逐字段、
-  尺寸、对齐、导出符号审计。
-  -> 已由 `tools/audit-abi.sh`（20 符号 × 4 载体）与 `tools/audit-abi-layout.py`
-     （结构体尺寸/对齐）覆盖，两者都在 AGENTS §5 门禁里。
+  版本、尺寸、对齐、导出符号审计。
+  -> 已由 `tools/audit-abi.sh`（28 符号 × 4 载体，外加 `ABI_VERSION` 与 Rust
+     常量两处版本比对）与 `tools/audit-abi-layout.py`（结构体尺寸/对齐）覆盖，
+     两者都在 AGENTS §5 门禁里。
+  -> `ABI_VERSION` 曾经停在 8 而头文件已经是 10，因为当时没有任何门禁读它；现在
+     `audit-abi.sh` 比对它和 Rust 常量，各自改成 9 都会非零退出（变异测试已做）。
 - [ ] 对 9 个 `core/binaries/<target>/manifest.json` 重新计算 SHA-256、大小、
   Chromium revision、ABI 和运行时依赖。
   （`tools/install-core-binaries.py` 会写 sha256 与 size_bytes；当前九个 manifest 一致，
@@ -691,8 +753,16 @@ mn_request_await_head(mn_request_t *request, uint64_t timeout_ms,
 语义：等价于「等到 `on_response` 与第一次 `on_body`（或完成）都到达」，
 在 Core 的网络线程上一次装好，只唤醒等待线程一次。
 
-**收益**：同步单请求约 **0.5 ms**（两次等待合并为一次，`read_body` 在首块已到的
-情况下退化为一次 `try_next`）。按当前 2.1 ms 的 p50 计，约 **-24%**。
+**收益：已重测，24% 不再成立。** 那个数字是按 **2.1 ms p50** 的旧基线算的。ABI 11
+的当前实测 p50 是 **521 µs**，在同一基线上把三次唤醒合并成一次，实测量到的是
+**503.1 → 456.6 µs，即 9%**（`coalesced-drain` 实验，见 `docs/ABI.md`）。
+差额是前几轮优化挣来的：GIL detach 与读 buffer 复用已经把这块大部分吃掉。
+
+**结论：不做。** 9% 的顺序延迟，代价是一个新 ABI 符号、每个请求两个同步对象
+（`WaitableEvent` + `Lock`）、一次首块堆分配，以及一条与 `on_body` 并存的
+**双路径首块语义**——后者意味着任何一处状态竞争都会让首块丢失或重复，而这正是
+本项目现有门禁（`leak-hunt`、`test_compat`）覆盖不到的一类缺陷。实测代码已写完
+又整体撤回，撤回后 `audit-abi` 仍为 28 符号。
 
 **代价与风险**：
 
@@ -858,7 +928,7 @@ Core。`tools/audit-layer-ownership.py` 的 `KNOWN` 里登记的就是这三条�
 - `tools/audit-layer-ownership.py` 的 `KNOWN` 里这三条被删除，且门禁仍通过
   （该门禁的规则是"条目不再匹配任何代码即失败"，删表后自然满足）。
 - 绑定层三个 frozenset 消失，改名/改集合的测试同步更新。
-- 九平台重建（含 macOS，前提是 osxcross 补齐，见 ABI v10 那节的平台状态）。
+- 九平台重建（含 macOS；osxcross 一直都在，见 ABI v11 那节的平台状态）。
 ## 已完成：ABI v10（回调携带结构化头 + reason + ECH 查询）
 
 v9 的回调签名 (`on_response(status, headers, len)`) 不足以让绑定层不做解析，v10 把它
@@ -872,21 +942,19 @@ v10 调用方 `MN_OK`。
 **顺带接通 ECH**：`mn_request_ech_status` 从 v9 起就在 Core 里，一直没接到绑定层。现在
 四层贯通，`Response.ech_status` 报告 `success` / `rejected` / `not_attempted` / `None`。
 
-### 平台状态：七个已重建，两个没有
+### 平台状态：九个全部重建（ABI 11）
 
 | 平台 | ABI | 说明 |
 | --- | --- | --- |
-| linux-x86 / x86_64 / arm64 / armv7 | **10** | 已重建并安装 |
-| windows-x86 / x86_64 / arm64 | **10** | 已重建并安装 |
-| macos-x86_64 / macos-arm64 | **9** | `osxcross` 工具链不完整，未能重建 |
+| linux-x86 / x86_64 / arm64 / armv7 | **11** | 已重建并安装 |
+| windows-x86 / x86_64 / arm64 | **11** | 已重建并安装 |
+| macos-x86_64 / macos-arm64 | **11** | 已重建并安装 |
 
-macOS 缺的是 `osxcross/bin/osxcross-conf`、两个 `*-apple-darwin25.5-clang`、
-`MacOSX26.5.sdk/SDKSettings.plist` 与 `usr/lib/libSystem.tbd`。补上后按同样流程重建即可。
-
-**没有用改 manifest 的方式掩盖**：两个 macOS 的 manifest 与 `targets.json` 的
-`abi_version_override` 都如实写 9，`audit-core-binaries.sh` 会打印
-`note: macos-* still ships ABI 9`。让 manifest 声称一个字节流没有实现的版本，比混合版本
-更糟——加载时看不出问题。
+**更正**：本节此前写「七个已重建，两个没有」，并列出 macOS 缺失的四个组件。
+那四条全部是误判——osxcross 在 `$CHROMIUM_SRC/../toolchains/osxcross-target`，
+与 Chromium 检出同级。当时的搜索是 `find / -maxdepth 4 -name "osxcross*"` 且只搜了
+一个文件系统，所以「没命中」被当成了「不存在」。详情与证据见 `docs/ABI.md` 的
+「v11 的产物覆盖」一节。两个 macOS 目标随后各用约 14 分钟建成并自审通过。
 
 ## 已完成（ABI v9）：协商协议由 Core 报告## 已完成（ABI v9）：协商协议由 Core 报告
 

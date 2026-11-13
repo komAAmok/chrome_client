@@ -8,7 +8,7 @@
 用真实 Chromium 网络栈实现的 HTTP/WebSocket 客户端，提供 requests / curl-cffi 风格
 的 Python API，同时让 TLS 指纹、HTTP/2 SETTINGS、QUIC 参数与真实 Chrome 一致。
 
-分层：`libminicronet`（Chromium C++，唯一协议实现）→ C ABI v9（28 个导出符号）→
+分层：`libminicronet`（Chromium C++，唯一协议实现）→ C ABI v11（28 个导出符号）→
 `minicronet-sys`（手写 FFI 声明）→ `minicronet`（Rust 安全层）→ 各语言薄绑定。
 
 - Chromium revision：`58bcc148f76b8975bbe59f1a6012d4ae409d62a9`（Chrome 156.0.8078.31 stable）
@@ -736,13 +736,28 @@ manifest（`--abi-version 8`）：
 `sync-core.sh` 先从根 `Cargo.toml` 注入版本头（版本号只在那里），`install-core-binaries.py` 再刷新 manifest。
 三者现已一致：`core_version()` = `__version__` = 根 `Cargo.toml` 的 `workspace.package.version`。
 
-### 验收
+### 验收（2026-11，ABI v11）
 
-12 项门禁全绿（`audit-abi`、`audit-readme`、`audit-pypi-metadata`、
-`audit-python-stubs`、`audit-python-typing`、`audit-core-binaries`（8/8，产物字节里的版本与工作区版本一致）、
-`audit-core-inputs`、`cargo fmt`/`check`/`clippy -D warnings`/`test`、`python36 --locked`）；
-Python 套件 **177 个用例通过、2 个 skip**（未设 `MINICRONET_WS_URL`/`MINICRONET_WSS_URL`）；
-`cargo test --workspace` 9 个用例通过。
+（发布日期与版本号只在根 `Cargo.toml` 的 `workspace.package.version`，本文不复述——复述过，且因此漂了两版。）
+
+**静态门禁 14 项全绿**：`audit-abi`（v11，28 符号）、`audit-abi-layout`（8 结构体
+103 字段）、`audit-layer-ownership`、`audit-readme`、`audit-pypi-metadata`、
+`audit-python-stubs`、`audit-doctests`、`audit-python-typing`、`audit-extra-fp`、
+`audit-client-hints`、`audit-core-binaries`（**9/9**）、`audit-core-inputs`、
+`audit-core-size-ceilings`、`audit-core-payloads`；Rust 四项
+（`cargo fmt` / `check` / `clippy -D warnings` / `test`）全过。
+
+`review-before-tag.py` 在 ABI v11 上跑完 **29 步、0 failures**，记录在
+`docs/review-<version>+<distance>.<sha>.dirty/`（目录名由该工具按
+`git describe` 加脏标记生成，版本号不在这里复述）。唯一跑不了的是
+`profile_state_isolation_probe`，原因写在报告里（需要 `HTTP_BASE`/`HTTPS_BASE`
+测试服务器，harness 不在本仓库），不记为通过。
+
+Python 套件 **235 个用例通过、1 个 skip**（`test_process_pool` 在本机因
+`sys.executable` 为空而无法 spawn 子进程，属环境问题，最小复现已确认与仓库无关）。
+
+**九平台产物全部为 ABI 11**：linux-x86/x86_64/arm64/armv7、
+windows-x86/x86_64/arm64、macos-x86_64/arm64。
 
 **仍未验证的一项**：真实 Python 3.9 解释器上运行现代轮子只能由 CI 的 `python39-smoke`
 证明，本机只有 3.12；同样，3.7/3.8 上安装 cp36 轮子这条路本机也无法执行。

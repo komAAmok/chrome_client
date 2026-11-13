@@ -562,7 +562,7 @@ Deliberate behavioural differences:
 
 | Path | Contents |
 | --- | --- |
-| `core/abi/` | Stable C ABI v9 |
+| `core/abi/` | Stable C ABI v11 |
 | `core/binaries/` | Nine audited Core targets |
 | `crates/minicronet/` | Rust safety layer, streams and lifetimes |
 | `bindings/python/` | Python 3.9–3.15 binding and the shared facade |

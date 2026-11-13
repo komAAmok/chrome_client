@@ -2,7 +2,7 @@
 
 本文是这个仓库的**性能工程手册**，不是一次性的报告。每个数字都能用本文给出的命令
 重跑；每个结论都附「如何验证」。实测环境：linux-x86_64、8 核、8 GiB、
-Core 产物 `core/binaries/linux-x86_64/libminicronet.so`（0.2.11，ABI v9）。
+Core 产物 `core/binaries/linux-x86_64/libminicronet.so`（0.2.11，ABI v11）。
 
 工具全部在 `tools/` 下，共享一个 fixture 与一套计数器：
 
