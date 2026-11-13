@@ -64,7 +64,7 @@ index 5a8ae42891a..d128e440b46 100644
    }
    if (!response_info_truncation_.did_use_shared_dictionary) {
 diff --git a/net/http/http_network_session.cc b/net/http/http_network_session.cc
-index 05fc0470009..2254deda941 100644
+index 05fc0470009..ff38366a71e 100644
 --- a/net/http/http_network_session.cc
 +++ b/net/http/http_network_session.cc
 @@ -11,14 +11,12 @@
@@ -130,13 +130,14 @@ index 05fc0470009..2254deda941 100644
        http_stream_factory_(std::make_unique<HttpStreamFactory>(this)),
        params_(params),
        context_(context) {
-@@ -199,24 +204,31 @@ HttpNetworkSession::HttpNetworkSession(const HttpNetworkSessionParams& params,
+@@ -199,24 +204,33 @@ HttpNetworkSession::HttpNetworkSession(const HttpNetworkSessionParams& params,
        CreateCommonConnectJobParams(true /* for_websockets */),
        SocketPoolType::kNormal,
        // cleanup_on_ip_address_change
 -      !params.ignore_ip_address_changes);
 +      !params.ignore_ip_address_changes, params.randomize_socket_pool_limit,
-+      params.randomize_proxy_socket_pool_limit);
++      params.randomize_proxy_socket_pool_limit,
++      params.max_sockets_per_group_override);
    websocket_socket_pool_manager_ =
        std::make_unique<ClientSocketPoolManagerImpl>(
            CreateCommonConnectJobParams(false /* for_websockets */),
@@ -145,7 +146,8 @@ index 05fc0470009..2254deda941 100644
            // cleanup_on_ip_address_change
 -          !params.ignore_ip_address_changes);
 +          !params.ignore_ip_address_changes, params.randomize_socket_pool_limit,
-+          params.randomize_proxy_socket_pool_limit);
++          params.randomize_proxy_socket_pool_limit,
++          /*max_sockets_per_group_override=*/0);
  
 -  if (params_.enable_http2) {
 +  if (params_.protocol_mode != HttpProtocolMode::kHttp11 &&
@@ -167,7 +169,7 @@ index 05fc0470009..2254deda941 100644
  
    http_server_properties_->SetMaxServerConfigsStoredInProperties(
        context.quic_context->params()->max_server_configs_stored_in_properties);
-@@ -227,7 +239,8 @@ HttpNetworkSession::HttpNetworkSession(const HttpNetworkSessionParams& params,
+@@ -227,7 +241,8 @@ HttpNetworkSession::HttpNetworkSession(const HttpNetworkSessionParams& params,
  
    http_stream_pool_ = std::make_unique<HttpStreamPool>(
        this,
@@ -177,7 +179,7 @@ index 05fc0470009..2254deda941 100644
  #if BUILDFLAG(IS_WIN)
    base::PowerMonitor::GetInstance()->AddPowerSuspendObserver(this);
  #endif
-@@ -400,8 +413,9 @@ bool HttpNetworkSession::ShouldForceQuic(const url::SchemeHostPort& destination,
+@@ -400,8 +415,9 @@ bool HttpNetworkSession::ShouldForceQuic(const url::SchemeHostPort& destination,
    if (!proxy_info.is_direct() && !proxy_info.proxy_chain().Last().is_quic()) {
      return false;
    }
@@ -190,7 +192,7 @@ index 05fc0470009..2254deda941 100644
  }
  
 diff --git a/net/http/http_network_session.h b/net/http/http_network_session.h
-index 0097a398b6d..b2e8b5ea19e 100644
+index 0097a398b6d..fa7f14179ea 100644
 --- a/net/http/http_network_session.h
 +++ b/net/http/http_network_session.h
 @@ -72,6 +72,13 @@ const uint32_t kSpdyMaxHeaderTableSize = 64 * 1024;
@@ -215,7 +217,7 @@ index 0097a398b6d..b2e8b5ea19e 100644
    size_t spdy_session_max_recv_window_size;
    // Maximum number of capped frames that can be queued at any time.
    int spdy_session_max_queued_capped_frames;
-@@ -109,6 +117,33 @@ struct NET_EXPORT HttpNetworkSessionParams {
+@@ -109,6 +117,53 @@ struct NET_EXPORT HttpNetworkSessionParams {
    // The same setting will be sent on every connection to prevent the retry
    // logic from hiding broken servers.
    spdy::SettingsMap http2_settings;
@@ -231,6 +233,26 @@ index 0097a398b6d..b2e8b5ea19e 100644
 +  // coexist in one process without mutating FeatureList.
 +  bool randomize_socket_pool_limit = true;
 +  bool randomize_proxy_socket_pool_limit = true;
++  // Maximum sockets per origin group. 0 keeps whatever
++  // ClientSocketPoolManager::max_sockets_per_group() returns, which is the
++  // process-wide default (6 for kNormal) and therefore the value every
++  // captured profile behaves like today.
++  //
++  // Non-zero lets one session raise its own ceiling. That ceiling is an
++  // observable fingerprint: a server counting concurrent connections from one
++  // client sees 7+ on one origin instead of never more than 6, and no Chrome
++  // release does that. It exists because throughput per origin is capped by
++  // this number times 1/RTT, which is the dominant limit for a client that
++  // talks to one host; a caller that needs the throughput trades the
++  // fingerprint deviation for it deliberately. Per session rather than global
++  // because the process-wide value is a static array, and a static cannot be
++  // scoped to the immutable profiles that share this process.
++  //
++  // Applies to the kNormal pool only. The kWebSocket pool derives from
++  // ClientSocketPool rather than TransportClientSocketPool and never consults
++  // a per-group cap, so there is no second knob to expose: adding one would be
++  // a field that changes nothing.
++  size_t max_sockets_per_group_override = 0;
 +  // Whether H2/H3 request HEADERS automatically include RFC 9218 priority.
 +  bool send_priority_header = true;
 +  // Session-frozen replacements for the process FeatureList gates. The default
@@ -249,7 +271,7 @@ index 0097a398b6d..b2e8b5ea19e 100644
    // If true, a setting parameter with reserved identifier will be sent in every
    // initial SETTINGS frame, see
    // https://tools.ietf.org/html/draft-bishop-httpbis-grease-00.
-@@ -277,6 +307,8 @@ class NET_EXPORT HttpNetworkSession : public base::PowerSuspendObserver {
+@@ -277,6 +332,8 @@ class NET_EXPORT HttpNetworkSession : public base::PowerSuspendObserver {
    // Returns protocols to be used with ALPN.
    const NextProtoVector& GetAlpnProtos() const { return next_protos_; }
  
@@ -568,28 +590,41 @@ index 9ce5cf88813..9c89a066bee 100644
    static base::TimeDelta unused_idle_socket_timeout(
        HttpNetworkSession::SocketPoolType pool_type);
 diff --git a/net/socket/client_socket_pool_manager_impl.cc b/net/socket/client_socket_pool_manager_impl.cc
-index 8b402f81cec..8d4916936e7 100644
+index 8b402f81cec..557f8ddffde 100644
 --- a/net/socket/client_socket_pool_manager_impl.cc
 +++ b/net/socket/client_socket_pool_manager_impl.cc
-@@ -30,11 +30,15 @@ ClientSocketPoolManagerImpl::ClientSocketPoolManagerImpl(
+@@ -30,11 +30,17 @@ ClientSocketPoolManagerImpl::ClientSocketPoolManagerImpl(
      const CommonConnectJobParams& common_connect_job_params,
      const CommonConnectJobParams& websocket_common_connect_job_params,
      HttpNetworkSession::SocketPoolType pool_type,
 -    bool cleanup_on_ip_address_change)
 +    bool cleanup_on_ip_address_change,
 +    bool randomize_socket_pool_limit,
-+    bool randomize_proxy_socket_pool_limit)
++    bool randomize_proxy_socket_pool_limit,
++    size_t max_sockets_per_group_override)
      : common_connect_job_params_(common_connect_job_params),
        websocket_common_connect_job_params_(websocket_common_connect_job_params),
        pool_type_(pool_type),
 -      cleanup_on_ip_address_change_(cleanup_on_ip_address_change) {
 +      cleanup_on_ip_address_change_(cleanup_on_ip_address_change),
 +      randomize_socket_pool_limit_(randomize_socket_pool_limit),
-+      randomize_proxy_socket_pool_limit_(randomize_proxy_socket_pool_limit) {
++      randomize_proxy_socket_pool_limit_(randomize_proxy_socket_pool_limit),
++      max_sockets_per_group_override_(max_sockets_per_group_override) {
    // |websocket_endpoint_lock_manager| must only be set for websocket
    // connections.
    DCHECK(!common_connect_job_params_.websocket_endpoint_lock_manager);
-@@ -84,13 +88,15 @@ ClientSocketPool* ClientSocketPoolManagerImpl::GetSocketPool(
+@@ -70,7 +76,9 @@ ClientSocketPool* ClientSocketPoolManagerImpl::GetSocketPool(
+   size_t sockets_per_group;
+   if (proxy_chain.is_direct()) {
+     sockets_per_proxy_chain = socket_soft_cap_per_pool(pool_type_);
+-    sockets_per_group = max_sockets_per_group(pool_type_);
++    sockets_per_group = max_sockets_per_group_override_
++                            ? max_sockets_per_group_override_
++                            : max_sockets_per_group(pool_type_);
+   } else {
+     sockets_per_proxy_chain = max_sockets_per_proxy_chain(pool_type_);
+     sockets_per_group =
+@@ -84,13 +92,15 @@ ClientSocketPool* ClientSocketPoolManagerImpl::GetSocketPool(
        proxy_chain.is_direct()) {
      new_pool = std::make_unique<WebSocketTransportClientSocketPool>(
          sockets_per_proxy_chain, proxy_chain,
@@ -608,26 +643,29 @@ index 8b402f81cec..8d4916936e7 100644
  
    std::pair<SocketPoolMap::iterator, bool> ret =
 diff --git a/net/socket/client_socket_pool_manager_impl.h b/net/socket/client_socket_pool_manager_impl.h
-index 93235445ecc..02f24c15a8d 100644
+index 93235445ecc..39f5d8446d4 100644
 --- a/net/socket/client_socket_pool_manager_impl.h
 +++ b/net/socket/client_socket_pool_manager_impl.h
-@@ -33,7 +33,9 @@ class NET_EXPORT_PRIVATE ClientSocketPoolManagerImpl
+@@ -33,7 +33,10 @@ class NET_EXPORT_PRIVATE ClientSocketPoolManagerImpl
        const CommonConnectJobParams& common_connect_job_params,
        const CommonConnectJobParams& websocket_common_connect_job_params,
        HttpNetworkSession::SocketPoolType pool_type,
 -      bool cleanup_on_ip_address_change = true);
 +      bool cleanup_on_ip_address_change = true,
 +      bool randomize_socket_pool_limit = true,
-+      bool randomize_proxy_socket_pool_limit = true);
++      bool randomize_proxy_socket_pool_limit = true,
++      size_t max_sockets_per_group_override = 0);
  
    ClientSocketPoolManagerImpl(const ClientSocketPoolManagerImpl&) = delete;
    ClientSocketPoolManagerImpl& operator=(const ClientSocketPoolManagerImpl&) =
-@@ -60,6 +62,8 @@ class NET_EXPORT_PRIVATE ClientSocketPoolManagerImpl
+@@ -60,6 +63,10 @@ class NET_EXPORT_PRIVATE ClientSocketPoolManagerImpl
    const HttpNetworkSession::SocketPoolType pool_type_;
  
    const bool cleanup_on_ip_address_change_;
 +  const bool randomize_socket_pool_limit_;
 +  const bool randomize_proxy_socket_pool_limit_;
++  // 0 means "use ClientSocketPoolManager::max_sockets_per_group()".
++  const size_t max_sockets_per_group_override_;
  
    SocketPoolMap socket_pools_;
  

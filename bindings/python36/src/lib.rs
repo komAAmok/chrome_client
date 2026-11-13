@@ -646,6 +646,12 @@ impl PyEngine {
             dns_rotate: 0,
             dns_padding: 0,
             platform: Platform::Auto,
+            // v11. Not exposed through the 3.6 wheel, for the same reason the v9
+            // options are not: this extension exists to keep an older
+            // interpreter working on the same Core, and 0 is exactly the
+            // behaviour every earlier release had (Chromium's own 6-per-origin
+            // limit).
+            max_sockets_per_group: 0,
         };
         Ok(PyEngine {
             inner: CoreEngine::new(config).map_err(error)?,

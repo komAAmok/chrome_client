@@ -66,6 +66,13 @@ private:
   void Complete(mn_result_t result, int net_error);
   void ReadMore();
   void PostReadMore();
+  // Returns the read buffer to the network thread and continues or pauses.
+  // Separate from PostReadMore because the buffer has to be stored back on the
+  // thread that will refill it, not on the callback thread that just read it.
+  void PostReturnBuffer(scoped_refptr<net::IOBufferWithSize> buffer,
+                        mn_read_disposition_t disposition);
+  void ReturnBufferAndContinue(scoped_refptr<net::IOBufferWithSize> buffer,
+                               mn_read_disposition_t disposition);
   // Runs on the callback runner once on_body has returned MN_READ_PAUSE.
   void PauseRead();
 
@@ -85,6 +92,11 @@ private:
   std::unique_ptr<net::URLRequest> request_;
   std::unique_ptr<net::ChunkedUploadDataStream::Writer> upload_writer_;
   scoped_refptr<net::IOBufferWithSize> read_buffer_;
+  // Set when a chunk was delivered with MN_READ_PAUSE and the buffer came back:
+  // that chunk is consumed but the next read must not start until resume_read,
+  // so the buffer waits here. Without it the pause would either drop the buffer
+  // (back to one allocation per chunk) or lose the pause.
+  bool buffer_held_paused_ = false;
   base::OneShotTimer timeout_timer_;
   scoped_refptr<Request> keep_alive_;
   std::atomic_bool started_{false};

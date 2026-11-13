@@ -41,6 +41,9 @@ struct EngineOptions {
   // False suppresses the captured request-header set (mn_engine_config_t's
   // inject_client_hints == 0).
   bool inject_client_hints = true;
+  // v11. 0 keeps ClientSocketPoolManager::max_sockets_per_group(); non-zero
+  // raises this engine's per-origin TCP ceiling (see mn_engine_config_t).
+  uint32_t max_sockets_per_group = 0;
 };
 
 // One cookie as the Core hands it out: the owned bytes live in `storage` and

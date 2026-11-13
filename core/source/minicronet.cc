@@ -85,6 +85,11 @@ constexpr size_t kVersionPrefixLength = sizeof("minicronet/") - 1;// Caller-supp
 // kMaxUrlLength is Chromium's own cross-process ceiling (url/url_constants.h
 // kMaxURLChars).
 constexpr size_t kMaxUrlLength = 2u * 1024u * 1024u;
+// ClientSocketPoolManager::socket_soft_cap_per_pool() is 256 for both pool
+// types (net/socket/client_socket_pool_manager.cc), so a per-group limit above
+// that can never be reached.
+constexpr uint32_t kMaxSocketsPerGroupLimit = 256;
+
 constexpr size_t kMaxHeaderCount = 16384u;
 constexpr size_t kMaxHeaderFieldLength = 64u * 1024u;
 constexpr size_t kMaxUploadBodyLength = 256u * 1024u * 1024u;
@@ -573,6 +578,13 @@ mn_result_t MN_CALL mn_engine_create(const mn_engine_config_t *config,
   if (config->inject_client_hints > 1) {
     return MN_ERROR_INVALID_ARGUMENT;
   }
+  // ---- v11. A per-origin limit above the pool's soft cap can never be
+  // reached, so it is rejected instead of clamped: a caller that asked for 4096
+  // must not be told nothing and silently get 256.
+  if (config->max_sockets_per_group > kMaxSocketsPerGroupLimit) {
+    return MN_ERROR_INVALID_ARGUMENT;
+  }
+  options.max_sockets_per_group = config->max_sockets_per_group;
   options.inject_client_hints = config->inject_client_hints != 0;
   // 0 is Chrome's own default semantics, which the Core already has. 1..3
   // would be a policy engine of our own.

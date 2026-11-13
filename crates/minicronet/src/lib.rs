@@ -262,6 +262,12 @@ pub struct EngineConfig {
     pub dns_rotate: u8,
     pub dns_padding: u8,
     pub platform: Platform,
+    /// Maximum TCP connections to one origin; 0 keeps Chromium's own limit (6).
+    ///
+    /// Raising it is an observable deviation from the browser being imitated
+    /// and the only knob that moves the per-origin throughput ceiling, which is
+    /// this number times 1/RTT. Documented at mn_engine_config_t.
+    pub max_sockets_per_group: u32,
 }
 
 impl Default for EngineConfig {
@@ -288,6 +294,7 @@ impl Default for EngineConfig {
             dns_rotate: 0,
             dns_padding: 0,
             platform: Platform::Auto,
+            max_sockets_per_group: 0,
         }
     }
 }
@@ -371,6 +378,7 @@ impl Engine {
             cookie_samesite_override: 0,
             inject_client_hints: 0,
             platform: config.platform.into(),
+            max_sockets_per_group: config.max_sockets_per_group,
         };
         let mut raw = std::ptr::null_mut();
         let result = unsafe { sys::mn_engine_create(&raw_config, &mut raw) };

@@ -20,7 +20,7 @@
 extern "C" {
 #endif
 
-#define MN_ABI_VERSION 10u
+#define MN_ABI_VERSION 11u
 
 /* tools/sync-core.sh installs core/exports/minicronet.lds, whose node name is
  * part of the link-time contract: every extension already built against this
@@ -43,13 +43,18 @@ typedef struct mn_websocket mn_websocket_t;
  *
  * Callbacks for one object are serialized.
  *
- * Engine lifetime: an engine must outlive every request and WebSocket created
- * from it. Releasing the last engine reference tears down its
- * URLRequestContext, and Chromium asserts that no URLRequest is still
- * registered against it, so releasing an engine with work in flight can abort
- * the host process. Finish or cancel the work first. The request and WebSocket
- * objects keep the engine alive, but that only protects the handle, not the
- * context.
+ * Engine lifetime: a Request and a WebSocket each hold a reference to the
+ * Engine they were created from (core/source/minicronet/request.h and
+ * websocket.h both keep a scoped_refptr<Engine>), so the URLRequestContext
+ * cannot be torn down while a request is registered against it, even if the
+ * caller has already released its own engine handle. That is what keeps the
+ * "Chromium asserts no URLRequest is still registered" abort unreachable.
+ *
+ * The requirement is therefore on the caller, not on the wire: finish or
+ * cancel the work before releasing the engine, because an engine released
+ * mid-flight leaves the context alive for the request but no longer part of
+ * any cache the caller can reach -- the socket pool and TLS session cache it
+ * was reusing are gone, and the in-flight request keeps them alive alone.
  *
  * Callback ordering: for one request, on_response and on_body precede the
  * single terminal on_complete. on_redirect is posted on the object's callback
@@ -216,6 +221,32 @@ typedef struct mn_engine_config {
    * effect there. Values above 1 are rejected. */
   uint8_t inject_client_hints;
   mn_platform_t platform;
+  /* ---- v11 appends. A caller built against the v10 header is rejected by the
+   * size check in mn_engine_create (INVALID_ARGUMENT) rather than reading a
+   * struct shorter than this one.
+   *
+   * Maximum TCP connections this engine keeps open to one origin. 0 (the
+   * default) keeps Chromium's own limit, which is 6 for the normal pool and is
+   * what every captured Chrome release does; a server counting concurrent
+   * connections from one client never sees more than 6 on one origin, with or
+   * without this field.
+   *
+   * A non-zero value raises this engine's ceiling, and that is a deliberate,
+   * observable deviation from the browser being imitated: a real Chrome never
+   * opens a 7th connection to one origin, so a caller setting 64 is asking to
+   * be distinguishable on the wire in exchange for throughput. Throughput per
+   * origin is bounded by this number times 1/RTT -- measured on this host, 6
+   * connections at 20 ms RTT caps out near 240 req/s whether the caller runs 8
+   * or 64 threads -- so this is the only knob that moves that ceiling.
+   *
+   * The value is per engine, not process-wide: Chromium's limit is a static
+   * array, and drivers that keep several immutable profiles in one process
+   * cannot each have a different one through a static.
+   *
+   * Values above the pool's soft cap (256) can never be reached and are
+   * rejected rather than clamped, so a caller cannot believe it asked for
+   * something it did not get. */
+  uint32_t max_sockets_per_group;
 } mn_engine_config_t;
 
 /* Returns MN_ABI_VERSION compiled into the library. */
@@ -484,6 +515,7 @@ MN_EXPORT mn_result_t MN_CALL mn_request_follow_redirect(mn_request_t *request);
  * that is already in flight owns the buffer the callback was handed, so the
  * Core only schedules the next read once that callback has returned. */
 MN_EXPORT mn_result_t MN_CALL mn_request_resume_read(mn_request_t *request);
+
 
 /* The protocol the connection actually used.
  *

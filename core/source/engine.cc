@@ -630,6 +630,11 @@ void Engine::InitializeOnNetworkThread() {
         profile->randomize_socket_pool_limit;
     session_params.randomize_proxy_socket_pool_limit =
         profile->randomize_proxy_socket_pool_limit;
+    // v11. Not profile data: every captured release leaves this 0, which keeps
+    // Chromium's own 6-per-origin limit. A non-zero value is the caller asking
+    // for a deviation from the imitated browser, documented on the ABI field.
+    session_params.max_sockets_per_group_override =
+        options_.max_sockets_per_group;
     session_params.send_priority_header = profile->send_priority_header;
     // HTTP/2 framing knobs. All three are false for every profile (see the
     // struct comment in the generated header): the 432 captured connections
@@ -693,6 +698,10 @@ void Engine::InitializeOnNetworkThread() {
     // keeps these session params identical to the historical-profile path.
     session_params.ignore_certificate_errors =
         tls_verify_mode_ == MN_TLS_VERIFY_INSECURE;
+    // The pool override is the protocol pin's twin: it is not profile data,
+    // so chromium_current must honour it exactly as a historical profile does.
+    session_params.max_sockets_per_group_override =
+        options_.max_sockets_per_group;
     // chromium_current keeps Chromium's own defaults for the three HTTP/2
     // framing knobs: that is what "current" means, and overriding them here
     // would make the default profile disagree with the Chromium it names.

@@ -3,7 +3,7 @@
 
 use core::ffi::c_void;
 
-pub const MN_ABI_VERSION: u32 = 10;
+pub const MN_ABI_VERSION: u32 = 11;
 
 #[repr(C)]
 pub struct mn_engine_t {
@@ -124,6 +124,10 @@ pub struct mn_engine_config_t {
     pub cookie_samesite_override: u8,
     pub inject_client_hints: u8,
     pub platform: mn_platform_t,
+    // ---- v11 appends. 0 keeps Chromium's own per-origin TCP limit (6), which
+    // is what every captured profile does; a non-zero value raises it for this
+    // engine and is an observable deviation from the imitated browser.
+    pub max_sockets_per_group: u32,
 }
 
 #[repr(C)]
@@ -975,7 +979,7 @@ mod abi_layout_tests {
         assert_eq!(mn_redirect_mode_t::MN_REDIRECT_ERROR.0, 2);
         assert_eq!(mn_read_disposition_t::MN_READ_PAUSE.0, 0);
         assert_eq!(mn_read_disposition_t::MN_READ_CONTINUE.0, 1);
-        assert_eq!(MN_ABI_VERSION, 10);
+        assert_eq!(MN_ABI_VERSION, 11);
         assert_eq!(mn_request_priority_t::MN_REQUEST_PRIORITY_IDLE.0, 5);
         assert_eq!(
             mn_websocket_message_type_t::MN_WEBSOCKET_MESSAGE_BINARY.0,
@@ -1013,6 +1017,17 @@ mod abi_layout_tests {
             // platform sits at 240, not 238: an enum is int-sized, so the two
             // trailing u8 fields are followed by two bytes of padding.
             assert_eq!(offset_of!(mn_engine_config_t, platform), 240);
+            // v11: the enum at 240 is 4 bytes wide, so the appended u32 lands
+            // at 244 with no padding, and the struct grows 248 -> 252... except
+            // it does not: 248 was already 4-byte aligned, so the field fits in
+            // the trailing padding and the struct keeps its old size.
+            //
+            // These three numbers are what the C compiler reports for
+            // core/abi/minicronet.h, not what the layout reasoning above
+            // predicts; the reasoning predicted 248/252 and was wrong. Verified
+            // with clang -I core/abi printing offsetof and sizeof directly.
+            assert_eq!(offset_of!(mn_engine_config_t, max_sockets_per_group), 244);
+            assert_eq!(size_of::<mn_engine_config_t>(), 248);
             // dns_padding is what makes the DNS flag group four bytes wide.
             // Dropping it would move cookie_samesite_override onto the padding
             // byte, where a reader of the DNS mode group would then read a

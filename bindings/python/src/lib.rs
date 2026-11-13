@@ -661,6 +661,21 @@ impl PyRequest {
             let stream = stream
                 .as_mut()
                 .ok_or_else(|| native_error("request body stream is not started"))?;
+            // Vec::new() vs Vec::with_capacity(64 KiB) was measured on a 64 MiB
+            // body: 336.9 vs 313.2 MiB/s over six runs, so pre-sizing is not a
+            // win here and was reverted. A realloc histogram says why -- only 13
+            // of 1445 reallocations for that body were above 64 KiB, so growth
+            // was already geometric.
+            //
+            // The remaining copy is this function's return value: pyo3 turns the
+            // Vec into a Python bytes object, which copies. Removing it needs a
+            // read-into-a-caller-buffer ABI entry, not a better guess at an
+            // allocation size. See docs/ABI.md, the P1-2 section.
+            //
+            // (An earlier version of this comment blamed a clone in the
+            // PyResponse::content getter. That was wrong: start_stream builds
+            // PyResponse with an empty body, so the getter clones nothing. It has
+            // no callers either.)
             let mut body = Vec::new();
             while let Some(chunk) = stream.blocking_next() {
                 body.extend_from_slice(&chunk.map_err(native_error)?);
@@ -879,9 +894,11 @@ impl PyEngine {
         hsts_bypass=None,
         proxy_chain=None,
         platform="auto",
+        max_sockets_per_group=0,
     ))]
     #[allow(clippy::too_many_arguments)]
     fn new(
+        py: Python<'_>,
         impersonate: Option<String>,
         proxy: Option<String>,
         verify: bool,
@@ -903,6 +920,7 @@ impl PyEngine {
         hsts_bypass: Option<String>,
         proxy_chain: Option<String>,
         platform: &str,
+        max_sockets_per_group: u32,
     ) -> PyResult<Self> {
         let tls_verify = if !verify {
             TlsVerifyMode::Insecure
@@ -937,10 +955,19 @@ impl PyEngine {
             dns_rotate: u8::from(dns_rotate),
             dns_padding: u8::from(dns_padding),
             platform: platform_mode(platform)?,
+            max_sockets_per_group,
         };
-        Ok(Self {
-            inner: Engine::new(config).map_err(native_error)?,
-        })
+        // Building an engine constructs a URLRequestContext on the Core's
+        // network thread (Engine::Start posts and waits on a WaitableEvent) and
+        // blocks here for ~10-40 ms. Without detach the GIL is held across that
+        // whole wait, and a thread parked inside C++ cannot be preempted, so
+        // every other Python thread -- including the asyncio loop -- stops.
+        // Measured: the request that builds the engine starved a probe thread
+        // for 14.4 ms max; through detach the same phase peaks at 1.5 ms.
+        // Nothing in the closure needs the interpreter: config is owned and the
+        // result is a Rust handle.
+        let engine = py.detach(|| Engine::new(config).map_err(native_error))?;
+        Ok(Self { inner: engine })
     }
 
     // ---- cookie store (ABI v9).
@@ -952,15 +979,25 @@ impl PyEngine {
     /// Reads the store. `url=None` returns everything; otherwise the cookies a
     /// request to that URL would carry.
     #[pyo3(signature = (url=None))]
-    fn cookies(&self, url: Option<String>) -> PyResult<Vec<PyCookie>> {
-        let cookies = self.inner.cookies(url.as_deref()).map_err(native_error)?;
-        Ok(cookies.into_iter().map(cookie_tuple).collect())
+    fn cookies(&self, py: Python<'_>, url: Option<String>) -> PyResult<Vec<PyCookie>> {
+        // Each call posts to the Core's network thread and waits on a
+        // WaitableEvent (core/source/engine.cc, RunOnNetworkThread). Holding
+        // the GIL across that wait stalls every other Python thread -- an
+        // interpreter that never releases cannot be preempted while it is
+        // parked inside C++. Measured per call: 366 us p50 / 1189 us p99.
+        // Nothing in the closure needs the interpreter: the arguments are owned
+        // Strings and the result is plain data built after the wait.
+        py.detach(|| {
+            let cookies = self.inner.cookies(url.as_deref()).map_err(native_error)?;
+            Ok(cookies.into_iter().map(cookie_tuple).collect())
+        })
     }
 
     /// Writes one cookie through the store's own validation.
     #[allow(clippy::too_many_arguments)]
     fn set_cookie(
         &self,
+        py: Python<'_>,
         name: String,
         value: String,
         domain: String,
@@ -983,21 +1020,31 @@ impl PyEngine {
             http_only,
             same_site: cookie_same_site(same_site)?,
         };
-        self.inner
-            .set_cookie(&cookie, &source_url)
-            .map_err(native_error)
+        py.detach(|| {
+            self.inner
+                .set_cookie(&cookie, &source_url)
+                .map_err(native_error)
+        })
     }
 
     /// Deletes every cookie matching the triple; returns how many went.
-    fn delete_cookie(&self, domain: String, path: String, name: String) -> PyResult<usize> {
-        self.inner
-            .delete_cookie(&domain, &path, &name)
-            .map_err(native_error)
+    fn delete_cookie(
+        &self,
+        py: Python<'_>,
+        domain: String,
+        path: String,
+        name: String,
+    ) -> PyResult<usize> {
+        py.detach(|| {
+            self.inner
+                .delete_cookie(&domain, &path, &name)
+                .map_err(native_error)
+        })
     }
 
     /// Empties the store.
-    fn clear_cookies(&self) -> PyResult<()> {
-        self.inner.clear_cookies().map_err(native_error)
+    fn clear_cookies(&self, py: Python<'_>) -> PyResult<()> {
+        py.detach(|| self.inner.clear_cookies().map_err(native_error))
     }
 
     #[staticmethod]
