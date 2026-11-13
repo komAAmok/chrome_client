@@ -18,10 +18,10 @@ use std::sync::{
 use std::time::{Duration, Instant};
 
 use minicronet::{
-    CacheMode, CloseInfo, Cookie, CookieSameSite, Engine, EngineConfig, Header, HttpCacheMode,
-    HttpVersion, MessageType, Platform, ProtocolMode, Redirect, RedirectMode, RequestConfig,
-    RequestPriority, ResponseFuture, ResponseStream, TlsVerifyMode, Upload, WebSocketConfig,
-    WebSocketEvent, WebSocketEvents,
+    CacheMode, CloseInfo, Cookie, CookieSameSite, EchStatus, Engine, EngineConfig, Header,
+    HttpCacheMode, HttpVersion, MessageType, Platform, ProtocolMode, Redirect, RedirectMode,
+    RequestConfig, RequestPriority, ResponseFuture, ResponseStream, TlsVerifyMode, Upload,
+    WebSocketConfig, WebSocketEvent, WebSocketEvents,
 };
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
@@ -461,6 +461,15 @@ impl PyRequest {
                 .into_iter()
                 .map(|field| (field.name, field.value))
                 .collect()
+        })
+    }
+
+    /// Whether Encrypted ClientHello was used, once a response has started.
+    fn ech_status(&self) -> Option<&'static str> {
+        self.inner.ech_status().map(|value| match value {
+            EchStatus::Success => "success",
+            EchStatus::Rejected => "rejected",
+            EchStatus::NotAttempted => "not_attempted",
         })
     }
 

@@ -67,7 +67,7 @@ jar、`stream=True` 返回可迭代对象）、Python 异常类型选择、冻�
 
 ## 2. ABI 规则
 
-- `core/abi/minicronet.h` 是**唯一** ABI 来源。当前 ABI v9，**28** 个导出符号。
+- `core/abi/minicronet.h` 是**唯一** ABI 来源。当前 ABI v10，**28** 个导出符号。
 - 结构体变更必须同时更新：头文件、`crates/minicronet-sys/src/lib.rs` 的 `#[repr(C)]`
   声明与布局测试、`core/exports/minicronet.{def,exports,lds}`。
 - 每个 config 结构体以 `size` + `version` 开头，两者都要校验。

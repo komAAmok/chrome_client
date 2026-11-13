@@ -3,7 +3,7 @@
 
 use core::ffi::c_void;
 
-pub const MN_ABI_VERSION: u32 = 9;
+pub const MN_ABI_VERSION: u32 = 10;
 
 #[repr(C)]
 pub struct mn_engine_t {
@@ -975,7 +975,7 @@ mod abi_layout_tests {
         assert_eq!(mn_redirect_mode_t::MN_REDIRECT_ERROR.0, 2);
         assert_eq!(mn_read_disposition_t::MN_READ_PAUSE.0, 0);
         assert_eq!(mn_read_disposition_t::MN_READ_CONTINUE.0, 1);
-        assert_eq!(MN_ABI_VERSION, 9);
+        assert_eq!(MN_ABI_VERSION, 10);
         assert_eq!(mn_request_priority_t::MN_REQUEST_PRIORITY_IDLE.0, 5);
         assert_eq!(
             mn_websocket_message_type_t::MN_WEBSOCKET_MESSAGE_BINARY.0,

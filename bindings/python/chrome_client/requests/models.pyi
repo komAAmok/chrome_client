@@ -14,6 +14,7 @@ from .._python_impl.models import (
     RawHeaderBlock as RawHeaderBlock,
     HistoryHeaders as HistoryHeaders,
     HeaderLink as HeaderLink,
+    ech_of as ech_of,
     compose_status_line as compose_status_line,
     parse_raw_headers as parse_raw_headers,
     reason_from_status_line as reason_from_status_line,

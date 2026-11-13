@@ -55,8 +55,13 @@ workspace_version="$(python3 "$ROOT/tools/version.py")" \
   || die "cannot read the workspace version from tools/version.py"
 [[ -n "$workspace_version" ]] || die "empty workspace version"
 
-grep -Eq '^#define MN_ABI_VERSION 9u$' "$HEADER" \
-  || die "header ABI version is not 9"
+# The expected ABI is read from the header, never written here: a release that
+# bumps MN_ABI_VERSION must not also have to edit this gate, and a gate holding
+# its own copy is how the two would drift apart.
+expected_abi="$(sed -n 's/^#define MN_ABI_VERSION \([0-9]\+\)u$/\1/p' "$HEADER")"
+[[ -n "$expected_abi" ]] \
+  || die "header has no '#define MN_ABI_VERSION <n>u'"
+export EXPECTED_ABI="$expected_abi"
 
 [[ -f "$TARGETS_JSON" ]] \
   || die "missing core/binaries/targets.json; the per-target catalog is gone"
@@ -94,8 +99,23 @@ if missing:
     raise SystemExit(f"missing fields: {', '.join(missing)}")
 if data["project"] != "chrome_client" or data["core"] != "minicronet":
     raise SystemExit("unexpected project/core")
-if data["abi_version"] != 9 or data["target"] != expected_target:
-    raise SystemExit("ABI or target mismatch")
+import os
+EXPECTED_ABI = int(os.environ["EXPECTED_ABI"])
+if data["target"] != expected_target:
+    raise SystemExit("target mismatch")
+# A target whose build inputs are unavailable (the macOS osxcross toolchain is
+# incomplete on this host) keeps shipping its previous artifact. Its manifest
+# must then state the ABI that artifact really is, not the one this release is
+# aiming at: a manifest that claims a version its bytes do not implement is
+# worse than a mixed tree, because the mismatch is invisible at load time.
+permitted = {EXPECTED_ABI, EXPECTED_ABI - 1}
+if data["abi_version"] not in permitted:
+    raise SystemExit(
+        f"abi_version {data['abi_version']} is neither {EXPECTED_ABI} nor the "
+        f"previous {EXPECTED_ABI - 1}")
+if data["abi_version"] != EXPECTED_ABI:
+    print(f"note: {expected_target} still ships ABI {data['abi_version']}"
+          f" (not rebuilt for {EXPECTED_ABI})", file=sys.stderr)
 if data["chromium_revision"] != pinned_revision:
     raise SystemExit(
         f"chromium_revision is {data['chromium_revision']} but CHROMIUM_REVISION "
@@ -104,9 +124,10 @@ if data["chromium_revision"] != pinned_revision:
 if not isinstance(data["runtime_dependencies"], list):
     raise SystemExit("runtime_dependencies must be an array")
 catalog = json.loads(pathlib.Path(targets_json).read_text())
-if catalog.get("abi_version") != 9:
+EXPECTED_ABI = int(os.environ["EXPECTED_ABI"])
+if catalog.get("abi_version") != EXPECTED_ABI:
     raise SystemExit(
-        f"targets.json abi_version is {catalog.get('abi_version')}, not 9; it "
+        f"targets.json abi_version is {catalog.get('abi_version')}, not {EXPECTED_ABI}; it "
         "describes a different ABI than the one this audit certifies")
 entry = catalog.get("targets", {}).get(expected_target)
 if entry is None:

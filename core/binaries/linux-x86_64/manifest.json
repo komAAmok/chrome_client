@@ -1,12 +1,12 @@
 {
   "project": "chrome_client",
   "core": "minicronet",
-  "abi_version": 9,
+  "abi_version": 10,
   "chromium_revision": "58bcc148f76b8975bbe59f1a6012d4ae409d62a9",
   "target": "linux-x86_64",
   "triple": "x86_64-unknown-linux-gnu",
   "library": "libminicronet.so",
-  "sha256": "33a1b0b448284cb58a6eedf9d52a2b25d3a882e7e1030da31ba82b35530f1d5a",
+  "sha256": "69bb4a343d556befb2c1aa1619d506b8b5b99880c6a5a9dc72fd8b447fceb99a",
   "size_bytes": 8658480,
   "runtime_dependencies": [
     "libc.so.6",

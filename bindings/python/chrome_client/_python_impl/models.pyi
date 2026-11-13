@@ -54,6 +54,18 @@ HistoryHeaders: TypeAlias = List[Tuple[str, Headers]]
 HeaderLink: TypeAlias = Dict[str, str]
 
 
+def ech_of(head: Any) -> Optional[str]:
+    """Returns the ECH status from a native response head, or ``None``.
+
+    Args:
+        head: The Core's response object, or ``None`` without one.
+
+    Returns:
+        ``"success"``, ``"rejected"``, ``"not_attempted"`` or ``None``.
+    """
+    ...
+
+
 def compose_status_line(status_code: int, reason_phrase: Optional[str]) -> str:
     """Builds ``HTTP/1.1 NNN Reason`` from the fields the Core sends.
 

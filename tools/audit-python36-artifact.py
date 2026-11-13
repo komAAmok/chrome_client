@@ -215,6 +215,16 @@ def check_wheel_imports_the_facade(wheel) -> str:
                  "supported interpreter; the facade must accept either module "
                  "name." % (wheel.name, sys.version_info[0], sys.version_info[1],
                            detail[-1] if detail else "no output"))
+        # Importing proves the package is loadable; it does not prove the
+        # packaged extension is this release. A wheel built against an older ABI
+        # imports fine and then refuses every call at create time, which is
+        # exactly the failure a user would report as "it installed but nothing
+        # works". The version is part of the artifact's contract, so check it.
+        packaged = result.stdout.strip()
+        if packaged != str(declared_abi_version()):
+            fail("%s packages an extension reporting abi_version=%s but "
+                 "core/abi/minicronet.h declares %d; rebuild the wheel"
+                 % (wheel.name, packaged, declared_abi_version()))
     return "%s: facade imports, abi %s" % (wheel.name, result.stdout.strip())
 
 

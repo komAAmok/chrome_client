@@ -115,6 +115,18 @@ def _decode_failure(error, response):
     return error
 
 
+def ech_of(head):
+    """Returns the ECH status from a native response head, or ``None``.
+
+    Args:
+        head: The Core's response object, or ``None`` without one.
+
+    Returns:
+        ``"success"``, ``"rejected"``, ``"not_attempted"`` or ``None``.
+    """
+    return getattr(head, "ech_status", None) if head is not None else None
+
+
 def compose_status_line(status_code, reason_phrase):
     """Builds ``HTTP/1.1 NNN Reason`` from the fields the Core sends.
 
@@ -510,6 +522,8 @@ class Response(object):
         self.request = None
         self.default_encoding = "utf-8"
         self.http_version = None
+        #: ECH status from the Core, or ``None`` before a response.
+        self.ech_status = None
         self.redirect_count = 0
         self.redirect_url = None
         self.infos = {}

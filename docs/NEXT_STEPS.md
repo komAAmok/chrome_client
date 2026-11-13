@@ -800,6 +800,35 @@ mn_engine_set_wakeup_batch(mn_engine_t *engine,
 2. 任何会 `spawn` 的诊断脚本都要有 `if __name__ == "__main__":`。
 3. 「稳定复现」也可能是自己的错误稳定复现——**先换环境对照一次**，再下结论。
 
+## 已完成：ABI v10（回调携带结构化头 + reason + ECH 查询）
+
+v9 的回调签名 (`on_response(status, headers, len)`) 不足以让绑定层不做解析，v10 把它
+扩成 `(status, reason, reason_len, fields, count, headers, len)`。
+
+**版本必须升而不仅仅是改签名**：Core 在 `minicronet.cc:765` 校验
+`callbacks.version == MN_ABI_VERSION`。签名变了但版本号不动，旧的 v9 绑定会通过校验然后
+被 9 参数调用 5 参数函数。实测：v9 调用方现在得到 `MN_ERROR_UNSUPPORTED_ABI`(2)，
+v10 调用方 `MN_OK`。
+
+**顺带接通 ECH**：`mn_request_ech_status` 从 v9 起就在 Core 里，一直没接到绑定层。现在
+四层贯通，`Response.ech_status` 报告 `success` / `rejected` / `not_attempted` / `None`。
+
+### 平台状态：七个已重建，两个没有
+
+| 平台 | ABI | 说明 |
+| --- | --- | --- |
+| linux-x86 / x86_64 / arm64 / armv7 | **10** | 已重建并安装 |
+| windows-x86 / x86_64 / arm64 | **10** | 已重建并安装 |
+| macos-x86_64 / macos-arm64 | **9** | `osxcross` 工具链不完整，未能重建 |
+
+macOS 缺的是 `osxcross/bin/osxcross-conf`、两个 `*-apple-darwin25.5-clang`、
+`MacOSX26.5.sdk/SDKSettings.plist` 与 `usr/lib/libSystem.tbd`。补上后按同样流程重建即可。
+
+**没有用改 manifest 的方式掩盖**：两个 macOS 的 manifest 与 `targets.json` 的
+`abi_version_override` 都如实写 9，`audit-core-binaries.sh` 会打印
+`note: macos-* still ships ABI 9`。让 manifest 声称一个字节流没有实现的版本，比混合版本
+更糟——加载时看不出问题。
+
 ## 已完成（ABI v9）：协商协议由 Core 报告## 已完成（ABI v9）：协商协议由 Core 报告
 
 `mn_request_negotiated_protocol` 已随 ABI v9 落地，Core 从

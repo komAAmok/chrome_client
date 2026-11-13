@@ -172,6 +172,27 @@ pub struct Redirect {
     pub new_method: String,
 }
 
+/// Whether Encrypted ClientHello was used.
+///
+/// Mirrors `mn_ech_status_t`. `Failed` is unreachable by construction: SSLInfo
+/// carries one boolean, false both for "tried and rejected" and "never tried".
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum EchStatus {
+    NotAttempted,
+    Success,
+    Rejected,
+}
+
+impl From<sys::mn_ech_status_t> for EchStatus {
+    fn from(value: sys::mn_ech_status_t) -> Self {
+        match value.0 {
+            1 => Self::Success,
+            2 => Self::Rejected,
+            _ => Self::NotAttempted,
+        }
+    }
+}
+
 /// The protocol a response arrived over.
 ///
 /// Mirrors `mn_http_version_t`. `Unknown` is produced by Chromium itself, so it
@@ -396,6 +417,17 @@ impl Request {
     /// is taken, which is why this clones rather than moving.
     pub fn response_head(&self) -> Option<ResponseHead> {
         lock(&self.0.shared.state).response.clone()
+    }
+
+    /// Whether Encrypted ClientHello was used for this connection.
+    ///
+    /// `None` when the Core cannot answer yet (no response). The three reachable
+    /// values are NotAttempted, Success and Rejected; MN_ECH_FAILED exists in the
+    /// enum but is unreachable, see core/source/request.cc:452.
+    pub fn ech_status(&self) -> Option<EchStatus> {
+        let mut value = sys::mn_ech_status_t::MN_ECH_NOT_ATTEMPTED;
+        let result = unsafe { sys::mn_request_ech_status(self.raw(), &mut value) };
+        (result == sys::mn_result_t::MN_OK).then(|| EchStatus::from(value))
     }
 
     pub fn negotiated_protocol(&self) -> Option<HttpVersion> {

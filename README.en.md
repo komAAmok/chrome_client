@@ -31,7 +31,7 @@ the [compatibility boundary](https://github.com/komAAmok/chrome_client/blob/main
 
 Core artifacts are in `core/binaries/<target>/`. Each artifact records the ABI
 version, Chromium revision, SHA-256 and runtime dependencies. The current ABI is
-v8. Go and Node directories currently contain binding design notes, not released
+v10. Go and Node directories currently contain binding design notes, not released
 installable packages.
 
 Cores range from 7.3 MB to 9.4 MB (macOS ARM64 smallest, Windows x86_64 largest,

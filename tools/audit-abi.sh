@@ -24,7 +24,7 @@ symbols=(
 die() { printf 'ABI audit: %s\n' "$*" >&2; exit 1; }
 
 [[ -f "$HEADER" && -f "$SYS" && -f "$CORE" ]] || die "missing ABI/FFI/Core source"
-grep -qx '#define MN_ABI_VERSION 9u' "$HEADER" \
+grep -qx '#define MN_ABI_VERSION 10u' "$HEADER" \
   || die "header ABI version is not 9"
 
 tmp="$(mktemp -d)"

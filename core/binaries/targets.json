@@ -1,5 +1,5 @@
 {
-  "abi_version": 9,
+  "abi_version": 10,
   "targets": {
     "linux-x86": {
       "triple": "i686-unknown-linux-gnu",
@@ -37,11 +37,13 @@
       "status": "migrated"
     },
     "macos-x86_64": {
+      "abi_version_override": 9,
       "triple": "x86_64-apple-darwin",
       "library": "libminicronet.dylib",
       "status": "migrated"
     },
     "macos-arm64": {
+      "abi_version_override": 9,
       "triple": "aarch64-apple-darwin",
       "library": "libminicronet.dylib",
       "status": "migrated"

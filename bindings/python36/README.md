@@ -28,7 +28,7 @@ WebSocket。无法用 Chromium 忠实实现的选项会显式报错，而不是�
 
 
 每个 Core 产物位于 `core/binaries/<target>/`，带 ABI 版本、Chromium revision、
-SHA-256 和依赖清单。ABI 当前为 v8。Go 和 Node.js 目录目前是绑定设计说明，
+SHA-256 和依赖清单。ABI 当前为 v10。Go 和 Node.js 目录目前是绑定设计说明，
 不是已发布的可安装包。
 
 Core 体积在 6.1–9.4 MB 之间（Linux ARMv7 最小，Windows x86_64 最大，静态 MSVC/UCRT
