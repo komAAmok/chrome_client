@@ -800,6 +800,65 @@ mn_engine_set_wakeup_batch(mn_engine_t *engine,
 2. 任何会 `spawn` 的诊断脚本都要有 `if __name__ == "__main__":`。
 3. 「稳定复现」也可能是自己的错误稳定复现——**先换环境对照一次**，再下结论。
 
+## 提案：三项头部校验下沉（头名拒绝 / 删除无效报告 / WS 保留名）
+
+**这三项是 AGENTS §1.1 迁移的剩余部分**，不是新功能。绑定层今天有三张表在做 Core
+本该做的事，它们之所以还在，只有一个原因：**Core 还不具备相应的拒绝能力**。
+
+按 §1.1 的主判据问一遍——"换 Go 或 Node 重写这个绑定，这三张表要不要再写一遍？"
+答案是"要，而且必须逐字节一致，否则同一个请求在不同语言里行为不同"——所以它们属于
+Core。`tools/audit-layer-ownership.py` 的 `KNOWN` 里登记的就是这三条。
+
+### 现状与证据（都已在代码里复核过）
+
+| 绑定层的表 | 位置 | Core 今天为什么不拦 |
+| --- | --- | --- |
+| `_HOP_BY_HOP_HEADERS` | `sessions.py:232` | `request.cc` 只做 `SetExtraRequestHeaders`，没有任何头名校验 |
+| `_CORE_OWNED_HEADERS` | `sessions.py:211` | `minicronet.cc:772/829` 只校验 `header_count` 的范围，不按名字拒绝；`SetExtraRequestHeaders` 只增不减，删除是 no-op 且 Core 无法报告 |
+| `_FORBIDDEN_WS_HEADERS` | `sessions.py:85` | `websocket.cc:265` 把 `headers_` 逐条 `SetHeader`，不检查保留名，与 Chromium 追加的 `Origin`/`Upgrade` 会冲突 |
+
+### 三项改动
+
+**1. 头名拒绝：`MN_ERROR_INVALID_ARGUMENT`**
+
+`mn_request_create` 校验每个 `mn_header_t.name`：hop-by-hop 集合
+（`connection` / `proxy-connection` / `keep-alive` / `te` / `trailer` / `upgrade`）出现即拒绝。
+契约写进头文件，绑定层删表。
+
+**2. 删除无效的报告**
+
+`headers={"User-Agent": None}` 今天在绑定层被拦，因为 Core 侧是静默 no-op。
+需要 ABI 能回答"这个名字我删不掉"，绑定层才能把拒绝的理由交给 Core 而不是自己维护名单。
+两种实现：给 `mn_request_config_t` 加 `remove_header_count` / `remove_headers`，由 Core
+返回失败；或在 `mn_request_create` 之外加一个查询入口，问某个名字是否 Core-owned。
+
+**3. WS 保留名校验**
+
+`mn_websocket_config_t` 校验 `Host` / `Origin` / `Upgrade` / `Connection` /
+`Sec-WebSocket-*` 与 `User-Agent`，出现即拒绝。Core 在 `websocket.cc` 里已经知道这几类
+由 Chromium 追加（那条注释就是证据），只是没有把判断变成拒绝。
+
+### 为什么必须一轮做，而不是逐个叠
+
+三项都要动 `MN_ABI_VERSION`：改校验语义、加结构体字段、加查询入口。分三次做就是三次
+版本升级、三次九平台重建、三次绑定层同步。**而且它们共享同一个契约问题**——"哪些头名
+是不可写的"必须在一处定义，否则头名拒绝和删除报告会各写一份名单，重演今天绑定层的问题。
+
+### 代价与风险
+
+- 三项都是**收紧**：今天被静默接受的调用会开始报错。这是 §8 fail-closed 要求的方向，
+  但会改变对外行为，需要在 README 与 COMPATIBILITY_BOUNDARY 里写明。
+- 头名拒绝必须与 Chromium 自己的行为一致，否则会拒绝掉 Chromium 本来能处理的头。
+  判据是 `net/spdy/spdy_http_utils.cc:214-221`（h2/h3 丢弃的三个）与
+  `SetExtraRequestHeaders` 的实际语义，不是凭 RFC 列表。
+- 顺序：**先加 Core 拒绝，再删绑定层表**。反过来会让一次失败同时暴露两个问题。
+
+### 完成判据
+
+- `tools/audit-layer-ownership.py` 的 `KNOWN` 里这三条被删除，且门禁仍通过
+  （该门禁的规则是"条目不再匹配任何代码即失败"，删表后自然满足）。
+- 绑定层三个 frozenset 消失，改名/改集合的测试同步更新。
+- 九平台重建（含 macOS，前提是 osxcross 补齐，见 ABI v10 那节的平台状态）。
 ## 已完成：ABI v10（回调携带结构化头 + reason + ECH 查询）
 
 v9 的回调签名 (`on_response(status, headers, len)`) 不足以让绑定层不做解析，v10 把它

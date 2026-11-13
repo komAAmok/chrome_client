@@ -86,15 +86,18 @@ KNOWN = {
     ("bindings/python/chrome_client/_python_impl/sessions.py", 4): (
         "the Core accepts every header name, so the refusal has to happen",
         "somewhere. Moving it needs mn_request_config to reject the six fields",
-        "and return MN_ERROR_INVALID_ARGUMENT (core/source/request.cc:245)."),
+        "and return MN_ERROR_INVALID_ARGUMENT (core/source/request.cc:245).",
+        "Scheduled: docs/NEXT_STEPS.md, the three-item header-validation",
+        "proposal -- head-name rejection is item 1."),
     ("bindings/python/chrome_client/_python_impl/sessions.py", 5): (
         "SetExtraRequestHeaders only adds, so a caller-owned removal is a no-op",
         "the Core cannot report. Needs a Core-side per-name removal entry point",
-        "(core/source/request.cc:275)."),
+        "(core/source/request.cc:275). Scheduled: same proposal, item 2."),
     ("bindings/python/chrome_client/_python_impl/sessions.py", 6): (
         "the WebSocket handshake builds its own header block in Chromium",
         "(websocket_basic_handshake_stream.cc), so the ABI never sees which",
-        "names are reserved. Needs mn_websocket_config to reject them."),
+        "names are reserved. Needs mn_websocket_config to reject them.",
+        "Scheduled: same proposal, item 3."),
 }
 
 
