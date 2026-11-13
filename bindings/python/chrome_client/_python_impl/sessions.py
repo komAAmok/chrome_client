@@ -2830,9 +2830,17 @@ class Session(BaseSession):
                         return
                     status_code, raw_headers = head
                     body = b"" if stream else native.read_body()
-                    final = self._finalize(self._new_response(), request,
-                                           status_code, raw_headers, [], _now(),
-                                           slot, False, body=body)
+                    # `head` is the Core's own response object, so it carries the
+                    # parsed fields and the reason just like the non-streaming
+                    # path does. Dropping them here sent this route back through
+                    # the status-line parser for no reason.
+                    final = self._finalize(
+                        self._new_response(), request, status_code,
+                        raw_headers, [], _now(), slot, False, body=body,
+                        http_version=getattr(head, "http_version", None),
+                        header_fields=getattr(head, "header_fields", None),
+                        reason_phrase=getattr(head, "reason_phrase", None),
+                        ech_status=ech_of(head))
                     final.url = url
                     yield final
                     return

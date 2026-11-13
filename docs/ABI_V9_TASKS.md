@@ -666,6 +666,49 @@ flush 之前就已就绪。我先写了一条走公开 API 的测试，它**通�
 `_STATUS_*` / `_REASON_*` 两个模式后才生效。记在这里，因为「门禁通过」和「门禁能抓」
 是两件事。
 
+### 1.13j 复核「能在 Core 做的禁止在绑定层做」到底做完了没有
+
+按要求不采信上一轮的汇报，回到代码逐条核对。**结论：没做完，查出两处真实问题。**
+
+#### 一、流式路径把结构化头丢掉了（真实遗漏，已修）
+
+`_finalize` 有 6 个调用点，其中 4 个不传 `header_fields`。逐个看：
+
+| 调用点 | 有 Core 响应可问吗 | 判定 |
+| --- | --- | --- |
+| 非流式最终响应 | 有（`head`） | 已传 ✓ |
+| 异步最终响应 | 有（`state`） | 已传 ✓ |
+| **流式最终响应** | **有（`head`）** | **没传 ✗** |
+| 重定向中间跳 ×2 | 无（`hop` 只有 4 个值） | 正确保留回退 ✓ |
+
+流式那条是错的：`head` 就是 Core 的响应对象，带 `header_fields` 与 `reason_phrase`，
+代码却只取 `status_code, raw_headers` 就把它丢了，白走一遍状态行解析。已修，实测：
+
+```
+stream=True -> reason='Custom Reason'   x-dup=['one','two']   body=b'hello'
+```
+
+#### 二、剩下的三张表：登记理由经复核仍然成立
+
+| 表 | 复核方式 | 结论 |
+| --- | --- | --- |
+| `_HOP_BY_HOP_HEADERS` | 查 `request.cc` 全部头处理 | Core 只做 `SetExtraRequestHeaders`，没有任何头名校验，也不报告删除无效 → 无法下沉 |
+| `_CORE_OWNED_HEADERS` | 查 `minicronet.cc:772/829` | 只校验 `header_count` 的范围（安全阀），不按名字拒绝 → 无法下沉 |
+| `_FORBIDDEN_WS_HEADERS` | 查 `websocket.cc:265` | Core 把 `headers_` 逐条 `SetHeader`，不检查保留名，与 Chromium 追加的 `Origin`/`Upgrade` 会冲突 → 无法下沉 |
+
+`parse_raw_headers` / `_negotiated_http_version` / `reason_from_status_line` 的残留调用点
+现在**只剩重定向中间跳**（`hop` 那两处），加上缓存命中时 Core 报 `UNKNOWN` 的回退——
+后者已核实：`HttpVersion::Unknown → None`，回退函数在状态行不能证明协议时也返回 `None`，
+行为一致，不是猜测。
+
+#### 三、门禁本身的弱点（记下来，不掩饰）
+
+`audit-layer-ownership.py` 数的是**符号出现次数**，不是**责任点数**。我修掉流式路径之后
+它仍然报 12——因为符号还在（重定向跳还在用），但真正走解析的调用点少了一个。
+
+也就是说：**这道门禁能防止新增越界，但它不能用来衡量迁移进度。** 拿它当进度指标会得出
+「12 处一直没变」的错误印象。进度只能用调用点计数，那是另一件事。
+
 ### 1.14 状态总表
 
 | 项 | 状态 | 依据 |
