@@ -4,13 +4,25 @@
 [![Python 版本](https://img.shields.io/badge/python-3.6%20%7C%203.7%20%7C%203.8%20%7C%203.9%20%7C%203.10%20%7C%203.11%20%7C%203.12%20%7C%203.13%20%7C%203.14%20%7C%203.15-blue)](https://pypi.org/project/chrome-client/)
 [![许可证：MIT](https://img.shields.io/pypi/l/chrome-client)](https://pypi.org/project/chrome-client/)
 
-基于 Chromium 网络栈的 HTTP/WebSocket 客户端。Core 负责 TLS、HTTP、HTTP/2、
-HTTP/3/QUIC、代理和 WebSocket/WSS；Python/Rust 绑定只负责参数、类型、错误和
-生命周期转换，不另实现一套网络协议。
+**Chromium 驱动的 HTTP/HTTPS 与 WebSocket 指纹客户端。**
+
+它不是一个"带相似指纹"的客户端，而是把真实 Chromium 的网络栈编译成
+`libminicronet`，直接由它发出请求。因此 TLS 的 ClientHello、HTTP/2 SETTINGS、
+QUIC 传输参数、请求头顺序都不是模仿出来的，而是那一版 Chrome 自己的行为。
+
+```python
+from chrome_client import Session
+
+with Session(impersonate="chrome_155") as session:
+    response = session.get("https://example.com")
+```
 
 Python API 同时对齐两套习惯：`requests` 的 `Session`/`Response`/异常层次，以及
 `curl_cffi` 的 `impersonate`、`http_version`、`AsyncSession`、`CurlMime` 和
-WebSocket。无法用 Chromium 忠实实现的选项会显式报错，而不是静默忽略——详见
+WebSocket。同步与异步两套 API 共用同一个引擎，行为只在"怎么等待"上不同。
+
+**无法用 Chromium 忠实实现的选项一律抛错**，不会静默忽略——静默降级比缺失更糟，
+因为它让调用方以为自己在模仿一个指纹，实际上不是。细则见
 [兼容边界](https://github.com/komAAmok/chrome_client/blob/main/docs/COMPATIBILITY_BOUNDARY.md)。
 
 [English README](https://github.com/komAAmok/chrome_client/blob/main/README.en.md) · [构建说明](https://github.com/komAAmok/chrome_client/blob/main/docs/BUILD.md) · [兼容边界](https://github.com/komAAmok/chrome_client/blob/main/docs/COMPATIBILITY_BOUNDARY.md) · [第三方许可](https://github.com/komAAmok/chrome_client/blob/main/THIRD_PARTY_NOTICES.md)
@@ -30,23 +42,6 @@ WebSocket。无法用 Chromium 忠实实现的选项会显式报错，而不是�
 每个 Core 产物位于 `core/binaries/<target>/`，带 ABI 版本、Chromium revision、
 SHA-256 和依赖清单。ABI 当前为 v11。Go 和 Node.js 目录目前是绑定设计说明，
 不是已发布的可安装包。
-
-Core 体积在 6.1–9.4 MB 之间（Linux ARMv7 最小，Windows x86_64 最大，静态 MSVC/UCRT
-多出约 2 MB）。IDNA-only 的 ICU 数据已编入库中，所以不需要外挂 `icudtl.dat`；用不到的
-磁盘缓存后端不进链接产物。各平台的体积上限由 `tools/audit-core-*.sh` 把关，超了直接
-构建失败。
-
-| Core 目录 | Rust target | Core 文件 |
-| --- | --- | --- |
-| `linux-x86` | `i686-unknown-linux-gnu` | `libminicronet.so` |
-| `linux-x86_64` | `x86_64-unknown-linux-gnu` | `libminicronet.so` |
-| `linux-armv7` | `armv7-unknown-linux-gnueabihf` | `libminicronet.so` |
-| `linux-arm64` | `aarch64-unknown-linux-gnu` | `libminicronet.so` |
-| `windows-x86` | `i686-pc-windows-msvc` | `minicronet.dll` + `minicronet.lib` |
-| `windows-x86_64` | `x86_64-pc-windows-msvc` | `minicronet.dll` + `minicronet.lib` |
-| `windows-arm64` | `aarch64-pc-windows-msvc` | `minicronet.dll` + `minicronet.lib` |
-| `macos-x86_64` | `x86_64-apple-darwin` | `libminicronet.dylib` |
-| `macos-arm64` | `aarch64-apple-darwin` | `libminicronet.dylib` |
 
 ### Chrome profile
 
@@ -568,6 +563,26 @@ Cookie 会按 URL 匹配后附加到握手上。
   `HTTPResponse`。
 - `Response.ok` 用 requests 语义（`status_code < 400`），不是 curl-cffi 的
   200–399。
+
+### Core 体积与目录
+
+Core 体积在 6.1–9.4 MB 之间（Linux ARMv7 最小，Windows x86_64 最大，静态 MSVC/UCRT
+多出约 2 MB）。IDNA-only 的 ICU 数据已编入库中，所以不需要外挂 `icudtl.dat`；用不到的
+磁盘缓存后端不进链接产物。各平台的体积上限由 `tools/audit-core-*.sh` 把关，超了直接
+构建失败。
+
+| Core 目录 | Rust target | Core 文件 |
+| --- | --- | --- |
+| `linux-x86` | `i686-unknown-linux-gnu` | `libminicronet.so` |
+| `linux-x86_64` | `x86_64-unknown-linux-gnu` | `libminicronet.so` |
+| `linux-armv7` | `armv7-unknown-linux-gnueabihf` | `libminicronet.so` |
+| `linux-arm64` | `aarch64-unknown-linux-gnu` | `libminicronet.so` |
+| `windows-x86` | `i686-pc-windows-msvc` | `minicronet.dll` + `minicronet.lib` |
+| `windows-x86_64` | `x86_64-pc-windows-msvc` | `minicronet.dll` + `minicronet.lib` |
+| `windows-arm64` | `aarch64-pc-windows-msvc` | `minicronet.dll` + `minicronet.lib` |
+| `macos-x86_64` | `x86_64-apple-darwin` | `libminicronet.dylib` |
+| `macos-arm64` | `aarch64-apple-darwin` | `libminicronet.dylib` |
+
 
 ## 目录与验证
 

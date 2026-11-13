@@ -4,16 +4,31 @@
 [![Python versions](https://img.shields.io/badge/python-3.6%20%7C%203.7%20%7C%203.8%20%7C%203.9%20%7C%203.10%20%7C%203.11%20%7C%203.12%20%7C%203.13%20%7C%203.14%20%7C%203.15-blue)](https://pypi.org/project/chrome-client/)
 [![License: MIT](https://img.shields.io/pypi/l/chrome-client)](https://pypi.org/project/chrome-client/)
 
-An HTTP/WebSocket client built on the Chromium network stack. The native Core
-owns TLS, HTTP/1.1, HTTP/2, HTTP/3/QUIC, proxy handling and WebSocket/WSS.
-Language bindings only translate arguments, types, errors and lifetimes; they do
-not ship a second networking stack.
+**A Chromium-powered HTTP/HTTPS and WebSocket fingerprinted client.**
+
+This is not a client that merely approximates a browser fingerprint. The Chromium
+network stack itself is compiled into `libminicronet` and issues the requests, so
+the TLS ClientHello, the HTTP/2 SETTINGS frame, the QUIC transport parameters and
+the request-header order are that Chrome release's own behaviour rather than an
+imitation of it.
+
+```python
+from chrome_client import Session
+
+with Session(impersonate="chrome_155") as session:
+    response = session.get("https://example.com")
+```
 
 The Python API matches two conventions at once: the `requests` shapes of
 `Session`, `Response` and the exception hierarchy, and the `curl_cffi` surface of
-`impersonate`, `http_version`, `AsyncSession`, `CurlMime` and WebSocket. Options
-Chromium cannot honour faithfully raise instead of being silently ignored -- see
-the [compatibility boundary](https://github.com/komAAmok/chrome_client/blob/main/docs/COMPATIBILITY_BOUNDARY.md).
+`impersonate`, `http_version`, `AsyncSession`, `CurlMime` and WebSocket. The
+synchronous and asynchronous APIs share one engine and differ only in how they
+wait.
+
+**Options Chromium cannot honour faithfully raise; they are never silently
+ignored.** A silent downgrade is worse than a missing feature, because it leaves
+the caller believing it is imitating a fingerprint when it is not. See the
+[compatibility boundary](https://github.com/komAAmok/chrome_client/blob/main/docs/COMPATIBILITY_BOUNDARY.md).
 
 [中文 README](https://github.com/komAAmok/chrome_client/blob/main/README.md) · [Build guide](https://github.com/komAAmok/chrome_client/blob/main/docs/BUILD.md) · [Compatibility boundary](https://github.com/komAAmok/chrome_client/blob/main/docs/COMPATIBILITY_BOUNDARY.md) · [Third-party notices](https://github.com/komAAmok/chrome_client/blob/main/THIRD_PARTY_NOTICES.md)
 
@@ -31,26 +46,8 @@ the [compatibility boundary](https://github.com/komAAmok/chrome_client/blob/main
 
 Core artifacts are in `core/binaries/<target>/`. Each artifact records the ABI
 version, Chromium revision, SHA-256 and runtime dependencies. The current ABI is
-v10. Go and Node directories currently contain binding design notes, not released
+v11. Go and Node directories currently contain binding design notes, not released
 installable packages.
-
-Cores range from 7.3 MB to 9.4 MB (macOS ARM64 smallest, Windows x86_64 largest,
-where static MSVC/UCRT adds about 2 MB). The IDNA-only ICU dataset is linked in,
-so no external `icudtl.dat` travels with the library, and the unused disk cache
-backends are not linked at all. `tools/audit-core-*.sh` enforces a per-platform
-size ceiling, so a regression fails the build.
-
-| Core directory | Rust target | Core file |
-| --- | --- | --- |
-| `linux-x86` | `i686-unknown-linux-gnu` | `libminicronet.so` |
-| `linux-x86_64` | `x86_64-unknown-linux-gnu` | `libminicronet.so` |
-| `linux-armv7` | `armv7-unknown-linux-gnueabihf` | `libminicronet.so` |
-| `linux-arm64` | `aarch64-unknown-linux-gnu` | `libminicronet.so` |
-| `windows-x86` | `i686-pc-windows-msvc` | `minicronet.dll` + `minicronet.lib` |
-| `windows-x86_64` | `x86_64-pc-windows-msvc` | `minicronet.dll` + `minicronet.lib` |
-| `windows-arm64` | `aarch64-pc-windows-msvc` | `minicronet.dll` + `minicronet.lib` |
-| `macos-x86_64` | `x86_64-apple-darwin` | `libminicronet.dylib` |
-| `macos-arm64` | `aarch64-apple-darwin` | `libminicronet.dylib` |
 
 ### Chrome profiles
 
@@ -557,6 +554,27 @@ Deliberate behavioural differences:
   `HTTPResponse`.
 - `Response.ok` uses the requests rule (`status_code < 400`), not curl-cffi's
   200–399.
+
+### Core size and directories
+
+Cores range from 7.3 MB to 9.4 MB (macOS ARM64 smallest, Windows x86_64 largest,
+where static MSVC/UCRT adds about 2 MB). The IDNA-only ICU dataset is linked in,
+so no external `icudtl.dat` travels with the library, and the unused disk cache
+backends are not linked at all. `tools/audit-core-*.sh` enforces a per-platform
+size ceiling, so a regression fails the build.
+
+| Core directory | Rust target | Core file |
+| --- | --- | --- |
+| `linux-x86` | `i686-unknown-linux-gnu` | `libminicronet.so` |
+| `linux-x86_64` | `x86_64-unknown-linux-gnu` | `libminicronet.so` |
+| `linux-armv7` | `armv7-unknown-linux-gnueabihf` | `libminicronet.so` |
+| `linux-arm64` | `aarch64-unknown-linux-gnu` | `libminicronet.so` |
+| `windows-x86` | `i686-pc-windows-msvc` | `minicronet.dll` + `minicronet.lib` |
+| `windows-x86_64` | `x86_64-pc-windows-msvc` | `minicronet.dll` + `minicronet.lib` |
+| `windows-arm64` | `aarch64-pc-windows-msvc` | `minicronet.dll` + `minicronet.lib` |
+| `macos-x86_64` | `x86_64-apple-darwin` | `libminicronet.dylib` |
+| `macos-arm64` | `aarch64-apple-darwin` | `libminicronet.dylib` |
+
 
 ## Repository and verification
 
