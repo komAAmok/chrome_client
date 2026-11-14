@@ -506,6 +506,46 @@ chrome_client.session(max_clients=4) -> 同样的 TypeError
 3. 断言「不串行化」时要给 `asyncio.wait_for` 加上限：门被错误地覆盖到 body 阶段时，
    gather 会**永久阻塞**，测试表现为 CI 挂住而不是失败。
 
+### 5.6 慢消费者：1 MiB 上限是否真的让 Core 停止读取
+
+`crates/minicronet` 在 `body_bytes` 达到 `BODY_BUFFER_LIMIT`（1 MiB）时向 Core 返回
+`MN_READ_PAUSE`（`request.rs:897`），Core 收到后 `PauseRead()`，消费者取走数据时再
+`mn_request_resume_read`。**枚举返回正确不等于连接被停住**：一个只返回枚举、却继续
+把连接读干的实现，会让内存在消费者停住时照常增长，而单测看不出来——它只观察返回值。
+
+`tools/slow-consumer-probe.py` 测量后果而不是返回值。服务端全速写 100 MiB，客户端
+读完指定量后停住 5 秒，期间同时采样 RSS 与服务端已写入字节数。三个臂只差消费者行为：
+
+| 臂 | 消费者 | 停住期间服务端推进 | 后半程推进 | RSS 变化 |
+| --- | --- | --- | --- | --- |
+| `park-1MiB` | 读 1 MiB 后停 | **0.875 MiB** | 0.000 MiB | +2.00 MiB |
+| `drain-fast` | 立即读完全部 | 0.000 MiB | 0.000 MiB | -0.00 MiB |
+| `park-late` | 读 40 MiB 后停 | **0.875 MiB** | 0.000 MiB | +0.75 MiB |
+
+0.875 MiB 是内核 socket 缓冲区在 TCP 背压形成前吸收的量；「后半程推进」是 0，
+因为这点吸收在停住的前一半就完成了。`park-late` 同样只有 0.875 MiB 余量，说明这个
+上限是**队列深度**，跟着消费者走，不是流里的某个绝对位置。
+
+**变异测试**：把 `request.rs:905` 的 `MN_READ_PAUSE` 改成 `MN_READ_CONTINUE`（枚举
+仍按上限计算，只是不再让 Core 停读），重新构建后同一探针输出：
+
+| 臂 | 停住期间服务端推进 | RSS 变化 |
+| --- | --- | --- |
+| `park-1MiB` | **96.562 MiB** | **+98.11 MiB** |
+| `park-late` | **57.625 MiB** | **+52.72 MiB** |
+
+探针退出码 1。两个数量级差 100 倍以上，说明这条测量确实在测「Core 有没有停读」，
+而不是碰巧通过。恢复后重新构建，三条断言回到 True。
+
+这也解释了为什么 README 原先写的「超限由 ABI v8 暂停读取」需要更正：机制成立，
+但暂停判定在 Rust 层（`BODY_BUFFER_LIMIT`），ABI 只提供 `MN_READ_PAUSE` 这个返回值
+与 `mn_request_resume_read` 这个函数，版本号也已是 v11。
+
+```bash
+LD_LIBRARY_PATH=core/binaries/linux-x86_64 \
+  PYTHONPATH=bindings/python python3 tools/slow-consumer-probe.py
+```
+
 ## 6. 复现命令
 
 ```bash

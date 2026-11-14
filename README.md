@@ -85,7 +85,7 @@ Profile 影响 TLS ClientHello、ALPN、HTTP/2 设置、QUIC/H3 和相关 Chromi
 | HTTP/HTTPS/SOCKS 代理 | ✓ | ✓ | `proxy`、Requests 风格 `proxies`，运行期可改 |
 | 同步请求 | ✓ | ✓ | 同步等待释放 GIL，可直接放进线程池 |
 | asyncio 请求 | ✓ | — | Core 回调唤醒事件循环，无请求线程池；每次唤醒批量取事件 |
-| 流式响应 | `iter_content` / `aiter_content` / `raw` | `ResponseStream` | 每请求 body 队列上限 1 MiB，超限由 ABI v8 暂停读取 |
+| 流式响应 | `iter_content` / `aiter_content` / `raw` | `ResponseStream` | 每请求 body 队列上限 1 MiB；达到上限时向 Core 返回 `MN_READ_PAUSE`（ABI v11）让其停止读 socket，消费者取走后 `resume_read` 恢复 |
 | 分块上传 | `data=` 传文件对象或迭代器 | `Upload::Chunked` | 同步与异步都走 `upload_write` |
 | 取消、超时、大小限制 | ✓ | ✓ | `Timeout`、`ResponseTooLarge`、`RequestException` |
 | WebSocket / WSS | ✓ | ✓ | 同步与异步，curl-cffi 方法名齐全 |
@@ -377,7 +377,7 @@ URLLoader。因此 chrome_124 起的 profile 会自动带上它，取值由请�
 
 不受支持而显式报错的还有：`interface=`、`doh_url=`、
 `curl_options=`、`max_recv_speed=`、`referer=`。`referer` 尤其容易误判：Chromium
-自己拥有 referrer 并会剥掉调用方设置的 `Referer` 头，ABI v8 也没有 referrer 字段，
+自己拥有 referrer 并会剥掉调用方设置的 `Referer` 头，ABI v11 也没有 referrer 字段，
 所以设置它在任何路径下都不会到达网络。
 
 multipart 两种写法都支持：
@@ -411,7 +411,8 @@ with open("big.bin", "rb") as handle:
 ```
 
 `max_response_bytes` 超限会取消请求并抛 `ResponseTooLarge`。每个请求的 body 队列
-上限 1 MiB，超过时 ABI v8 用 `MN_READ_PAUSE` 暂停读取，不会占住 Core 线程。
+上限 1 MiB，超过时绑定层返回 `MN_READ_PAUSE`（ABI v11）让 Core 停止读 socket，
+不会占住 Core 线程；实测见 `docs/PERF_TEST_AND_LEAK.md` §5.6。
 
 ### 并发
 
@@ -503,7 +504,7 @@ Cookie 会按 URL 匹配后附加到握手上。
 | `headers`、`cookies`、`auth`、`timeout` | ✓ |
 | 删除 Core 自有的头（`User-Agent`、`Accept-Encoding` 等） | ✗ 抛 `UnsupportedFeature`；覆盖仍然可以 |
 | 设置 hop-by-hop 头（`Connection`、`Keep-Alive`、`TE`、`Trailer`、`Upgrade`、`Proxy-Connection`） | ✗ 抛 `UnsupportedFeature`；Chromium 拥有连接生命周期，h2/h3 上这些字段被直接丢弃 |
-| `timeout=(connect, read)` 两值不同 | ✗ 抛 `UnsupportedFeature`（ABI v8 只有一个期限）；两值相同可用 |
+| `timeout=(connect, read)` 两值不同 | ✗ 抛 `UnsupportedFeature`（ABI v11 只有一个期限）；两值相同可用 |
 | `proxies`、`proxy`、`proxy_auth`、`trust_env`、`NO_PROXY` | ✓ |
 | `verify=True/False/"/path/ca.pem"` | ✓ |
 | `host_mapping="MAP <域名> <IP>[:端口]"`、`EXCLUDE <域名>`、以及它们的列表 | ✓ 只改写解析结果，SNI/Host/证书校验仍是域名；写错关键字抛 `UnsupportedFeature` |

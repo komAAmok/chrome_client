@@ -93,7 +93,7 @@ Service Workers and persistent browser profiles are not included.
 | HTTP/HTTPS/SOCKS proxies | ✓ | ✓ | `proxy`, Requests-style `proxies`, mutable at runtime |
 | Synchronous requests | ✓ | ✓ | Blocking calls release the GIL, so a thread pool works |
 | asyncio requests | ✓ | — | Core callbacks wake the loop; no request thread pool, batched per wakeup |
-| Streaming responses | `iter_content` / `aiter_content` / `raw` | `ResponseStream` | 1 MiB body queue per request, paused by ABI v8 above it |
+| Streaming responses | `iter_content` / `aiter_content` / `raw` | `ResponseStream` | 1 MiB body queue per request; at the ceiling the binding returns `MN_READ_PAUSE` (ABI v11) so the Core stops reading the socket, and `resume_read` restarts it once the consumer takes data |
 | Chunked uploads | `data=` with a file object or iterator | `Upload::Chunked` | Same `upload_write` path for sync and async |
 | Cancellation, timeouts, size limits | ✓ | ✓ | `Timeout`, `ResponseTooLarge`, `RequestException` |
 | WebSocket / WSS | ✓ | ✓ | Sync and async, with the curl-cffi method names |
@@ -354,7 +354,7 @@ from the captures before a commit.
 Also rejected explicitly: `interface=`,
 `doh_url=`, `curl_options=`, `max_recv_speed=` and `referer=`. The last one is
 easy to get wrong: Chromium owns the referrer and strips a caller-supplied
-`Referer` header, and ABI v8 has no referrer field, so setting it would never
+`Referer` header, and ABI v11 has no referrer field, so setting it would never
 reach the wire on any path.
 
 Both multipart spellings work:
@@ -388,7 +388,7 @@ with open("big.bin", "rb") as handle:
 ```
 
 Exceeding `max_response_bytes` cancels the request and raises
-`ResponseTooLarge`. Each request buffers at most 1 MiB of body; above that ABI v8
+`ResponseTooLarge`. Each request buffers at most 1 MiB of body; above that ABI v11
 answers `MN_READ_PAUSE`, so nothing occupies a Core thread.
 
 ### Concurrency
@@ -490,7 +490,7 @@ no further edits.
 | `headers`, `cookies`, `auth`, `timeout` | ✓ |
 | Removing a Core-owned header (`User-Agent`, `Accept-Encoding`, ...) | ✗ raises `UnsupportedFeature`; overriding still works |
 | Setting a hop-by-hop field (`Connection`, `Keep-Alive`, `TE`, `Trailer`, `Upgrade`, `Proxy-Connection`) | ✗ raises `UnsupportedFeature`; Chromium owns connection lifetime and discards these on h2/h3 |
-| `timeout=(connect, read)` with two different values | ✗ raises `UnsupportedFeature` (ABI v8 carries one deadline); an agreeing pair works |
+| `timeout=(connect, read)` with two different values | ✗ raises `UnsupportedFeature` (ABI v11 carries one deadline); an agreeing pair works |
 | `proxies`, `proxy`, `proxy_auth`, `trust_env`, `NO_PROXY` | ✓ |
 | `verify=True/False/"/path/ca.pem"` | ✓ |
 | `host_mapping="MAP <domain> <ip>[:port]"`, `EXCLUDE <domain>`, or a list of either | ✓ rewrites only the resolution result; SNI, Host and certificate verification keep the domain. A misspelled keyword raises `UnsupportedFeature` |
