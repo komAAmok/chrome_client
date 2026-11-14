@@ -77,6 +77,7 @@ Profile 影响 TLS ClientHello、ALPN、HTTP/2 设置、QUIC/H3 和相关 Chromi
 | HTTP/1.1、HTTP/2、HTTP/3/QUIC | ✓ | ✓ | 默认由 Chromium 协商；`http_version="v1"/"v2"/"v3"` 可强制 |
 | HTTPS/TLS、证书校验 | ✓ | ✓ | `verify=False` 或 `verify="/path/ca.pem"` 自定义 CA；证书失败按具体检查项报错 |
 | mTLS 客户端证书 | ✓ | ✓ | `cert=("c.pem","k.pem")` 或单个合并 PEM；服务端要求时自动出示，不改变 ClientHello |
+| 域名映射到指定 IP | ✓ | ✓ | `host_mapping="MAP cdn.test 93.184.216.34"`；**只改写解析结果**，SNI、Host 头、证书校验仍用域名 |
 | HTTP/HTTPS/SOCKS 代理 | ✓ | ✓ | `proxy`、Requests 风格 `proxies`，运行期可改 |
 | 同步请求 | ✓ | ✓ | 同步等待释放 GIL，可直接放进线程池 |
 | asyncio 请求 | ✓ | — | Core 回调唤醒事件循环，无请求线程池；每次唤醒批量取事件 |
@@ -501,6 +502,7 @@ Cookie 会按 URL 匹配后附加到握手上。
 | `timeout=(connect, read)` 两值不同 | ✗ 抛 `UnsupportedFeature`（ABI v8 只有一个期限）；两值相同可用 |
 | `proxies`、`proxy`、`proxy_auth`、`trust_env`、`NO_PROXY` | ✓ |
 | `verify=True/False/"/path/ca.pem"` | ✓ |
+| `host_mapping="MAP <域名> <IP>[:端口]"`、`EXCLUDE <域名>`、以及它们的列表 | ✓ 只改写解析结果，SNI/Host/证书校验仍是域名；写错关键字抛 `UnsupportedFeature` |
 | `cert=("c.pem","k.pem")`、`cert="combined.pem"`、`set_client_certificate()` | ✓ 服务端发 CertificateRequest 时才出示，不影响 ClientHello 指纹 |
 | `allow_redirects`、`max_redirects`、`history`、最终 URL | ✓ |
 | `stream=True`、`iter_content`、`iter_lines`、`raw` | ✓ |

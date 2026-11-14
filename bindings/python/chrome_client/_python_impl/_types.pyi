@@ -79,6 +79,7 @@ __all__ = [
     "StrPath",
     "Timeout",
     "Verify",
+    "HostMappingRules",
     "WsMessage",
 ]
 
@@ -165,6 +166,10 @@ Timeout: TypeAlias = Union[int, float, Tuple[Optional[Union[int, float]], Option
 
 #: ``verify=``: ``True``/``False``, or the path of a CA bundle in PEM form.
 Verify: TypeAlias = Union[bool, str]
+
+#: A MappedHostResolver rule string, or a list of one-rule strings.
+#: Chromium takes "MAP <pattern> <host>[:port]" and "EXCLUDE <pattern>".
+HostMappingRules: TypeAlias = Union[str, Sequence[str]]
 
 #: ``proxies=``: ``{"https": "http://host:port", "all": ...}``. Mutating the
 #: session's mapping takes effect on the next request.

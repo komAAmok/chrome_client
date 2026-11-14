@@ -47,6 +47,7 @@ from ._types import (
     HeadersLike,
     Hook,
     Hooks,
+    HostMappingRules,
     ParamsLike,
     Proxies,
     RequestPriority,
@@ -84,6 +85,26 @@ CHROMIUM_MAX_REDIRECTS: int
 
 #: Backoff shape accepted by :class:`RetryStrategy`.
 Backoff: TypeAlias = Literal["linear", "exponential"]
+
+
+def normalize_host_mapping(rules: Optional[HostMappingRules]) -> Optional[str]:
+    """Validates the shape of a MappedHostResolver rule list.
+
+    Returns a comma-joined rule string, or ``None`` when nothing was given.
+    Chromium splits the string on commas and silently skips any rule it cannot
+    parse, so the shape is checked here instead.
+
+    Args:
+        rules: A rule string, a list of them, or ``None``.
+
+    Returns:
+        A comma-joined string, or ``None``.
+
+    Raises:
+        UnsupportedFeature: The value is not rule text, or a rule is not one of
+            the two shapes Chromium accepts.
+    """
+    ...
 
 
 def normalize_client_cert(cert: Any) -> Optional[Tuple[bytes, bytes]]:
@@ -572,6 +593,7 @@ class BaseSession:
     user_agent: Optional[str]
     accept_language: Optional[str]
     response_class: ResponseClass
+    host_mapping: Optional[HostMappingRules]
     extra_fp: Optional[Union[ExtraFingerprints, Mapping[str, Any]]]
     header_order: Optional[List[str]]
     form_boundary: Optional[str]
@@ -615,6 +637,7 @@ class BaseSession:
         curl_options: Optional[Mapping[Any, Any]] = None,
         max_engines: int = 8,
         response_class: ResponseClass = None,
+        host_mapping: Optional[HostMappingRules] = None,
     ) -> None:
         """Configures the defaults shared by every request this session sends.
 

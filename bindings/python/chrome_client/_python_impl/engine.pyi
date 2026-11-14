@@ -43,6 +43,8 @@ class SessionBinding:
         http_version: ``"v1"``/``"v2"``/``"v3"``, or ``None``.
         cache: Whether the Chromium HTTP cache is enabled.
         profile_namespace: Reserved isolation key for the profile.
+        host_mapping: Chromium MappedHostResolver rules, or ``None``. Part of
+            the key: two engines given different rules reach different addresses.
         key: The hashable tuple of every field above.
         fingerprint: The profile whose wire behaviour this context reproduces.
     """
@@ -58,6 +60,7 @@ class SessionBinding:
     http_version: Optional[HttpVersionNormalized]
     cache: bool
     profile_namespace: Optional[str]
+    host_mapping: Optional[str]
 
     def __init__(
         self,
@@ -72,6 +75,7 @@ class SessionBinding:
         http_version: Optional[str] = None,
         cache: bool = True,
         profile_namespace: Optional[str] = None,
+        host_mapping: Optional[str] = None,
     ) -> None:
         """Describes one transport context.
 
@@ -87,6 +91,7 @@ class SessionBinding:
             http_version: Pinned protocol.
             cache: Enable the HTTP cache; coerced to ``bool``.
             profile_namespace: Reserved isolation key.
+            host_mapping: Chromium MappedHostResolver rules, or ``None``.
         """
         ...
 
@@ -191,6 +196,8 @@ class EngineConfig:
         http_version: Pinned ``"v1"``/``"v2"``/``"v3"``, or ``None``.
         cache: Whether the Chromium HTTP cache is enabled.
         profile_namespace: Reserved isolation key for the profile.
+        host_mapping: Chromium MappedHostResolver rules, or ``None``. Part of
+            the key: two engines given different rules reach different addresses.
         key: The hashable tuple of every field above.
     """
 
@@ -208,6 +215,7 @@ class EngineConfig:
     http_version: Optional[HttpVersionNormalized]
     cache: bool
     profile_namespace: Optional[str]
+    host_mapping: Optional[str]
 
     def __init__(
         self,
@@ -222,6 +230,7 @@ class EngineConfig:
         http_version: Optional[str] = None,
         cache: bool = True,
         profile_namespace: Optional[str] = None,
+        host_mapping: Optional[str] = None,
     ) -> None:
         """Describes one engine.
 
@@ -237,6 +246,7 @@ class EngineConfig:
             http_version: Pinned protocol.
             cache: Enable the HTTP cache; coerced to ``bool``.
             profile_namespace: Reserved isolation key.
+            host_mapping: Chromium MappedHostResolver rules, or ``None``.
         """
         ...
 

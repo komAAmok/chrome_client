@@ -11,6 +11,7 @@ from .._python_impl.sessions import (
     STREAM_BUFFER_LIMIT as STREAM_BUFFER_LIMIT,
     CHROMIUM_MAX_REDIRECTS as CHROMIUM_MAX_REDIRECTS,
     Backoff as Backoff,
+    normalize_host_mapping as normalize_host_mapping,
     normalize_client_cert as normalize_client_cert,
     RetryStrategy as RetryStrategy,
     BaseSession as BaseSession,

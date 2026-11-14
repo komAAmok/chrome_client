@@ -660,6 +660,105 @@ def _read_pem(path, what):
             "cert= could not read the %s file %r: %s" % (what, path, error))
 
 
+def normalize_host_mapping(rules):
+    """Validates the shape of a MappedHostResolver rule list.
+
+    The syntax belongs to Chromium: ``HostMappingRules`` parses it, and a second
+    parser here would drift from it the first time either changed. So this only
+    rejects what cannot be a rule string at all -- a non-string, an empty
+    entry -- and leaves the grammar to the Core, which reports what it could not
+    parse.
+
+    Args:
+        rules: A string of rules separated by newlines (Chromium also accepts
+            commas), a list of such strings, or ``None``.
+
+    Returns:
+        A newline-joined string, or ``None`` when nothing was given.
+
+    Raises:
+        UnsupportedFeature: The value is not a rule string or a list of them,
+            or one entry is empty.
+
+    Example:
+        >>> normalize_host_mapping("MAP example.test 93.184.216.34")
+        'MAP example.test 93.184.216.34'
+        >>> normalize_host_mapping(["MAP a.test 10.0.0.1", "MAP b.test 10.0.0.2"])
+        'MAP a.test 10.0.0.1,MAP b.test 10.0.0.2'
+        >>> normalize_host_mapping(None) is None
+        True
+    """
+    if rules is None:
+        return None
+    if isinstance(rules, str):
+        entries = [line.strip() for line in rules.replace(",", "\n").splitlines()]
+    elif isinstance(rules, (list, tuple)):
+        entries = []
+        for item in rules:
+            if not isinstance(item, str):
+                raise UnsupportedFeature(
+                    "host_mapping entries must be strings, not %r" % (item,))
+            entries.append(item.strip())
+    else:
+        raise UnsupportedFeature(
+            "host_mapping accepts a rule string or a list of them, not %r" % (rules,))
+    kept = [entry for entry in entries if entry]
+    if not kept:
+        raise UnsupportedFeature(
+            "host_mapping was given but contains no rule; drop the argument to "
+            "use the system resolver")
+    for entry in kept:
+        _check_host_mapping_rule(entry)
+    # Chromium splits this string on commas
+    # (net/base/host_mapping_rules.cc, SetRulesFromString -> SplitStringPiece(",")),
+    # not on newlines, so a newline-joined list reaches it as one unparsable
+    # rule. It then logs and skips it -- SetRulesFromString has no failure
+    # return -- and the request silently resolves through the real DNS instead.
+    # Joining with a comma is what makes a multi-rule list actually work.
+    return ",".join(kept)
+
+
+#: The two rule keywords Chromium accepts
+#: (net/base/host_mapping_rules.cc, AddRuleFromString). Anything else is
+#: rejected there by logging and returning false, and SetRulesFromString has no
+#: way to report that -- so the check has to be here or a typo resolves through
+#: the real DNS as if no rule had been given.
+_HOST_MAPPING_KEYWORDS = ("map", "exclude")
+
+
+def _check_host_mapping_rule(rule):
+    """Rejects a rule Chromium would parse and then silently drop.
+
+    Chromium takes exactly two shapes: ``MAP <pattern> <host>[:<port>]`` and
+    ``EXCLUDE <pattern>``, split on single spaces. Checking the shape here is
+    not a second implementation of the grammar -- it is the only way to report
+    a mistake, because ``HostMappingRules::SetRulesFromString`` cannot fail:
+    it logs ``Failed parsing rule`` and moves on, so a misspelled rule means the
+    request resolves normally and the mapping looks like it worked.
+
+    Args:
+        rule: One rule, already stripped.
+
+    Raises:
+        UnsupportedFeature: The rule is not one of the two accepted shapes.
+    """
+    parts = rule.split()
+    keyword = parts[0].lower() if parts else ""
+    if keyword == "map":
+        if len(parts) != 3:
+            raise UnsupportedFeature(
+                "host_mapping rule %r needs exactly MAP <pattern> <host>[:port]"
+                % (rule,))
+        return
+    if keyword == "exclude":
+        if len(parts) != 2:
+            raise UnsupportedFeature(
+                "host_mapping rule %r needs exactly EXCLUDE <pattern>" % (rule,))
+        return
+    raise UnsupportedFeature(
+        "host_mapping rule %r must start with MAP or EXCLUDE; Chromium logs and "
+        "skips anything else, so it would be accepted and never applied" % (rule,))
+
 def normalize_client_cert(cert):
     """Turns ``cert=`` into ``(cert_pem, key_pem)`` bytes, or ``None``.
 
@@ -1277,7 +1376,7 @@ class BaseSession(object):
                  discard_cookies=False, raise_for_status=False, retry=0, cache=True,
                  user_agent=None, accept_language=None, interface=None, doh_url=None,
                  max_recv_speed=0, curl_options=None, max_engines=DEFAULT_MAX_ENGINES,
-                 response_class=None):
+                 response_class=None, host_mapping=None):
         """Configures defaults shared by requests made through this session.
 
         ``impersonate`` selects a pinned Chromium profile, ``http_version`` can
@@ -1310,6 +1409,11 @@ class BaseSession(object):
         self.proxies = dict(proxies) if proxies else {}
         self.proxy_auth = proxy_auth
         self.verify = verify
+        #: Chromium MappedHostResolver rules, e.g. "MAP example.test 93.184.216.34".
+        #: A rule rewrites only the resolution result: SNI, the Host header and
+        #: certificate verification keep using the URL host, which is what makes a
+        #: CDN IP reachable without turning its certificate into an IP-SAN one.
+        self.host_mapping = normalize_host_mapping(host_mapping)
         #: Client certificate for mTLS, parsed to (cert_pem, key_pem) bytes.
         #: The certificate is registered on the engine per (host, port) just
         #: before a request needs it -- see _register_client_cert -- because the
@@ -1757,6 +1861,7 @@ class BaseSession(object):
             http_version=http_version if http_version is not None else self.http_version,
             cache=self.cache,
             profile_namespace=None,
+            host_mapping=self.host_mapping,
         )
 
     def _engine_config(self, impersonate, proxy, verify, http_version, url=None,

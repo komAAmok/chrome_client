@@ -47,7 +47,8 @@ DEFAULT_MAX_ENGINES = 8
 #: deliberate act, not an incidental one.
 BINDING_FIELDS = ("impersonate", "proxy", "proxy_username", "proxy_password",
                   "verify", "ca_pem", "user_agent", "accept_language",
-                  "http_version", "cache", "profile_namespace")
+                  "http_version", "cache", "profile_namespace",
+                  "host_mapping")
 
 #: The value every binding field takes when the caller did not set it.  Used by
 #: :meth:`SessionBinding.describe` so "which fields did this caller choose?" is
@@ -117,7 +118,7 @@ class SessionBinding(object):
     def __init__(self, impersonate=None, proxy=None, proxy_username=None,
                  proxy_password=None, verify=True, ca_pem=None, user_agent=None,
                  accept_language=None, http_version=None, cache=True,
-                 profile_namespace=None):
+                 profile_namespace=None, host_mapping=None):
         """Describes one transport context.
 
         Args:
@@ -144,6 +145,10 @@ class SessionBinding(object):
         self.http_version = http_version
         self.cache = bool(cache)
         self.profile_namespace = profile_namespace
+        # Part of the key, not a per-request option: two engines given different
+        # rules reach different addresses, and sharing one would route a request
+        # to whichever mapping was built first.
+        self.host_mapping = host_mapping
         self._key = tuple(getattr(self, name) for name in BINDING_FIELDS)
 
     def replace(self, **changes):
@@ -274,7 +279,7 @@ class EngineConfig(object):
     def __init__(self, impersonate=None, proxy=None, verify=True, ca_pem=None,
                  user_agent=None, accept_language=None, proxy_username=None,
                  proxy_password=None, http_version=None, cache=True,
-                 profile_namespace=None):
+                 profile_namespace=None, host_mapping=None):
         """Describes one engine.
 
         Args:
@@ -301,6 +306,10 @@ class EngineConfig(object):
         self.http_version = http_version
         self.cache = bool(cache)
         self.profile_namespace = profile_namespace
+        # Part of the key, not a per-request option: two engines given different
+        # rules reach different addresses, and sharing one would route a request
+        # to whichever mapping was built first.
+        self.host_mapping = host_mapping
         self._key = tuple(getattr(self, name) for name in BINDING_FIELDS)
 
     @property
@@ -404,11 +413,15 @@ class EngineConfig(object):
             raise map_native_error(error)
 
     def _build(self):
+        # The first eleven are positional because the extension's signature has
+        # been that shape since v8; host_mapping is passed by keyword so adding
+        # a field here cannot silently shift the ones after it.
         return native.PyEngine(
             self.impersonate, self.proxy, self.verify, self.ca_pem,
             self.user_agent, self.accept_language, self.proxy_username,
             self.proxy_password, self.http_version, self.cache,
             self.profile_namespace,
+            host_mapping=self.host_mapping,
         )
 
 

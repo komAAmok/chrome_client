@@ -85,6 +85,7 @@ Service Workers and persistent browser profiles are not included.
 | HTTP/1.1, HTTP/2, HTTP/3/QUIC | ✓ | ✓ | Chromium negotiates by default; `http_version="v1"/"v2"/"v3"` pins it |
 | HTTPS/TLS and certificate verification | ✓ | ✓ | `verify=False`, or `verify="/path/ca.pem"` for a custom CA; failures name the failing check |
 | mTLS client certificates | ✓ | ✓ | `cert=("c.pem", "k.pem")` or one combined PEM; presented only when the server asks, so the ClientHello is unchanged |
+| Domain mapped to a fixed IP | ✓ | ✓ | `host_mapping="MAP cdn.test 93.184.216.34"`; rewrites **only the resolution result**, so SNI, the Host header and certificate verification keep the domain |
 | HTTP/HTTPS/SOCKS proxies | ✓ | ✓ | `proxy`, Requests-style `proxies`, mutable at runtime |
 | Synchronous requests | ✓ | ✓ | Blocking calls release the GIL, so a thread pool works |
 | asyncio requests | ✓ | — | Core callbacks wake the loop; no request thread pool, batched per wakeup |
@@ -488,6 +489,7 @@ no further edits.
 | `timeout=(connect, read)` with two different values | ✗ raises `UnsupportedFeature` (ABI v8 carries one deadline); an agreeing pair works |
 | `proxies`, `proxy`, `proxy_auth`, `trust_env`, `NO_PROXY` | ✓ |
 | `verify=True/False/"/path/ca.pem"` | ✓ |
+| `host_mapping="MAP <domain> <ip>[:port]"`, `EXCLUDE <domain>`, or a list of either | ✓ rewrites only the resolution result; SNI, Host and certificate verification keep the domain. A misspelled keyword raises `UnsupportedFeature` |
 | `cert=("c.pem", "k.pem")`, `cert="combined.pem"`, `set_client_certificate()` | ✓ sent only when the server issues a CertificateRequest, so the ClientHello fingerprint is unchanged |
 | `allow_redirects`, `max_redirects`, `history`, final URL | ✓ |
 | `stream=True`, `iter_content`, `iter_lines`, `raw` | ✓ |
