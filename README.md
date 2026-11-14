@@ -95,40 +95,8 @@ Profile 影响 TLS ClientHello、ALPN、HTTP/2 设置、QUIC/H3 和相关 Chromi
 python -m pip install chrome-client
 ```
 
-已发布的 wheel 自带对应平台的 native 扩展。从源码使用时，先针对某个 Core 目录构建
-扩展（`MINICRONET_CORE_DIR` 在构建期读取），运行时把同一目录放到加载路径上。
-
-本目录的 wheel 用脚本构建，它会顺带跑产物门禁（见下面「产物门禁」）：
-
-```bash
-tools/build-python36-wheel.sh linux-x86_64
-```
-
-脚本要求 `cargo` 与 `maturin`（`pip install maturin`）在 PATH 上，Core 目录必须已存在，
-产出的 wheel 必须是 `cp36-abi3` 标签——一个 `cp39` 的 wheel 会在 3.9+ 上遮蔽另一个包，
-而 `py3-none-any` 会假装自己是纯 Python。手工构建等价于：
-
-```bash
-cd bindings/python36
-MINICRONET_CORE_DIR=$PWD/../../core/binaries/linux-x86_64 \
-  python3 -m maturin build --release --out dist
-```
-
-### 产物门禁
-
-`bindings/python36/src/lib.rs` 里 `#[test]` 的数量是 **0**，所以对这个 crate 跑
-`cargo test` 只会编译然后退出 0——它曾经是打 tag 前 review 的一步，但永远不可能失败。
-现在那一步换成 `tools/audit-python36-artifact.py`，检查产物本身：
-
-| 检查 | 为什么 |
-| --- | --- |
-| 扩展能按自己的模块名导入 | `PyInit_chrome_client_native36` 是导入器唯一会找的导出名，换个名字加载必然失败 |
-| `abi_version` 等于 `core/abi/minicronet.h` 的 `MN_ABI_VERSION` | 版本从头部读，不从脚本里抄，v9 时这个门禁不会继续通过 |
-| 没有链接 `libpython`、没有引用除白名单外的 `_Py_*` | `abi3` 意味着 3.6 到 3.15 都能装，链上 libpython 就不是 |
-| 能驱动 `bindings/python` 的 facade 发一次真实请求 | 这是真正会出问题的形态：旧扩展导入正常，只在 facade 调用它没有的方法时才崩 |
-
-最后一条是重点——前三条都能被一个「能导入但过时」的扩展满足。
-
+从源码使用时，先针对某个 Core 目录构建扩展（`MINICRONET_CORE_DIR` 在构建期读取），
+运行时把同一目录放到加载路径上：
 
 ```bash
 MINICRONET_CORE_DIR=$PWD/core/binaries/linux-x86_64 cargo build --release -p chrome-client-python
