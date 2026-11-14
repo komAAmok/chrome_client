@@ -48,13 +48,19 @@ DEFAULT_MAX_ENGINES = 8
 BINDING_FIELDS = ("impersonate", "proxy", "proxy_username", "proxy_password",
                   "verify", "ca_pem", "user_agent", "accept_language",
                   "http_version", "cache", "profile_namespace",
-                  "host_mapping")
+                  "host_mapping", "dns_nameservers", "doh_template",
+                  "dns_secure_mode", "dns_over_tls", "dns_rotate",
+                  "dns_padding", "hsts_bypass", "proxy_chain", "platform",
+                  "max_sockets_per_group")
 
 #: The value every binding field takes when the caller did not set it.  Used by
 #: :meth:`SessionBinding.describe` so "which fields did this caller choose?" is
 #: answered by comparison against this table rather than by a list of field
 #: names that has to be kept in step with the constructor by hand.
-BINDING_DEFAULTS = {"verify": True, "cache": True}
+BINDING_DEFAULTS = {"verify": True, "cache": True, "dns_secure_mode": 0,
+                    "dns_over_tls": False, "dns_rotate": False,
+                    "dns_padding": False, "platform": "auto",
+                    "max_sockets_per_group": 0}
 
 
 def _client_cert_error(error):
@@ -118,7 +124,10 @@ class SessionBinding(object):
     def __init__(self, impersonate=None, proxy=None, proxy_username=None,
                  proxy_password=None, verify=True, ca_pem=None, user_agent=None,
                  accept_language=None, http_version=None, cache=True,
-                 profile_namespace=None, host_mapping=None):
+                 profile_namespace=None, host_mapping=None, dns_nameservers=None,
+                 doh_template=None, dns_secure_mode=0, dns_over_tls=False,
+                 dns_rotate=False, dns_padding=False, hsts_bypass=None,
+                 proxy_chain=None, platform="auto", max_sockets_per_group=0):
         """Describes one transport context.
 
         Args:
@@ -149,6 +158,19 @@ class SessionBinding(object):
         # rules reach different addresses, and sharing one would route a request
         # to whichever mapping was built first.
         self.host_mapping = host_mapping
+        # DNS, HSTS, proxy chain and platform all change which addresses are
+        # reachable or what the connection claims to be, so they belong in the
+        # key for the same reason host_mapping does.
+        self.dns_nameservers = dns_nameservers
+        self.doh_template = doh_template
+        self.dns_secure_mode = int(dns_secure_mode)
+        self.dns_over_tls = bool(dns_over_tls)
+        self.dns_rotate = bool(dns_rotate)
+        self.dns_padding = bool(dns_padding)
+        self.hsts_bypass = hsts_bypass
+        self.proxy_chain = proxy_chain
+        self.platform = platform
+        self.max_sockets_per_group = int(max_sockets_per_group)
         self._key = tuple(getattr(self, name) for name in BINDING_FIELDS)
 
     def replace(self, **changes):
@@ -279,7 +301,10 @@ class EngineConfig(object):
     def __init__(self, impersonate=None, proxy=None, verify=True, ca_pem=None,
                  user_agent=None, accept_language=None, proxy_username=None,
                  proxy_password=None, http_version=None, cache=True,
-                 profile_namespace=None, host_mapping=None):
+                 profile_namespace=None, host_mapping=None, dns_nameservers=None,
+                 doh_template=None, dns_secure_mode=0, dns_over_tls=False,
+                 dns_rotate=False, dns_padding=False, hsts_bypass=None,
+                 proxy_chain=None, platform="auto", max_sockets_per_group=0):
         """Describes one engine.
 
         Args:
@@ -310,6 +335,19 @@ class EngineConfig(object):
         # rules reach different addresses, and sharing one would route a request
         # to whichever mapping was built first.
         self.host_mapping = host_mapping
+        # DNS, HSTS, proxy chain and platform all change which addresses are
+        # reachable or what the connection claims to be, so they belong in the
+        # key for the same reason host_mapping does.
+        self.dns_nameservers = dns_nameservers
+        self.doh_template = doh_template
+        self.dns_secure_mode = int(dns_secure_mode)
+        self.dns_over_tls = bool(dns_over_tls)
+        self.dns_rotate = bool(dns_rotate)
+        self.dns_padding = bool(dns_padding)
+        self.hsts_bypass = hsts_bypass
+        self.proxy_chain = proxy_chain
+        self.platform = platform
+        self.max_sockets_per_group = int(max_sockets_per_group)
         self._key = tuple(getattr(self, name) for name in BINDING_FIELDS)
 
     @property
@@ -414,14 +452,24 @@ class EngineConfig(object):
 
     def _build(self):
         # The first eleven are positional because the extension's signature has
-        # been that shape since v8; host_mapping is passed by keyword so adding
-        # a field here cannot silently shift the ones after it.
+        # been that shape since v8; everything added later is passed by keyword,
+        # so a field inserted here cannot silently shift the argument list.
         return native.PyEngine(
             self.impersonate, self.proxy, self.verify, self.ca_pem,
             self.user_agent, self.accept_language, self.proxy_username,
             self.proxy_password, self.http_version, self.cache,
             self.profile_namespace,
             host_mapping=self.host_mapping,
+            dns_nameservers=self.dns_nameservers,
+            doh_template=self.doh_template,
+            dns_secure_mode=self.dns_secure_mode,
+            dns_over_tls=self.dns_over_tls,
+            dns_rotate=self.dns_rotate,
+            dns_padding=self.dns_padding,
+            hsts_bypass=self.hsts_bypass,
+            proxy_chain=self.proxy_chain,
+            platform=self.platform,
+            max_sockets_per_group=self.max_sockets_per_group,
         )
 
 

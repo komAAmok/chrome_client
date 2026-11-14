@@ -61,6 +61,16 @@ class SessionBinding:
     cache: bool
     profile_namespace: Optional[str]
     host_mapping: Optional[str]
+    dns_nameservers: Optional[str]
+    doh_template: Optional[str]
+    dns_secure_mode: int
+    dns_over_tls: bool
+    dns_rotate: bool
+    dns_padding: bool
+    hsts_bypass: Optional[str]
+    proxy_chain: Optional[str]
+    platform: str
+    max_sockets_per_group: int
 
     def __init__(
         self,
@@ -76,6 +86,16 @@ class SessionBinding:
         cache: bool = True,
         profile_namespace: Optional[str] = None,
         host_mapping: Optional[str] = None,
+        dns_nameservers: Optional[str] = None,
+        doh_template: Optional[str] = None,
+        dns_secure_mode: int = 0,
+        dns_over_tls: bool = False,
+        dns_rotate: bool = False,
+        dns_padding: bool = False,
+        hsts_bypass: Optional[str] = None,
+        proxy_chain: Optional[str] = None,
+        platform: str = "auto",
+        max_sockets_per_group: int = 0,
     ) -> None:
         """Describes one transport context.
 
@@ -216,6 +236,16 @@ class EngineConfig:
     cache: bool
     profile_namespace: Optional[str]
     host_mapping: Optional[str]
+    dns_nameservers: Optional[str]
+    doh_template: Optional[str]
+    dns_secure_mode: int
+    dns_over_tls: bool
+    dns_rotate: bool
+    dns_padding: bool
+    hsts_bypass: Optional[str]
+    proxy_chain: Optional[str]
+    platform: str
+    max_sockets_per_group: int
 
     def __init__(
         self,
@@ -231,6 +261,16 @@ class EngineConfig:
         cache: bool = True,
         profile_namespace: Optional[str] = None,
         host_mapping: Optional[str] = None,
+        dns_nameservers: Optional[str] = None,
+        doh_template: Optional[str] = None,
+        dns_secure_mode: int = 0,
+        dns_over_tls: bool = False,
+        dns_rotate: bool = False,
+        dns_padding: bool = False,
+        hsts_bypass: Optional[str] = None,
+        proxy_chain: Optional[str] = None,
+        platform: str = "auto",
+        max_sockets_per_group: int = 0,
     ) -> None:
         """Describes one engine.
 

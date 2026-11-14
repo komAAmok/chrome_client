@@ -759,6 +759,194 @@ def _check_host_mapping_rule(rule):
         "host_mapping rule %r must start with MAP or EXCLUDE; Chromium logs and "
         "skips anything else, so it would be accepted and never applied" % (rule,))
 
+def normalize_dns_nameservers(value):
+    """Validates the shape of a nameserver list.
+
+    Chromium takes ``host[:port]`` entries separated by commas and parses each
+    one itself; this only rejects values that cannot be an entry list at all.
+
+    Args:
+        value: A comma-separated string, a list of strings, or ``None``.
+
+    Returns:
+        A comma-joined string, or ``None``.
+
+    Raises:
+        UnsupportedFeature: The value is not a string or string list.
+    """
+    return _join_entries(value, "dns_nameservers")
+
+
+def normalize_doh(doh_template, secure_mode):
+    """Validates a DoH template together with its secure-DNS mode.
+
+    A template with mode 0 is a contradiction -- one says DoH may be used, the
+    other forbids it -- and the Core rejects it. Reporting it here names both
+    arguments instead of surfacing a bare ``InvalidArgument`` from engine
+    construction.
+
+    Args:
+        doh_template: An ``https://`` DoH template, or ``None``.
+        secure_mode: ``None``/0 off, 1 opportunistic, 2 secure.
+
+    Returns:
+        ``(doh_template, secure_mode)``.
+
+    Raises:
+        UnsupportedFeature: The mode is out of range, or a template has no mode.
+    """
+    mode = 0 if secure_mode is None else int(secure_mode)
+    if mode < 0 or mode > 2:
+        raise UnsupportedFeature(
+            "dns_secure_mode must be 0 (off), 1 (opportunistic) or 2 (secure), "
+            "not %r" % (secure_mode,))
+    if doh_template is None:
+        return None, mode
+    if not isinstance(doh_template, str) or not doh_template.strip():
+        raise UnsupportedFeature(
+            "doh_template must be a non-empty https:// template, not %r"
+            % (doh_template,))
+    if mode == 0:
+        raise UnsupportedFeature(
+            "doh_template= needs dns_secure_mode=1 or 2: a template with secure "
+            "DNS off says both \"DoH may be used\" and \"DoH must not be used\"")
+    return doh_template.strip(), mode
+
+
+def normalize_hsts_bypass(value):
+    """Validates an HSTS-preload bypass list.
+
+    Chromium's TransportSecurityState matches bypass entries by single label
+    and silently ignores anything else in a release build, so a dotted entry
+    would be accepted and never applied. The Core rejects those; this reports
+    which entry and why.
+
+    Args:
+        value: A comma-separated string, a list of strings, or ``None``.
+
+    Returns:
+        A comma-joined string, or ``None``.
+
+    Raises:
+        UnsupportedFeature: An entry is empty or contains a dot.
+    """
+    joined = _join_entries(value, "hsts_bypass")
+    if joined is None:
+        return None
+    for entry in joined.split(","):
+        if "." in entry:
+            raise UnsupportedFeature(
+                "hsts_bypass entry %r must be a single label: Chromium matches "
+                "these by label and silently ignores a dotted one" % (entry,))
+    return joined
+
+
+def normalize_proxy_chain(value):
+    """Validates a multi-hop proxy chain.
+
+    ``proxy=`` and ``proxy_chain=`` describe the same connection path twice,
+    and the Core refuses both at once rather than silently picking one.
+
+    Args:
+        value: Comma-separated ``scheme://host:port`` entries, or ``None``.
+
+    Returns:
+        The stripped string, or ``None``.
+
+    Raises:
+        UnsupportedFeature: The value is not a non-empty string.
+    """
+    if value is None:
+        return None
+    if not isinstance(value, str) or not value.strip():
+        raise UnsupportedFeature(
+            "proxy_chain must be a comma-separated list of scheme://host:port "
+            "entries, not %r" % (value,))
+    return value.strip()
+
+
+def normalize_platform(value):
+    """Validates the platform identity the engine presents.
+
+    The User-Agent group, ``sec-ch-ua-platform`` and ``sec-ch-ua-mobile`` are
+    three statements of one fact, so all three derive from this value. AUTO
+    follows the host the Core runs on.
+
+    Args:
+        value: ``"auto"``, ``"windows"``, ``"macos"`` or ``"linux"``.
+
+    Returns:
+        The lower-cased name, or ``"auto"`` when unset.
+
+    Raises:
+        UnsupportedFeature: The name is not one of the four.
+    """
+    name = "auto" if value is None else str(value).strip().lower()
+    if name not in ("auto", "windows", "macos", "linux"):
+        raise UnsupportedFeature(
+            "platform must be auto, windows, macos or linux, not %r" % (value,))
+    return name
+
+
+def normalize_max_sockets(value):
+    """Validates the per-origin connection ceiling.
+
+    0 keeps Chromium's own limit (6 per origin for normal traffic). Raising it
+    is an observable deviation from the browser being imitated -- real Chrome
+    never opens a seventh connection to one origin -- so it stays opt-in.
+
+    Args:
+        value: ``0`` for Chromium's default, otherwise 1..256.
+
+    Returns:
+        The value as an int.
+
+    Raises:
+        UnsupportedFeature: The value is negative or above the pool ceiling.
+    """
+    limit = int(value or 0)
+    if limit < 0 or limit > 256:
+        raise UnsupportedFeature(
+            "max_sockets_per_group must be 0 (Chromium default) or 1..256, "
+            "not %r" % (value,))
+    return limit
+
+
+def _join_entries(value, name):
+    """Normalises a comma-separated entry list shared by two options.
+
+    Args:
+        value: A string, a list of strings, or ``None``.
+        name: The argument name, for the error message.
+
+    Returns:
+        A comma-joined string, or ``None``.
+
+    Raises:
+        UnsupportedFeature: The value is not a string or a list of them.
+    """
+    if value is None:
+        return None
+    if isinstance(value, str):
+        entries = [part.strip() for part in value.split(",")]
+    elif isinstance(value, (list, tuple)):
+        entries = []
+        for item in value:
+            if not isinstance(item, str):
+                raise UnsupportedFeature(
+                    "%s entries must be strings, not %r" % (name, item))
+            entries.append(item.strip())
+    else:
+        raise UnsupportedFeature(
+            "%s accepts a comma-separated string or a list of them, not %r"
+            % (name, value))
+    kept = [entry for entry in entries if entry]
+    if not kept:
+        raise UnsupportedFeature(
+            "%s was given but contains no entry; drop the argument to keep the "
+            "system setting" % name)
+    return ",".join(kept)
+
 def normalize_client_cert(cert):
     """Turns ``cert=`` into ``(cert_pem, key_pem)`` bytes, or ``None``.
 
@@ -1376,7 +1564,10 @@ class BaseSession(object):
                  discard_cookies=False, raise_for_status=False, retry=0, cache=True,
                  user_agent=None, accept_language=None, interface=None, doh_url=None,
                  max_recv_speed=0, curl_options=None, max_engines=DEFAULT_MAX_ENGINES,
-                 response_class=None, host_mapping=None):
+                 response_class=None, host_mapping=None, dns_nameservers=None,
+                 doh_template=None, dns_secure_mode=None, dns_over_tls=False,
+                 dns_rotate=False, dns_padding=False, hsts_bypass=None,
+                 proxy_chain=None, platform="auto", max_sockets_per_group=0):
         """Configures defaults shared by requests made through this session.
 
         ``impersonate`` selects a pinned Chromium profile, ``http_version`` can
@@ -1414,6 +1605,19 @@ class BaseSession(object):
         #: certificate verification keep using the URL host, which is what makes a
         #: CDN IP reachable without turning its certificate into an IP-SAN one.
         self.host_mapping = normalize_host_mapping(host_mapping)
+        #: Resolver configuration. Each of these makes the Core build a
+        #: standalone HostResolver instead of using the system one, which is why
+        #: they are engine-level and part of the cache key.
+        self.dns_nameservers = normalize_dns_nameservers(dns_nameservers)
+        self.doh_template, self.dns_secure_mode = normalize_doh(
+            doh_template, dns_secure_mode)
+        self.dns_over_tls = bool(dns_over_tls)
+        self.dns_rotate = bool(dns_rotate)
+        self.dns_padding = bool(dns_padding)
+        self.hsts_bypass = normalize_hsts_bypass(hsts_bypass)
+        self.proxy_chain = normalize_proxy_chain(proxy_chain)
+        self.platform = normalize_platform(platform)
+        self.max_sockets_per_group = normalize_max_sockets(max_sockets_per_group)
         #: Client certificate for mTLS, parsed to (cert_pem, key_pem) bytes.
         #: The certificate is registered on the engine per (host, port) just
         #: before a request needs it -- see _register_client_cert -- because the
@@ -1654,7 +1858,7 @@ class BaseSession(object):
             # The Core owns Accept-Language when the session set one; only inject
             # the captured value when nothing else will produce the header.
             accept_language = None
-        captured = browser_headers(profile, accept_language)
+        captured = browser_headers(profile, accept_language, self.platform)
         if not captured:
             return caller
         if caller is not None or dropped:
@@ -1862,6 +2066,16 @@ class BaseSession(object):
             cache=self.cache,
             profile_namespace=None,
             host_mapping=self.host_mapping,
+            dns_nameservers=self.dns_nameservers,
+            doh_template=self.doh_template,
+            dns_secure_mode=self.dns_secure_mode,
+            dns_over_tls=self.dns_over_tls,
+            dns_rotate=self.dns_rotate,
+            dns_padding=self.dns_padding,
+            hsts_bypass=self.hsts_bypass,
+            proxy_chain=self.proxy_chain,
+            platform=self.platform,
+            max_sockets_per_group=self.max_sockets_per_group,
         )
 
     def _engine_config(self, impersonate, proxy, verify, http_version, url=None,

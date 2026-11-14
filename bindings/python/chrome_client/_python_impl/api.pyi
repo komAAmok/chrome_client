@@ -114,6 +114,16 @@ def session(
     max_engines: int = 8,
     response_class: ResponseClass = None,
     host_mapping: Optional[HostMappingRules] = None,
+    dns_nameservers: Optional[str] = None,
+    doh_template: Optional[str] = None,
+    dns_secure_mode: Optional[int] = None,
+    dns_over_tls: bool = False,
+    dns_rotate: bool = False,
+    dns_padding: bool = False,
+    hsts_bypass: Optional[str] = None,
+    proxy_chain: Optional[str] = None,
+    platform: str = 'auto',
+    max_sockets_per_group: int = 0,
 ) -> Session:
     """Creates a synchronous :class:`~chrome_client.Session`.
 
@@ -176,6 +186,16 @@ def session(
         response_class: Subclass to instantiate instead of
             :class:`~chrome_client.Response`/``AsyncResponse``.
         host_mapping:
+        dns_nameservers:
+        doh_template:
+        dns_secure_mode:
+        dns_over_tls:
+        dns_rotate:
+        dns_padding:
+        hsts_bypass:
+        proxy_chain:
+        platform:
+        max_sockets_per_group:
 
     Returns:
         The new session. Close it, or use it as a context manager.
@@ -230,6 +250,16 @@ def async_session(
     max_engines: int = 8,
     response_class: ResponseClass = None,
     host_mapping: Optional[HostMappingRules] = None,
+    dns_nameservers: Optional[str] = None,
+    doh_template: Optional[str] = None,
+    dns_secure_mode: Optional[int] = None,
+    dns_over_tls: bool = False,
+    dns_rotate: bool = False,
+    dns_padding: bool = False,
+    hsts_bypass: Optional[str] = None,
+    proxy_chain: Optional[str] = None,
+    platform: str = 'auto',
+    max_sockets_per_group: int = 0,
     max_clients: Optional[int] = None,
 ) -> AsyncSession:
     """Creates an :class:`~chrome_client.AsyncSession`.
@@ -293,6 +323,16 @@ def async_session(
         response_class: Subclass to instantiate instead of
             :class:`~chrome_client.Response`/``AsyncResponse``.
         host_mapping:
+        dns_nameservers:
+        doh_template:
+        dns_secure_mode:
+        dns_over_tls:
+        dns_rotate:
+        dns_padding:
+        hsts_bypass:
+        proxy_chain:
+        platform:
+        max_sockets_per_group:
         max_clients: Maximum concurrently in-flight requests, or None for unbounded.
             Only AsyncSession accepts it; Session has no such limit.
 

@@ -86,6 +86,10 @@ Service Workers and persistent browser profiles are not included.
 | HTTPS/TLS and certificate verification | ✓ | ✓ | `verify=False`, or `verify="/path/ca.pem"` for a custom CA; failures name the failing check |
 | mTLS client certificates | ✓ | ✓ | `cert=("c.pem", "k.pem")` or one combined PEM; presented only when the server asks, so the ClientHello is unchanged |
 | Domain mapped to a fixed IP | ✓ | ✓ | `host_mapping="MAP cdn.test 93.184.216.34"`; rewrites **only the resolution result**, so SNI, the Host header and certificate verification keep the domain |
+| DNS servers / DoH / DoT | ✓ | ✓ | `dns_nameservers="1.1.1.1"`, `doh_template=...` (needs `dns_secure_mode=1/2`), `dns_over_tls`, `dns_rotate`, `dns_padding` |
+| Platform identity | ✓ | ✓ | `platform="windows"/"macos"/"linux"`; the UA group, `sec-ch-ua-platform` and `sec-ch-ua-mobile` share one source, so a Linux host can send a Windows UA |
+| Per-origin connection ceiling | ✓ | ✓ | `max_sockets_per_group=32`; the default 0 keeps Chromium's own 6. Raising it is an observable deviation from the browser being imitated |
+| HSTS bypass and multi-hop proxy | ✓ | ✓ | `hsts_bypass="example"` (single labels only), `proxy_chain="socks5://a:1080,http://b:8080"` |
 | HTTP/HTTPS/SOCKS proxies | ✓ | ✓ | `proxy`, Requests-style `proxies`, mutable at runtime |
 | Synchronous requests | ✓ | ✓ | Blocking calls release the GIL, so a thread pool works |
 | asyncio requests | ✓ | — | Core callbacks wake the loop; no request thread pool, batched per wakeup |
@@ -490,6 +494,8 @@ no further edits.
 | `proxies`, `proxy`, `proxy_auth`, `trust_env`, `NO_PROXY` | ✓ |
 | `verify=True/False/"/path/ca.pem"` | ✓ |
 | `host_mapping="MAP <domain> <ip>[:port]"`, `EXCLUDE <domain>`, or a list of either | ✓ rewrites only the resolution result; SNI, Host and certificate verification keep the domain. A misspelled keyword raises `UnsupportedFeature` |
+| `dns_nameservers`, `doh_template`, `dns_secure_mode`, `dns_over_tls`, `dns_rotate`, `dns_padding` | ✓ setting any of them switches to Chromium's own resolver; a `doh_template` without `dns_secure_mode` raises rather than being ignored |
+| `platform`, `max_sockets_per_group`, `hsts_bypass`, `proxy_chain` | ✓ all engine-level and part of the engine cache key; `platform` also decides the UA group and the client hints |
 | `cert=("c.pem", "k.pem")`, `cert="combined.pem"`, `set_client_certificate()` | ✓ sent only when the server issues a CertificateRequest, so the ClientHello fingerprint is unchanged |
 | `allow_redirects`, `max_redirects`, `history`, final URL | ✓ |
 | `stream=True`, `iter_content`, `iter_lines`, `raw` | ✓ |

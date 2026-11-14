@@ -32,7 +32,8 @@ except ImportError:  # Python 3.6
 
 import chrome_client
 from chrome_client import engine as engine_module
-from chrome_client._python_impl.engine import (BINDING_FIELDS, EngineCache,
+from chrome_client._python_impl.engine import (BINDING_DEFAULTS, BINDING_FIELDS,
+                                               EngineCache,
                                                EngineConfig, SessionBinding)
 
 
@@ -92,10 +93,20 @@ class BindingTests(unittest.TestCase):
         self.assertEqual(len({left, right}), 1)
 
     def test_any_transport_field_separates_the_key(self):
+        # A value of the right type that differs from the default: "v" for a
+        # string field, and the opposite of the default for the typed ones.
+        # Passing "v" for an int field raises from its constructor, which would
+        # report a type error rather than the cache-key question this asks.
         base = SessionBinding()
         for field in BINDING_FIELDS:
-            changed = base.replace(**{field: "v" if field != "verify" and field != "cache"
-                                      else False})
+            default = BINDING_DEFAULTS.get(field)
+            if isinstance(default, bool):
+                value = not default
+            elif isinstance(default, int):
+                value = default + 1
+            else:
+                value = "v"
+            changed = base.replace(**{field: value})
             self.assertNotEqual(base.key, changed.key,
                                 "%s did not participate in the cache key" % field)
 

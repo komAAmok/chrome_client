@@ -87,6 +87,81 @@ CHROMIUM_MAX_REDIRECTS: int
 Backoff: TypeAlias = Literal["linear", "exponential"]
 
 
+def normalize_dns_nameservers(value: Union[str, Sequence[str]]) -> Optional[str]:
+    """Validates a nameserver list.
+
+    Args:
+        value: A comma-separated string, a list of strings, or ``None``.
+
+    Returns:
+        A comma-joined string, or ``None``.
+    """
+    ...
+
+
+def normalize_doh(doh_template: Optional[str], secure_mode: Optional[int]):
+    """Validates a DoH template together with its secure-DNS mode.
+
+    Args:
+        doh_template: An ``https://`` DoH template, or ``None``.
+        secure_mode: ``None``/0 off, 1 opportunistic, 2 secure.
+
+    Returns:
+        ``(doh_template, secure_mode)``.
+
+    Raises:
+        UnsupportedFeature: The mode is out of range, or a template has no mode.
+    """
+    ...
+
+
+def normalize_hsts_bypass(value: Union[str, Sequence[str]]) -> Optional[str]:
+    """Validates an HSTS-preload bypass list.
+
+    Args:
+        value: A comma-separated string, a list of strings, or ``None``.
+
+    Returns:
+        A comma-joined string, or ``None``.
+    """
+    ...
+
+
+def normalize_proxy_chain(value: Optional[str]) -> Optional[str]:
+    """Validates a multi-hop proxy chain.
+
+    Args:
+        value: Comma-separated ``scheme://host:port`` entries, or ``None``.
+
+    Returns:
+        The stripped string, or ``None``.
+    """
+    ...
+
+
+def normalize_platform(value: Optional[str]) -> str:
+    """Validates the platform identity the engine presents.
+
+    Args:
+        value: ``"auto"``, ``"windows"``, ``"macos"`` or ``"linux"``.
+
+    Returns:
+        The lower-cased name, or ``"auto"`` when unset.
+    """
+    ...
+
+
+def normalize_max_sockets(value: int) -> int:
+    """Validates the per-origin connection ceiling.
+
+    Args:
+        value: ``0`` for Chromium's default, otherwise 1..256.
+
+    Returns:
+        The value as an int.
+    """
+    ...
+
 def normalize_host_mapping(rules: Optional[HostMappingRules]) -> Optional[str]:
     """Validates the shape of a MappedHostResolver rule list.
 
@@ -594,6 +669,16 @@ class BaseSession:
     accept_language: Optional[str]
     response_class: ResponseClass
     host_mapping: Optional[HostMappingRules]
+    dns_nameservers: Optional[str]
+    doh_template: Optional[str]
+    dns_secure_mode: int
+    dns_over_tls: bool
+    dns_rotate: bool
+    dns_padding: bool
+    hsts_bypass: Optional[str]
+    proxy_chain: Optional[str]
+    platform: str
+    max_sockets_per_group: int
     extra_fp: Optional[Union[ExtraFingerprints, Mapping[str, Any]]]
     header_order: Optional[List[str]]
     form_boundary: Optional[str]
@@ -638,6 +723,16 @@ class BaseSession:
         max_engines: int = 8,
         response_class: ResponseClass = None,
         host_mapping: Optional[HostMappingRules] = None,
+        dns_nameservers: Optional[str] = None,
+        doh_template: Optional[str] = None,
+        dns_secure_mode: Optional[int] = None,
+        dns_over_tls: bool = False,
+        dns_rotate: bool = False,
+        dns_padding: bool = False,
+        hsts_bypass: Optional[str] = None,
+        proxy_chain: Optional[str] = None,
+        platform: str = "auto",
+        max_sockets_per_group: int = 0,
     ) -> None:
         """Configures the defaults shared by every request this session sends.
 

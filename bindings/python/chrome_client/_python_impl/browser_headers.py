@@ -45,20 +45,31 @@ PLATFORM_HEADERS = ("User-Agent", "sec-ch-ua-platform")
 ZSTD_FIRST_MAJOR = 123
 
 
-def _platform_token():
-    """Returns the platform token the Core puts inside the User-Agent group.
+def _platform_token(platform="auto"):
+    """Returns the platform token the User-Agent group carries.
 
     Must match ``core/source/minicronet.cc`` exactly: the two strings are the
     same claim, one on each side of the ABI, and a mismatch is exactly the
     contradiction this module exists to avoid.
 
+    ``platform`` is the engine's own choice, not this host's: a session that asks
+    for ``platform="windows"`` must send a Windows User-Agent group from a Linux
+    build, which is the whole point of the option. ``"auto"`` follows the host,
+    matching what the Core does for ``MN_PLATFORM_AUTO``.
+
+    Args:
+        platform: ``"auto"``, ``"windows"``, ``"macos"`` or ``"linux"``.
+
     Returns:
         The parenthesised-group text without the parentheses, e.g.
         ``"X11; Linux x86_64"``.
     """
-    if _sys.platform.startswith("win"):
+    name = (platform or "auto").lower()
+    if name == "auto":
+        name = _host_platform()
+    if name == "windows":
         return "Windows NT 10.0; Win64; x64"
-    if _sys.platform == "darwin":
+    if name == "macos":
         return "Macintosh; Intel Mac OS X 10_15_7"
     machine = _platform.machine().lower()
     if machine in ("aarch64", "arm64"):
@@ -68,18 +79,39 @@ def _platform_token():
     return "X11; Linux x86_64"
 
 
-def _sec_ch_ua_platform():
-    """Returns the ``sec-ch-ua-platform`` value for this host.
+def _host_platform():
+    """Returns which platform identity this host maps to.
 
-    Chrome sends a quoted, case-sensitive platform name from a fixed set.  Linux
-    and Windows are what the Core can run on; macOS is mapped from ``darwin``.
+    Returns:
+        ``"windows"``, ``"macos"`` or ``"linux"``.
+    """
+    if _sys.platform.startswith("win"):
+        return "windows"
+    if _sys.platform == "darwin":
+        return "macos"
+    return "linux"
+
+
+def _sec_ch_ua_platform(platform="auto"):
+    """Returns the ``sec-ch-ua-platform`` value for an engine's platform.
+
+    Chrome sends a quoted, case-sensitive platform name from a fixed set. The
+    value must be the engine's choice rather than this host's, because the Core
+    derives the same field from ``mn_platform_t``; a mismatch would send one
+    field claiming Windows and another claiming Linux.
+
+    Args:
+        platform: ``"auto"``, ``"windows"``, ``"macos"`` or ``"linux"``.
 
     Returns:
         e.g. ``"Linux"`` with the quotes Chrome writes, as a string.
     """
-    if _sys.platform.startswith("win"):
+    name = (platform or "auto").lower()
+    if name == "auto":
+        name = _host_platform()
+    if name == "windows":
         return chr(34) + "Windows" + chr(34)
-    if _sys.platform == "darwin":
+    if name == "macos":
         return chr(34) + "macOS" + chr(34)
     return chr(34) + "Linux" + chr(34)
 
@@ -103,7 +135,7 @@ def profile_major(profile):
     return major if major in CAPTURED_HEADERS else None
 
 
-def browser_headers(profile, accept_language=None):
+def browser_headers(profile, accept_language=None, platform="auto"):
     """Returns the ordered headers Chrome of *profile* would send.
 
     Args:
@@ -111,6 +143,9 @@ def browser_headers(profile, accept_language=None):
         accept_language: Overrides the captured ``Accept-Language``.  The Core
             sends its own value from the engine field, so passing the same string
             here keeps the two from disagreeing.
+        platform: The engine's platform identity. The User-Agent group and
+            ``sec-ch-ua-platform`` are derived from it, so they agree with what
+            the Core writes for the same field.
 
     Returns:
         A list of ``(name, value)`` pairs in capture order, or an empty list when
@@ -119,8 +154,8 @@ def browser_headers(profile, accept_language=None):
     major = profile_major(profile)
     if major is None:
         return []
-    token = _platform_token()
-    platform_hint = _sec_ch_ua_platform()
+    token = _platform_token(platform)
+    platform_hint = _sec_ch_ua_platform(platform)
     pairs = []
     for name, value in CAPTURED_HEADERS[major]:
         if name == "User-Agent":

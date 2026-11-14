@@ -40,7 +40,8 @@ def profile_major(profile: Optional[str]) -> Optional[int]:
 
 
 def browser_headers(profile: Optional[str],
-                    accept_language: Optional[str] = None) -> List[Tuple[str, str]]:
+                    accept_language: Optional[str] = None,
+                    platform: str = "auto") -> List[Tuple[str, str]]:
     """Returns the ordered headers Chrome of *profile* would send.
 
     Args:
@@ -59,6 +60,8 @@ def header_order(profile: Optional[str]) -> Sequence[str]:
 
     Args:
         profile: A ``chrome_<major>`` name, or ``None``.
+        platform: The engine's platform identity; the User-Agent group and
+            ``sec-ch-ua-platform`` derive from it.
 
     Returns:
         The header names in capture order, or an empty sequence when *profile* is
