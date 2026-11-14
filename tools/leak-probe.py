@@ -7,7 +7,7 @@ request; a release review needs the other shapes the binding offers, because a
 leak is per-path and the batch that happens to be measured is the only one that
 passes.
 
-So five shapes run in sequence, each in its own subprocess so a crash or a hung
+So six shapes run in sequence, each in its own subprocess so a crash or a hung
 finalizer cannot be mistaken for a clean run:
 
   sync-get        get(), body discarded
@@ -15,6 +15,10 @@ finalizer cannot be mistaken for a clean run:
   sync-abandon    get(stream=True), close() without reading
   async-gather    AsyncSession, asyncio.gather over N requests
   error-path      every request to a refused port, so the error path allocates
+  discard-path    discard_cookies=True, which builds and drops one engine per
+                  request (sessions.py, _throwaway_slot) -- the only shape that
+                  pays mn_engine_create and ~Engine, so the only one that can
+                  leak a URLRequestContext
 
 Each shape reports RSS and open descriptors at three points: after a warmup
 batch, after batch 1, after batch 2. A leak is linear in request count, so the
@@ -84,6 +88,14 @@ CHILD = textwrap.dedent("""
                     await asyncio.gather(*[
                         session.get("%s?i=%d" % (url, i)) for i in range(count)])
             asyncio.run(main())
+        elif shape == "discard-path":
+            # One engine per request: building it posts to the Core's network
+            # thread, and dropping it posts again and waits. Neither the
+            # descriptor nor the RSS cost is visible in any other shape, because
+            # every other shape reuses a cached slot.
+            with chrome_client.Session() as session:
+                for index in range(count):
+                    session.get("%s?i=%d" % (url, index), discard_cookies=True)
         elif shape == "error-path":
             with chrome_client.Session() as session:
                 for _ in range(count):
@@ -108,7 +120,8 @@ CHILD = textwrap.dedent("""
     sys.stderr.flush()
 """)
 
-SHAPES = ("sync-get", "sync-stream", "sync-abandon", "async-gather", "error-path")
+SHAPES = ("sync-get", "sync-stream", "sync-abandon", "async-gather", "error-path",
+          "discard-path")
 
 
 def measure(shape, url, count, python, timeout):

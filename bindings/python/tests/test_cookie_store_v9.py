@@ -52,29 +52,32 @@ class _Base(unittest.TestCase):
         cls.thread.join(timeout=5)
 
 
-class SuppressionIsAlwaysRestoredTests(_Base):
-    """``discard_cookies`` must not leave the jar muted.
+class A_DiscardRequestLeavesTheJarWritableTests(_Base):
+    """A failed ``discard_cookies`` request must not mute the jar.
 
-    The mute exists for one request. If an exception escapes between "clear the
-    store" and "clear it again", the flag stays set and every later write is
-    silently dropped -- the caller's jar looks correct while the wire never sees
-    another cookie. Silent, and invisible to a test that only checks one request.
+    The flag these tests used to assert on (``writing_suppressed``) is gone:
+    ``discard_cookies`` no longer goes anywhere near the session's store, so
+    there is no mute to restore. The PROPERTY is still worth pinning, and this is
+    what pins it -- the assertion is now the observable one (a cookie the caller
+    sets afterwards reaches the wire) rather than the internal flag, which would
+    have passed unconditionally once the flag stopped being written.
+
+    It matters because a discard request runs on its own engine, and an engine
+    owns its cookie store: the failure mode this can still have is the jar
+    ending up attached to the wrong sink.
     """
 
     def test_a_failed_discard_request_leaves_the_jar_writable(self):
         with chrome_client.Session() as session:
             with self.assertRaises(Exception):
                 session.get("http://127.0.0.1:1/", discard_cookies=True)
-            self.assertFalse(session.cookies.writing_suppressed,
-                             "a failed discard request left the jar muted")
             session.cookies.set("after", "1", domain="127.0.0.1", path="/")
             self.assertIn("after=1", session.get(self.base + "echo").text)
 
     def test_a_discard_request_to_a_failing_server_leaves_the_jar_writable(self):
         with chrome_client.Session() as session:
-            # 500 is a response, not an exception: the restore must run there too.
+            # 500 is a response, not an exception: the path must be clean there too.
             session.get(self.base + "boom", discard_cookies=True)
-            self.assertFalse(session.cookies.writing_suppressed)
             session.cookies.set("after", "2", domain="127.0.0.1", path="/")
             self.assertIn("after=2", session.get(self.base + "echo").text)
 
@@ -257,9 +260,7 @@ class EveryFailurePathLeavesAConsistentStateTests(_Base):
     """
 
     def _invariant(self, session):
-        """The jar is writable and every jar cookie is something the store took."""
-        self.assertFalse(session.cookies.writing_suppressed,
-                         "the jar was left muted")
+        """Every jar cookie is something the store took, i.e. it reaches the wire."""
         session.cookies.set("probe", "1", domain="127.0.0.1", path="/")
         self.assertIn("probe=1", session.get(self.base + "echo").text)
         session.cookies.clear(domain="127.0.0.1", path="/", name="probe")

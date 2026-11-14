@@ -16,6 +16,7 @@ import asyncio
 import math
 import os
 import random
+import queue
 import threading
 import time
 import warnings
@@ -33,7 +34,7 @@ from .browser_headers import browser_headers, header_order as browser_header_ord
 from .auth import build_auth
 from .cookies import RequestsCookieJar, cookiejar_from_dict, merge_cookies
 from .engine import (BINDING_FIELDS, DEFAULT_MAX_ENGINES, EngineCache,
-                     EngineConfig, SessionBinding)
+                     EngineConfig, EngineSlot, SessionBinding)
 from .exceptions import (InvalidProxyURL, InvalidURL, ProxyError,
                          RequestException, ResponseTooLarge, SessionClosed,
                          Timeout, TooManyRedirects, UnsupportedFeature,
@@ -49,8 +50,18 @@ from .utils import (default_headers as _default_headers, get_netrc_auth,
                     resolve_proxies, should_bypass_proxies,
                     to_key_val_list)
 
-#: Events drained from the Core per event-loop wakeup.  Batching is what keeps a
-#: large download from costing one loop round trip per Core chunk.
+#: Ceiling on the events drained from the Core per event-loop wakeup.
+#:
+#: A CEILING, not a target.  The Core posts one event per read, so draining a
+#: single response gets one event per call: measured on a 4 MiB body, 156
+#: ``poll_events`` calls carrying 159 events, batch sizes {1: 154, 5: 1}.  The
+#: batching that does happen comes from OTHER requests that are ready at the same
+#: instant -- 64 concurrent 1 KiB responses gave {1: 101, 2: 26, 3: 13}.
+#:
+#: So the per-chunk loop round trip is still paid.  Removing it needs the Core to
+#: coalesce its own events, not a larger number here: raising this changes
+#: nothing, because the queue is empty (not the ceiling) when a single-response
+#: drain ends.  See docs/NEXT_STEPS.md, "提案 2：批量唤醒投递".
 ASYNC_POLL_BATCH = 64
 
 #: Hops Chromium follows inside one ``URLRequest``, from
@@ -912,6 +923,116 @@ def normalize_max_sockets(value):
     return limit
 
 
+#: Cache modes defined in terms of what this session's HTTP cache already
+#: holds.  A ``discard_cookies`` request runs on its own engine (see
+#: :meth:`BaseSession._throwaway_slot`), and an engine owns its ``HttpCache``
+#: partition (core/source/engine.cc:863-869, EnableHttpCache on the per-engine
+#: URLRequestContext), so that cache is always empty. Asking for one of these
+#: on such a request would silently answer a different question:
+#: ``only_if_cached`` turns a local read into a network round trip and then
+#: reports ERR_CACHE_MISS, and ``force`` re-fetches what it promised to take
+#: from the cache. AGENTS section 8: refuse what cannot be honoured.
+_DISCARD_INCOMPATIBLE_CACHE_MODES = ("only_if_cached", "force")
+
+
+#: One shared worker for dropping throwaway engines off the caller's thread.
+#: ``mn_engine_release`` posts a shutdown task to the Core's network thread and
+#: waits on a WaitableEvent (core/source/engine.cc:493-521), so the drop of the
+#: last reference blocks for a full round trip. On the asyncio loop that is a
+#: loop stall proportional to the number of discard requests in flight: measured
+#: 83 ms at 16 concurrent discards, against 2.5 ms for the same load without
+#: discard_cookies. One daemon thread, not a pool: the work is a single wait and
+#: a pool would just add queueing.
+_RETIRED = queue.Queue()
+
+
+def _retire_worker():
+    """Drops retired engines until the process ends."""
+    while True:
+        slot = _RETIRED.get()
+        try:
+            if slot is not None:
+                # release_engine() drops the reference and is idempotent, so a
+                # slot that reached the queue twice cannot raise here.
+                slot.release_engine()
+        except Exception:
+            # Nothing here may kill the worker: it serves every session.
+            pass
+        finally:
+            _RETIRED.task_done()
+
+
+def _start_retire_worker():
+    """Starts the retirement worker once per process."""
+    thread = threading.Thread(target=_retire_worker, name="chrome-client-retire",
+                              daemon=True)
+    thread.start()
+
+
+_RETIRE_START_LOCK = threading.Lock()
+_retire_started = False
+
+
+def retire_engine_slot(slot):
+    """Drops a throwaway engine without blocking the calling thread.
+
+    The Core releases a URLRequestContext on its own network thread and this call
+    waits for that, so doing it inline parks whichever thread called it -- for an
+    async request that is the event loop. The slot is handed to a daemon worker
+    instead; the engine is unreachable from anywhere else once the request that
+    built it returns, which is what makes releasing it later safe.
+
+    Thread-safe and idempotent: the first caller starts the worker under a lock,
+    so two threads cannot start two workers and leave one of them parked on a
+    queue nothing will ever fill.
+
+    Args:
+        slot: An :class:`EngineSlot` nobody else holds, or ``None``.
+
+    Returns:
+        ``None``.
+    """
+    if slot is None:
+        return
+    global _retire_started
+    if not _retire_started:
+        with _RETIRE_START_LOCK:
+            if not _retire_started:
+                _start_retire_worker()
+                _retire_started = True
+    _RETIRED.put(slot)
+
+
+def check_discard_cache_mode(discard, cache_mode):
+    """Refuses cache modes a discard request cannot honour.
+
+    Args:
+        discard: Whether this request asked for "neither send nor record".
+        cache_mode: The ``cache_mode=`` value, or ``None``.
+
+    Returns:
+        ``None``.
+
+    Raises:
+        UnsupportedFeature: The mode reads a cache this engine cannot have.
+
+    Example:
+        >>> check_discard_cache_mode(True, "no_store") is None
+        True
+    """
+    if not discard or cache_mode is None:
+        return None
+    if cache_mode in _DISCARD_INCOMPATIBLE_CACHE_MODES:
+        raise UnsupportedFeature(
+            "cache_mode=%r with discard_cookies=True: a discard request runs on "
+            "its own engine, whose HTTP cache is empty by construction, so %r "
+            "would silently do something else. Use cache_mode='default', "
+            "'no_store' or 'bypass' for a discard request, or drop "
+            "discard_cookies=True and read the session's cache."
+            % (cache_mode, cache_mode))
+    return None
+
+
 def _join_entries(value, name):
     """Normalises a comma-separated entry list shared by two options.
 
@@ -1316,8 +1437,11 @@ class _AsyncState(object):
             if self.closed:
                 return
         if len(events) == ASYNC_POLL_BATCH:
-            # The batch limit, not an empty queue, ended the drain, so nothing
-            # else will wake us: re-arm explicitly.
+            # The ceiling, not an empty queue, ended the drain, so nothing else
+            # will wake us: re-arm explicitly.  Measured on a 4 MiB streamed
+            # body this branch ran once in 156 drains; it exists for the case
+            # where several requests' events are queued at once, which is the
+            # only way this request can still have work left after a full batch.
             self.loop.call_soon(self.notify)
 
     def error_is_lazy(self):
@@ -1547,6 +1671,36 @@ class BaseSession(object):
     """Shared configuration, engine selection, and cookie policy."""
 
     @property
+    def max_sockets_per_group(self):
+        """Per-origin TCP connection ceiling for engines this session builds.
+
+        Returns:
+            ``0`` for Chromium's own limit, otherwise 1..256.
+        """
+        return self._max_sockets_per_group
+
+    @max_sockets_per_group.setter
+    def max_sockets_per_group(self, value):
+        """Validates the ceiling on every assignment, not only in the constructor.
+
+        ``normalize_max_sockets`` used to run once, against the constructor
+        argument. Assigning the attribute afterwards put the raw value straight
+        into the engine cache key, and the Core rejected anything above its
+        per-pool soft cap with ``MN_ERROR_INVALID_ARGUMENT`` -- which
+        ``map_native_error`` reports as ``InvalidURL``, telling the caller its URL
+        was malformed when the URL had nothing to do with it. Measured:
+        ``session.max_sockets_per_group = 9999`` then a request raised
+        ``InvalidURL``.
+
+        Args:
+            value: ``0`` for Chromium's default, otherwise 1..256.
+
+        Raises:
+            UnsupportedFeature: The value is negative or above the pool ceiling.
+        """
+        self._max_sockets_per_group = normalize_max_sockets(value)
+
+    @property
     def stream(self):
         return _StreamFlag(self._stream, self)
 
@@ -1617,7 +1771,7 @@ class BaseSession(object):
         self.hsts_bypass = normalize_hsts_bypass(hsts_bypass)
         self.proxy_chain = normalize_proxy_chain(proxy_chain)
         self.platform = normalize_platform(platform)
-        self.max_sockets_per_group = normalize_max_sockets(max_sockets_per_group)
+        self.max_sockets_per_group = max_sockets_per_group
         #: Client certificate for mTLS, parsed to (cert_pem, key_pem) bytes.
         #: The certificate is registered on the engine per (host, port) just
         #: before a request needs it -- see _register_client_cert -- because the
@@ -2241,6 +2395,19 @@ class BaseSession(object):
             http_version, url, proxy, proxies)
         return self._engines.acquire(config)
 
+    def _throwaway_slot(self, config):
+        """Builds an engine no other request can reach, for one discard request.
+
+        Args:
+            config: The :class:`EngineConfig` this request would have used. Its
+                binding is kept, so the wire identity is the one the caller
+                asked for; only the store is new.
+
+        Returns:
+            A fresh :class:`EngineSlot`, not registered in the engine cache.
+        """
+        return EngineSlot(config.build(), config, single_use=True)
+
     # -- client certificates (ABI v11) --------------------------------------
 
     def set_client_certificate(self, host, port, cert, key=None):
@@ -2470,6 +2637,34 @@ class BaseSession(object):
         self._store_slot().clear_cookies()
 
     # -- cookie policy ------------------------------------------------------
+    def _discard_config(self, slot, prepared):
+        """Drops the outgoing Cookie header and returns the engine config to use.
+
+        Dropping the header is not enough on its own: CookieMonster owns the
+        Cookie header and re-attaches whatever IT holds
+        (net/url_request/url_request_http_job.cc:761-838), so the request has to
+        run on an engine whose store is empty. Clearing the SESSION's store used
+        to stand in for that, which is the same thing only while one thread uses
+        the session: measured with one plain request and one discard request
+        running together, 19 of 20 readings of the plain request's Cookie header
+        were wrong. A throwaway engine is the isolation without the shared state.
+
+        Split out from :meth:`_resolve_cookies` because the two callers build the
+        engine differently: the synchronous path builds it inline, the asyncio
+        path hands the build to an executor so a burst of discard requests does
+        not stall the loop (measured: 16 concurrent builds, 3.4 ms each, 72 ms of
+        loop stall).
+
+        Args:
+            slot: The slot the request would otherwise have used.
+            prepared: The prepared request, whose Cookie header is dropped.
+
+        Returns:
+            The :class:`EngineConfig` for the throwaway engine.
+        """
+        prepared.headers.pop("Cookie", None)
+        return slot.config
+
     def _resolve_cookies(self, slot, prepared, discard):
         """Decides the outgoing ``Cookie`` header.
 
@@ -2488,21 +2683,7 @@ class BaseSession(object):
             The :class:`EngineSlot` to use, always *slot*.
         """
         if discard:
-            # Clearing the store is what makes the promise hold. Dropping the
-            # header alone is not enough: CookieMonster owns the header and
-            # re-attaches whatever it holds. Measured before ABI v9: the only
-            # faithful implementation was a one-shot engine, because there was
-            # no way to clear the store. Now there is.
-            prepared.headers.pop("Cookie", None)
-            slot.clear_cookies()
-            # "nor record" half. The response's Set-Cookie lines still reach the
-            # jar -- a caller reading response.cookies expects that -- so the
-            # write-through is suppressed for the duration, or the discard
-            # request quietly puts its own cookies back into the store it just
-            # emptied. Measured with the flag absent: the next plain request
-            # sent sid=BBB.
-            self.cookies.writing_suppressed = True
-            return slot
+            return self._throwaway_slot(self._discard_config(slot, prepared))
         # A per-request ``cookies=`` mapping goes into the store for this
         # request. A header would not do: CookieMonster owns the Cookie header
         # and re-attaches whatever it holds, so a cookie the store also has
@@ -2774,14 +2955,13 @@ class BaseSession(object):
         response.url = url
         response.redirect_url = url if history else None
         self._absorb_cookies(slot, response, discard_cookies)
-        if discard_cookies:
-            # The response's Set-Cookie lines reach the store through Chromium
-            # itself, not through the jar: CookieMonster accepts them while the
-            # request runs. Clearing before the request is therefore not enough
-            # -- measured, the next plain request sent sid=BBB. Clearing again
-            # after it is what makes "nor record" true.
-            slot.clear_cookies()
-            self.cookies.writing_suppressed = False
+        # No store cleanup here. A discard request ran on its own engine
+        # (_throwaway_slot), whose store no other request can reach, and that
+        # engine goes away when this frame drops its last reference -- the Core
+        # request holds its own reference for as long as the transfer runs.
+        # There used to be a slot.clear_cookies() at this point, back when the
+        # request shared the session's engine; it is what deleted other requests'
+        # cookies.
         if response.is_redirect:
             following = prepared.copy()
             following.url = urljoin(response.url, response.headers["location"])
@@ -3152,23 +3332,12 @@ class Session(BaseSession):
         """
         discard = options.get("discard_cookies")
         discard = self.discard_cookies if discard is None else discard
+        check_discard_cache_mode(discard, options.get("cache_mode"))
         lease = self._lease(prepared.url, options.get("impersonate"),
                             options.get("proxy"), options.get("proxies"),
                             options.get("verify"), options.get("http_version"))
         with lease:
-            try:
-                return self._send_on_slot(lease, prepared, options, discard)
-            finally:
-                # The mute belongs to this request and nothing else. Restoring
-                # it here rather than only on the success path is what keeps a
-                # failure -- a refused connection, a cancelled stream, an
-                # exception out of the caller's own body iterator -- from
-                # leaving the jar silently unable to reach the store again.
-                # Measured with the restore on the success path alone: after one
-                # failed discard request, every later cookie the caller set was
-                # recorded in the jar and never sent.
-                if discard:
-                    self.cookies.writing_suppressed = False
+            return self._send_on_slot(lease, prepared, options, discard)
 
     def _send_on_slot(self, lease, prepared, options, discard):
         """Performs the transfer on the pinned slot, rebuilding its store if needed.
@@ -3187,6 +3356,7 @@ class Session(BaseSession):
         # the one this request runs on: move the pin so the in-flight count
         # follows the request instead of the engine it abandoned.
         lease.rebind(slot)
+        throwaway = slot.single_use
         # After the rebind, so the certificate lands on the engine that will
         # actually open the connection rather than the one just abandoned.
         cert = self._effective_client_cert(prepared.url, options)
@@ -3196,6 +3366,37 @@ class Session(BaseSession):
         stream = bool(options.get("stream"))
         started = _now()
         follow = bool(options.get("allow_redirects", True))
+        native = None
+        try:
+            return self._transfer_on_slot(
+                slot, prepared, options, discard, throwaway, limit, stream,
+                started, follow)
+        finally:
+            if throwaway:
+                # The request is finished or has failed, and the Core holds its
+                # own reference for as long as it runs. Releasing the engine here
+                # would block this thread on the Core's network thread
+                # (core/source/engine.cc:493-521); hand it to the retire worker.
+                retire_engine_slot(slot)
+
+    def _transfer_on_slot(self, slot, prepared, options, discard, throwaway, limit,
+                          stream, started, follow):
+        """Performs the transfer. Split out so the slot can be retired on every exit.
+
+        Args:
+            slot: The engine this request runs on.
+            prepared: The prepared request.
+            options: The resolved call options.
+            discard: Whether cookies must be neither sent nor recorded.
+            throwaway: Whether *slot* is a one-request engine.
+            limit: ``max_response_bytes``, or ``None``.
+            stream: Whether the body is handed back unread.
+            started: The monotonic start time, for ``elapsed``.
+            follow: Whether Chromium follows redirects inside the request.
+
+        Returns:
+            The assembled :class:`Response`.
+        """
         native = None
         try:
             native = self._native_request(
@@ -3472,7 +3673,18 @@ class AsyncSession(BaseSession):
                  discard_cookies=False, raise_for_status=False, retry=0, cache=True,
                  user_agent=None, accept_language=None, interface=None, doh_url=None,
                  max_recv_speed=0, curl_options=None, max_engines=DEFAULT_MAX_ENGINES,
-                 response_class=None, max_clients=None):
+                 response_class=None, max_clients=None,
+                 # Everything below was appended AFTER max_clients on purpose:
+                 # this constructor has no keyword-only marker, so a parameter
+                 # inserted before an existing one silently changes what an
+                 # existing positional call means. Measured: with these eleven
+                 # placed before max_clients, AsyncSession(*([None]*37 + [8]))
+                 # -- a working call -- started binding 8 to host_mapping and
+                 # raised "host_mapping accepts a rule string ... not 8".
+                 host_mapping=None, dns_nameservers=None,
+                 doh_template=None, dns_secure_mode=None, dns_over_tls=False,
+                 dns_rotate=False, dns_padding=False, hsts_bypass=None,
+                 proxy_chain=None, platform="auto", max_sockets_per_group=0):
         BaseSession.__init__(
             self, impersonate=impersonate, proxy=proxy, proxies=proxies,
             proxy_auth=proxy_auth, verify=verify, timeout=timeout, headers=headers,
@@ -3486,7 +3698,13 @@ class AsyncSession(BaseSession):
             retry=retry, cache=cache, user_agent=user_agent,
             accept_language=accept_language, interface=interface, doh_url=doh_url,
             max_recv_speed=max_recv_speed, curl_options=curl_options,
-            max_engines=max_engines, response_class=response_class)
+            max_engines=max_engines, response_class=response_class,
+            host_mapping=host_mapping, dns_nameservers=dns_nameservers,
+            doh_template=doh_template, dns_secure_mode=dns_secure_mode,
+            dns_over_tls=dns_over_tls, dns_rotate=dns_rotate,
+            dns_padding=dns_padding, hsts_bypass=hsts_bypass,
+            proxy_chain=proxy_chain, platform=platform,
+            max_sockets_per_group=max_sockets_per_group)
         self.max_clients = max_clients
         self._gate = None
         self._gate_loop = None
@@ -3606,13 +3824,53 @@ class AsyncSession(BaseSession):
         """
         discard = options.get("discard_cookies")
         discard = self.discard_cookies if discard is None else discard
-        slot = self._resolve_cookies(lease.slot, prepared, discard)
+        check_discard_cache_mode(discard, options.get("cache_mode"))
+        if discard:
+            # The build posts to the Core's network thread and waits there
+            # (mn_engine_create -> Engine::Start, core/source/engine.cc:517-538),
+            # 3.4 ms measured. Inline that is 3.4 ms of loop stall per discard
+            # request; in an executor it is 3.4 ms of a worker thread.
+            slot = await loop.run_in_executor(
+                None, self._throwaway_slot,
+                self._discard_config(lease.slot, prepared))
+        else:
+            slot = self._resolve_cookies(lease.slot, prepared, discard)
         cert = self._effective_client_cert(prepared.url, options)
         if cert is not None:
             slot.set_client_certificate(*cert)
         # The replacement engine is the one this request runs on; move the pin so
         # the in-flight count follows the request rather than the engine it left.
         lease.rebind(slot)
+        throwaway = slot.single_use
+        try:
+            return await self._perform_on_slot(slot, prepared, options, loop, discard)
+        finally:
+            if throwaway:
+                # Dropping this engine blocks on the Core's network thread
+                # (core/source/engine.cc:493-521 posts a shutdown task and waits
+                # on a WaitableEvent). Doing that here would stall the event loop
+                # for the length of that round trip per discard request --
+                # measured 83 ms at 16 concurrent discards against 2.5 ms for the
+                # same load without discard_cookies. Hand it to the retire worker.
+                #
+                # The Core request holds its own reference to the Chromium
+                # context, so a streaming body keeps reading after this returns
+                # (AGENTS section 2, measured).
+                retire_engine_slot(slot)
+
+    async def _perform_on_slot(self, slot, prepared, options, loop, discard):
+        """Performs the transfer on *slot*, which the caller keeps alive.
+
+        Args:
+            slot: The engine this request runs on.
+            prepared: The prepared request.
+            options: The resolved call options.
+            loop: The running event loop.
+            discard: Whether cookies must be neither sent nor recorded.
+
+        Returns:
+            The assembled :class:`AsyncResponse`.
+        """
         stream = bool(options.get("stream"))
         limit = options.get("max_response_bytes")
         timeout = _split_timeout(options.get("timeout"))

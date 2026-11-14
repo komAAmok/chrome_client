@@ -1,0 +1,78 @@
+{
+  "cpu_count": 8,
+  "fixture": "http://127.0.0.1:43983",
+  "profile": "chrome_120",
+  "python": "3.12.3",
+  "rows": {
+    "async": [
+      {
+        "distinct": true,
+        "mode": "async",
+        "network_thread_ms_per_request": 0.7421874999999998,
+        "ok": 256,
+        "profile": "chrome_120",
+        "qps": 992.1569297122799,
+        "requests": 256,
+        "rss_kib_delta": 192,
+        "wall_seconds": 0.258023697999306
+      },
+      {
+        "distinct": false,
+        "mode": "async",
+        "network_thread_ms_per_request": 3.515625,
+        "ok": 256,
+        "profile": "chrome_120",
+        "qps": 256.988536216257,
+        "requests": 256,
+        "rss_kib_delta": 5220,
+        "wall_seconds": 0.9961533839959884
+      },
+      {
+        "distinct": true,
+        "mode": "async",
+        "network_thread_ms_per_request": 0.7910156250000004,
+        "ok": 1024,
+        "profile": "chrome_120",
+        "qps": 921.7828573839685,
+        "requests": 1024,
+        "rss_kib_delta": 8592,
+        "wall_seconds": 1.1108906959998421
+      },
+      {
+        "distinct": false,
+        "mode": "async",
+        "network_thread_ms_per_request": 13.388671875,
+        "ok": 1024,
+        "profile": "chrome_120",
+        "qps": 72.43154378790463,
+        "requests": 1024,
+        "rss_kib_delta": 78208,
+        "wall_seconds": 14.137486880004872
+      }
+    ],
+    "sync": [
+      {
+        "latency_ms_p50": 8.090023009572178,
+        "latency_ms_p99": 31.402088003233075,
+        "mode": "sync",
+        "network_thread_ms_per_request": 0.78125,
+        "profile": "chrome_120",
+        "qps": 835.057492196537,
+        "requests": 320,
+        "threads": 8,
+        "wall_seconds": 0.38320714799920097
+      },
+      {
+        "latency_ms_p50": 26.934134992188774,
+        "latency_ms_p99": 44.70821599534247,
+        "mode": "sync",
+        "network_thread_ms_per_request": 0.7343749999999982,
+        "profile": "chrome_120",
+        "qps": 1083.353501972865,
+        "requests": 1280,
+        "threads": 32,
+        "wall_seconds": 1.1815164650033694
+      }
+    ]
+  }
+}

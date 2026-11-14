@@ -59,7 +59,7 @@ from ._types import (
 from .adapters import BaseAdapter
 from .auth import AuthBase
 from .cookies import RequestsCookieJar
-from .engine import SessionBinding
+from .engine import EngineSlot, SessionBinding
 from .impersonate import (
     ChromeProfileName,
     ExtraFingerprints,
@@ -159,6 +159,37 @@ def normalize_max_sockets(value: int) -> int:
 
     Returns:
         The value as an int.
+    """
+    ...
+
+def retire_engine_slot(slot: Optional[EngineSlot]) -> None:
+    """Drops a throwaway engine without blocking the calling thread.
+
+    ``mn_engine_release`` posts a shutdown task to the Core's network thread and
+    waits on a WaitableEvent, so releasing inline parks whichever thread called
+    it -- for an async request that is the event loop.
+
+    Args:
+        slot: An :class:`EngineSlot` nobody else holds, or ``None``.
+    """
+    ...
+
+
+def check_discard_cache_mode(discard: bool, cache_mode: Optional[str]) -> None:
+    """Refuses cache modes a discard request cannot honour.
+
+    A ``discard_cookies`` request runs on its own engine, and an engine owns its
+    ``HttpCache`` partition, so that cache is empty by construction:
+    ``only_if_cached`` would turn a local read into a network round trip and
+    then report ``ERR_CACHE_MISS``, and ``force`` would re-fetch what it
+    promised to take from the cache.
+
+    Args:
+        discard: Whether this request asked for "neither send nor record".
+        cache_mode: The ``cache_mode=`` value, or ``None``.
+
+    Raises:
+        UnsupportedFeature: The mode reads a cache this engine cannot have.
     """
     ...
 
@@ -2484,6 +2515,17 @@ class AsyncSession(BaseSession):
         max_engines: int = 8,
         response_class: ResponseClass = None,
         max_clients: Optional[int] = None,
+        host_mapping: Optional[HostMappingRules] = None,
+        dns_nameservers: Optional[str] = None,
+        doh_template: Optional[str] = None,
+        dns_secure_mode: Optional[int] = None,
+        dns_over_tls: bool = False,
+        dns_rotate: bool = False,
+        dns_padding: bool = False,
+        hsts_bypass: Optional[str] = None,
+        proxy_chain: Optional[str] = None,
+        platform: str = "auto",
+        max_sockets_per_group: int = 0,
     ) -> None:
         """Configures the asyncio session.
 
@@ -2528,6 +2570,19 @@ class AsyncSession(BaseSession):
             curl_options: Rejected.
             max_engines: Engines kept alive per session.
             response_class: Response subclass to instantiate.
+            host_mapping: Chromium MappedHostResolver rules.
+            dns_nameservers: Resolver servers for this engine.
+            doh_template: DNS-over-HTTPS template; needs ``dns_secure_mode``.
+            dns_secure_mode: 0 system resolver, 1/2 secure DNS modes.
+            dns_over_tls: Send the resolver's queries over TLS.
+            dns_rotate: Rotate the resolver's servers.
+            dns_padding: Pad the resolver's queries.
+            hsts_bypass: Single-label hosts that skip HSTS.
+            proxy_chain: Proxy chain rules.
+            platform: UA/platform group: ``"windows"``, ``"macos"``,
+                ``"linux"`` or ``"auto"``.
+            max_sockets_per_group: Per-origin TCP connection cap; 0 keeps
+                Chromium's own limit.
             max_clients: Maximum concurrently in-flight requests; ``None``
                 leaves the gate open.
 

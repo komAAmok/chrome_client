@@ -1,0 +1,254 @@
+{
+  "concurrency": [
+    {
+      "conclusive": true,
+      "distinct": false,
+      "intra_arm_spread_qps": 8.7,
+      "mode": "async",
+      "original_median_qps": 74.9,
+      "original_qps": [
+        79.8,
+        76.7,
+        73.9,
+        71.0,
+        74.9
+      ],
+      "paired_delta_percent": -3.28,
+      "paired_ratio_median": 0.9672,
+      "patched_median_qps": 72.5,
+      "patched_qps": [
+        72.5,
+        72.8,
+        73.7,
+        70.0,
+        72.4
+      ],
+      "rounds": 5,
+      "rounds_agreeing": 5,
+      "size": 1024
+    },
+    {
+      "conclusive": false,
+      "distinct": true,
+      "intra_arm_spread_qps": 86.6,
+      "mode": "async",
+      "original_median_qps": 943.8,
+      "original_qps": [
+        1015.0,
+        945.2,
+        943.8,
+        930.4,
+        928.4
+      ],
+      "paired_delta_percent": 0.88,
+      "paired_ratio_median": 1.0088,
+      "patched_median_qps": 952.2,
+      "patched_qps": [
+        1042.6,
+        957.8,
+        952.2,
+        934.0,
+        921.8
+      ],
+      "rounds": 5,
+      "rounds_agreeing": 4,
+      "size": 1024
+    },
+    {
+      "conclusive": false,
+      "distinct": false,
+      "intra_arm_spread_qps": 22.4,
+      "mode": "async",
+      "original_median_qps": 256.0,
+      "original_qps": [
+        268.2,
+        261.3,
+        256.0,
+        251.8,
+        245.7
+      ],
+      "paired_delta_percent": -0.13,
+      "paired_ratio_median": 0.9987,
+      "patched_median_qps": 257.0,
+      "patched_qps": [
+        264.5,
+        262.2,
+        255.6,
+        250.8,
+        257.0
+      ],
+      "rounds": 5,
+      "rounds_agreeing": 3,
+      "size": 256
+    },
+    {
+      "conclusive": false,
+      "distinct": true,
+      "intra_arm_spread_qps": 61.7,
+      "mode": "async",
+      "original_median_qps": 945.0,
+      "original_qps": [
+        992.8,
+        945.0,
+        958.5,
+        932.5,
+        931.1
+      ],
+      "paired_delta_percent": 1.46,
+      "paired_ratio_median": 1.0146,
+      "patched_median_qps": 992.2,
+      "patched_qps": [
+        1007.3,
+        1002.9,
+        929.8,
+        930.1,
+        992.2
+      ],
+      "rounds": 5,
+      "rounds_agreeing": 3,
+      "size": 256
+    },
+    {
+      "conclusive": true,
+      "distinct": null,
+      "intra_arm_spread_qps": 91.3,
+      "mode": "sync",
+      "original_median_qps": 1100.3,
+      "original_qps": [
+        1177.5,
+        1122.8,
+        1086.2,
+        1091.1,
+        1100.3
+      ],
+      "paired_delta_percent": -2.48,
+      "paired_ratio_median": 0.9752,
+      "patched_median_qps": 1083.4,
+      "patched_qps": [
+        1159.9,
+        1094.9,
+        1029.4,
+        933.4,
+        1083.4
+      ],
+      "rounds": 5,
+      "rounds_agreeing": 5,
+      "size": 32
+    },
+    {
+      "conclusive": false,
+      "distinct": null,
+      "intra_arm_spread_qps": 59.8,
+      "mode": "sync",
+      "original_median_qps": 1059.5,
+      "original_qps": [
+        1108.5,
+        1075.3,
+        1059.5,
+        1048.7,
+        1048.7
+      ],
+      "paired_delta_percent": -1.36,
+      "paired_ratio_median": 0.9864,
+      "patched_median_qps": 1050.5,
+      "patched_qps": [
+        1144.6,
+        1057.7,
+        1045.1,
+        1050.5,
+        835.1
+      ],
+      "rounds": 5,
+      "rounds_agreeing": 3,
+      "size": 8
+    }
+  ],
+  "mtls": {
+    "original": [
+      {
+        "ok": 64,
+        "profile": "chrome_120",
+        "requests": 64,
+        "requests_per_second": 135.7,
+        "tcp_connections": 369,
+        "tls_handshakes": 6,
+        "wall_seconds": 0.471651
+      },
+      {
+        "ok": 64,
+        "profile": "chrome_120",
+        "requests": 64,
+        "requests_per_second": 132.9,
+        "tcp_connections": 369,
+        "tls_handshakes": 6,
+        "wall_seconds": 0.48154
+      },
+      {
+        "ok": 64,
+        "profile": "chrome_120",
+        "requests": 64,
+        "requests_per_second": 204.0,
+        "tcp_connections": 162,
+        "tls_handshakes": 24,
+        "wall_seconds": 0.313759
+      }
+    ],
+    "original_median_qps": 135.7,
+    "original_median_tcp": 369,
+    "original_qps": [
+      135.7,
+      132.9,
+      204.0
+    ],
+    "original_tcp": [
+      369,
+      369,
+      162
+    ],
+    "paired_delta_percent": 454.3,
+    "paired_ratio_median": 5.543,
+    "patched": [
+      {
+        "ok": 64,
+        "profile": "chrome_120",
+        "requests": 64,
+        "requests_per_second": 865.8,
+        "tcp_connections": 5,
+        "tls_handshakes": 5,
+        "wall_seconds": 0.073919
+      },
+      {
+        "ok": 64,
+        "profile": "chrome_120",
+        "requests": 64,
+        "requests_per_second": 736.7,
+        "tcp_connections": 5,
+        "tls_handshakes": 5,
+        "wall_seconds": 0.086868
+      },
+      {
+        "ok": 64,
+        "profile": "chrome_120",
+        "requests": 64,
+        "requests_per_second": 797.9,
+        "tcp_connections": 5,
+        "tls_handshakes": 5,
+        "wall_seconds": 0.080214
+      }
+    ],
+    "patched_median_qps": 797.9,
+    "patched_median_tcp": 5,
+    "patched_qps": [
+      865.8,
+      736.7,
+      797.9
+    ],
+    "patched_tcp": [
+      5,
+      5,
+      5
+    ],
+    "rounds": 3
+  },
+  "source": "docs/perf/ab-gate-0.2.11/raw"
+}

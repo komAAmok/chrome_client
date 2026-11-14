@@ -303,6 +303,43 @@ class DiscardCookiesIsolationTests(Base):
             self.assertNotIn("sid=ABC", discarded)
             self.assertNotIn("taste=sweet", discarded)
 
+    def test_a_discard_request_does_not_touch_another_requests_cookies(self):
+        """The defect the single-threaded tests could not see.
+
+        ``discard_cookies`` used to clear the SESSION's store, which is the same
+        thing as "this request sends nothing" only while one thread uses the
+        session. Run a plain request beside a discard request and the plain one
+        loses its cookies: measured 19 of 20 readings wrong before the fix, 0 of
+        20 after.
+        """
+        import threading
+
+        with chrome_client.Session() as session:
+            session.get(self.base + "set-cookie")   # sid=ABC
+
+            wrong = []
+
+            def discarding():
+                for _ in range(6):
+                    session.get(self.base + "set-other-cookie",   # sid=BBB
+                                discard_cookies=True)
+
+            def reading():
+                for _ in range(12):
+                    seen = session.get(self.base + "echo-cookie").text
+                    if "sid=ABC" not in seen or "BBB" in seen:
+                        wrong.append(seen)
+
+            threads = [threading.Thread(target=discarding),
+                       threading.Thread(target=reading)]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join()
+
+        self.assertEqual(wrong, [],
+                         "a discard request changed what another request sent")
+
     def test_a_discard_request_records_no_cookies(self):
         with chrome_client.Session() as session:
             session.get(self.base + "set-cookie", discard_cookies=True)

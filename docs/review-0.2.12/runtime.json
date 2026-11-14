@@ -1,0 +1,59 @@
+{
+  "context": {
+    "release": "docs/review-0.2.12+16.6b271b2.dirty",
+    "smoke_binary": "$CHROMIUM_SRC/out/MiniCronet-linux-x86_64/minicronet_smoke"
+  },
+  "environment": {
+    "core": "core/binaries/linux-x86_64",
+    "cpus": 8,
+    "machine": "x86_64",
+    "platform": "Linux-7.0.0-38-generic-x86_64-with-glibc2.39",
+    "python": "3.12.3"
+  },
+  "failures": 0,
+  "groups": {
+    "concurrency": {
+      "bench": {
+        "exit_code": 0,
+        "seconds": 2.9,
+        "status": "pass",
+        "summary": "}"
+      }
+    },
+    "fingerprint": {
+      "discard-fingerprint": {
+        "exit_code": 0,
+        "seconds": 1.5,
+        "status": "pass",
+        "summary": "discard fingerprint: 3 connections per arm, resumption is the only documented difference, cache is not shared"
+      },
+      "frozen-headers": {
+        "exit_code": 0,
+        "seconds": 0.2,
+        "status": "pass",
+        "summary": "frozen headers: 6 arms, 14 baseline fields, only documented arms move them, order pinned"
+      },
+      "wire-smoke": {
+        "exit_code": 0,
+        "seconds": 3.2,
+        "status": "pass",
+        "summary": "request cancel smoke passed"
+      }
+    },
+    "leaks": {
+      "leak-hunt": {
+        "exit_code": 0,
+        "seconds": 38.2,
+        "status": "pass",
+        "summary": "leak hunt: 13/13 shapes flat"
+      },
+      "leak-probe": {
+        "exit_code": 0,
+        "seconds": 3.6,
+        "status": "pass",
+        "summary": "leak probe: 6/6 shapes flat"
+      }
+    }
+  },
+  "seconds": 49.7
+}

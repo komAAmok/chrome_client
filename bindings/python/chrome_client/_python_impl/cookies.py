@@ -284,11 +284,7 @@ class RequestsCookieJar(cookielib.CookieJar, MutableMapping):
         #: The last URL this jar served, used as the source for a caller
         #: assignment that names no domain. Empty until a request has run.
         self.default_source = ""
-        #: When true, mutations stay in the jar and are not written through.
-        #: ``discard_cookies`` sets this for the duration of its request: the
-        #: response's cookies reach the jar (a caller reads them there) but must
-        #: not reach the store, which is the "nor record" half of the promise.
-        self.writing_suppressed = False
+
 
     # -- mutation bookkeeping ------------------------------------------------
     def set_cookie(self, cookie, *args, **kwargs):
@@ -366,7 +362,7 @@ class RequestsCookieJar(cookielib.CookieJar, MutableMapping):
             cookie: The cookie that was just stored.
             source_url: The URL it came from.
         """
-        if self._sink is None or self.writing_suppressed or not source_url:
+        if self._sink is None or not source_url:
             return
         self._sink.write_cookie(cookie, source_url)
 
@@ -378,13 +374,13 @@ class RequestsCookieJar(cookielib.CookieJar, MutableMapping):
             path: Cookie path.
             name: Cookie name.
         """
-        if self._sink is None or self.writing_suppressed:
+        if self._sink is None:
             return
         self._sink.remove_cookie(domain, path, name)
 
     def _clear_through(self):
         """Empties the sink, when one is attached."""
-        if self._sink is None or self.writing_suppressed:
+        if self._sink is None:
             return
         self._sink.clear_cookies()
 

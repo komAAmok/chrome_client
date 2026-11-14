@@ -202,5 +202,143 @@ class ClientCertificateTest(unittest.TestCase):
             chrome_client.Session(cert=123)
 
 
+class _RecordingEngine(object):
+    """Stands in for the native engine and counts the calls it receives.
+
+    The registration memo is invisible to a functional test: with it disabled
+    every assertion about WHICH certificate the server saw still passes, because
+    the Core call it skips produces the same state. What changes is how often
+    the Core is asked, and each ask closes that origin's idle connections
+    (net/socket/ssl_client_socket.cc:274-287). So the observation has to be the
+    call count, not the outcome -- measured by disabling the memo on the shipped
+    tree: all seven functional tests stayed green.
+    """
+
+    def __init__(self):
+        self.calls = []
+
+    def set_client_certificate(self, host, port, cert, key):
+        self.calls.append(("set", host, port, cert, key))
+
+    def clear_client_certificate(self, host, port):
+        self.calls.append(("clear", host, port))
+
+
+class RegistrationMemoTests(unittest.TestCase):
+    """The memo, the collapse of duplicate calls, and the clear handshake."""
+
+    def _slot(self, engine):
+        from chrome_client._python_impl.engine import EngineSlot
+        slot = EngineSlot.__new__(EngineSlot)
+        slot.engine = engine
+        slot.config = None
+        slot._lock = threading.RLock()
+        slot._inflight = 0
+        slot._applied_certs = {}
+        slot._pending_certs = {}
+        slot._cert_cond = threading.Condition(slot._lock)
+        return slot
+
+    def test_the_same_bytes_reach_the_core_once(self):
+        engine = _RecordingEngine()
+        slot = self._slot(engine)
+        for _ in range(3):
+            slot.set_client_certificate("example.test", 443, b"CERT", b"KEY")
+        self.assertEqual(len(engine.calls), 1,
+                         "every repeat refreshed the origin's connection group")
+
+    def test_a_rotation_reaches_the_core(self):
+        engine = _RecordingEngine()
+        slot = self._slot(engine)
+        slot.set_client_certificate("example.test", 443, b"CERT", b"KEY")
+        slot.set_client_certificate("example.test", 443, b"OTHER", b"KEY")
+        self.assertEqual([call[3] for call in engine.calls], [b"CERT", b"OTHER"])
+
+    def test_clearing_makes_the_next_registration_reach_the_core(self):
+        engine = _RecordingEngine()
+        slot = self._slot(engine)
+        slot.set_client_certificate("example.test", 443, b"CERT", b"KEY")
+        slot.clear_client_certificate("example.test", 443)
+        slot.set_client_certificate("example.test", 443, b"CERT", b"KEY")
+        self.assertEqual([call[0] for call in engine.calls], ["set", "clear", "set"],
+                         "a cleared certificate was skipped as if it were still live")
+
+    def test_a_second_server_is_not_covered_by_the_first(self):
+        engine = _RecordingEngine()
+        slot = self._slot(engine)
+        slot.set_client_certificate("a.test", 443, b"CERT", b"KEY")
+        slot.set_client_certificate("b.test", 443, b"CERT", b"KEY")
+        self.assertEqual(len(engine.calls), 2)
+
+    def test_overlapping_identical_calls_collapse(self):
+        engine = _RecordingEngine()
+        slot = self._slot(engine)
+        threads = [threading.Thread(
+            target=lambda: slot.set_client_certificate("example.test", 443,
+                                                       b"CERT", b"KEY"))
+                   for _ in range(8)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        self.assertEqual(len(engine.calls), 1,
+                         "8 concurrent identical registrations reached the Core "
+                         "%d times" % len(engine.calls))
+
+    def test_the_record_follows_completion_order(self):
+        """Two rotations that finish out of order must leave the Core's value.
+
+        A sequence number taken before the Core call names whichever thread
+        entered last; Chromium keeps whichever call LANDED last. When those
+        differ the record describes a certificate the Core does not hold, and
+        the next identical registration is then skipped while the stale one
+        stays live.
+        """
+        engine = _RecordingEngine()
+        original = engine.set_client_certificate
+
+        def set_with_reordered_completion(host, port, cert, key):
+            if cert == b"SLOW":
+                threading.Event().wait(0.05)
+                original(host, port, cert, key)
+                return
+            original(host, port, cert, key)
+
+        engine.set_client_certificate = set_with_reordered_completion
+        slot = self._slot(engine)
+        slow = threading.Thread(target=lambda: slot.set_client_certificate(
+            "example.test", 443, b"SLOW", b"KEY"))
+        slow.start()
+        threading.Event().wait(0.01)
+        slot.set_client_certificate("example.test", 443, b"FAST", b"KEY")
+        slow.join()
+        held = [call[3] for call in engine.calls][-1]
+        recorded = slot._applied_certs[("example.test", 443)][0]
+        self.assertEqual(recorded, held,
+                         "the record names %r while the Core holds %r"
+                         % (recorded, held))
+
+    def test_clearing_waits_for_an_in_flight_registration(self):
+        engine = _RecordingEngine()
+        original = engine.set_client_certificate
+
+        def slow_set(host, port, cert, key):
+            threading.Event().wait(0.05)
+            original(host, port, cert, key)
+
+        engine.set_client_certificate = slow_set
+        slot = self._slot(engine)
+        thread = threading.Thread(target=lambda: slot.set_client_certificate(
+            "example.test", 443, b"CERT", b"KEY"))
+        thread.start()
+        threading.Event().wait(0.01)
+        slot.clear_client_certificate("example.test", 443)
+        thread.join()
+        self.assertIsNone(slot._applied_certs.get(("example.test", 443)))
+        self.assertEqual(engine.calls[-1][0], "clear",
+                         "the clear did not perform the last Core call")
+
+
+
 if __name__ == "__main__":
     unittest.main()

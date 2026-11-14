@@ -105,6 +105,23 @@ STEPS = [
     # against the captures and the source, so they catch a table edit nobody
     # re-captured. wire-smoke is the only fingerprint check that talks to a real
     # server, which is the level ABI v8 cannot fake.
+    # The request header block had no byte-level baseline at all: profile gates
+    # compare captures and sources, and wire-smoke checks a real connection's
+    # negotiation, but nothing compared the fields a request actually carries
+    # across the cache options. Measured: cache_mode="bypass" adds
+    # "Pragma: no-cache" and "Cache-Control: no-cache", cache_mode="validate"
+    # adds "Cache-Control: max-age=0", and every other cache arm is byte-identical
+    # to the default.
+    ("fingerprint", "frozen-headers", ["python3", "tools/audit-frozen-headers.py"],
+     "needs the linux-x86_64 Core on the build host"),
+    # discard_cookies runs on its own engine, so its ClientHello carries no
+    # pre_shared_key and its HTTP cache is empty. That is a stated property of
+    # this implementation rather than a Chromium default, so it needs a baseline
+    # of its own: otherwise a change back to a shared engine would look like an
+    # improvement in the throughput and leak numbers and pass every other gate.
+    ("fingerprint", "discard-fingerprint",
+     ["python3", "tools/audit-discard-fingerprint.py"],
+     "needs the linux-x86_64 Core and openssl on the build host"),
     ("fingerprint", "wire-smoke", ["python3", "tools/run-http-smoke.py",
                                    "{smoke_binary}"],
      "needs the linux-x86_64 Core plus a built minicronet_smoke binary"),
@@ -125,7 +142,12 @@ STEPS = [
     # shapes with a per-request slope, a descriptor-kind breakdown and one shape
     # (churn-nogc) that turns the collector off on purpose.
     ("leaks", "leak-hunt", ["python3", "tools/leak-hunt.py",
-                            "--requests", "20", "--batches", "6",
+                            # 8 batches, not 6: _floor() spends one sample, and the
+                            # late window must keep LATE_WINDOW=3 points or the
+                            # slope carries no information (docs/LESSONS.md 28).
+                            # 6 batches left two, and the gate reported a real
+                            # per-request leak as flat.
+                            "--requests", "20", "--batches", "8",
                             "--repeat", "2",
                             "--out", "{release}/leak-hunt.json"],
      "needs the linux-x86_64 Core on the build host"),
@@ -135,6 +157,11 @@ STEPS = [
 NEEDS_CORE = {
     "rust-check", "rust-clippy", "rust-tests", "python36-artifact", "python-tests",
     "wire-smoke", "bench", "leak-probe", "leak-hunt",
+    # Both new fingerprint steps load the Core through the Python facade: without
+    # it they raise ImportError from _native.load(), which the runner records as
+    # "fail" rather than "unavailable". A missing prerequisite must never read as
+    # a failed assertion.
+    "frozen-headers", "discard-fingerprint",
 }
 
 
@@ -235,6 +262,30 @@ def substitute(argv, context):
     return out
 
 
+#: Used when the environment carries no PATH at all. Not a fallback for a
+#: broken one: subprocess needs something, and these are the paths a step is
+#: entitled to assume.
+DEFAULT_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+
+def prepend_path(existing, entry):
+    """Puts *entry* first in a PATH-like variable, keeping what was there.
+
+    Args:
+        existing: The current value, which may be None (the environment can
+            carry a key with a None value; os.environ.get() then returns None
+            rather than the default).
+        entry: The path to prepend.
+
+    Returns:
+        ``"<entry>:<existing>"``, or just ``"<entry>"`` when *existing* is
+        empty or None. Never contains the literal "None".
+    """
+    if not existing:
+        return str(entry)
+    return "%s%s%s" % (entry, os.pathsep, existing)
+
+
 def missing_prerequisite(argv, name, context):
     """Returns a reason when a step cannot run, or None when it can.
 
@@ -267,14 +318,19 @@ def run(argv, name, unavailable_reason, context):
     release_dir.mkdir(parents=True, exist_ok=True)
     started = time.time()
     env = dict(os.environ)
-    env.setdefault("PATH", os.environ.get("PATH", ""))
+    # setdefault() leaves an explicit None in place, and subprocess treats a
+    # None PATH as "no PATH": every step then fails with FileNotFoundError on
+    # "python3" even though the interpreter exists. Measured in this session,
+    # where os.environ carries PATH=None. The same holding-true-for-None trap
+    # applied to LD_LIBRARY_PATH and PYTHONPATH: prepending to them produced
+    # "/core:None", which puts a directory named "None" on the loader path.
+    env["PATH"] = env.get("PATH") or DEFAULT_PATH
     if CORE.is_dir():
         # Every runtime step loads the Core from here; a stale path would
         # measure a different library than the manifest describes.
-        env["LD_LIBRARY_PATH"] = "%s%s%s" % (
-            CORE, os.pathsep, env.get("LD_LIBRARY_PATH", ""))
-        env["PYTHONPATH"] = "%s%s%s" % (
-            ROOT / "bindings/python", os.pathsep, env.get("PYTHONPATH", ""))
+        env["LD_LIBRARY_PATH"] = prepend_path(env.get("LD_LIBRARY_PATH"), CORE)
+        env["PYTHONPATH"] = prepend_path(env.get("PYTHONPATH"),
+                                         ROOT / "bindings/python")
     try:
         done = subprocess.run(argv, cwd=ROOT, env=env, capture_output=True,
                               text=True, timeout=1800)

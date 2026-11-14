@@ -19,6 +19,20 @@ Core 产物 `core/binaries/linux-x86_64/libminicronet.so`（0.2.11，ABI v11）�
 `tools/leak-probe.py`（发布门禁用）与 `tools/bench-core-baseline.py`（基线）保持原样：
 它们回答「平不平」和「快不快」，本文的工具回答「为什么」和「哪一条路径」。
 
+一次改动前后的对照记录在 `docs/perf/ab-gate-0.2.11/README.md`，配套探针
+`tools/concurrency-ab.py`（并发矩阵）、`tools/mtls-concurrency.py`（mTLS 连接复用）、
+`tools/perf-ab-summary.py`（从原始 JSON 重算中位数与配对比值；`--swapped` 才给得出
+跨序列结论）、
+`tools/loop-lag-check.py`（单 URL vs 不同 URL 的 event-loop lag，T-6 的复现探针）。
+
+`leak-hunt.py` 的晚期窗口至少保留 3 个采样点（`LATE_WINDOW`）：两点永远能精确拟合，
+斜率不含信息。绝对门槛按每批请求数缩放，所以 `--requests 20` 与 `--requests 40` 的
+结论必须一致——这条由 `bindings/python/tests/test_leak_verdict.py` 守住。
+
+那份记录里有一条值得单独记住的**方法论教训**：第一序列固定「新代码先跑」，两个臂
+出现 5/5 一致的「退化」；换序复测后二者同时反号。**配对实验必须交换臂顺序**，
+否则符号检验这种看起来很硬的判据，量到的可能只是固定偏差。
+
 ---
 
 ## 0. 库的基本信息（按本仓库实测填写，不是假设）

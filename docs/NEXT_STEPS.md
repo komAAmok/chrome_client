@@ -90,6 +90,32 @@ python3 tools/audit-core-payloads.py
 python3 tools/record-core-build-args.py --check
 ```
 
+### 0.2.12 的实测结果
+
+九个平台全部用 0.2.12 重建，`CHROMIUM_REVISION` 与 ABI 11 都不变：
+
+| target | 大小 |
+| --- | --- |
+| linux-x86_64 | 8,658,480 |
+| linux-x86 | 8,258,520 |
+| linux-arm64 | 8,302,752 |
+| linux-armv7 | 6,247,152 |
+| macos-x86_64 | 8,135,664 |
+| macos-arm64 | 7,476,544 |
+| windows-x86_64 | 9,624,064 |
+| windows-x86 | 7,662,080 |
+| windows-arm64 | 8,321,536 |
+
+`tools/audit-core-binaries.sh` 逐个核对版本串为 `minicronet/0.2.12`；
+`audit-core-size-ceilings.py` 三个平台族的余量分别 2.05% / 2.00% / 1.98%；
+`audit-core-payloads.py` 27 组 payload 逐字节一致；`record-core-build-args.py --check`
+九个快照全部匹配。
+
+构建机的两个环境前提，写在 `docs/BUILD.md` 里：`rg` 必须可用（`RG=` 可覆盖），
+以及交叉构建需要 `CHROMIUM_TOOLCHAIN` / `XWIN_ROOT` / `OSXCROSS_TARGET` 三个变量——
+它们的默认值从 `$HOME` 推导，而本会话的 `HOME` 为空，所以第一次交叉构建把路径解析成
+`/chromium/...` 并失败。显式传这三个变量后全部通过。
+
 ### 0.2.11 的实测结果
 
 | 平台 | 产物 | 大小 |
@@ -771,6 +797,41 @@ mn_request_await_head(mn_request_t *request, uint64_t timeout_ms,
 - `body` 指针只在调用期间有效，与现有 `on_body` 的契约一致，不新增生命周期规则。
 - 流式路径（`stream=True`）不受影响：它本来就不该等 body。
 - 不改任何既有导出符号，旧调用方零改动。
+
+### 五、`discard_cookies` 的重定向跳仍会带上本请求自己设的 cookie（登记缺陷）
+
+`discard_cookies=True` 的 promise 是「这次请求不发送、不记录 cookie」。实测一个 302 链：
+第一跳回 `Set-Cookie: hop=SENT`，**第二跳把 `hop=SENT` 发出去了**（服务端读到
+`['hop=SENT']`）。会话 jar 事后仍然是空的，所以「不记录」成立，「不发送」只对第一跳成立。
+
+原因在 Chromium 侧而不是实现：一次 `URLRequest` 跟随重定向时用的是同一个
+`URLRequestContext`，`CookieMonster` 在第一跳之后已经接受了那条 cookie，第二跳由
+`URLRequestHttpJob::AddCookieHeaderAndStart` 正常附加
+（`net/url_request/url_request_http_job.cc:761`）。换引擎只能隔离「跨请求」，隔不开
+「同一次请求的两个跳」。
+
+要修只能在 Core 加 per-hop 的 cookie 抑制，而 M156 没有这个开关
+（`docs/TBD_VERIFICATION.md` T-1 已证：`LOAD_DO_NOT_SEND_COOKIES` M87 删除，
+`set_disallow_credentials` 连带改隐私模式与客户端证书）。**在此之前应当写进
+`discard_cookies` 的 docstring 与 README 的已知限制**，而不是让它继续作为未文档化的
+行为差异存在。改动前的那一版也是同样的行为（已用 HEAD 树实测），所以它不是本轮引入的。
+
+---
+
+### 四、`kCurrentChromiumMajor = 157` 与产物 M156 不一致（登记缺陷，不是疑问）
+
+`core/source/minicronet.cc:102` 写的是 `157`，而 `core/binaries/*/libminicronet.*` 是从
+`58bcc148f76`（= **M156.0.8078.31**，`chrome/VERSION` 与 `manifest.json` 都这么写）构建的。
+
+**这是指纹面，不是文案问题**：`impersonate=None` 时 UA 由这个常量拼出来
+（`core/source/minicronet.cc:149`），于是默认会话宣称 `Chrome/157.0.0.0`，而同一连接的
+TLS/H2/H3 参数来自 M156。所有命名 profile 不受影响——它们从 profile 表拿 UA。
+
+处置：Core 里那个常量必须由构建时读到的 `chrome/VERSION` 生成，或与 `CHROMIUM_REVISION`
+一起校验；在此之前 `audit-profile-evidence.py` 已经比对 revision，但没有任何门禁比对这个
+常量。它在本次审查的 diff 之外，登记在此而不是随这次改动一起动。
+
+---
 
 ### 三、提案 2：批量唤醒投递
 

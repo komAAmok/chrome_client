@@ -37,7 +37,12 @@ class _Server(unittest.TestCase):
                 self.send_header("Content-Length", str(len(body)))
                 self.send_header("Content-Type", "application/json")
                 if self.path.startswith("/set"):
-                    self.send_header("Set-Cookie", "sid=v; Path=/")
+                    value = "v"
+                    if "?" in self.path:
+                        from urllib.parse import parse_qs, urlsplit
+                        value = parse_qs(urlsplit(self.path).query).get(
+                            "value", ["v"])[0]
+                    self.send_header("Set-Cookie", "sid=%s; Path=/" % value)
                 self.end_headers()
                 try:
                     self.wfile.write(body)
@@ -265,17 +270,36 @@ class PerRequestCookieCostTests(_Server):
                 session.get(self.base + "/echo")))
 
     def test_discard_cookies_still_isolates(self):
+        """Neither send nor record -- for THIS request, and only this one.
+
+        The earlier version of this test asserted that the session's own cookie
+        was gone after a discard request. That is the defect, not the contract:
+        it passed because the discard cleared the session's shared store
+        (sessions.py, _resolve_cookies), which also deleted the cookies of every
+        other request in flight. Measured with a plain request running beside a
+        discard request: 19 of 20 readings of the plain request's Cookie header
+        were wrong.
+
+        What is asserted now is both halves against the value the discard request
+        itself set, so neither can pass for the wrong reason.
+        """
         import chrome_client
 
         with chrome_client.Session() as session:
-            session.get(self.base + "/set")
+            session.get(self.base + "/set?value=KEEP")
+            self.assertEqual(self.wire_cookie(session.get(self.base + "/echo")),
+                             "sid=KEEP")
             discarded = self.wire_cookie(
-                session.get(self.base + "/echo", discard_cookies=True))
+                session.get(self.base + "/set?value=DROP", discard_cookies=True))
             self.assertIsNone(discarded,
                               "discard_cookies must send no Cookie header")
-            self.assertIsNone(self.wire_cookie(session.get(self.base + "/echo")),
-                              "the discarded request's Set-Cookie reached the "
-                              "store")
+            after = self.wire_cookie(session.get(self.base + "/echo"))
+            self.assertEqual(after, "sid=KEEP",
+                             "a discard request must leave the session's store "
+                             "exactly as it found it")
+            self.assertNotIn("DROP", after,
+                             "the discarded request's Set-Cookie reached the "
+                             "store")
 
 
 if __name__ == "__main__":

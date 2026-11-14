@@ -73,8 +73,14 @@ pyproject，**漏掉了 Core 自己这一份**。
 **规则**：本项目对外的核心承诺是「无法忠实实现就显式报错，而不是静默忽略」。
 凡是被这个承诺覆盖的选项，必须在**两个存储/两层实现**上都生效，否则报错。
 
-**门禁**：`discard_cookies` 现在切换到一个空 cookie store 的同配置 Engine；
-回归测试断言 store 里的 cookie 也不得发出。
+**门禁**：`discard_cookies` 现在把该请求放到一个**一次性 Engine** 上
+（`sessions.py`，`_throwaway_slot`），它的 store 只有这一次请求能看见。
+
+> 更正（2026-11）：这一条此前写的是"切换到一个空 cookie store 的同配置 Engine"，
+> 而代码在 ABI v9 之后改成了`slot.clear_cookies()` **原地清空会话共享的 store** +
+> 会话级 `writing_suppressed`。单线程下两者等价，并发下不等价：实测一个普通请求与一个
+> `discard_cookies` 请求并行时，20 次读里 19 次拿到错误的 `Cookie` 头（别人的值或空）。
+> 见 §43 后面的补记与本轮审计报告 P0-2。回归测试只覆盖了单线程，所以当时全绿。
 
 ---
 
@@ -571,6 +577,45 @@ early return」与「删掉」在**所有 pinned profile** 上等价，且不会
 
 **教训**：这一条是被自己踩出来的——同一份文件里既记录着「变异测试后要恢复原状」，也
 因为恢复手段选错而丢了内容。
+## 泄漏门禁的「晚期窗口」只有两个点时，它什么也证明不了
+
+`tools/leak-hunt.py` 的判据分两步：先用 `_floor()` 取相邻采样的最小值去掉单次抖动，
+再对**后半段**拟合斜率——前半段是缓存预热，后半段才看得出「是否每个请求都在涨」。
+
+缺陷是这两步的次序：`half = max(2, len(samples) // 2)` 用的是 **floor 之前**的长度，
+`5 // 2 = 2`；而 `_floor()` 已经把 6 个采样点变成 5 个，于是 `fds[2:]` 只剩 **3** 个点，
+再往下 `xs[2:]` 与 `fds[2:]` 长度不等时更是只剩 **2** 个。两个点永远能精确拟合一条直线，
+斜率因此不含任何信息，判据退化成只剩绝对门槛。
+
+后果是**两个方向都错**，而且漏报那一侧更严重：
+
+| 输入（fd 序列） | 应判 | 修复前 | 修复后 |
+| --- | --- | --- | --- |
+| `9,12,15,18,21,24`（每批 +3，真实泄漏） | 泄漏 | **flat** | `grows:fd` |
+| `9,9,9,9,9,12`（末尾开了一条连接） | flat | flat | flat |
+| `9,12,15,15,15,15`（缓存填满后收敛） | flat | flat | flat |
+
+**这是打 tag 前那次 review 里 `leak-hunt 12/13` 的真正来源**：门禁自己抖动，而不是被测
+对象泄漏。同一份代码、同样的参数连跑 4 次都是 13/13，正是因为失效窗口在真实序列上
+只有偶尔才落进「看起来涨」的形状。
+
+修复两条：
+
+1. `half` 按 **floor 之后**的长度算，且 `LATE_WINDOW = 3` 保底——两点拟合没有自由度，
+   三点才有。
+2. 绝对门槛按每批请求数缩放（`absolute_floors()`）。它是「一个连接 / 一个 arena」的
+   量级，而 `--requests 20` 时一个 0.05 fd/请求 的真实泄漏每批只移动 1 个描述符，
+   固定门槛 3 会把它整个吃掉。下限仍是 3 / 2048 KiB，所以任何批量下抖动都不够格。
+
+**教训**：一个判据在两次运行里给不同答案时，先怀疑判据，再怀疑被测对象。当时如果直接
+把 `12/13` 记成「偶发、可复现不了」就发布，这个门禁会继续在真实泄漏上保持沉默。
+
+回归：`bindings/python/tests/test_leak_verdict.py`（8 条）直接调用 `judge()`，不复述
+它的算术——第一版测试自己重写了切片，把缺陷抄了一遍，因此杀不掉变异。把 `half` 改回
+旧算式后 `test_the_verdict_does_not_depend_on_the_batch_size` 立刻红（`flat` != `grows:fd`）。
+
+---
+
 ## 29. 一个会话里「每次请求都换配置」会悄悄退化成每次新建一条连接
 
 **现象**：代理池跑一段时间后大量 `ERR_PROXY_CONNECTION_FAILED`(-130) 与
@@ -1523,3 +1568,80 @@ manifest 也是完全自洽的。这正是 chrome_152 的 28 vs 32 能活过一�
 
 **教训**：静态一致和运行验证是两个不同的命题，中间没有捷径。把前者做成门禁能挡住
 「陈旧产物」这一类真实缺陷，但它不能替代后者——文档里必须把两者分开写。
+
+---
+
+## 49. 共享状态被当成本地状态：两处 P0 是同一个形状
+
+**现象**：两个各自独立、都通过单线程测试的机制，在并发下把状态改到了别人的请求上。
+
+| 机制 | 单线程表现 | 并发表现 |
+| --- | --- | --- |
+| `cert=` 每请求重新注册 | 正确，只是慢 | 正确，但每个请求都刷新该 origin 的连接组，连接池与 H2 复用被摧毁 |
+| `discard_cookies=True` | 正确 | 清掉**别的**请求的 cookie，并置会话级 mute 把别人的写入也吞掉 |
+
+**根因**：两者的状态本该属于「这一次请求」或「这个引擎」，却被存放在「这个会话」上。
+`cert=` 的「已注册」没有记录，于是每次调用都得当作首次；`discard` 的「不发送不记录」
+没有每请求表达，于是用「先把世界抹掉」当作等价物。
+
+Chromium 侧的原因各有一句源码可依：
+
+- `SSLClientContext::SetClientCertificate` 同步调 `NotifySSLConfigForServersChanged`
+  （`net/socket/ssl_client_socket.cc:274-287`），后者让 `HttpStreamPool` 刷新该 origin
+  的连接组。函数本身没错，错的是把它放在每请求热路径上。
+- `CookieMonster` 是 per-context 单例，`Cookie` 头由 `URLRequestHttpJob` 自己附加
+  （`net/url_request/url_request_http_job.cc:761-838`），请求层面没有「这次别带」的开关
+  ——除非走 `allow_credentials` / `LOAD_DO_NOT_SAVE_COOKIES`，而 ABI v11 没有把它们
+  暴露出来。
+
+**规则**：
+
+- 一个判断「要不要做」的成本，必须和「做了之后影响多大」一起看。重注册证书的代价不是
+  一次 PEM 解析，是**该 origin 的所有空闲连接被关掉**。
+- 用「清空共享状态」实现「这次不用状态」时，必须先回答：还有谁在读它。答不上来就别写。
+
+**门禁**：
+
+- `EngineSlot._applied_certs`：同一 (host, port) 的相同字节只注册一次，记录按 **Core 调用
+  完成的顺序**提交（最后返回的那次就是 Chromium 保留的那次）；`_pending_certs` 让同一个
+  值的并发调用合并成一次 Core 调用，`clear_client_certificate` 等待在飞的注册。
+  回归：`test_client_certificates.RegistrationMemoTests`（7 条）。**这 7 条是必须的**：
+  把记忆化短路掉之后，原来的 7 条功能测试全绿——它们断言的是"服务器看到了哪张证书"，
+  而那件事在不记忆化时也成立。**变异测试**：`if self._applied_certs.get(key) == value:`
+  改成 `if False:` → `test_the_same_bytes_reach_the_core_once` 立刻红（3 != 1）。
+- `discard_cookies` 走 `_throwaway_slot`：该请求的引擎不可从缓存到达，store 无人共享。
+  回归：`test_session_defects.DiscardCookiesIsolationTests`，新增一条并发用例。
+  **变异测试**：把实现改回 `slot.clear_cookies()` → 新用例立刻失败并打印 `[sid=BBB]`；
+  补丁下 20 次读 0 次错，补丁前 19/20 错（独立探针）。
+
+**顺序那一层不是过度设计，但方向必须是"完成顺序"**：两个线程为同一个 server 注册
+**不同**证书时，Core 调用的完成顺序可能与取锁顺序相反。第一版实现用"调用前取号、号大者写"，
+在那种交错下会把记录写在**先完成的那张**上——而 Core 实际保留的是后完成的那张。
+实测（假引擎复现同一交错）：`core_holds=CERT_X`、`record_says=CERT_Y`、
+`record_matches_core=false`，且下一次**相同**的 CERT_Y 注册被跳过（Core 调用 0 次），
+服务器继续看到 CERT_X。改成"谁完成谁落地"之后两者一致。
+
+**没有被测到的东西写进代码就是未经验证**：上面这段交错在本轮之前没有任何测试覆盖，
+因为它要求 Core 调用乱序完成，功能测试构造不出来。`RegistrationMemoTests` 用假引擎直接
+指定完成顺序，这是这类缺陷唯一能稳定复现的形状。
+
+**代价（写在明处）**：`discard_cookies=True` 每个请求多一次上下文构建并自带一条连接，
+因此**不复用 TLS 会话、不共享 HTTP 缓存**。实测分三段：`EngineConfig.build()` 2.36–4.04 ms、
+拆除 2.16–3.51 ms、以及一次全握手（`session_reused=False`，ClientHello 无 `pre_shared_key`）。
+构建已挪到 `run_in_executor`、拆除已挪到 `retire_engine_slot` 的后台线程，所以这些耗时不再
+落在事件循环上：16 并发 discard 的 loop 停摆从 83 ms 降到 9.5 ms（同负载无 discard 为 2.8 ms）。
+这是 fail-closed 的正当成本，也是指纹面上必须具名的代价（`tools/audit-discard-fingerprint.py`）。
+
+**这条代价短期消不掉，原因是查证过的**（见 `docs/TBD_VERIFICATION.md` T-1）：
+
+- `net::LOAD_DO_NOT_SEND_COOKIES` **在 M87 就被删了**（M86 还有，`1 << 8`）。
+  仓库 Core 是 M156，所以「给 ABI 加一个抑制字段」没有对应的 Chromium 机制可用。
+- M156 里唯一的 per-request 入口是 `URLRequest::set_disallow_credentials()`，但它
+  同时置 `LOAD_DO_NOT_SAVE_COOKIES`，并在 `DeterminePrivacyMode()` 里把请求降级成
+  `PRIVACY_MODE_ENABLED(_WITHOUT_CLIENT_CERTS)`——**会连带改掉客户端证书行为**。
+  用它实现 `discard_cookies`，等于让「不带 cookie」顺带变成「不带客户端证书」。
+- 所以「换一个 store」不是权宜之计，而是当前唯一只影响 cookie 的开关：`CookieMonster`
+  是 per-context 单例，没有 per-request 的删改入口。
+
+**教训**：不要写「等 ABI 加上就能消掉」这种话——它把一个尚未查证的假设写成了路线图。
+本轮就是照这句话去查 T-1 的，结果三条前提全不成立。

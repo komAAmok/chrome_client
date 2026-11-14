@@ -137,5 +137,69 @@ class CloseReleasesTheEngineTests(_Server):
                              % grown)
 
 
+class SlotOwnershipTests(_Server):
+    """Only an engine no cache owns may be released with its request.
+
+    ``discard_cookies=True`` runs on a throwaway engine and hands it to a retire
+    worker as soon as the request ends. Deciding "throwaway" by asking the cache
+    whether it still holds the slot is wrong, because EVICTION answers the same
+    way: measured with ``max_engines=1``, building a second configuration evicts
+    the first, the evicted slot is no longer findable, and the request still
+    running on it would have its engine torn down underneath it. The slot now
+    carries the answer instead of having it inferred.
+    """
+
+    def test_an_evicted_pooled_slot_is_not_single_use(self):
+        session = chrome_client.Session(max_engines=1)
+        try:
+            first = session._engine_config(None, None, None, None)
+            second = session._engine_config(None, None, False, None)
+            pooled = session._engines.get(first)
+            self.assertFalse(pooled.single_use)
+            replacement = session._engines.get(second)
+            self.assertIsNot(pooled, replacement)
+            self.assertFalse(pooled.single_use,
+                             "an evicted pooled slot was marked single-use, so the "
+                             "request still running on it would lose its engine")
+            self.assertIsNotNone(pooled.engine,
+                                 "eviction released an engine a request may still use")
+        finally:
+            session.close()
+
+    def test_a_throwaway_slot_is_single_use(self):
+        session = chrome_client.Session()
+        try:
+            config = session._engine_config(None, None, None, None)
+            session._engines.get(config)
+            throwaway = session._throwaway_slot(config)
+            self.assertTrue(throwaway.single_use)
+            self.assertIsNot(throwaway, session._engines.get(config),
+                             "a throwaway slot came from the cache")
+        finally:
+            session.close()
+
+    def test_releasing_a_slot_twice_is_harmless(self):
+        session = chrome_client.Session()
+        try:
+            config = session._engine_config(None, None, None, None)
+            slot = session._throwaway_slot(config)
+            slot.release_engine()
+            slot.release_engine()
+            self.assertIsNone(slot.engine)
+        finally:
+            session.close()
+
+    def test_a_discard_request_leaves_a_pooled_engine_usable(self):
+        """The pooled engine must survive a discard request that ran beside it."""
+        with chrome_client.Session() as session:
+            session.get(self.base + "/keep")
+            pooled = session._engines.get(
+                session._engine_config(None, None, None, None))
+            session.get(self.base + "/discard", discard_cookies=True)
+            self.assertIsNotNone(pooled.engine,
+                                 "a discard request released the pooled engine")
+            self.assertEqual(session.get(self.base + "/again").status_code, 200)
+
+
 if __name__ == "__main__":
     unittest.main()

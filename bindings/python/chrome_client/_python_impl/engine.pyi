@@ -390,15 +390,34 @@ class EngineSlot:
     engine: Any
     config: EngineConfig
 
-    def __init__(self, engine: Any, config: EngineConfig) -> None:
+    def __init__(self, engine: Any, config: EngineConfig,
+                 single_use: bool = False) -> None:
         """Pairs an engine with its configuration.
 
         Args:
             engine: The native engine.
             config: The configuration it was built from.
+            single_use: Whether no cache owns this slot, i.e. it was built for
+                one request and may be released as soon as that request ends.
         """
         ...
 
+
+    @property
+    def single_use(self) -> bool:
+        """True when no cache owns this slot.
+
+        Returns:
+            ``True`` for an engine built for one discard request.
+        """
+        ...
+
+    def release_engine(self) -> None:
+        """Drops the native engine reference, which is what frees the context.
+
+        Idempotent, so a slot that reached the retire queue twice cannot raise.
+        """
+        ...
     @property
     def binding(self) -> SessionBinding:
         """The transport context this slot reproduces.

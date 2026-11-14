@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Finds which request shape grows, by how much per request, and where.
 
-tools/leak-probe.py answers "flat or not" over two batches for five shapes, which
+tools/leak-probe.py answers "flat or not" over two batches for six shapes, which
 is what a release gate needs. It cannot answer the next three questions, and they
 are the ones that lead to a fix:
 
@@ -220,6 +220,28 @@ def measure(shape, url, count, batches, python, timeout):
     if not lines:
         return {"shape": shape, "status": "crash", "reason": "no output"}
     samples = json.loads(lines[-1])["samples"]
+    record = judge(samples, count)
+    record["shape"] = shape
+    record["status"] = "ok"
+    return record
+
+
+def judge(samples, count):
+    """Turns one run's raw samples into a verdict.
+
+    Extracted so the arithmetic can be tested without starting a subprocess:
+    the window bug this function exists to prevent lived here, and a test that
+    reimplements the slicing cannot catch a regression in it.
+
+    Args:
+        samples: ``[{"fds": int, "rss_kib": int, "threads": int,
+            "fd_kinds": dict}, ...]``, one per batch.
+        count: Requests per batch.
+
+    Returns:
+        The per-run record, including ``verdict``.
+    """
+    set_requests_per_batch(count)
     xs = [i * count for i in range(len(samples))]
     # The floor of each pair of consecutive samples, not the raw series. A leak
     # raises the floor; a batch whose sockets have not finished closing raises one
@@ -239,7 +261,17 @@ def measure(shape, url, count, batches, python, timeout):
     # The whole-run slope cannot tell those apart when the warmup is included, so
     # the verdict uses the slope of the second half, where a converging series is
     # already flat.
-    half = max(2, len(samples) // 2)
+    # The late window must keep at least three points. Two points always fit a
+    # line exactly, so the slope carries no information: measured, a series of
+    # nine descriptors rising by three per batch -- a real per-request leak --
+    # and a series that merely opened one connection at the end both produced
+    # "flat", because _floor() turns six samples into five and half of six is
+    # three, leaving two.
+    #
+    # Splitting AFTER the floor and on the floor length is what fixes it; the
+    # old code split on len(samples) and then sliced the shorter floor list,
+    # which silently shortened the window it had just chosen.
+    half = max(0, len(fds) - max(LATE_WINDOW, len(fds) // 2))
     late_xs = xs[half:]
     late_fds, late_rss, late_threads = fds[half:], rss[half:], threads[half:]
     late_fd = H.slope_per_unit(late_fds, late_xs)
@@ -253,10 +285,8 @@ def measure(shape, url, count, batches, python, timeout):
     kind_slopes = {name: H.slope_per_unit(values, xs) for name, values in kinds.items()}
 
     return {
-        "shape": shape,
-        "status": "ok",
         "requests_per_batch": count,
-        "batches": batches,
+        "batches": len(samples),
         "fd_series": fds,
         "rss_kib_series": rss,
         "threads_series": threads,
@@ -295,6 +325,47 @@ def _floor(series):
             for index in range(len(series) - 1)]
 
 
+#: Points the late window must keep. Three is the minimum that leaves the slope
+#: with a degree of freedom; two always fit a line exactly.
+LATE_WINDOW = 3
+
+#: Requests per batch of the run being judged, used to scale the absolute floors.
+#: Kept in a module global rather than threaded through every call because the
+#: verdict function is also called by hand from the reproducer and from tests,
+#: where the default is the right answer.
+_REQUESTS_PER_BATCH = 40
+
+
+def set_requests_per_batch(count):
+    """Records the batch size that `absolute_floors` should scale against.
+
+    Args:
+        count: Requests per batch of the run about to be judged.
+
+    Returns:
+        ``None``.
+    """
+    global _REQUESTS_PER_BATCH
+    _REQUESTS_PER_BATCH = max(1, int(count))
+
+
+def absolute_floors():
+    """Returns the (fd, rss_kib, threads) absolute floors for this batch size.
+
+    The floors answer "how much must the series move before a slope is credible",
+    and the credible amount scales with how many requests one step of the series
+    represents. A leak of 0.05 descriptors per request moves a 20-request batch
+    by one descriptor and a 40-request batch by two, so a floor fixed at three
+    descriptors hides the first and barely admits the second.
+
+    Returns:
+        Three ints. Never below the one-connection / one-arena minimums, so a
+        wiggle at any batch size still needs a real magnitude to be reported.
+    """
+    scale = max(1.0, _REQUESTS_PER_BATCH / 40.0)
+    return max(3, int(round(3 / scale))), max(2048, int(round(2048 / scale))), 2
+
+
 def verdict(fd_slope, rss_slope, thread_slope,
             fd_abs=0, rss_abs=0, thread_abs=0) -> str:
     """A cache converges, a leak does not: the late slope is the discriminator.
@@ -315,11 +386,18 @@ def verdict(fd_slope, rss_slope, thread_slope,
     allocator arena's worth of RSS.
     """
     signals = []
-    if (fd_slope is not None and fd_slope > 1e-3) and fd_abs >= 3:
+    # The absolute floors are one connection and one allocator arena, which is
+    # what the DEFAULT batch size of 40 requests produces. They scale with the
+    # batch size because the quantity being judged is per-request: at 20 requests
+    # per batch a genuine leak of 0.05 fds per request moves the series by one
+    # descriptor per batch, and a fixed floor of three would need three batches
+    # of late window to see it at all.
+    fd_floor, rss_floor, thread_floor = absolute_floors()
+    if (fd_slope is not None and fd_slope > 1e-3) and fd_abs >= fd_floor:
         signals.append("fd")
-    if (rss_slope is not None and rss_slope > 1.0) and rss_abs >= 2048:
+    if (rss_slope is not None and rss_slope > 1.0) and rss_abs >= rss_floor:
         signals.append("rss")
-    if (thread_slope is not None and thread_slope > 1e-3) and thread_abs >= 2:
+    if (thread_slope is not None and thread_slope > 1e-3) and thread_abs >= thread_floor:
         signals.append("threads")
     return "grows:" + ",".join(signals) if signals else "flat"
 

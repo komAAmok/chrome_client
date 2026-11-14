@@ -129,16 +129,18 @@ C++ Core 侧已补上（见 `docs/FORK_SAFETY_PATCH.md`）。Python 侧只有两
 （`SessionBinding`：profile / 代理 / 代理凭据 / TLS 校验 / CA / UA / Accept-Language /
 协议钉 / HTTP cache / profile namespace）。它同时就是 Engine 缓存键，所以
 「两条请求是否共享连接池、TLS 会话缓存、H2/H3 会话池」从推断变成 `==` 比较。
-`generation`（cookie store 换代）**不在** binding 里，它是缓存键的附加项，不会
-污染传输身份。
-
-
-- `EngineConfig` 的 `__hash__`/`__eq__` 用 `(impersonate, proxy, verify, ca_pem, user_agent,
-  accept_language, proxy_*, http_version, cache, profile_namespace, generation)` 作 key。
+- `EngineConfig` 的 `__hash__`/`__eq__` 用 `engine.BINDING_FIELDS` 的 22 个字段作 key
+  （`bindings/python/chrome_client/_python_impl/engine.py:48-54`）。
 - 因此**同一个 profile 永远命中同一个 Engine**，TLS ClientHello/GREASE、ALPN、H2 SETTINGS、
   H3 参数、QUIC 版本全部由该 Engine 的 URLRequestContext 固定下来，**并发下不会串**。
 - 越界 profile / 非 Chromium 家族显式抛 `ImpersonateError`，不静默降级。
-- 唯一"偏移"来源是 `generation`（清 cookie 时 +1 换引擎），属于预期行为。
+
+> 更正（2026-11）：这段此前写着「`generation` 是缓存键的附加项」「清 cookie 时 +1 换引擎」。
+> `generation` 已经不存在了——ABI v9 让 jar 成为 `CookieMonster` 的视图，不再有"两份存储
+> 对账"，那个计数器、那个键维度和所有 +1 的路径一起被删掉（`engine.py:278`）。
+> 当前只有一处"换引擎"：`discard_cookies=True` 的请求跑在自己的引擎上（见下一条）。
+> 其余路径都不换：`clear()` / `discard()` 只把槽从缓存里摘掉，在飞请求继续跑在原上下文上；
+> `max_engines` 溢出时发生的是淘汰，不是换引擎。
 
 ## 四、速度 —— ✅ 结构合理，2026-11 又削掉两处复制
 
@@ -196,11 +198,16 @@ C++ Core 侧已补上（见 `docs/FORK_SAFETY_PATCH.md`）。Python 侧只有两
      子进程不要复用父进程的 Session。
    - 📌 短期规避（对未升级的 so 仍适用）：任何工作进程在 fork 之后才 import
      chrome_client / 建 Session。
-2. ~~**P2 — Cookie mirror 非线程安全**~~ **已修复（Session 重构）**：`BaseSession` 新增
-   `_cookie_lock`，`_resolve_cookies` 的「读 jar → 读 mirror → 比对 → 换 generation」
-   与 `_absorb_cookies` 的三 jar 更新都在锁内完成；`EngineSlot` 自己再持一把锁保护
-   mirror。回归测试 `test_cookie_resolution_never_runs_in_parallel` 用真 GIL 释放
+2. ~~**P2 — Cookie mirror 非线程安全**~~ **已不存在**：mirror 随 ABI v9 一起删掉了
+   （`engine.py`，`EngineSlot` 的 docstring：「There is no mirror any more」）。现在
+   `_resolve_cookies` 只做 `discard_cookies` 的判断和每请求 `cookies=` 的 store 写入，
+   两者都在 `_cookie_lock` 内；`_absorb_cookies` 的 jar 更新同锁。
+   回归测试 `test_cookie_resolution_never_runs_in_parallel` 用真 GIL 释放
    （`time.sleep`）测重叠，把锁去掉即失败。
+2b. **P0 — `discard_cookies` 在并发下改动别人的 cookie**（本次修复）：它原来
+   `slot.clear_cookies()` 清会话共享的 store，并置会话级 `writing_suppressed`。
+   实测并发下 20 次读里 19 次拿到错误值。现在该请求跑在一次性引擎上
+   （`sessions.py`，`_throwaway_slot`），store 不可达，会话标志已删除。
 3. **P2 — 流式 body 弃置依赖 `__del__`**：非 CPython 解释器（PyPy）下回收延迟，可能短暂
    占用 Core 请求。可给 `Response.close()` 提供显式通道并鼓励调用。
 4. **信息 — 单 IO 线程 + HTTP/1.1 每 host 6 连接**：Chromium 固有，不算缺陷，但要写进

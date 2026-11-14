@@ -1,0 +1,168 @@
+{
+  "concurrency": [
+    {
+      "conclusive": false,
+      "distinct": false,
+      "intra_arm_spread_qps": 3.6,
+      "mode": "async",
+      "original_median_qps": 71.6,
+      "original_qps": [
+        68.9,
+        72.5,
+        71.6,
+        71.4,
+        71.7
+      ],
+      "paired_delta_percent": 0.4,
+      "paired_ratio_median": 1.004,
+      "patched_median_qps": 71.7,
+      "patched_qps": [
+        69.9,
+        71.5,
+        71.7,
+        71.7,
+        72.9
+      ],
+      "rounds": 5,
+      "rounds_agreeing": 4,
+      "size": 1024
+    },
+    {
+      "conclusive": false,
+      "distinct": true,
+      "intra_arm_spread_qps": 44.8,
+      "mode": "async",
+      "original_median_qps": 918.1,
+      "original_qps": [
+        920.8,
+        928.5,
+        883.7,
+        918.1,
+        904.4
+      ],
+      "paired_delta_percent": -1.82,
+      "paired_ratio_median": 0.9818,
+      "patched_median_qps": 901.9,
+      "patched_qps": [
+        861.1,
+        901.9,
+        922.5,
+        901.4,
+        924.6
+      ],
+      "rounds": 5,
+      "rounds_agreeing": 3,
+      "size": 1024
+    },
+    {
+      "conclusive": false,
+      "distinct": false,
+      "intra_arm_spread_qps": 15.0,
+      "mode": "async",
+      "original_median_qps": 252.4,
+      "original_qps": [
+        241.3,
+        253.8,
+        256.4,
+        252.4,
+        252.4
+      ],
+      "paired_delta_percent": 1.21,
+      "paired_ratio_median": 1.0121,
+      "patched_median_qps": 249.2,
+      "patched_qps": [
+        249.2,
+        231.4,
+        259.5,
+        236.9,
+        262.2
+      ],
+      "rounds": 5,
+      "rounds_agreeing": 3,
+      "size": 256
+    },
+    {
+      "conclusive": false,
+      "distinct": true,
+      "intra_arm_spread_qps": 87.8,
+      "mode": "async",
+      "original_median_qps": 912.3,
+      "original_qps": [
+        996.1,
+        991.1,
+        912.3,
+        908.3,
+        911.5
+      ],
+      "paired_delta_percent": -3.92,
+      "paired_ratio_median": 0.9608,
+      "patched_median_qps": 926.0,
+      "patched_qps": [
+        923.3,
+        952.2,
+        962.0,
+        926.0,
+        857.9
+      ],
+      "rounds": 5,
+      "rounds_agreeing": 3,
+      "size": 256
+    },
+    {
+      "conclusive": false,
+      "distinct": null,
+      "intra_arm_spread_qps": 18.5,
+      "mode": "sync",
+      "original_median_qps": 1059.0,
+      "original_qps": [
+        1053.7,
+        1059.0,
+        1051.1,
+        1060.5,
+        1069.6
+      ],
+      "paired_delta_percent": 0.59,
+      "paired_ratio_median": 1.0059,
+      "patched_median_qps": 1057.3,
+      "patched_qps": [
+        1043.6,
+        1066.7,
+        1057.3,
+        1052.2,
+        1080.5
+      ],
+      "rounds": 5,
+      "rounds_agreeing": 3,
+      "size": 32
+    },
+    {
+      "conclusive": false,
+      "distinct": null,
+      "intra_arm_spread_qps": 71.1,
+      "mode": "sync",
+      "original_median_qps": 1025.5,
+      "original_qps": [
+        1025.5,
+        1026.1,
+        1000.9,
+        977.1,
+        1048.2
+      ],
+      "paired_delta_percent": -1.32,
+      "paired_ratio_median": 0.9868,
+      "patched_median_qps": 1023.4,
+      "patched_qps": [
+        1011.9,
+        999.5,
+        1066.0,
+        1023.4,
+        1023.5
+      ],
+      "rounds": 5,
+      "rounds_agreeing": 3,
+      "size": 8
+    }
+  ],
+  "mtls": null,
+  "source": "docs/perf/ab-gate-0.2.11/raw-swapped"
+}

@@ -17,6 +17,8 @@ from ._python_impl.sessions import (
     normalize_proxy_chain as normalize_proxy_chain,
     normalize_platform as normalize_platform,
     normalize_max_sockets as normalize_max_sockets,
+    retire_engine_slot as retire_engine_slot,
+    check_discard_cache_mode as check_discard_cache_mode,
     normalize_host_mapping as normalize_host_mapping,
     normalize_client_cert as normalize_client_cert,
     RetryStrategy as RetryStrategy,

@@ -176,6 +176,24 @@ class ResolverOptionTest(unittest.TestCase):
         self.assertIsNotNone(self._build(max_sockets_per_group=0))
         self.assertIsNotNone(self._build(max_sockets_per_group=32))
 
+    def test_max_sockets_is_validated_on_assignment_too(self):
+        """The constructor was the only place the ceiling was checked.
+
+        Assigning the attribute afterwards put the raw value into the engine key,
+        the Core answered ``MN_ERROR_INVALID_ARGUMENT``, and ``map_native_error``
+        reported that as ``InvalidURL`` -- an exception class that says "your URL
+        is malformed" for a number that has nothing to do with the URL.
+        """
+        with chrome_client.Session() as session:
+            session.max_sockets_per_group = 32
+            self.assertEqual(session.max_sockets_per_group, 32)
+            with self.assertRaises(chrome_client.UnsupportedFeature):
+                session.max_sockets_per_group = 4096
+            with self.assertRaises(chrome_client.UnsupportedFeature):
+                session.max_sockets_per_group = -1
+            # A refused assignment must not have changed the accepted value.
+            self.assertEqual(session.max_sockets_per_group, 32)
+
 
 if __name__ == "__main__":
     unittest.main()

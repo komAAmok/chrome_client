@@ -34,6 +34,9 @@ jobs:
       # they changed a degree of freedom that does not exist. A new knob
       # without a verdict fails this gate.
       - run: python3 tools/audit-extra-fp.py
+      - run: python3 tools/audit-session-parity.py
+      - run: python3 tools/audit-frozen-headers.py
+      - run: python3 tools/audit-discard-fingerprint.py
       # Pure static audit of the committed Core artifacts: manifest fields,
       # SHA-256, size, the twenty ABI exports per platform, the presence of the
       # ICU ISO-8859-1 converter table that HTTP Basic/Digest realms need, and

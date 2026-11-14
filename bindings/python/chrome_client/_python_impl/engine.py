@@ -491,19 +491,56 @@ class EngineSlot(object):
         config: The configuration that produced it.
     """
 
-    __slots__ = ("engine", "config", "_lock", "_inflight")
+    __slots__ = ("engine", "config", "_lock", "_inflight", "_applied_certs",
+                   "_pending_certs", "_cert_cond", "_single_use")
 
-    def __init__(self, engine, config):
+    def __init__(self, engine, config, single_use=False):
         """Pairs an engine with its configuration.
 
         Args:
             engine: The native engine.
             config: The configuration it was built from.
+            single_use: Whether this engine exists for one request only, i.e. it
+                was built by ``BaseSession._throwaway_slot`` and no cache owns
+                it. Only such a slot may be released as soon as its request
+                finishes.
         """
         self.engine = engine
         self.config = config
+        #: Set only by the construction site that builds an engine no cache owns.
+        #: If this were inferred from cache membership instead, an EVICTED pooled
+        #: slot would look single-use too: measured with max_engines=1, building a
+        #: second configuration evicts the first, the evicted slot stops being
+        #: findable in the cache, and the request still running on it would have
+        #: its engine torn down underneath it.
+        self._single_use = bool(single_use)
         self._lock = threading.RLock()
         self._inflight = 0
+        #: ``(host, port) -> (cert_pem, key_pem)``: what the Core currently holds,
+        #: as far as this slot can tell. Re-registering identical bytes is not
+        #: free -- ``SSLClientContext::SetClientCertificate`` synchronously
+        #: refreshes that origin's connection group and closes its idle
+        #: connections (core/source/engine.cc:1322-1327, quoting
+        #: net/http/http_stream_pool.cc ``Refresh(kSslConfigChanged)``); measured
+        #: on an mTLS server with a constructor ``cert=``: the re-registration made
+        #: every request open a fresh TCP connection and handshake -- 8 requests,
+        #: 8 connections, 8 handshakes, p50 46.97 ms -- and skipping it left 1
+        #: connection and 1.81 ms. Written by whichever Core call COMPLETES last,
+        #: because that is the one Chromium keeps: SetClientCertificate overwrites
+        #: the cache entry for the server and then refreshes that origin's
+        #: connection group (net/socket/ssl_client_socket.cc:274-287), so the last
+        #: call to return is the last call to land.
+        self._applied_certs = {}
+        #: (host, port) -> (cert_pem, key_pem) currently being registered. Two
+        #: identical calls that overlap share one Core call instead of queueing two
+        #: refreshes of the same connection group; a call that has to wait returns
+        #: as soon as the value it wants is the one the Core holds.
+        self._pending_certs = {}
+        #: Signals a registration finishing, so a second caller that wants the
+        #: same value waits for the first Core call instead of repeating it. Tied
+        #: to the slot lock, which is reentrant, so the bookkeeping below can hold
+        #: it across the whole decision without deadlocking on itself.
+        self._cert_cond = threading.Condition(self._lock)
 
     @property
     def binding(self):
@@ -631,11 +668,56 @@ class EngineSlot(object):
             RequestException: The Core rejected the certificate. An encrypted
                 key, a malformed block and an empty host all land here.
         """
+        key = (str(host), int(port))
+        value = (bytes(cert_pem), bytes(key_pem))
+        with self._cert_cond:
+            while True:
+                if self._applied_certs.get(key) == value:
+                    # Same bytes, same server: the Core's registration is already
+                    # what this call would produce, and re-issuing it would close
+                    # the connections this engine is reusing.
+                    return
+                if key not in self._pending_certs:
+                    # Nothing in flight for this server. Claim it and call the Core.
+                    self._pending_certs[key] = value
+                    break
+                # A registration for this server is in flight. Waiting is right for
+                # both cases: an identical value must not refresh the same
+                # connection group twice, and a DIFFERENT value is a rotation that
+                # has to be applied after the one in flight, not racing it. Either
+                # way the loop re-decides when the wait returns.
+                self._cert_cond.wait()
         try:
-            self.engine.set_client_certificate(
-                host, int(port), bytes(cert_pem), bytes(key_pem))
+            # Outside the lock: the Core posts to its network thread and waits on a
+            # WaitableEvent, and holding the slot lock across that wait would
+            # serialise unrelated reservations on this slot.
+            self.engine.set_client_certificate(host, key[1], value[0], value[1])
         except RuntimeError as error:
+            with self._cert_cond:
+                if self._pending_certs.get(key) == value:
+                    self._pending_certs.pop(key, None)
+                self._cert_cond.notify_all()
             raise _client_cert_error(error)
+        with self._cert_cond:
+            if self._pending_certs.get(key) == value:
+                self._pending_certs.pop(key, None)
+            # The record follows COMPLETION order, because that is the order
+            # Chromium keeps: SetClientCertificate overwrites this server's entry
+            # and then refreshes the origin's connection group
+            # (net/socket/ssl_client_socket.cc:274-287), so whichever call returns
+            # last is the certificate the Core holds. A sequence number taken
+            # before the call would instead name whichever thread entered last --
+            # which is a different one whenever two rotations overlap, and would
+            # leave the record describing a certificate the Core does not hold, so
+            # the NEXT identical registration would be skipped and the stale one
+            # would stay live.
+            #
+            # No further guard is needed around this write: clear_client_certificate
+            # waits for in-flight registrations of the same server before it acts,
+            # and both the claim and this record happen under the same lock, so a
+            # clear cannot slip between them.
+            self._applied_certs[key] = value
+            self._cert_cond.notify_all()
 
     def clear_client_certificate(self, host, port):
         """Forgets the certificate registered for (host, port).
@@ -647,10 +729,43 @@ class EngineSlot(object):
         Raises:
             RequestException: The Core rejected the call.
         """
+        key = (str(host), int(port))
+        with self._cert_cond:
+            # Wait for a registration of this server that is already in the Core.
+            # Without this the clear would return while a certificate it was meant
+            # to remove is still landing: the caller would read "cleared" from
+            # _applied_certs while the Core held the certificate just set, and the
+            # next identical registration would then be skipped against a record
+            # that describes neither state. The wait is one Core round trip, which
+            # this call is a synchronous round trip anyway.
+            while key in self._pending_certs:
+                self._cert_cond.wait()
+            self._applied_certs.pop(key, None)
         try:
             self.engine.clear_client_certificate(host, int(port))
         except RuntimeError as error:
             raise _client_cert_error(error)
+
+    @property
+    def single_use(self):
+        """True when no cache owns this slot.
+
+        Returns:
+            ``True`` for an engine built for one discard request.
+        """
+        return self._single_use
+
+    def release_engine(self):
+        """Drops the native engine reference, which is what frees the context.
+
+        Idempotent: a second call is a no-op, so a slot that reached the retire
+        queue twice cannot raise from the worker thread.
+
+        Returns:
+            ``None``.
+        """
+        if self.engine is not None:
+            self.engine = None
 
     def _retain(self):
         with self._lock:
@@ -682,7 +797,14 @@ class EngineCache(object):
             max_engines: Ceiling; coerced to at least 1.
         """
         self._slots = {}
-        self._order = []
+        #: Insertion-ordered set of keys, oldest first, implemented as a dict whose
+        #: values are always ``None``. A dict rather than a list so "move this key
+        #: to the back" is pop + reinsert instead of a linear scan on every cache
+        #: hit, which is the path every request takes.
+        #:
+        #: The values are never read: only key order and membership are. Nothing
+        #: may store data here.
+        self._order = {}
         self._max = max(1, int(max_engines))
         self._lock = threading.RLock()
         self._pid = os.getpid()
@@ -694,7 +816,7 @@ class EngineCache(object):
         # engine would hang on the first request. Drop them and rebuild lazily.
         if os.getpid() != self._pid:
             self._slots.clear()
-            del self._order[:]
+            self._order.clear()
             self._pid = os.getpid()
             self._stats = {"hits": 0, "builds": 0, "evictions": 0, "deferred": 0}
 
@@ -724,16 +846,19 @@ class EngineCache(object):
             self._reset_after_fork_locked()
             slot = self._slots.get(config.key)
             if slot is not None:
-                self._order.remove(config.key)
-                self._order.append(config.key)
+                self._order.pop(config.key, None)
+                self._order[config.key] = None
                 self._stats["hits"] += 1
                 return slot
             slot = EngineSlot(config.build(), config)
             self._slots[config.key] = slot
-            self._order.append(config.key)
+            self._order[config.key] = None
             self._stats["builds"] += 1
             while len(self._order) > self._max:
-                evicted = self._order.pop(0)
+                # dict iteration is insertion-ordered, so the first key is the
+                # oldest -- the same slot the list version evicted.
+                evicted = next(iter(self._order))
+                del self._order[evicted]
                 victim = self._slots.pop(evicted, None)
                 self._stats["evictions"] += 1
                 if victim is not None and victim.inflight:
@@ -785,23 +910,20 @@ class EngineCache(object):
         """
         with self._lock:
             if self._slots.pop(config.key, None) is not None:
-                try:
-                    self._order.remove(config.key)
-                except ValueError:
-                    pass
+                self._order.pop(config.key, None)
 
     def clear(self):
         """Empties the cache, releasing the engines it held."""
         with self._lock:
             self._slots.clear()
-            del self._order[:]
+            self._order.clear()
 
     def close(self):
         """Closes the cache; later :meth:`get` calls raise."""
         with self._lock:
             self._closed = True
             self._slots.clear()
-            del self._order[:]
+            self._order.clear()
 
     @property
     def closed(self):

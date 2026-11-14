@@ -161,6 +161,32 @@ python3 tools/audit-python-stubs.py
 LD_LIBRARY_PATH=core/binaries/linux-x86_64 \
   PYTHONPATH=bindings/python python3 tools/audit-doctests.py
 python3 tools/audit-extra-fp.py
+# Two constructors that accept the same option NAME are not accepting the same
+# option: a differing default is a different behaviour, and for platform= that is
+# a different User-Agent group and a different sec-ch-ua-platform. Neither
+# constructor is keyword-only either, so the ORDER is part of the contract --
+# inserting a parameter before an existing one silently changes what an existing
+# positional call means (measured: AsyncSession(*([None]*37+[8])) started
+# binding 8 to host_mapping).
+python3 tools/audit-session-parity.py
+# The request header block had no byte-level baseline: the profile gates compare
+# captures and sources, but nothing compared the default block itself, and a
+# baseline captured in the same run cannot see a header disappearing from every
+# arm at once. Pinned in profiles/<profile>/h1/request_head.txt; --record
+# rewrites it deliberately. Field ORDER is compared too, because a set diff
+# cannot see a swap.
+python3 tools/audit-frozen-headers.py
+# discard_cookies runs the request on its own engine, which is the only way to
+# honour it on M156 (docs/TBD_VERIFICATION.md, T-1). Two wire properties follow
+# from that and belong to this implementation, not to Chromium: no TLS
+# resumption, and an empty HTTP cache. This gate pins both, because losing them
+# would look like a performance win in every other number.
+python3 tools/audit-discard-fingerprint.py
+# The three gates above are only worth their run time if they fail when the thing
+# they pin moves. This breaks each of them on purpose -- a changed default header,
+# a reversed header order, a diverging AsyncSession default, a missing option, and
+# a discard request back on a shared engine -- and requires all five to go red.
+tools/mutation-fingerprint-gates.sh
 # The per-profile request header set is generated from the h1 captures, so a
 # stale table or a capture that stopped agreeing with its five siblings has to
 # fail here rather than show up as a fingerprint mismatch on the wire.
@@ -350,7 +376,7 @@ LD_LIBRARY_PATH=core/binaries/linux-x86_64 \
 | `gates` | ABI、README、stub、Core 产物、profile 证据 | `audit-abi.sh` 等 12 项 |
 | `fingerprint` | h1/h2/h3 指纹是否漂移 | `audit-padding-rule.py`、`audit-tls-version-range.py`、`audit-h1-alps-absence.py`、`audit-h3-profile-support.py`、`audit-profile-addition.py`、`audit-profile-probes.sh`、`run-http-smoke.py` |
 | `concurrency` | 同步/异步吞吐、`stalled_consumer_isolation` | `bench-core-baseline.py` |
-| `leaks` | 五种请求形态的 fd / RSS 增长 | `leak-probe.py` |
+| `leaks` | 六种请求形态的 fd / RSS 增长 | `leak-probe.py` |
 
 `fingerprint` 组里前四个是静态的：它们比对 profile 表、抓包与源码，能发现改了表
 却没重新抓包。`wire-smoke` 是唯一真的连服务器的指纹检查——静态检查看不到协商结果。
@@ -358,7 +384,7 @@ LD_LIBRARY_PATH=core/binaries/linux-x86_64 \
 `concurrency` 与 `leaks` 是源码里读不出来的：只能测，且只在跑绑定的那台机器上有意义。
 两者都写 JSON，让一次发布有数字可比，而不只是一个退出码。
 
-### 泄漏必须覆盖五种形态
+### 泄漏必须覆盖六种形态
 
 `test_async_requests_do_not_leak` 在测试套件里比较两批等量请求，但它只覆盖异步回调
 一条路径。泄漏是分路径的，被测到的那条正好是唯一干净的那条就是最坏情况。所以
@@ -372,6 +398,11 @@ LD_LIBRARY_PATH=core/binaries/linux-x86_64 \
 | `sync-abandon` | `stream=True` 后 `close()` 但不读 |
 | `async-gather` | `AsyncSession` + `asyncio.gather` |
 | `error-path` | 每个请求都打到拒绝端口，测错误路径的分配 |
+| `discard-path` | `discard_cookies=True`，每请求建一个引擎再丢弃 |
+
+`discard-path` 是唯一会走 `mn_engine_create` 与 `~Engine` 的形态：其余五种都复用缓存里的
+槽，所以上下文构建/销毁路径上的泄漏在它们身上看不见。加它之前实测该形态 flat
+（fd +0、RSS +0 KiB），即它记录的是一个已经成立的性质，而不是一个待修的缺陷。
 
 判据是**第二批相对第一批的增量**（fd ≤ 8 个、RSS ≤ 24 MiB）：泄漏随请求数线性增长，
 固定容差吸收 Chromium 的缓存与线程池。
