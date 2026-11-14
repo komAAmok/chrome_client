@@ -522,6 +522,7 @@ no further edits.
 | `timeout=(connect, read)` with two different values | ✗ raises `UnsupportedFeature` (ABI v8 carries one deadline); an agreeing pair works |
 | `proxies`, `proxy`, `proxy_auth`, `trust_env`, `NO_PROXY` | ✓ |
 | `verify=True/False/"/path/ca.pem"` | ✓ |
+| `cert=("c.pem", "k.pem")`, `cert="combined.pem"`, `set_client_certificate()` | ✓ sent only when the server issues a CertificateRequest, so the ClientHello fingerprint is unchanged |
 | `allow_redirects`, `max_redirects`, `history`, final URL | ✓ |
 | `stream=True`, `iter_content`, `iter_lines`, `raw` | ✓ |
 | `aiter_content`, `aiter_lines`, `atext`, `acontent`, `session.stream(...)` | ✓ |

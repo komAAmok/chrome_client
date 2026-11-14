@@ -533,6 +533,7 @@ Cookie 会按 URL 匹配后附加到握手上。
 | `timeout=(connect, read)` 两值不同 | ✗ 抛 `UnsupportedFeature`（ABI v8 只有一个期限）；两值相同可用 |
 | `proxies`、`proxy`、`proxy_auth`、`trust_env`、`NO_PROXY` | ✓ |
 | `verify=True/False/"/path/ca.pem"` | ✓ |
+| `cert=("c.pem","k.pem")`、`cert="combined.pem"`、`set_client_certificate()` | ✓ 服务端发 CertificateRequest 时才出示，不影响 ClientHello 指纹 |
 | `allow_redirects`、`max_redirects`、`history`、最终 URL | ✓ |
 | `stream=True`、`iter_content`、`iter_lines`、`raw` | ✓ |
 | `aiter_content`、`aiter_lines`、`atext`、`acontent`、`session.stream(...)` | ✓ |
@@ -546,7 +547,7 @@ Cookie 会按 URL 匹配后附加到握手上。
 | `HTTPDigestAuth` | 部分：需要用 `parse_challenge()`/`handle_401()` 显式驱动 |
 | `HTTPAdapter(pool_connections=..., pool_maxsize=...)` | 接受但不生效：连接池由 Chromium 拥有 |
 | `ja3`、`akamai`、`perk`、`extra_fp` 的 TLS/HTTP2 字段 | ✗ 显式抛 `UnsupportedFeature` |
-| `cert`（客户端证书）、`interface`、`doh_url`、`curl_options`、`max_recv_speed` | ✗ 显式抛 `UnsupportedFeature` |
+| `interface`、`doh_url`、`curl_options`、`max_recv_speed` | ✗ 显式抛 `UnsupportedFeature` |
 | `referer=` / `Referer` 头 | ✗ 显式抛 `UnsupportedFeature`（Chromium 会剥掉） |
 | 持久化 cookie/cache 文件、`Curl` 低层句柄、`CurlOpt`/`CurlInfo` | ✗ |
 
