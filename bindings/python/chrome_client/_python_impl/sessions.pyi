@@ -86,6 +86,24 @@ CHROMIUM_MAX_REDIRECTS: int
 Backoff: TypeAlias = Literal["linear", "exponential"]
 
 
+def normalize_client_cert(cert: Any) -> Optional[Tuple[bytes, bytes]]:
+    """Turns ``cert=`` into ``(cert_pem, key_pem)`` bytes, or ``None``.
+
+    Accepts a combined PEM path or a ``(cert, key)`` pair of paths. The Core
+    separates the PEM blocks itself, so a combined file is passed through whole.
+
+    Args:
+        cert: A path, a pair of paths, or ``None``.
+
+    Returns:
+        ``None`` when unset, otherwise ``(cert_pem, key_pem)``.
+
+    Raises:
+        UnsupportedFeature: The value is not one of those shapes, or a file
+            could not be read.
+    """
+    ...
+
 class RetryStrategy:
     """curl_cffi-shaped retry policy.
 
@@ -817,6 +835,34 @@ class BaseSession:
         Returns:
             ``{"proxies": ..., "stream": ..., "verify": ..., "cert": ...}`` with
             session defaults merged in. Empty when ``trust_env`` is ``False``.
+        """
+        ...
+
+    def set_client_certificate(
+        self, host: str, port: int, cert: Any, key: Any = None
+    ) -> None:
+        """Registers a client certificate for one server at runtime.
+
+        Args:
+            host: Server hostname, e.g. ``"api.internal"``.
+            port: Server port, e.g. ``443``.
+            cert: Path to a certificate file, either a combined PEM or the
+                certificate half of a pair.
+            key: Path to the private key when it is not in ``cert``.
+
+        Raises:
+            UnsupportedFeature: A file could not be read, or the value is not a
+                path.
+            SSLError: The Core rejected the certificate or key.
+        """
+        ...
+
+    def clear_client_certificate(self, host: str, port: int) -> None:
+        """Forgets the client certificate registered for (host, port).
+
+        Args:
+            host: Server hostname.
+            port: Server port.
         """
         ...
 

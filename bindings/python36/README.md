@@ -76,6 +76,7 @@ Profile 影响 TLS ClientHello、ALPN、HTTP/2 设置、QUIC/H3 和相关 Chromi
 | --- | --- | --- | --- |
 | HTTP/1.1、HTTP/2、HTTP/3/QUIC | ✓ | ✓ | 默认由 Chromium 协商；`http_version="v1"/"v2"/"v3"` 可强制 |
 | HTTPS/TLS、证书校验 | ✓ | ✓ | `verify=False` 或 `verify="/path/ca.pem"` 自定义 CA；证书失败按具体检查项报错 |
+| mTLS 客户端证书 | ✓ | ✓ | `cert=("c.pem","k.pem")` 或单个合并 PEM；服务端要求时自动出示，不改变 ClientHello |
 | HTTP/HTTPS/SOCKS 代理 | ✓ | ✓ | `proxy`、Requests 风格 `proxies`，运行期可改 |
 | 同步请求 | ✓ | ✓ | 同步等待释放 GIL，可直接放进线程池 |
 | asyncio 请求 | ✓ | — | Core 回调唤醒事件循环，无请求线程池；每次唤醒批量取事件 |
@@ -401,7 +402,7 @@ URLLoader。因此 chrome_124 起的 profile 会自动带上它，取值由请�
 这些 profile 的默认优先级是 `highest`，发出的正是真实 Chrome 导航的
 `priority: u=0, i`；chrome_86–123 不发这个头，与它们的抓包一致。HTTP/1.1 上不发。
 
-不受支持而显式报错的还有：`cert=`（客户端证书）、`interface=`、`doh_url=`、
+不受支持而显式报错的还有：`interface=`、`doh_url=`、
 `curl_options=`、`max_recv_speed=`、`referer=`。`referer` 尤其容易误判：Chromium
 自己拥有 referrer 并会剥掉调用方设置的 `Referer` 头，ABI v8 也没有 referrer 字段，
 所以设置它在任何路径下都不会到达网络。

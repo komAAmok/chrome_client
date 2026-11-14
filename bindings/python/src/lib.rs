@@ -1047,6 +1047,39 @@ impl PyEngine {
         py.detach(|| self.inner.clear_cookies().map_err(native_error))
     }
 
+    /// Registers the client certificate presented to one server.
+    ///
+    /// `cert_pem` is a chain of PEM CERTIFICATE blocks and `key_pem` a single
+    /// unencrypted PEM private key, both as bytes. The certificate is sent only
+    /// when the server issues a CertificateRequest, so registering one cannot
+    /// change the ClientHello of any other connection.
+    ///
+    /// Releases the GIL for the same reason the cookie methods do: the Core
+    /// posts to its network thread and waits on a WaitableEvent.
+    fn set_client_certificate(
+        &self,
+        py: Python<'_>,
+        host: String,
+        port: u16,
+        cert_pem: Vec<u8>,
+        key_pem: Vec<u8>,
+    ) -> PyResult<()> {
+        py.detach(|| {
+            self.inner
+                .set_client_certificate(&host, port, &cert_pem, &key_pem)
+                .map_err(native_error)
+        })
+    }
+
+    /// Forgets the certificate registered for (host, port).
+    fn clear_client_certificate(&self, py: Python<'_>, host: String, port: u16) -> PyResult<()> {
+        py.detach(|| {
+            self.inner
+                .clear_client_certificate(&host, port)
+                .map_err(native_error)
+        })
+    }
+
     #[staticmethod]
     fn abi_version() -> u32 {
         Engine::core_abi_version()

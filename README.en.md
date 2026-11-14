@@ -84,6 +84,7 @@ Service Workers and persistent browser profiles are not included.
 | --- | --- | --- | --- |
 | HTTP/1.1, HTTP/2, HTTP/3/QUIC | ✓ | ✓ | Chromium negotiates by default; `http_version="v1"/"v2"/"v3"` pins it |
 | HTTPS/TLS and certificate verification | ✓ | ✓ | `verify=False`, or `verify="/path/ca.pem"` for a custom CA; failures name the failing check |
+| mTLS client certificates | ✓ | ✓ | `cert=("c.pem", "k.pem")` or one combined PEM; presented only when the server asks, so the ClientHello is unchanged |
 | HTTP/HTTPS/SOCKS proxies | ✓ | ✓ | `proxy`, Requests-style `proxies`, mutable at runtime |
 | Synchronous requests | ✓ | ✓ | Blocking calls release the GIL, so a thread pool works |
 | asyncio requests | ✓ | — | Core callbacks wake the loop; no request thread pool, batched per wakeup |
@@ -379,7 +380,7 @@ sends only the caller's headers, which always win field by field).
 its captures, and `tools/audit-client-hints.py` re-derives the whole table
 from the captures before a commit.
 
-Also rejected explicitly: `cert=` (client certificates), `interface=`,
+Also rejected explicitly: `interface=`,
 `doh_url=`, `curl_options=`, `max_recv_speed=` and `referer=`. The last one is
 easy to get wrong: Chromium owns the referrer and strips a caller-supplied
 `Referer` header, and ABI v8 has no referrer field, so setting it would never
@@ -534,7 +535,7 @@ no further edits.
 | `HTTPDigestAuth` | Partial: drive it with `parse_challenge()`/`handle_401()` |
 | `HTTPAdapter(pool_connections=..., pool_maxsize=...)` | Accepted but inert: Chromium owns the pools |
 | `ja3`, `akamai`, `perk`, TLS/HTTP2 fields of `extra_fp` | ✗ raises `UnsupportedFeature` |
-| `cert` (client certificates), `interface`, `doh_url`, `curl_options`, `max_recv_speed` | ✗ raises `UnsupportedFeature` |
+| `interface`, `doh_url`, `curl_options`, `max_recv_speed` | ✗ raises `UnsupportedFeature` |
 | `referer=` / a `Referer` header | ✗ raises `UnsupportedFeature` (Chromium strips it) |
 | Persistent cookie/cache files, the low-level `Curl` handle, `CurlOpt`/`CurlInfo` | ✗ |
 

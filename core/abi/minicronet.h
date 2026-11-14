@@ -354,9 +354,9 @@ MN_EXPORT mn_result_t MN_CALL mn_engine_cookies_clear(mn_engine_t *engine);
  * no field for, and sending no certificate silently is worse than failing.
  *
  * Chromium keeps the private key in process memory; there is no OS keystore
- * behind this call. Replacing the certificate for a server also flushes that
- * server's TLS session cache, because session resumption would otherwise skip
- * client-certificate negotiation entirely. */
+ * behind this call. Replacing the certificate for a server refreshes that
+ * origin's connection group, so the idle connections opened under the old
+ * certificate are closed instead of being reused. */
 MN_EXPORT mn_result_t MN_CALL
 mn_engine_set_client_certificate(mn_engine_t *engine, const char *host,
                                  size_t host_length, uint16_t port,

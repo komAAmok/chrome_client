@@ -1,0 +1,206 @@
+"""Client certificates (mTLS) through the Python facade.
+
+The Core has carried ``mn_engine_set_client_certificate`` since ABI v9 but no
+binding exposed it, so connecting to an mTLS endpoint failed with
+``ERR_SSL_CLIENT_AUTH_CERT_NEEDED`` and no way to fix it from Python. These
+tests cover the four claims the facade now makes:
+
+  1. ``cert=`` as a (cert, key) pair and as one combined PEM both authenticate;
+  2. no certificate still fails, and fails loudly;
+  3. replacing a certificate at runtime takes effect on the next request --
+     this is the one that catches a missing connection refresh, because a
+     pooled connection opened under the old certificate would be reused and the
+     server would keep seeing the previous CN;
+  4. a certificate the Core cannot use is rejected at the call site instead of
+     being accepted and failing on the first request.
+
+Each server is a real TLS listener with ``CERT_REQUIRED``, and the assertion is
+the common name the server actually saw, not merely that a response arrived.
+"""
+
+import os
+import shutil
+import socket
+import ssl
+import subprocess
+import tempfile
+import threading
+import unittest
+
+import chrome_client
+
+
+def _openssl(*args):
+    subprocess.run(("openssl",) + args, check=True,
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+@unittest.skipUnless(shutil.which("openssl"), "openssl is required to mint test certificates")
+class _Certificates(object):
+    """One CA, one server certificate and two client certificates."""
+
+    def __init__(self):
+        self.dir = tempfile.mkdtemp(prefix="chrome-client-mtls-")
+        j = lambda name: os.path.join(self.dir, name)
+        self.ca = j("ca.pem")
+        _openssl("req", "-x509", "-newkey", "rsa:2048", "-keyout", j("ca.key"),
+                 "-out", self.ca, "-days", "2", "-nodes", "-subj", "/CN=Test CA")
+        self.server_cert, self.server_key = j("srv.pem"), j("srv.key")
+        _openssl("req", "-newkey", "rsa:2048", "-keyout", self.server_key,
+                 "-out", j("srv.csr"), "-nodes", "-subj", "/CN=localhost")
+        ext = j("srv.ext")
+        with open(ext, "w") as handle:
+            handle.write("subjectAltName=DNS:localhost\nextendedKeyUsage=serverAuth\n")
+        _openssl("x509", "-req", "-in", j("srv.csr"), "-CA", self.ca,
+                 "-CAkey", j("ca.key"), "-CAcreateserial", "-out", self.server_cert,
+                 "-days", "2", "-extfile", ext)
+        self.client_cert, self.client_key = self._client(j, "cli", "client.test")
+        self.second_cert, self.second_key = self._client(j, "cli2", "second.test")
+        self.encrypted_key = j("cli_enc.key")
+        _openssl("rsa", "-in", self.client_key, "-aes256", "-passout", "pass:secret",
+                 "-out", self.encrypted_key)
+        self.combined = j("combined.pem")
+        with open(self.combined, "wb") as handle:
+            for part in (self.client_cert, self.client_key):
+                with open(part, "rb") as source:
+                    handle.write(source.read())
+
+    def _client(self, j, stem, cn):
+        cert, key = j(stem + ".pem"), j(stem + ".key")
+        _openssl("req", "-newkey", "rsa:2048", "-keyout", key,
+                 "-out", j(stem + ".csr"), "-nodes", "-subj", "/CN=" + cn)
+        ext = j(stem + ".ext")
+        with open(ext, "w") as handle:
+            handle.write("extendedKeyUsage=clientAuth\n")
+        _openssl("x509", "-req", "-in", j(stem + ".csr"), "-CA", self.ca,
+                 "-CAkey", j("ca.key"), "-CAcreateserial", "-out", cert,
+                 "-days", "2", "-extfile", ext)
+        return cert, key
+
+    def close(self):
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+
+class _MtlsServer(object):
+    """A TLS server that demands a client certificate and records its CN."""
+
+    def __init__(self, certs):
+        self.context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        self.context.load_cert_chain(certs.server_cert, certs.server_key)
+        self.context.verify_mode = ssl.CERT_REQUIRED
+        self.context.load_verify_locations(certs.ca)
+        self.socket = socket.socket()
+        self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.socket.bind(("127.0.0.1", 0))
+        self.socket.listen(16)
+        self.port = self.socket.getsockname()[1]
+        self.seen = []
+        self._closed = False
+        self.thread = threading.Thread(target=self._serve, daemon=True)
+        self.thread.start()
+
+    def _serve(self):
+        while not self._closed:
+            try:
+                raw, _ = self.socket.accept()
+            except OSError:
+                return
+            try:
+                tls = self.context.wrap_socket(raw, server_side=True)
+                subject = dict(x[0] for x in tls.getpeercert()["subject"])
+                self.seen.append(subject["commonName"])
+                tls.recv(8192)
+                tls.sendall(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n"
+                            b"Connection: close\r\n\r\nok")
+                tls.close()
+            except Exception as error:  # noqa: BLE001 - recorded, not raised
+                self.seen.append("FAIL:" + type(error).__name__)
+                try:
+                    raw.close()
+                except Exception:
+                    pass
+
+    def url(self):
+        return "https://localhost:%d/" % self.port
+
+    def close(self):
+        self._closed = True
+        try:
+            self.socket.close()
+        except OSError:
+            pass
+        self.thread.join(timeout=2)
+
+
+class ClientCertificateTest(unittest.TestCase):
+
+    @classmethod
+    def setUpClass(cls):
+        cls.certs = _Certificates()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.certs.close()
+
+    def setUp(self):
+        self.server = _MtlsServer(self.certs)
+
+    def tearDown(self):
+        self.server.close()
+
+    def test_cert_pair_authenticates(self):
+        with chrome_client.Session(verify=self.certs.ca,
+                                   cert=(self.certs.client_cert,
+                                         self.certs.client_key)) as session:
+            response = session.get(self.server.url(), timeout=10)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self.server.seen, ["client.test"])
+
+    def test_combined_pem_authenticates(self):
+        with chrome_client.Session(verify=self.certs.ca,
+                                   cert=self.certs.combined) as session:
+            response = session.get(self.server.url(), timeout=10)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self.server.seen, ["client.test"])
+
+    def test_without_certificate_fails_loudly(self):
+        with chrome_client.Session(verify=self.certs.ca) as session:
+            with self.assertRaises(chrome_client.SSLError):
+                session.get(self.server.url(), timeout=10)
+
+    def test_runtime_swap_takes_effect(self):
+        # The regression this exists for: without the Core refreshing that
+        # origin's connection group, the second request reuses the connection
+        # opened under client.test and the server never sees second.test.
+        with chrome_client.Session(verify=self.certs.ca,
+                                   cert=(self.certs.client_cert,
+                                         self.certs.client_key)) as session:
+            session.get(self.server.url(), timeout=10)
+            session.set_client_certificate(
+                "localhost", self.server.port,
+                self.certs.second_cert, self.certs.second_key)
+            session.get(self.server.url(), timeout=10)
+        self.assertEqual(self.server.seen, ["client.test", "second.test"])
+
+    def test_encrypted_key_is_rejected_at_the_call_site(self):
+        # Accepted-then-failed would report success here and break at the first
+        # request, which is the fail-closed promise inverted.
+        with chrome_client.Session(verify=self.certs.ca,
+                                   cert=(self.certs.client_cert,
+                                         self.certs.client_key)) as session:
+            with self.assertRaises(chrome_client.SSLError):
+                session.set_client_certificate(
+                    "localhost", self.server.port,
+                    self.certs.client_cert, self.certs.encrypted_key)
+
+    def test_missing_file_is_rejected(self):
+        with self.assertRaises(chrome_client.UnsupportedFeature):
+            chrome_client.Session(cert="/nonexistent/cert.pem")
+
+    def test_wrong_shape_is_rejected(self):
+        with self.assertRaises(chrome_client.UnsupportedFeature):
+            chrome_client.Session(cert=123)
+
+
+if __name__ == "__main__":
+    unittest.main()

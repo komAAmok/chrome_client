@@ -127,6 +127,18 @@ manifest 与 `targets.json` 的 `abi_version_override` 如实写 9，门禁打�
 | ECH 状态 | `mn_request_ech_status` |
 | mTLS | `mn_engine_set_client_certificate` / `mn_engine_clear_client_certificate` |
 
+mTLS 的 ABI 从 v9 起就在，但没有任何绑定暴露它，所以 Python 侧连 mTLS 端点只能得到
+`ERR_SSL_CLIENT_AUTH_CERT_NEEDED`。现在三层都通了：`crates/minicronet` 的
+`Engine::set_client_certificate`、扩展的 `PyEngine.set_client_certificate`、以及
+facade 的 `cert=("c.pem","k.pem")` / 单个合并 PEM / 运行期
+`session.set_client_certificate(host, port, ...)`。
+
+一个容易写错的机制：换证书生效**不是**靠清 TLS 会话缓存，而是
+`SetClientCertificate` 同步调用 `OnSSLConfigForServersChanged()`，由
+`HttpStreamPool` 对该 origin 的 group 执行 `Refresh(kSslConfigChanged)`，关掉旧证书下
+建立的空闲连接（`net/http/http_stream_pool.cc:352`）。少了这一步，第二次请求会复用
+旧连接，服务端继续看到上一个 CN。
+
 结构与布局：`mn_engine_config_t` 152 → 248 字节（32 位 84 → 136），追加 13 个字段；
 新增 `mn_cookie_t`（88 / 52 字节）与 `mn_platform_t` / `mn_cookie_same_site_t` /
 `mn_http_version_t` / `mn_ech_status_t` 四个枚举。`mn_request_config_t`（144）与

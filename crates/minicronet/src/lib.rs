@@ -511,6 +511,74 @@ impl Engine {
             Err(result.into())
         }
     }
+
+    /// Registers the client certificate this engine presents to one server.
+    ///
+    /// `cert_pem` is a chain of PEM `CERTIFICATE` blocks, `key_pem` a single
+    /// unencrypted PEM private key. The certificate is sent only when the server
+    /// issues a CertificateRequest, so it cannot change the ClientHello of any
+    /// other connection and cannot disturb a pinned TLS fingerprint.
+    ///
+    /// Replacing a certificate makes the Core refresh that origin's connection
+    /// group, so the idle connections opened under the old certificate are not
+    /// reused. Without that refresh the next request would keep presenting the
+    /// previous certificate to the server.
+    ///
+    /// An empty `cert_pem` or `key_pem`, a malformed PEM block, an encrypted
+    /// key and an empty host all come back as `ErrorKind::InvalidArgument`.
+    /// Sending no certificate when one was asked for is a silent authentication
+    /// failure, so every one of those cases fails loudly instead.
+    pub fn set_client_certificate(
+        &self,
+        host: &str,
+        port: u16,
+        cert_pem: &[u8],
+        key_pem: &[u8],
+    ) -> Result<(), Error> {
+        if host.is_empty() {
+            return Err(Error::from(sys::mn_result_t::MN_ERROR_INVALID_ARGUMENT));
+        }
+        let result = unsafe {
+            sys::mn_engine_set_client_certificate(
+                self.raw(),
+                host.as_ptr().cast(),
+                host.len(),
+                port,
+                ptr_or_null(cert_pem).cast(),
+                cert_pem.len(),
+                ptr_or_null(key_pem).cast(),
+                key_pem.len(),
+            )
+        };
+        if result == sys::mn_result_t::MN_OK {
+            Ok(())
+        } else {
+            Err(result.into())
+        }
+    }
+
+    /// Forgets the certificate registered for (host, port).
+    ///
+    /// Succeeds even when none was registered, so unregistering is idempotent
+    /// and a caller does not have to track what it set.
+    pub fn clear_client_certificate(&self, host: &str, port: u16) -> Result<(), Error> {
+        if host.is_empty() {
+            return Err(Error::from(sys::mn_result_t::MN_ERROR_INVALID_ARGUMENT));
+        }
+        let result = unsafe {
+            sys::mn_engine_clear_client_certificate(
+                self.raw(),
+                host.as_ptr().cast(),
+                host.len(),
+                port,
+            )
+        };
+        if result == sys::mn_result_t::MN_OK {
+            Ok(())
+        } else {
+            Err(result.into())
+        }
+    }
 }
 
 fn bytes(value: Option<&str>) -> Vec<u8> {

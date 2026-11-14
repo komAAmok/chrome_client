@@ -1318,8 +1318,12 @@ mn_result_t Engine::SetClientCertificateOnNetworkThread(
   if (!key) {
     return MN_ERROR_INVALID_ARGUMENT;
   }
-  // SetClientCertificate flushes this server's TLS session cache, which is what
-  // stops a resumed session from skipping client-certificate negotiation.
+  // SetClientCertificate synchronously calls OnSSLConfigForServersChanged(),
+  // and HttpStreamPool answers it by refreshing that origin's group
+  // (net/http/http_stream_pool.cc, Refresh(kSslConfigChanged)) -- the idle
+  // connections for this server are closed. Measured consequence: without it a
+  // second request would reuse the pooled connection established under the old
+  // certificate and the server would keep seeing the previous CN.
   ssl->SetClientCertificate(net::HostPortPair(host, port), std::move(certificate),
                             net::WrapOpenSSLPrivateKey(std::move(key)));
   return MN_OK;

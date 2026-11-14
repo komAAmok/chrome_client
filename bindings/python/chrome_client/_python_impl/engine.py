@@ -34,7 +34,7 @@ Two rules follow from the split:
 import os
 import threading
 
-from .exceptions import RequestException, map_native_error
+from .exceptions import RequestException, SSLError, map_native_error
 from ._native import native
 
 #: Extra engines a single session keeps alive for per-request overrides.  Eight
@@ -55,6 +55,31 @@ BINDING_FIELDS = ("impersonate", "proxy", "proxy_username", "proxy_password",
 #: names that has to be kept in step with the constructor by hand.
 BINDING_DEFAULTS = {"verify": True, "cache": True}
 
+
+def _client_cert_error(error):
+    """Maps a native client-certificate failure onto the public hierarchy.
+
+    ``map_native_error`` sends every ``InvalidArgument`` to ``InvalidURL``,
+    which reads as "your URL is malformed" -- true for a request but wrong here:
+    the URL was fine and the certificate or key was not. A caller catching
+    ``SSLError`` around an mTLS call used to get a URL error instead, and one
+    catching ``InvalidURL`` would have been told to look in the wrong place.
+
+    Args:
+        error: The ``RuntimeError`` raised by the extension.
+
+    Returns:
+        An ``SSLError`` for a rejected certificate or key, otherwise whatever
+        ``map_native_error`` produces.
+    """
+    message = str(error)
+    if "InvalidArgument" in message:
+        return SSLError(
+            "the client certificate or key was rejected: the Core accepts a "
+            "chain of PEM CERTIFICATE blocks plus one unencrypted PEM private "
+            "key, and refuses an encrypted key rather than sending nothing "
+            "silently")
+    return map_native_error(error)
 
 class SessionBinding(object):
     """An immutable transport context: profile, proxy and TLS policy.
@@ -523,6 +548,49 @@ class EngineSlot(object):
             self.engine.clear_cookies()
         except RuntimeError as error:
             raise map_native_error(error)
+
+    def set_client_certificate(self, host, port, cert_pem, key_pem):
+        """Registers the client certificate this engine presents to one server.
+
+        The Core parses the PEM itself, so `cert_pem` may be a certificate
+        chain followed by its key: `PemBlocksToDer` reads the CERTIFICATE
+        blocks and the private key out of the same buffer. That is what lets the
+        facade pass a single combined file through without splitting PEM in
+        Python, where the delimiter rules would have to be reimplemented and
+        could drift from BoringSSL's.
+
+        Args:
+            host: The server hostname the certificate is registered for.
+            port: The server port.
+            cert_pem: PEM bytes; one or more CERTIFICATE blocks, optionally
+                followed by the private key.
+            key_pem: PEM bytes holding exactly one unencrypted private key.
+
+        Raises:
+            RequestException: The Core rejected the certificate. An encrypted
+                key, a malformed block and an empty host all land here.
+        """
+        try:
+            self.engine.set_client_certificate(
+                host, int(port), bytes(cert_pem), bytes(key_pem))
+        except RuntimeError as error:
+            raise _client_cert_error(error)
+
+    def clear_client_certificate(self, host, port):
+        """Forgets the certificate registered for (host, port).
+
+        Args:
+            host: The server hostname to unregister.
+            port: The server port.
+
+        Raises:
+            RequestException: The Core rejected the call.
+        """
+        try:
+            self.engine.clear_client_certificate(host, int(port))
+        except RuntimeError as error:
+            raise _client_cert_error(error)
+
     def _retain(self):
         with self._lock:
             self._inflight += 1

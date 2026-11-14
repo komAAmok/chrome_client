@@ -632,6 +632,67 @@ def proxy_from_proxies(url, proxies):
     return None
 
 
+
+def _read_pem(path, what):
+    """Reads one PEM file the caller named for a client certificate.
+
+    Paths only, never inline PEM text: ``requests`` accepts either, but a
+    private key passed as a string literal has already been copied into the
+    caller's source, shell history and process arguments by the time this
+    runs, and reading the file keeps that decision in the caller's hands
+    rather than making it silent.
+
+    Args:
+        path: Filesystem path to read.
+        what: Which half of the pair this is, for the error message.
+
+    Returns:
+        The file contents as bytes.
+
+    Raises:
+        UnsupportedFeature: The file could not be read.
+    """
+    try:
+        with open(path, "rb") as handle:
+            return handle.read()
+    except OSError as error:
+        raise UnsupportedFeature(
+            "cert= could not read the %s file %r: %s" % (what, path, error))
+
+
+def normalize_client_cert(cert):
+    """Turns ``cert=`` into ``(cert_pem, key_pem)`` bytes, or ``None``.
+
+    Accepts the two spellings ``requests`` and ``curl_cffi`` both use:
+
+    * ``"combined.pem"`` -- one file holding the certificate chain and its key.
+      The Core separates the blocks itself (``PemBlocksToDer``), so the file
+      is passed through whole rather than split here.
+    * ``("cert.pem", "key.pem")`` -- the two halves in separate files.
+
+    Returns:
+        ``None`` when unset, otherwise ``(cert_pem, key_pem)``.
+
+    Raises:
+        UnsupportedFeature: The value is not one of those two shapes, or a
+            file could not be read.
+    """
+    if cert is None:
+        return None
+    if isinstance(cert, (str, bytes, os.PathLike)) and not isinstance(cert, tuple):
+        combined = _read_pem(cert, "combined certificate")
+        # The Core needs a key in the same buffer; passing the combined file as
+        # both halves is how a single-file cert= reaches it. PemBlocksToDer
+        # picks the CERTIFICATE blocks out of one and the PrivateKey out of the
+        # other, so the duplication costs one memcpy and keeps this side free
+        # of PEM splitting rules.
+        return combined, combined
+    if isinstance(cert, tuple) and len(cert) == 2:
+        return _read_pem(cert[0], "certificate"), _read_pem(cert[1], "private key")
+    raise UnsupportedFeature(
+        "cert= accepts a combined PEM path or a (cert, key) pair of paths, "
+        "not %r" % (cert,))
+
 # Kept as a private alias: the regression suite imports this name.
 _proxy_from_proxies = proxy_from_proxies
 
@@ -1233,11 +1294,11 @@ class BaseSession(object):
         they would drift from Chromium's.
         """
         reject_fingerprint_overrides(ja3, akamai, perk)
-        for name, value in (("cert", cert), ("interface", interface),
-                            ("doh_url", doh_url), ("curl_options", curl_options)):
+        for name, value in (("interface", interface), ("doh_url", doh_url),
+                            ("curl_options", curl_options)):
             if value:
                 raise UnsupportedFeature(
-                    "%s= is not supported: ABI v8 exposes no Core setting for it" % name)
+                    "%s= is not supported: ABI v11 exposes no Core setting for it" % name)
         if max_recv_speed:
             raise UnsupportedFeature(
                 "max_recv_speed= is not supported: Chromium owns transfer pacing")
@@ -1249,7 +1310,17 @@ class BaseSession(object):
         self.proxies = dict(proxies) if proxies else {}
         self.proxy_auth = proxy_auth
         self.verify = verify
-        self.cert = None
+        #: Client certificate for mTLS, parsed to (cert_pem, key_pem) bytes.
+        #: The certificate is registered on the engine per (host, port) just
+        #: before a request needs it -- see _register_client_cert -- because the
+        #: Core keys it by server and an engine may be shared by many hosts.
+        self.cert = normalize_client_cert(cert)
+        #: Per-(host, port) client certificates, registered at runtime.
+        self._client_certs = {}
+        #: Constructor ``cert=`` applies to every server this session reaches.
+        #: The host is only known when a request is made, so it is kept here
+        #: and resolved per request rather than keyed by host at construction.
+        self._client_cert_default = self.cert
         self.timeout = timeout
         self.params = dict(params) if params else {}
         self.auth = build_auth(auth)
@@ -1851,6 +1922,156 @@ class BaseSession(object):
             http_version, url, proxy, proxies)
         return self._engines.acquire(config)
 
+    # -- client certificates (ABI v11) --------------------------------------
+
+    def set_client_certificate(self, host, port, cert, key=None):
+        """Registers a client certificate for one server at runtime.
+
+        Use this when the certificate only becomes available after the session
+        was built -- an enrolment exchange, a token refresh, a rotated key. For
+        a certificate known up front, pass it to the constructor as
+        ``cert=("cert.pem", "key.pem")`` instead, which applies it to every
+        request this session makes.
+
+        The registration is per (host, port) and per engine. Every engine the
+        session currently holds gets it, and engines built later pick it up the
+        first time a request goes to that host, so a certificate set before the
+        first request is not lost to a lazily built engine.
+
+        Replacing a certificate makes the Core refresh that origin's connection
+        group, closing the idle connections opened under the old certificate.
+        Without that, the next request reuses the pooled connection and the
+        server keeps seeing the previous certificate: measured by swapping
+        certificates on a live session and reading the CN the server received.
+
+        Args:
+            host: Server hostname, e.g. ``"api.internal"``.
+            port: Server port, e.g. ``443``.
+            cert: Path to a certificate file, either a combined PEM or the
+                certificate half of a pair.
+            key: Path to the private key when it is not in ``cert``.
+
+        Raises:
+            UnsupportedFeature: A file could not be read, or the value is not a
+                path.
+            RequestException: The Core rejected the certificate or key.
+
+        Example:
+            >>> session.set_client_certificate(  # doctest: +SKIP
+            ...     "api.internal", 443, "new.pem", "new.key")
+        """
+        cert_pem, key_pem = normalize_client_cert(
+            cert if key is None else (cert, key))
+        host = str(host)
+        port = int(port)
+        record = getattr(self, "_client_certs", None)
+        if record is None:
+            record = self._client_certs = {}
+        record[(host, port)] = (cert_pem, key_pem)
+        slots = self._engines.slots()
+        if not slots:
+            # Validate against the Core even when no engine exists yet. Looping
+            # over an empty list made this call a silent no-op: a malformed or
+            # passphrase-protected key was accepted here and only failed at the
+            # first request, which reads as success at the call site that was
+            # supposed to report the problem. Materialising the default engine
+            # costs what the next request would have paid anyway.
+            slots = [self._store_slot()]
+        for slot in slots:
+            slot.set_client_certificate(host, port, cert_pem, key_pem)
+
+    def clear_client_certificate(self, host, port):
+        """Forgets the client certificate registered for (host, port).
+
+        Forgetting one that was never registered is not an error, so a caller
+        does not have to track what it set.
+
+        Args:
+            host: Server hostname.
+            port: Server port.
+
+        Raises:
+            RequestException: The Core rejected the call.
+        """
+        host = str(host)
+        port = int(port)
+        record = getattr(self, "_client_certs", None)
+        if record:
+            record.pop((host, port), None)
+        for slot in self._engines.slots():
+            slot.clear_client_certificate(host, port)
+
+    def _client_cert_for(self, url):
+        """Returns ``(host, port, cert_pem, key_pem)`` for *url*, or ``None``.
+
+        The Core keys a client certificate by (host, port) while an engine is
+        chosen by profile/proxy/verify, so one engine can serve several mTLS
+        servers and needs one registration per server. Only the request path
+        knows which server a request targets, which is why this lookup happens
+        per request rather than once at construction.
+
+        Args:
+            url: The request URL.
+
+        Returns:
+            The matching registration, or ``None`` when this URL has none.
+        """
+        record = getattr(self, "_client_certs", None)
+        if not record:
+            return None
+        parts = urlsplit(url)
+        if not parts.hostname:
+            return None
+        default_port = 443 if parts.scheme.lower() in ("https", "wss") else 80
+        port = parts.port or default_port
+        entry = record.get((parts.hostname, port))
+        if entry is None:
+            return None
+        return parts.hostname, port, entry[0], entry[1]
+
+    def _effective_client_cert(self, url, options):
+        """Returns ``(host, port, cert_pem, key_pem)`` for one transfer.
+
+        A per-request ``cert=`` wins over the session default for this one
+        request. It is registered on the engine without being recorded on the
+        session, so a one-off override cannot silently apply to every later
+        request that happens to reuse the same engine.
+
+        Args:
+            url: The request URL.
+            options: The resolved call options; ``cert`` may be set there.
+
+        Returns:
+            The registration to apply, or ``None``.
+        """
+        parts = urlsplit(url)
+        if not parts.hostname:
+            return None
+        default_port = 443 if parts.scheme.lower() in ("https", "wss") else 80
+        port = parts.port or default_port
+        override = (options or {}).get("cert")
+        if override:
+            cert_pem, key_pem = normalize_client_cert(override)
+            return parts.hostname, port, cert_pem, key_pem
+        found = self._client_cert_for(url)
+        if found is not None:
+            return found
+        default = getattr(self, "_client_cert_default", None)
+        if default is not None:
+            return parts.hostname, port, default[0], default[1]
+        return None
+
+    def _register_client_cert(self, slot, url):
+        """Registers the session's certificate on *slot* for the URL's server.
+
+        Args:
+            slot: The :class:`EngineSlot` the request will run on.
+            url: The request URL.
+        """
+        found = self._client_cert_for(url)
+        if found is not None:
+            slot.set_client_certificate(*found)
+
     # -- cookie store (ABI v9) ---------------------------------------------
 
     def _store_slot(self):
@@ -2278,10 +2499,10 @@ class BaseSession(object):
         url = values.pop("url")
         reject_fingerprint_overrides(values.get("ja3"), values.get("akamai"),
                                      values.get("perk"))
-        for name in ("cert", "interface", "doh_url", "curl_options", "thread", "debug"):
+        for name in ("interface", "doh_url", "curl_options", "thread", "debug"):
             if values.get(name):
                 raise UnsupportedFeature(
-                    "%s= is not supported: ABI v8 exposes no Core setting for it" % name)
+                    "%s= is not supported: ABI v11 exposes no Core setting for it" % name)
         if values.get("max_recv_speed"):
             raise UnsupportedFeature(
                 "max_recv_speed= is not supported: Chromium owns transfer pacing")
@@ -2389,6 +2610,10 @@ class BaseSession(object):
         value on the wire, and the fix was to build a throwaway engine.
         """
         slot = self._slot(url, impersonate, proxy, proxies, verify, None)
+        # A wss:// server may demand a client certificate on the handshake too,
+        # and the handshake is a normal TLS connection from the Core's point of
+        # view, so the same per-(host, port) registration applies.
+        self._register_client_cert(slot, url)
         merged = Headers(self.headers)
         if headers:
             merged.update(headers)
@@ -2643,6 +2868,11 @@ class Session(BaseSession):
         # the one this request runs on: move the pin so the in-flight count
         # follows the request instead of the engine it abandoned.
         lease.rebind(slot)
+        # After the rebind, so the certificate lands on the engine that will
+        # actually open the connection rather than the one just abandoned.
+        cert = self._effective_client_cert(prepared.url, options)
+        if cert is not None:
+            slot.set_client_certificate(*cert)
         limit = options.get("max_response_bytes")
         stream = bool(options.get("stream"))
         started = _now()
@@ -3058,6 +3288,9 @@ class AsyncSession(BaseSession):
         discard = options.get("discard_cookies")
         discard = self.discard_cookies if discard is None else discard
         slot = self._resolve_cookies(lease.slot, prepared, discard)
+        cert = self._effective_client_cert(prepared.url, options)
+        if cert is not None:
+            slot.set_client_certificate(*cert)
         # The replacement engine is the one this request runs on; move the pin so
         # the in-flight count follows the request rather than the engine it left.
         lease.rebind(slot)

@@ -408,6 +408,35 @@ class EngineSlot:
         """Empties the store."""
         ...
 
+    def set_client_certificate(
+        self, host: str, port: int, cert_pem: bytes, key_pem: bytes
+    ) -> None:
+        """Registers the client certificate this engine presents to one server.
+
+        Args:
+            host: The server hostname the certificate is registered for.
+            port: The server port.
+            cert_pem: PEM bytes; CERTIFICATE blocks, optionally followed by
+                the private key.
+            key_pem: PEM bytes holding exactly one unencrypted private key.
+
+        Raises:
+            SSLError: The Core rejected the certificate or key.
+        """
+        ...
+
+    def clear_client_certificate(self, host: str, port: int) -> None:
+        """Forgets the certificate registered for (host, port).
+
+        Args:
+            host: The server hostname to unregister.
+            port: The server port.
+
+        Raises:
+            SSLError: The Core rejected the call.
+        """
+        ...
+
     def write_cookie(self, cookie: Any, source_url: str) -> None:
         """Mirrors one jar cookie into the store.
 
