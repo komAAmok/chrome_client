@@ -2446,3 +2446,83 @@ request`，`review-before-tag.py` 把它记成 `pass`。
 出现在那里。运行时那一半由 `test_session_defects.EngineOptionForwardingTests` 用
 一个假 engine 断言它收到的 kwargs。两者都做了变异测试。
 
+---
+
+## 71. `getattr` 的默认值把「字段不存在」伪装成「值为 None」
+
+**现象**：`Response.ech_status` 在同步路径上恒为 `None`，而异步路径正常返回
+`"not_attempted"`。同一个 Core、同一个请求，两条路径给出不同答案。
+
+**根因**：同步路径读 `head.ech_status`，而 `PyResponse` 从未声明这个字段。
+`models.ech_of` 用的是 `getattr(head, "ech_status", None)`——一个不存在的属性和一个
+值为 `None` 的属性在这里无法区分，于是「字段丢了」被读成「Core 说不知道」。异步路径
+问的是 request 对象（`self.request.ech_status()`），那里有真 getter，所以一直是对的。
+
+**为什么没有门禁发现**：`ech_status` 当时不在 `models.pyi` 的 `Response` 声明里。
+stub 检查只比对「实现有的 stub 也要有」这一个方向，实现少一个字段它不会红；类型检查
+也只看被声明的东西。**一个从未被声明的属性，既不缺也不多。**
+
+**规则**：
+
+- 读 ABI 报告的字段时不要用 `getattr(obj, name, None)` 吞掉缺失。要么让类型
+  声明存在（`#[pyo3(get)]` / `.pyi`），要么显式区分「没有这个字段」和「字段是
+  None」。这两件事在语义上不同：前者是绑定层缺陷，后者是 Core 的真实回答。
+- 同步与异步两条路径读同一个事实，必须有测试同时断言两者。只测一条时，另一条可以
+  一直错着，而报告上写着「已覆盖」。
+
+**门禁**：`test_session_defects.EchStatusReportingTests` 断言同步路径给出真实值，并断言
+两条路径相等。变异测试：把 `ech_status` 在 `PyResponse` 里固定成 `None` → 两条测试都红。
+
+---
+
+## 72. `SameSite` 只匹配小写，服务器发的是 `SameSite=None`
+
+**现象**：任何一个 `Set-Cookie: ...; SameSite=None` 的响应都让整个 `Session().get()`
+抛 `ValueError: unknown SameSite value "None"`。不只是那条 cookie 丢掉——请求本身失败。
+
+**根因**：`cookie_same_site` 用 `match name { "none" => ..., "lax" => ... }`，只认小写。
+而这个值来自 `http.cookiejar`，它保存的是**服务器写的原样**；浏览器实际发出的正是
+`None` / `Lax` / `Strict`（首字母大写）。三个合法值一个都不匹配，全部落到 `other` 分支。
+
+**规则**：从外部协议文本解析枚举时，大小写是协议的一部分，不是格式偏好。
+RFC 6265bis 把 `SameSite` 的取值定义为大小写不敏感，所以比较前必须归一。
+同一类错误还存在于任何「按字面量匹配头字段取值」的地方。
+
+**门禁**：`test_session_defects.SameSiteCookieTests` 覆盖 `None` / `Lax` / `Strict` /
+`none` / `lax` / `strict` 六种写法，并断言未知取值仍然 fail-closed（不能被静默当成
+`unspecified`，那会改变上线内容）。变异测试：把 `to_ascii_lowercase()` 去掉 → 四条测试红。
+
+---
+
+## 73. DoH 与 ECH 的实测边界（不是缺陷，是能力边界）
+
+用户问「DoH 和 ECH 支持吗」。实测答案分成两半，值得记下来，因为很容易把两者混为
+一谈。
+
+**DoH / DoT / 指定 DNS 服务器：支持，且实测生效。**
+
+| 配置 | 观测 |
+| --- | --- |
+| `dns_nameservers` 指向本地 53 端口 | 服务端真的收到查询：`dns.google` 的 A(1) 与 HTTPS(65) |
+| `dns_nameservers` 指向死服务器 `127.0.0.1:1` | 仍然 200——Chromium 回退到 `TaskType::SYSTEM` |
+| `doh_template` + `dns_secure_mode=2` 指向 `127.0.0.1:1` | `DNSError ERR_NAME_NOT_RESOLVED`，**不回退** |
+| 同上但 `dns_secure_mode=1` | 200——opportunistic 允许回退 |
+
+最后两行才是 secure 与 opportunistic 的实质区别，也是 `dns_secure_mode` 这个参数值得存在
+的理由。第一行同时说明「Core 到底有没有用这个解析器」是可验证的：数查询比看返回值可靠。
+
+**ECH：只发 GREASE，不会真的加密 SNI。** 这是 Chromium 桌面构建的事实，不是本项目的
+缺口：
+
+- ECHConfigList 的唯一来源是 DNS HTTPS 记录（`net/dns/dns_response_result_extractor.cc:581`），
+  而 `TransportConnectJob` 只有在 destination 是带 scheme 的 `SchemeHostPort` 时才把
+  `DnsQueryType::HTTPS` 加进查询（`net/dns/host_resolver_manager.cc:845-852`，需要
+  `kUseDnsHttpsSvcb`，默认开启）。HTTPS 记录确实被查了——实测本地 53 端口收到 qtype 65。
+- 但公网实测 `cloudflare.com` 的 HTTPS 记录**不含 `ech=` 参数**，所以拿不到 config。
+- 没有 config 时 BoringSSL 只发 ECH GREASE：实测 ClientHello 里存在扩展 `0xfe0d`，
+  与真实 Chrome 119+ 的指纹一致（`tools/verify-wire-capture.py:117` 的 `ECH_FIRST_MAJOR`）。
+- 因此 `mn_ech_status_t` 的 `MN_ECH_FAILED` 不可达，`SUCCESS` 也不可达，实测恒为
+  `not_attempted`。头文件已经把这条写在契约里（`core/abi/minicronet.h:596-605`）。
+
+**结论**：`Response.ech_status` 现在能如实报告 `not_attempted`（修之前同步路径报 `None`），
+但不要据此期待 ECH 真的生效——在这个 Chromium 版本上它不会。

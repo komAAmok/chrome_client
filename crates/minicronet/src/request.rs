@@ -245,6 +245,15 @@ pub struct Response {
     /// `kUNKNOWN` when it genuinely does not know (a response served from the
     /// HTTP cache), and reporting HTTP/1.1 there would be a lie.
     pub http_version: HttpVersion,
+    /// Whether Encrypted ClientHello was used for this connection.
+    ///
+    /// Read here, next to `http_version`, for the same reason: both are facts
+    /// about the connection the Core only exposes while the request is still
+    /// alive, and a binding that asked for it later would have to reach back
+    /// into the request. The Python facade used to read it off the response
+    /// head, which never carried it, so `Response.ech_status` was permanently
+    /// `None` on every synchronous request.
+    pub ech_status: EchStatus,
     pub body: ResponseStream,
 }
 
@@ -860,12 +869,23 @@ fn take_response(
             } else {
                 HttpVersion::Unknown
             };
+            // Same read-now rule as the protocol: the ABI answers
+            // MN_ERROR_INVALID_STATE before a response starts, and this is the
+            // last moment the request is guaranteed to still be here.
+            let mut ech = sys::mn_ech_status_t::MN_ECH_NOT_ATTEMPTED;
+            let ech_result = unsafe { sys::mn_request_ech_status(request.raw(), &mut ech) };
+            let ech_status = if ech_result == sys::mn_result_t::MN_OK {
+                EchStatus::from(ech)
+            } else {
+                EchStatus::NotAttempted
+            };
             return Some(Ok(Response {
                 status_code: head.status_code,
                 headers: head.raw_headers,
                 header_fields: head.header_fields,
                 reason_phrase: head.reason_phrase,
                 http_version,
+                ech_status,
                 body: ResponseStream {
                     shared: Arc::clone(shared),
                     request: request.clone(),

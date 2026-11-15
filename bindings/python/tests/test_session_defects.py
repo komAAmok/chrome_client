@@ -1587,6 +1587,133 @@ def _type_block(source, name):
                 return source[start:index + 1]
     raise AssertionError("%s is not a parenthesised tuple" % name)
 
+class SameSiteCookieTests(unittest.TestCase):
+    "    A SameSite=None cookie must not fail the whole response."
+
+    "    cookie_same_site matched lowercase only, so the spelling a server"
+    "    actually sends -- SameSite=None, Lax, Strict -- reached the binding"
+    "    as an unknown value and raised ValueError from Session().get(). One"
+    "    such Set-Cookie made the entire response unusable."
+    "    "
+
+    def _serve(self, set_cookie):
+        class Handler(BaseHTTPRequestHandler):
+            protocol_version = "HTTP/1.1"
+
+            def do_GET(self):
+                body = b"ok"
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Set-Cookie", set_cookie)
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *_args):
+                pass
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        server.daemon_threads = True
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        return "http://127.0.0.1:%d/" % server.server_address[1]
+
+    def test_none_capitalized_is_accepted(self):
+        # SameSite=None is only storable together with Secure, and over plain
+        # HTTP Chromium correctly refuses it. What this asserts is narrower and
+        # is the defect: the VALUE must parse. Before the fix the request
+        # raised ValueError and no cookie was seen at all.
+        url = self._serve("a=1; Path=/; SameSite=None; Secure")
+        with chrome_client.Session() as session:
+            response = session.get(url, timeout=5)
+        self.assertEqual(response.status_code, 200)
+
+    def test_none_without_secure_is_rejected_by_the_store(self):
+        # Chromium refuses to store SameSite=None without Secure, and the
+        # facade mirrors the jar into the store as the cookie arrives. So the
+        # request raises -- but with the STORE's refusal, not with a ValueError
+        # naming an unknown SameSite value, which is what it used to do.
+        url = self._serve("a=1; Path=/; SameSite=None")
+        with chrome_client.Session() as session:
+            with self.assertRaises(chrome_client.RequestException) as caught:
+                session.get(url, timeout=5)
+        self.assertNotIn("SameSite", str(caught.exception),
+                         "the value parsed; the refusal is about Secure")
+
+    def test_every_capitalized_spelling_is_accepted(self):
+        for spelling in ("Lax", "Strict", "lax", "strict"):
+            with self.subTest(spelling=spelling):
+                url = self._serve("b=2; Path=/; SameSite=%s" % spelling)
+                with chrome_client.Session() as session:
+                    response = session.get(url, timeout=5)
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(session.cookies.get_dict(), {"b": "2"})
+
+    def test_an_unknown_value_is_still_refused(self):
+        # Fail closed: a SameSite value no browser accepts must not silently
+        # become "unspecified" and change what goes on the wire.
+        # ``chrome_client._python_impl._native`` is the extension itself (the
+        # package re-exports it under that name); the loader module is the one
+        # that carries ``native``. Reach the extension the same way the facade
+        # does.
+        from chrome_client._python_impl import _native as extension
+        engine = extension.PyEngine()
+        with self.assertRaises(ValueError) as caught:
+            engine.set_cookie("c", "3", "example.test", "/",
+                              "https://example.test/", False, False,
+                              "sideways", False, 0)
+        self.assertIn("sideways", str(caught.exception))
+
+
+class EchStatusReportingTests(unittest.TestCase):
+    "    Response.ech_status must report what the Core reported."
+
+    "    The sync path read head.ech_status, and PyResponse never declared"
+    "    that field: getattr returned its default, so every synchronous"
+    "    response reported None while the async path -- which asks the"
+    "    request object -- reported the real value. Both paths are asserted"
+    "    together because disagreeing is exactly the defect."
+    "    "
+
+    def _serve(self):
+        class Handler(BaseHTTPRequestHandler):
+            protocol_version = "HTTP/1.1"
+
+            def do_GET(self):
+                body = b"ok"
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *_args):
+                pass
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        server.daemon_threads = True
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        return "http://127.0.0.1:%d/" % server.server_address[1]
+
+    def test_the_sync_path_reports_a_value(self):
+        url = self._serve()
+        with chrome_client.Session() as session:
+            response = session.get(url, timeout=5)
+        self.assertEqual(response.ech_status, "not_attempted")
+
+    def test_both_paths_agree(self):
+        url = self._serve()
+        with chrome_client.Session() as session:
+            sync_value = session.get(url, timeout=5).ech_status
+
+        async def one():
+            async with chrome_client.AsyncSession() as session:
+                return (await session.get(url, timeout=5)).ech_status
+
+        async_value = asyncio.run(one())
+        self.assertEqual(sync_value, async_value)
+
 
 if __name__ == "__main__":
     unittest.main()

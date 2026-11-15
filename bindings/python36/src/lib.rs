@@ -82,6 +82,15 @@ fn http_version_name(value: HttpVersion) -> Option<&'static str> {
     }
 }
 
+/// Maps the Core's ECH result onto the string the facade reports.
+fn ech_status_name(value: EchStatus) -> Option<&'static str> {
+    Some(match value {
+        EchStatus::Success => "success",
+        EchStatus::Rejected => "rejected",
+        EchStatus::NotAttempted => "not_attempted",
+    })
+}
+
 fn cookie_same_site_name(value: CookieSameSite) -> &'static str {
     match value {
         CookieSameSite::Unspecified => "unspecified",
@@ -92,10 +101,13 @@ fn cookie_same_site_name(value: CookieSameSite) -> &'static str {
 }
 
 fn cookie_same_site(name: &str) -> PyResult<CookieSameSite> {
-    Ok(match name {
+    // Case-insensitive, and "none" accepted as an alias for no_restriction,
+    // exactly as the modern binding does: a `SameSite=None` cookie reaches
+    // this from the jar with the server's own capitalization.
+    Ok(match name.to_ascii_lowercase().as_str() {
         // The facade passes an empty string for "the jar had no SameSite".
         "" | "unspecified" => CookieSameSite::Unspecified,
-        "no_restriction" => CookieSameSite::NoRestriction,
+        "none" | "no_restriction" => CookieSameSite::NoRestriction,
         "lax" => CookieSameSite::Lax,
         "strict" => CookieSameSite::Strict,
         other => return Err(error(format!("unknown same_site {other:?}"))),
@@ -210,6 +222,10 @@ struct PyResponse {
     status_code: i32,
     headers: Vec<u8>,
     content: Vec<u8>,
+    /// Whether Encrypted ClientHello was used. The facade reads this off the
+    /// head object, so the 3.6 extension needs it for the same reason the
+    /// modern one does -- without it Response.ech_status is always None.
+    ech_status: Option<&'static str>,
 }
 
 #[pymethods]
@@ -225,6 +241,10 @@ impl PyResponse {
     #[getter]
     fn content<'p>(&self, py: Python<'p>) -> &'p PyBytes {
         PyBytes::new(py, &self.content)
+    }
+    #[getter]
+    fn ech_status(&self) -> Option<&'static str> {
+        self.ech_status
     }
 }
 
@@ -657,6 +677,7 @@ impl PyRequest {
                 status_code: response.status_code,
                 headers: response.headers,
                 content: Vec::new(),
+                ech_status: ech_status_name(response.ech_status),
             })
         })
     }
@@ -681,6 +702,7 @@ impl PyRequest {
                 status_code: response.status_code,
                 headers: response.headers,
                 content: Vec::new(),
+                ech_status: ech_status_name(response.ech_status),
             })
         })
     }

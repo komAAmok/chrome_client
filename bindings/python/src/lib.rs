@@ -168,6 +168,18 @@ fn cookie_tuple(
 /// against that library's values needs no translation. `None` for `Unknown`:
 /// the ABI documents that value as "Chromium does not know", and inventing
 /// HTTP/1.1 there is exactly the misreport v9 removed.
+/// Maps the Core's ECH result onto the string the facade reports.
+///
+/// Same vocabulary as `PyRequest::ech_status`; `None` before a response has
+/// started, which is the only case the ABI getter refuses.
+fn ech_status_name(value: EchStatus) -> Option<&'static str> {
+    Some(match value {
+        EchStatus::Success => "success",
+        EchStatus::Rejected => "rejected",
+        EchStatus::NotAttempted => "not_attempted",
+    })
+}
+
 fn http_version_name(value: HttpVersion) -> Option<&'static str> {
     match value {
         HttpVersion::Http09 => Some("HTTP/0.9"),
@@ -189,7 +201,14 @@ fn cookie_same_site_name(value: CookieSameSite) -> &'static str {
 }
 
 fn cookie_same_site(name: &str) -> PyResult<CookieSameSite> {
-    match name {
+    // Matched case-insensitively: the value reaches here from a caller-built
+    // jar, and `http.cookiejar` keeps the spelling the server used while
+    // browsers emit "None"/"Lax"/"Strict" capitalized. The lowercase-only
+    // match rejected every one of those, so a single `Set-Cookie: ...
+    // SameSite=None` made the whole response raise ValueError. Measured before
+    // the fix: `Session().get(url)` on a server sending SameSite=None failed
+    // with 'unknown SameSite value "None"'.
+    match name.to_ascii_lowercase().as_str() {
         "" | "unspecified" => Ok(CookieSameSite::Unspecified),
         "none" | "no_restriction" => Ok(CookieSameSite::NoRestriction),
         "lax" => Ok(CookieSameSite::Lax),
@@ -240,6 +259,15 @@ struct PyResponse {
     /// facade reports as `None` rather than guessing HTTP/1.1.
     #[pyo3(get)]
     http_version: Option<&'static str>,
+    /// Whether Encrypted ClientHello was used, as the Core reported it.
+    ///
+    /// The facade reads this off the head object (models.ech_of), so a head
+    /// without the attribute made `Response.ech_status` permanently None on
+    /// every synchronous request while the async path -- which asks the
+    /// request object -- reported the real value. Same value vocabulary as
+    /// `PyRequest::ech_status`.
+    #[pyo3(get)]
+    ech_status: Option<&'static str>,
 }
 
 #[pymethods]
@@ -607,6 +635,7 @@ impl PyRequest {
                     .map(|field| (field.name, field.value))
                     .collect(),
                 http_version: http_version_name(response.http_version),
+                ech_status: ech_status_name(response.ech_status),
             })
         })
     }
@@ -647,6 +676,7 @@ impl PyRequest {
                     .map(|field| (field.name, field.value))
                     .collect(),
                 http_version: http_version_name(response.http_version),
+                ech_status: ech_status_name(response.ech_status),
             })
         })
     }
