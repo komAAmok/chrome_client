@@ -160,6 +160,41 @@ def audit_captures():
     return failures, checked
 
 
+
+#: The release whose ClientHello first carries the ECH extension. The wire
+#: side is asserted in tools/verify-wire-capture.py; this constant is the same
+#: fact in the other direction, so the two cannot drift apart.
+ECH_FIRST_MAJOR = 119
+
+
+def check_ech_boundary_documented():
+    """Fails when a document states a different ECH starting major.
+
+    Three independent carriers claim the same number: the captures
+    (tools/verify-wire-capture.py), the profile table (ech_enabled), and the
+    prose a reader actually sees. The first two are already checked; without
+    this one the README could say 118 and every gate would stay green.
+
+    Returns:
+        A list of error strings, empty when every carrier agrees.
+    """
+    errors = []
+    pattern = re.compile(r"chrome_(\d+)`?\s*(?:起|and later|及以后)")
+    for relative in ("README.md", "README.en.md", "docs/ABI.md"):
+        path = pathlib.Path(__file__).resolve().parents[1] / relative
+        if not path.is_file():
+            continue
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if "ECH" not in line and "ech" not in line:
+                continue
+            for major in pattern.findall(line):
+                if int(major) != ECH_FIRST_MAJOR:
+                    errors.append(
+                        "%s: ECH is claimed to start at chrome_%s, but the "
+                        "captures put it at chrome_%d" % (relative, major,
+                                                       ECH_FIRST_MAJOR))
+    return errors
+
 def main(argv):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--header", default=str(DEFAULT_HEADER),
@@ -169,6 +204,7 @@ def main(argv):
     failures = audit_table(pathlib.Path(args.header))
     capture_failures, checked = audit_captures()
     failures += capture_failures
+    failures += check_ech_boundary_documented()
 
     if failures:
         print("padding rule audit FAILED:", file=sys.stderr)

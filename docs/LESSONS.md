@@ -2526,3 +2526,37 @@ RFC 6265bis 把 `SameSite` 的取值定义为大小写不敏感，所以比较�
 
 **结论**：`Response.ech_status` 现在能如实报告 `not_attempted`（修之前同步路径报 `None`），
 但不要据此期待 ECH 真的生效——在这个 Chromium 版本上它不会。
+
+---
+
+## 74. 同一个「支持 ECH」的结论，在三个版本里由三套不同机制实现
+
+**问题**：不同 Chrome 版本的 DoH 和 ECH 支持有什么不同。
+
+**ECH 的边界是 119，机制换过三次但行为没变**：
+
+| 版本 | 开关 | 位置 |
+| --- | --- | --- |
+| 110–121 | `config().EncryptedClientHelloEnabled()` | `net/base/features.cc` 的 `kEncryptedClientHello` |
+| 122–156 | `config().ech_enabled` | feature 已删除 |
+| 157 | `SSLClientContext::GetEchMode()` | `net/socket/ssl_client_socket.cc` |
+
+110/117/118 的 feature 是 `FEATURE_DISABLED_BY_DEFAULT`，119/120 是 `ENABLED_BY_DEFAULT`，
+122 起整条删除。这与抓包边界逐版本吻合：118 的 6 条连接都没有 `0xfe0d`，119 起 6 条全有。
+
+**教训**：只查一个版本的源码然后外推，会得到一个「机制」而不是「行为」。这次三套机制
+的行为一致，所以外推碰巧没错；但如果是 122 那次 feature 删除，只看 119 的源码会以为
+`kEncryptedClientHello` 仍然存在。**版本边界必须逐 tag 核对，而不是从相邻版本继承**
+（AGENTS §9 的同一原则）。
+
+**GREASE 与真实 ECH 的判据**：payload 长度在 372/436/500/564 之间随机浮动就是 GREASE，
+真实配置会在六条连接里稳定。`tools/verify-wire-capture.py` 已经把这个判据写成断言：
+从 119 起每条连接必须有扩展，且 6 条 payload 必须互不相同。
+
+**DoH 没有版本边界**：86 起每个 profile 都支持，只是 `SecureDnsMode` 的声明位置从
+`net/dns/dns_config.h` 移到了 `net/dns/public/secure_dns_mode.h`。
+
+**一处差点写错的**：我先写「`insecure_dns_mode` 在 152 之前不存在」，逐 tag 核对
+`net/dns/host_resolver.h` 后发现是 **156**：86/95/118/130/152 都没有该字段，156/157 有。
+差一个版本号看起来无关紧要，但它决定了「这套注入点能不能用在更早的 Chromium 上」，
+所以文档里改成了逐 tag 列出的具体版本。**否定性结论同样需要证据**（AGENTS §11）。

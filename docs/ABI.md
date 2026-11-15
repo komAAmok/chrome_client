@@ -332,3 +332,73 @@ Python 自己的 32 KiB 级增长——**计数正确，归因错误**。这是�
 `libminicronet` 作为 capsule 交给 Python 侧，名字应形如
 `minicronet.abi.v<N>`，并在 `PyCapsule_GetPointer` 时按名字逐字比对——但在那之前
 不引入它：多一条路径就多一处需要门禁的断言。
+
+---
+
+## 附：DoH 与 ECH 在各 Chrome 版本上的差异
+
+这一节回答「不同版本的 Chrome，DoH 和 ECH 支持有什么不同」。两者结论完全不同：
+**DoH 从 86 起每个版本都支持**，**ECH 从 119 起才在默认构建里发送 GREASE**。
+
+### ECH：唯一的边界是 119，机制换过两次但行为没变
+
+抓包证据（每个版本 6 条独立 h2 连接，`profiles/chrome_<major>/h2/captures.json`）：
+
+| 版本 | ClientHello 里的 ECH 扩展（`0xfe0d`） | payload 长度 |
+| --- | --- | --- |
+| chrome_86 – chrome_118 | **不存在** | — |
+| chrome_119 – chrome_157 | 存在，6 条连接的 payload 各不相同 | 372 / 436 / 500 / 564 |
+
+**payload 长度在 372/436/500/564 之间随机浮动**，这正是 GREASE 的判据：真实配置会在六条连接
+里稳定，只有填充的 GREASE 才会每次不同。这条判据由 `tools/verify-wire-capture.py:117`
+的 `ECH_FIRST_MAJOR = 119` 钉住，并要求「从 119 起每条连接都必须有，且 6 条 payload 互不相同」。
+
+源码侧确认同一个边界，机制在 119、122、157 换过三次但**行为始终一致**：
+
+| 版本 | 开关 | 源码位置 |
+| --- | --- | --- |
+| 110 – 121 | `context_->config().EncryptedClientHelloEnabled()` | `net/base/features.cc`：`kEncryptedClientHello` |
+| 122 – 156 | `context_->config().ech_enabled`（feature 已删除） | `net/socket/ssl_client_socket_impl.cc` |
+| 157 | `SSLClientContext::GetEchMode()` | `net/socket/ssl_client_socket.cc` |
+
+关键的一行是 feature 的默认值：
+
+```
+chrome_110 / 117 / 118:  BASE_FEATURE(kEncryptedClientHello, ..., base::FEATURE_DISABLED_BY_DEFAULT);
+chrome_119 / 120:        BASE_FEATURE(kEncryptedClientHello, ..., base::FEATURE_ENABLED_BY_DEFAULT);
+chrome_122 – chrome_156: 该 feature 整条被删除，改由 SSLClientContextConfig::ech_enabled
+                        直接控制（机制换了，行为没变：119 起一直发 GREASE）
+```
+
+119 的翻转与抓包边界逐版本吻合，这是三条独立证据（抓包、源码、产物）指向同一结论。
+
+**开启之后仍然不加密 SNI**：`ConfigureEch()` 在 `kOpportunistic` 下无条件调用
+`SSL_set_enable_ech_grease(ssl, 1)`，而 ECHConfigList 为空时只走 GREASE 分支
+（`net/socket/ssl_client_socket_impl.cc:1899`）。ECHConfigList 的唯一来源是 DNS HTTPS 记录，
+桌面构建不会为本引擎取到它，所以 `mn_ech_status_t` 恒为 `MN_ECH_NOT_ATTEMPTED`。
+
+### DoH：86 起全部支持，差异只在声明位置
+
+DoH 不出现在抓包里（DNS 发生在 TLS 之前），所以这一行只能靠源码与实测：
+
+| 版本 | `SecureDnsMode` | `DnsOverHttpsConfig::FromString` | 声明位置 |
+| --- | --- | --- | --- |
+| 86 | ✓ | ✓ | `net/dns/dns_config.h` |
+| 95 起 | ✓ | ✓ | `net/dns/public/secure_dns_mode.h` |
+| 156 起 | ✓ | ✓ | 同上，另加 `net/dns/public/insecure_dns_mode.h` |
+
+`ManagerOptions::insecure_dns_mode` 只在 **156 及以后**存在：逐 tag 核对
+`net/dns/host_resolver.h`，86 / 95 / 118 / 130 / 152 都没有这个字段，156 / 157 有。
+本仓库固定在 156，所以能用它。不设时 `dns_nameservers` 会被接受后忽略，那是本项目
+踩过的坑（LESSONS 62），与 Chrome 版本无关；若要支持 152 及更早的 Chromium，
+`dns_nameservers` 这条路需要另一套注入点。
+
+实测（ABI 12 产物，见 LESSONS 73）：`dns_secure_mode=2` 的 DoH 不回退，`=1` 回退到系统解析。
+这两个模式从 86 起的语义就没变过，`SecureDnsMode` 的三个值（Off / Automatic / Secure）
+在各版本源码里完全一致。
+
+### 一句话结论
+
+- **DoH**：`chrome_86` 起每个 profile 都能用，`doh_template` + `dns_secure_mode` 是唯一开关。
+- **ECH**：`chrome_118` 及以前不发 ECH 扩展；`chrome_119` 起发 GREASE，但**永远不加密 SNI**——
+  这是 Chromium 桌面构建的边界，不是本项目的缺口。

@@ -79,7 +79,7 @@ Profile 影响 TLS ClientHello、ALPN、HTTP/2 设置、QUIC/H3 和相关 Chromi
 | mTLS 客户端证书 | ✓ | ✓ | `cert=("c.pem","k.pem")` 或单个合并 PEM；服务端要求时自动出示，不改变 ClientHello |
 | 域名映射到指定 IP | ✓ | ✓ | `host_mapping="MAP cdn.test 93.184.216.34"`；**只改写解析结果**，SNI、Host 头、证书校验仍用域名 |
 | DNS 服务器 / DoH / DoT | ✓ | ✓ | `dns_nameservers="1.1.1.1"`、`doh_template=...` 需配 `dns_secure_mode=1/2`、`dns_over_tls`、`dns_rotate`、`dns_padding`。实测：指向死服务器的 `dns_nameservers` 仍返回 200（Chromium 的 SYSTEM 兜底）；`dns_secure_mode=2` 的 DoH 不回退 |
-| ECH（Encrypted ClientHello） | ✓ GREASE | ✓ | `Response.ech_status` 报告 `success` / `rejected` / `not_attempted`。桌面 Chromium 只从 DNS HTTPS 记录取 ECHConfigList，本引擎不取，所以真实配置永远不出现；ClientHello 里的 ECH GREASE 扩展（`0xfe0d`）从 chrome_119 起与真实 Chrome 一致 |
+| ECH（Encrypted ClientHello） | ✓ GREASE | ✓ | `Response.ech_status` 报告 `success` / `rejected` / `not_attempted`。**版本边界：`chrome_118` 及以前不发 ECH 扩展，`chrome_119` 起发 GREASE**（payload 长度在 372/436/500/564 间随机，正是 GREASE 的特征）。桌面 Chromium 只从 DNS HTTPS 记录取 ECHConfigList，本引擎不取，所以真实配置永远不出现，`ech_status` 恒为 `not_attempted`。逐版本证据见 `docs/ABI.md` 末节 |
 | 平台身份 | ✓ | ✓ | `platform="windows"/"macos"/"linux"`；UA 组、`sec-ch-ua-platform`、`sec-ch-ua-mobile` 同源，Linux 主机可发 Windows UA |
 | 每 origin 连接上限 | ✓ | ✓ | `max_sockets_per_group=32`；默认 0 保留 Chromium 自身的 6，提高是对被模仿浏览器的可观测偏离 |
 | HSTS 例外与多跳代理 | ✓ | ✓ | `hsts_bypass="example"`（只接受单标签）、`proxy_chain="socks5://a:1080,http://b:8080"` |
