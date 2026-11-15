@@ -37,13 +37,14 @@ from .engine import (BINDING_FIELDS, DEFAULT_MAX_ENGINES, EngineCache,
                      EngineConfig, EngineSlot, SessionBinding)
 from .exceptions import (InvalidProxyURL, InvalidURL, ProxyError,
                          RequestException, ResponseTooLarge, SessionClosed,
-                         Timeout, TooManyRedirects, UnsupportedFeature,
-                         map_native_error)
+                         SSLError, Timeout, TooManyRedirects,
+                         UnsupportedFeature, map_native_error)
 from .impersonate import (default_priority, normalize_http_version,
                           normalize_impersonate, reject_fingerprint_overrides,
                           validate_extra_fp)
 from .models import (PreparedRequest, Request, Response, AsyncResponse,
-                     _negotiated_http_version, compose_status_line, ech_of, parse_raw_headers,
+                     _headers_from_fields, _negotiated_http_version, compose_status_line,
+                     ech_of, parse_raw_headers,
                      reason_from_status_line)
 from .structures import CaseInsensitiveDict, Headers
 from .utils import (default_headers as _default_headers, get_netrc_auth,
@@ -873,6 +874,20 @@ def normalize_proxy_chain(value):
         raise UnsupportedFeature(
             "proxy_chain must be a comma-separated list of scheme://host:port "
             "entries, not %r" % (value,))
+    # The Core parses each entry itself and, on anything it cannot turn into a
+    # ProxyServer, gives up and leaves the context unbuilt -- the caller then
+    # sees InitializationFailed with no mention of the chain. Rejecting the
+    # shape here names the option instead.
+    for entry in (part.strip() for part in value.split(",")):
+        scheme, separator, rest = entry.partition("://")
+        if not separator or not rest.rsplit(":", 1)[-1].isdigit() \
+                or ":" not in rest:
+            raise UnsupportedFeature(
+                "proxy_chain entry %r is not scheme://host:port" % (entry,))
+        if scheme.lower() not in _PROXY_SCHEMES:
+            raise UnsupportedFeature(
+                "proxy_chain entry %r uses scheme %r; Chromium accepts %s"
+                % (entry, scheme, ", ".join(_PROXY_SCHEMES)))
     return value.strip()
 
 
@@ -1067,6 +1082,32 @@ def _join_entries(value, name):
             "%s was given but contains no entry; drop the argument to keep the "
             "system setting" % name)
     return ",".join(kept)
+
+def _read_ca_bundle(path):
+    """Reads a CA bundle the caller named with ``verify=``.
+
+    ``verify="/missing.pem"`` used to escape as a bare ``FileNotFoundError`` from
+    inside ``open()``: not a ``RequestException``, so ``except RequestException``
+    around a request missed it, and the message named no option. ``cert=`` has
+    always reported the same situation as a ``RequestException`` naming its
+    option, so this path does too.
+
+    Args:
+        path: Filesystem path to read.
+
+    Returns:
+        The file contents as bytes.
+
+    Raises:
+        SSLError: The bundle could not be read.
+    """
+    try:
+        with open(path, "rb") as handle:
+            return handle.read()
+    except OSError as error:
+        raise SSLError(
+            "verify= could not read the CA bundle %r: %s" % (path, error))
+
 
 def normalize_client_cert(cert):
     """Turns ``cert=`` into ``(cert_pem, key_pem)`` bytes, or ``None``.
@@ -1413,7 +1454,7 @@ class _AsyncState(object):
         except RuntimeError as error:
             self._fail(map_native_error(error))
             return
-        for kind, code, raw_headers, chunk, message in events:
+        for kind, code, raw_headers, chunk, message, fields in events:
             if kind == "body":
                 self._on_body(chunk)
             elif kind == "response":
@@ -1429,7 +1470,7 @@ class _AsyncState(object):
                 if self.stream:
                     self._signal()
             elif kind == "redirect":
-                self._on_redirect(code, raw_headers, chunk)
+                self._on_redirect(code, raw_headers, chunk, fields)
             elif kind == "done":
                 self._on_done()
             elif kind == "error":
@@ -1477,10 +1518,10 @@ class _AsyncState(object):
             # download paid two full copies; joining once pays one.
             self.body.append(chunk)
 
-    def _on_redirect(self, status_code, raw_headers, new_url):
+    def _on_redirect(self, status_code, raw_headers, new_url, fields=None):
         if self.follow:
             self.hops.append((status_code, raw_headers, bytes(new_url).decode(
-                "utf-8", "replace"), ""))
+                "utf-8", "replace"), "", fields))
             return
         # Chromium defers the hop waiting for `follow_redirect`; the caller asked
         # not to follow, so the 3xx is the response.
@@ -1712,7 +1753,9 @@ class BaseSession(object):
                  verify=True, timeout=None, headers=None, cookies=None, params=None,
                  auth=None, cert=None, stream=False, hooks=None,
                  max_redirects=None, trust_env=True,
-                 allow_redirects=True, max_response_bytes=None, base_url=None,
+                 allow_redirects=True, max_response_bytes=None,
+                 strip_authorization=False, take_body_buffers=False,
+                 base_url=None,
                  http_version=None, ja3=None, akamai=None, perk=None, extra_fp=None,
                  default_headers=True, default_encoding="utf-8",
                  discard_cookies=False, raise_for_status=False, retry=0, cache=True,
@@ -1753,7 +1796,12 @@ class BaseSession(object):
         self.proxy = proxy
         self.proxies = dict(proxies) if proxies else {}
         self.proxy_auth = proxy_auth
-        self.verify = verify
+        # ``None`` is not a documented value here, and bool(None) is False:
+        # passing one silently turned certificate verification OFF at the
+        # engine, which is the one setting where a silent downgrade is
+        # unacceptable. The constructor default is True, so an explicit None
+        # is read as "leave it at the default" rather than "disable it".
+        self.verify = True if verify is None else verify
         #: Chromium MappedHostResolver rules, e.g. "MAP example.test 93.184.216.34".
         #: A rule rewrites only the resolution result: SNI, the Host header and
         #: certificate verification keep using the URL host, which is what makes a
@@ -1769,6 +1817,15 @@ class BaseSession(object):
         self.dns_rotate = bool(dns_rotate)
         self.dns_padding = bool(dns_padding)
         self.hsts_bypass = normalize_hsts_bypass(hsts_bypass)
+        # The ABI rejects both at once (core/abi/minicronet.h: proxy_chain and
+        # proxy_rules "describe the same connection path twice"), but the
+        # rejection used to arrive with the FIRST REQUEST as InvalidURL /
+        # InvalidArgument -- a URL error for a configuration conflict. The
+        # combination is decidable here, so it is refused here.
+        if proxy is not None and proxy_chain is not None:
+            raise InvalidProxyURL(
+                "proxy= and proxy_chain= both describe the connection path; "
+                "set one of them")
         self.proxy_chain = normalize_proxy_chain(proxy_chain)
         self.platform = normalize_platform(platform)
         self.max_sockets_per_group = max_sockets_per_group
@@ -1795,14 +1852,29 @@ class BaseSession(object):
         #: "no caller cap"; an explicit value at or above 20 raises from
         #: _validate_max_redirects rather than being clamped to 20.
         self.max_redirects = _validate_max_redirects(max_redirects)
-        self.trust_env = trust_env
-        self.allow_redirects = allow_redirects
+        # Each of these is documented as a flag with a True/False default, never
+        # None. bool(None) is False, so an explicit None silently SELECTED the
+        # off state -- measured: cache=None disabled the HTTP cache, and
+        # default_headers=None dropped every captured browser header. None is
+        # read here as "leave the default", the same rule verify= follows.
+        self.trust_env = True if trust_env is None else trust_env
+        self.allow_redirects = True if allow_redirects is None else allow_redirects
+        #: Drop a caller-supplied ``Authorization`` when a redirect changes the
+        #: origin. Off by default: this was silently broken before ABI 12 (the
+        #: header reached the new host), so turning it on is a behaviour change
+        #: callers opt into. See docs/COMPATIBILITY_BOUNDARY.md.
+        self.strip_authorization = bool(strip_authorization)
+        #: Wrap the Core body buffer instead of copying it, handing the memory
+        #: back through the ABI when the chunk is dropped. Off by default: the
+        #: copy is about 1.6% of a 64 MiB local stream, so this exists for the
+        #: allocation behaviour, not for throughput.
+        self.take_body_buffers = bool(take_body_buffers)
         self.base_url = base_url
         self.default_encoding = default_encoding
         self.discard_cookies = discard_cookies
         self.raise_for_status = raise_for_status
         self.retry = RetryStrategy.coerce(retry)
-        self.cache = cache
+        self.cache = True if cache is None else cache
         self.user_agent = user_agent
         self.accept_language = accept_language
         self.response_class = response_class
@@ -1813,8 +1885,8 @@ class BaseSession(object):
         #: not just consumed at construction: :meth:`_browser_headers` reads it on
         #: every request, and a session that says "no default headers" must keep
         #: saying so for its whole life.
-        self.default_headers = bool(default_headers)
-        self.headers = Headers(_default_headers() if default_headers else None)
+        self.default_headers = True if default_headers is None else bool(default_headers)
+        self.headers = Headers(_default_headers() if self.default_headers else None)
         if headers:
             self.headers.update(headers)
         self.cookies = cookiejar_from_dict(cookies) \
@@ -2185,16 +2257,20 @@ class BaseSession(object):
         # Attaching it unconditionally sent the session's credentials to whatever
         # proxy a proxied pool happened to select for one call.
         proxy, url_user, url_password = split_proxy_credentials(proxy)
+        # ``verify`` is a flag or a CA bundle path. An unreadable bundle is an
+        # SSL failure, not a URL one: it used to escape as a bare
+        # FileNotFoundError, and the Core rejected the bytes as
+        # InvalidArgument -> InvalidURL, which blamed the caller's URL.
         ca_pem = None
         if isinstance(verify, str):
-            with open(verify, "rb") as handle:
-                ca_pem = handle.read()
+            ca_pem = _read_ca_bundle(verify)
             verify_flag = True
         elif verify is None:
-            verify_flag = bool(self.verify) if not isinstance(self.verify, str) else True
+            verify_flag = True
             if isinstance(self.verify, str):
-                with open(self.verify, "rb") as handle:
-                    ca_pem = handle.read()
+                ca_pem = _read_ca_bundle(self.verify)
+            else:
+                verify_flag = bool(self.verify)
         else:
             verify_flag = bool(verify)
         username, password = url_user, url_password
@@ -2216,7 +2292,14 @@ class BaseSession(object):
             accept_language=self.accept_language,
             proxy_username=username,
             proxy_password=password,
-            http_version=http_version if http_version is not None else self.http_version,
+            # Normalise per-request values too, for the same reason impersonate is:
+            # ``Session(http_version="h2")`` is accepted at construction, and a
+            # per-call ``http_version="h2"`` used to reach the Core verbatim and
+            # fail with "unknown http version". It also split the engine cache:
+            # "v2", "h2" and "HTTP/2" are one protocol but were three keys, so
+            # one session built three contexts for the same wire identity.
+            http_version=normalize_http_version(http_version)
+            if http_version is not None else self.http_version,
             cache=self.cache,
             profile_namespace=None,
             host_mapping=self.host_mapping,
@@ -2655,15 +2738,28 @@ class BaseSession(object):
         not stall the loop (measured: 16 concurrent builds, 3.4 ms each, 72 ms of
         loop stall).
 
+        The Cookie header is dropped from a COPY, never from the object the
+        caller handed in. ``send()`` takes a PreparedRequest the caller owns and
+        may reuse, and ``pop``-ing its header made that request permanently
+        cookie-free: measured, ``session.send(prepared, discard_cookies=True)``
+        followed by ``session.send(prepared)`` sent no Cookie header on the
+        second call either, because the caller's own object had been rewritten.
+        ``requests`` never mutates a request it sends.
+
         Args:
             slot: The slot the request would otherwise have used.
-            prepared: The prepared request, whose Cookie header is dropped.
+            prepared: The prepared request.
 
         Returns:
-            The :class:`EngineConfig` for the throwaway engine.
+            ``(config, prepared)``: the :class:`EngineConfig` for the throwaway
+            engine, and the request to send on it -- the same object when it
+            carried no Cookie header, otherwise a copy without one.
         """
-        prepared.headers.pop("Cookie", None)
-        return slot.config
+        if prepared.headers is None or "Cookie" not in prepared.headers:
+            return slot.config, prepared
+        effective = prepared.copy()
+        effective.headers.pop("Cookie", None)
+        return slot.config, effective
 
     def _resolve_cookies(self, slot, prepared, discard):
         """Decides the outgoing ``Cookie`` header.
@@ -2680,10 +2776,14 @@ class BaseSession(object):
             discard: Whether the caller asked for "neither send nor record".
 
         Returns:
-            The :class:`EngineSlot` to use, always *slot*.
+            ``(slot, prepared)``. *slot* is the engine the request runs on --
+            the session's own unless ``discard_cookies`` asked for a throwaway;
+            *prepared* is the request to send, which is a copy when the caller's
+            own object had to lose its Cookie header.
         """
         if discard:
-            return self._throwaway_slot(self._discard_config(slot, prepared))
+            config, effective = self._discard_config(slot, prepared)
+            return self._throwaway_slot(config), effective
         # A per-request ``cookies=`` mapping goes into the store for this
         # request. A header would not do: CookieMonster owns the Cookie header
         # and re-attaches whatever it holds, so a cookie the store also has
@@ -2728,7 +2828,7 @@ class BaseSession(object):
                             continue
         # The jar writes through to the store, so the header the Core emits is
         # the one the jar describes. Nothing to compare, nothing to replace.
-        return slot
+        return slot, prepared
     def _seed_store_from_jar(self, slot, source_url):
         """Writes the session jar into a store the session has not filled yet.
 
@@ -2931,8 +3031,16 @@ class BaseSession(object):
         # so a caller reconstructing the chain from request.url saw the same URL
         # three times and could not tell which hop set which cookie.
         hop_request = prepared
-        for hop_status, hop_raw, hop_url, _hop_method in hops:
-            hop_line, hop_headers = parse_raw_headers(hop_raw)
+        for hop_status, hop_raw, hop_url, _hop_method, hop_fields in hops:
+            # ABI 12 hands the parsed fields over with the hop, so the raw block
+            # only has to be split on a build that predates it. The status line
+            # still comes from the raw block: the ABI carries the fields and the
+            # reason phrase separately, and a hop has no reason phrase of its own.
+            if hop_fields is not None:
+                hop_headers = _headers_from_fields(hop_fields)
+                hop_line = None
+            else:
+                hop_line, hop_headers = parse_raw_headers(hop_raw)
             hop = Response()
             hop.status_code = hop_status
             hop.headers = hop_headers
@@ -2978,10 +3086,18 @@ class BaseSession(object):
     def _native_request(self, slot, prepared, timeout, allow_redirects, cache_mode,
                         priority):
         body = prepared.body if not prepared.stream_body else None
+        # ``take_body_buffers`` is passed by keyword, not positionally: the
+        # eleven positional slots are the ones the two extensions have shared
+        # since v8, and inserting a twelfth would shift every one after it.
+        # It was accepted by the constructor and then never forwarded, so the
+        # documented zero-copy option did nothing -- the copy it is supposed to
+        # avoid still happened, and no gate could see it because both behaviours
+        # return identical bytes.
         return slot.engine.request(
             prepared.method, prepared.url, prepared.wire_headers(), body,
             _split_timeout(timeout), bool(allow_redirects), None, cache_mode,
-            priority, bool(prepared.stream_body),
+            priority, bool(prepared.stream_body), self.strip_authorization,
+            take_body_buffers=self.take_body_buffers,
         )
 
 
@@ -3351,10 +3467,12 @@ class Session(BaseSession):
         Returns:
             The assembled :class:`Response`.
         """
-        slot = self._resolve_cookies(lease.slot, prepared, discard)
+        slot, prepared = self._resolve_cookies(lease.slot, prepared, discard)
         # Cookie resolution may have replaced the engine, and the replacement is
         # the one this request runs on: move the pin so the in-flight count
-        # follows the request instead of the engine it abandoned.
+        # follows the request instead of the engine it abandoned. It may also
+        # have produced a copy of the request (``discard_cookies`` drops the
+        # Cookie header from a copy rather than from the caller's object).
         lease.rebind(slot)
         throwaway = slot.single_use
         # After the rebind, so the certificate lands on the engine that will
@@ -3556,7 +3674,7 @@ class Session(BaseSession):
             while True:
                 hop, head = native.wait_manual(deadline)
                 if hop is not None:
-                    status_code, raw_headers, url, _new_method = hop
+                    status_code, raw_headers, url, _new_method, hop_fields = hop
                     if yield_requests:
                         following = request.copy()
                         following.url = url
@@ -3667,7 +3785,9 @@ class AsyncSession(BaseSession):
                  verify=True, timeout=None, headers=None, cookies=None, params=None,
                  auth=None, cert=None, stream=False, hooks=None,
                  max_redirects=None, trust_env=True,
-                 allow_redirects=True, max_response_bytes=None, base_url=None,
+                 allow_redirects=True, max_response_bytes=None,
+                 strip_authorization=False, take_body_buffers=False,
+                 base_url=None,
                  http_version=None, ja3=None, akamai=None, perk=None, extra_fp=None,
                  default_headers=True, default_encoding="utf-8",
                  discard_cookies=False, raise_for_status=False, retry=0, cache=True,
@@ -3825,16 +3945,18 @@ class AsyncSession(BaseSession):
         discard = options.get("discard_cookies")
         discard = self.discard_cookies if discard is None else discard
         check_discard_cache_mode(discard, options.get("cache_mode"))
+        # ``_discard_config`` returns the request to send as well as the config:
+        # it drops the caller's Cookie header from a COPY, because the caller
+        # owns the PreparedRequest and may send it again.
         if discard:
+            config, prepared = self._discard_config(lease.slot, prepared)
             # The build posts to the Core's network thread and waits there
             # (mn_engine_create -> Engine::Start, core/source/engine.cc:517-538),
             # 3.4 ms measured. Inline that is 3.4 ms of loop stall per discard
             # request; in an executor it is 3.4 ms of a worker thread.
-            slot = await loop.run_in_executor(
-                None, self._throwaway_slot,
-                self._discard_config(lease.slot, prepared))
+            slot = await loop.run_in_executor(None, self._throwaway_slot, config)
         else:
-            slot = self._resolve_cookies(lease.slot, prepared, discard)
+            slot, prepared = self._resolve_cookies(lease.slot, prepared, discard)
         cert = self._effective_client_cert(prepared.url, options)
         if cert is not None:
             slot.set_client_certificate(*cert)

@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import argparse
 import inspect
+import re
 import pathlib
 import sys
 
@@ -60,6 +61,62 @@ def parameters(cls):
             default = repr(parameter.default)
         rows.append((name, default, parameter.kind.name))
     return rows
+
+
+#: Options that must reach the Core request config, and the keyword each one is
+#: forwarded as. A constructor option that is stored and then never passed is
+#: accepted and ignored -- the silent-ignore AGENTS.md section 8 forbids -- and
+#: nothing compared the two: take_body_buffers was stored on the session and
+#: dropped on the floor for a whole round, and no gate could see it because both
+#: behaviours return identical bytes.
+NEWLINE_GUARD = chr(10) + "    def "
+
+#: Constructor options that must be READ by ``_native_request``, the one place a
+#: request is built. An option that is stored and then never read is accepted and
+#: ignored -- the silent ignore AGENTS.md section 8 forbids -- and nothing
+#: compared the two: take_body_buffers was stored on the session and dropped on
+#: the floor for a whole round, and no gate could see it because both behaviours
+#: return identical bytes.
+#:
+#: The session ATTRIBUTE, not the keyword: strip_authorization is the eleventh
+#: positional argument, so requiring a keyword spelling would fail on a correct
+#: tree. What must hold either way is that the session value reaches the call
+#: site.
+FORWARDED = ("strip_authorization", "take_body_buffers")
+
+
+def check_options_reach_the_core() -> list[str]:
+    """Returns an error per constructor option that never reaches the Core.
+
+    Reads the source of ``_native_request`` -- the one place a request is built
+    -- and requires each forwarded option to appear there. A call-site scan
+    rather than a runtime probe because the probe would need a live Core and a
+    server, and this has to fail on a clean checkout in CI.
+
+    Returns:
+        A list of error strings, empty when every option is forwarded.
+    """
+    source = (REPO / "bindings" / "python" / "chrome_client" / "_python_impl"
+              / "sessions.py").read_text()
+    start = source.find("def _native_request(")
+    if start < 0:
+        return ["sessions.py has no _native_request; this check cannot read the "
+                "request construction site"]
+    end = source.find(NEWLINE_GUARD, start + 1)
+    body = source[start:end if end > 0 else len(source)]
+    # Comments are stripped first. Without this the check passed on a mutated
+    # tree that no longer forwarded take_body_buffers: the comment above the
+    # call still named the option, and a substring test cannot tell code from
+    # prose. Measured -- deleting the keyword left the gate green.
+    code = chr(10).join(
+        line.split("#", 1)[0] for line in body.splitlines())
+    errors = []
+    for option in FORWARDED:
+        if not re.search(r"self\.%s\b" % re.escape(option), code):
+            errors.append(
+                "%s= is accepted by both constructors but never reaches the Core: "
+                "_native_request never reads self.%s" % (option, option))
+    return errors
 
 
 def main() -> int:
@@ -122,6 +179,7 @@ def main() -> int:
         print("Session      : %d options" % len(sync))
         print("AsyncSession : %d options" % len(asynchronous))
         print("shared       : %d" % len(shared_sync))
+    errors.extend(check_options_reach_the_core())
     for error in errors:
         print("error: " + error)
     if errors:

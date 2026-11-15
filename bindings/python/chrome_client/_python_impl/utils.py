@@ -118,6 +118,12 @@ def get_encoding_from_headers(headers):
     content_type, params = _parse_content_type_header(content_type)
     if "charset" in params:
         return params["charset"].strip("'\"")
+    if "text" in content_type:
+        # RFC 2616 section 3.7.1's default for text/* with no charset, and what
+        # requests answers. Returning None instead sent ``.text`` and
+        # ``iter_content(decode_unicode=True)`` down different fallbacks, so one
+        # body decoded two ways (measured: U+FFFD where the accents were).
+        return "ISO-8859-1"
     if "application/json" in content_type:
         return "utf-8"
     return None
@@ -161,9 +167,19 @@ def guess_json_utf(data):
     if null_count == 0:
         return "utf-8"
     if null_count == 2:
-        return "utf-16-be" if sample[::2] == b"\x00\x00" else "utf-16-le"
+        # Only the two shapes that really are UTF-16 ASCII characters identify
+        # anything; claiming one for the rest decoded garbage as text.
+        if sample[::2] == b"\x00\x00":
+            return "utf-16-be"
+        if sample[1::2] == b"\x00\x00":
+            return "utf-16-le"
+        return None
     if null_count == 3:
-        return "utf-32-be" if sample[:3] == b"\x00\x00\x00" else "utf-32-le"
+        if sample[:3] == b"\x00\x00\x00":
+            return "utf-32-be"
+        if sample[1:] == b"\x00\x00\x00":
+            return "utf-32-le"
+        return None
     return None
 
 
@@ -220,18 +236,51 @@ def _urlparse6(url):
 
 
 def prepend_scheme_if_needed(url, new_scheme):
+    """Adds *new_scheme* to a URL that has none, keeping one it already has.
+
+    ``urlparse`` reads a bare ``host:port/...`` as a scheme named after the host.
+    Swapping netloc and path on that reading produced ``example.com://8080/x``,
+    which no client can fetch; a scheme is never followed by a port number.
+
+    Args:
+        url: The URL, which may or may not carry a scheme.
+        new_scheme: The scheme to add when there is none.
+
+    Returns:
+        The absolute URL.
+
+    Example:
+        >>> prepend_scheme_if_needed("example.com:8080/x", "http")
+        'http://example.com:8080/x'
+    """
     parsed = urlparse(url, scheme=new_scheme)
     if not parsed.netloc:
-        parsed = parsed._replace(netloc=parsed.path, path="")
+        _head, colon, tail = url.partition(":")
+        if colon and tail[:1].isdigit():
+            parsed = urlparse("%s://%s" % (new_scheme, url))
+        else:
+            parsed = parsed._replace(netloc=parsed.path, path="")
     return parsed.geturl()
 
 
 def is_ipv4_address(value):
+    """Reports whether the address parser accepts the value as IPv4.
+
+    The dotted-quad test this used to add is not requests' rule and it changes
+    the NO_PROXY answer: ``inet_aton`` also takes the short forms ``1.2.3`` and
+    ``127.1``, which resolve as addresses, so both branches must agree on them.
+
+    Args:
+        value: The candidate string.
+
+    Returns:
+        ``True`` when the address parser accepts it.
+    """
     try:
         socket.inet_aton(value)
     except OSError:
         return False
-    return value.count(".") == 3
+    return True
 
 
 def address_in_network(address, network):
@@ -246,14 +295,33 @@ def address_in_network(address, network):
 
 
 def should_bypass_proxies(url, no_proxy=None):
-    """Applies ``NO_PROXY`` semantics, including CIDR and suffix matching."""
+    """Applies ``NO_PROXY`` semantics, including CIDR and suffix matching.
+
+    Two spellings both used to fail OPEN, routing through the proxy the caller
+    had excluded: ``*`` (never proxy) matched no suffix, and a leading dot
+    (``.example.com``) stayed in the comparison so the bare host never matched.
+
+    Args:
+        url: The target URL.
+        no_proxy: The NO_PROXY value, or ``None`` to read the environment.
+
+    Returns:
+        ``True`` when no proxy may be used for *url*.
+    """
     if no_proxy is None:
         no_proxy = os.environ.get("no_proxy") or os.environ.get("NO_PROXY")
     parsed = urlparse(url)
     if parsed.hostname is None:
         return True
     if no_proxy:
+        # The wildcard answers before any matching: it excludes everything.
+        if no_proxy.strip() == "*":
+            return True
         entries = (host for host in no_proxy.replace(" ", "").split(",") if host)
+        # A leading dot is a suffix marker. A bare "." keeps its dots rather than
+        # becoming an empty entry that would match every host.
+        entries = (entry.lstrip(".") if entry.strip(".") else entry
+                   for entry in entries)
         if is_ipv4_address(parsed.hostname):
             for entry in entries:
                 if "/" in entry:

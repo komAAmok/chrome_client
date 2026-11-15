@@ -46,7 +46,7 @@ the caller believing it is imitating a fingerprint when it is not. See the
 
 Core artifacts are in `core/binaries/<target>/`. Each artifact records the ABI
 version, Chromium revision, SHA-256 and runtime dependencies. The current ABI is
-v11. Go and Node directories currently contain binding design notes, not released
+v12. Go and Node directories currently contain binding design notes, not released
 installable packages.
 
 ### Chrome profiles
@@ -556,7 +556,7 @@ size ceiling, so a regression fails the build.
 
 | Path | Contents |
 | --- | --- |
-| `core/abi/` | Stable C ABI v11 |
+| `core/abi/` | Stable C ABI v12 |
 | `core/binaries/` | Nine audited Core targets |
 | `crates/minicronet/` | Rust safety layer, streams and lifetimes |
 | `bindings/python/` | Python 3.9–3.15 binding and the shared facade |

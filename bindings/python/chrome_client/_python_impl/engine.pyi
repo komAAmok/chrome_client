@@ -542,7 +542,12 @@ class EngineCache:
         """Creates a cache holding at most ``max_engines`` engines.
 
         Args:
-            max_engines: Ceiling; coerced to at least 1.
+            max_engines: Ceiling, at least 1.
+
+        Raises:
+            ValueError: ``max_engines`` is not a positive integer. A wrong type
+                or a non-positive count is refused here rather than silently
+                coerced, matching every other limit on the session.
         """
         ...
 

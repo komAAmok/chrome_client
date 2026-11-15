@@ -71,6 +71,7 @@
 #include "net/cookies/cookie_util.h"
 #include "net/dns/public/dns_config_overrides.h"
 #include "net/dns/public/dns_over_https_config.h"
+#include "net/dns/public/insecure_dns_mode.h"
 #include "net/dns/public/secure_dns_mode.h"
 #include "net/ssl/openssl_private_key.h"
 #include "third_party/boringssl/src/include/openssl/bio.h"
@@ -854,6 +855,16 @@ void Engine::InitializeOnNetworkThread() {
       overrides.dns_over_https_config = std::move(*doh);
     }
     net::HostResolver::ManagerOptions resolver_options;
+    // InsecureDnsMode::kDisabled makes HostResolverManager push no TaskType::DNS
+    // at all (net/dns/host_resolver_manager.cc:1355), so only the SYSTEM task
+    // runs and dns_nameservers was accepted and ignored: measured, a request
+    // with dns_nameservers="127.0.0.1:1" still resolved example.com in 0.5 s and
+    // sent zero packets to that address. DoH was unaffected because it gates on
+    // SecureDnsMode instead, which is why only the plain-DNS knob was dead.
+    // kEnabledBuiltIn uses the overrides' nameservers and is refused when the
+    // config carries unhandled options or DoT is on.
+    resolver_options.insecure_dns_mode =
+        net::InsecureDnsMode::kEnabledBuiltIn;
     resolver_options.dns_config_overrides = std::move(overrides);
     builder.set_host_resolver(net::HostResolver::CreateStandaloneResolver(
         net::NetLog::Get(), std::move(resolver_options),

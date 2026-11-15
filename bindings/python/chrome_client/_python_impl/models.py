@@ -42,6 +42,27 @@ REDIRECT_STATI = (301, 302, 303, 307, 308)
 DEFAULT_REDIRECT_LIMIT = 30
 
 
+def _headers_from_fields(fields):
+    """Builds ``Headers`` from the Core's parsed name/value list.
+
+    ABI 12 sends redirect hops the same structured fields on_response has
+    always carried, so this replaces the raw-block split on every build that
+    reports it. Duplicates stay separate entries in arrival order: a redirect
+    that sets more than one ``Set-Cookie`` depends on that, and so does
+    ``response.history``.
+
+    Args:
+        fields: An iterable of ``(name, value)`` pairs, in wire order.
+
+    Returns:
+        A :class:`Headers` holding every pair.
+    """
+    headers = Headers()
+    for name, value in fields or ():
+        headers.add(name, value)
+    return headers
+
+
 def parse_raw_headers(raw, encoding="iso-8859-1"):
     """Parses the Core's raw header block into ``(status_line, Headers)``.
 

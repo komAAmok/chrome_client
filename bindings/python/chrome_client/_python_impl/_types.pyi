@@ -165,6 +165,8 @@ Body: TypeAlias = Union[
 Timeout: TypeAlias = Union[int, float, Tuple[Optional[Union[int, float]], Optional[Union[int, float]]], None]
 
 #: ``verify=``: ``True``/``False``, or the path of a CA bundle in PEM form.
+#: An unreadable path or a bundle the Core cannot parse raises ``SSLError``,
+#: never a bare ``OSError`` and never ``InvalidURL``.
 Verify: TypeAlias = Union[bool, str]
 
 #: A MappedHostResolver rule string, or a list of one-rule strings.

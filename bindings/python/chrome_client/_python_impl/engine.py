@@ -34,7 +34,7 @@ Two rules follow from the split:
 import os
 import threading
 
-from .exceptions import RequestException, SSLError, map_native_error
+from .exceptions import RequestException, SessionClosed, SSLError, map_native_error
 from ._native import native
 
 #: Extra engines a single session keeps alive for per-request overrides.  Eight
@@ -448,6 +448,16 @@ class EngineConfig(object):
         try:
             return self._build()
         except RuntimeError as error:
+            # A configured CA bundle makes this failure an SSL one, not a URL
+            # one. The Core answers both "could not parse the bundle" and
+            # "verify=false cannot be honoured" with a bare InvalidArgument,
+            # which map_native_error sends to InvalidURL -- so a caller with a
+            # malformed .pem was told its URL was malformed. The context is
+            # known here and nowhere downstream, so it is used here.
+            if self.ca_pem is not None and "InvalidArgument" in str(error):
+                raise SSLError(
+                    "the CA bundle given to verify= was rejected: it must hold "
+                    "one or more PEM CERTIFICATE blocks")
             raise map_native_error(error)
 
     def _build(self):
@@ -693,11 +703,15 @@ class EngineSlot(object):
             # serialise unrelated reservations on this slot.
             self.engine.set_client_certificate(host, key[1], value[0], value[1])
         except RuntimeError as error:
-            with self._cert_cond:
-                if self._pending_certs.get(key) == value:
-                    self._pending_certs.pop(key, None)
-                self._cert_cond.notify_all()
+            self._abandon_pending_cert(key, value)
             raise _client_cert_error(error)
+        except BaseException:
+            # An interrupt raised while waiting on the Core is not a Core
+            # rejection, so the handler above misses it and the claim stayed in
+            # _pending_certs forever -- measured: after one interrupt, every
+            # later set/clear for that server blocked indefinitely.
+            self._abandon_pending_cert(key, value)
+            raise
         with self._cert_cond:
             if self._pending_certs.get(key) == value:
                 self._pending_certs.pop(key, None)
@@ -717,6 +731,19 @@ class EngineSlot(object):
             # and both the claim and this record happen under the same lock, so a
             # clear cannot slip between them.
             self._applied_certs[key] = value
+            self._cert_cond.notify_all()
+
+    def _abandon_pending_cert(self, key, value):
+        """Releases this call's registration claim for one server.
+
+        Args:
+            key: The ``(host, port)`` pair whose claim is being released.
+            value: The ``(cert_pem, key_pem)`` this call claimed. A different
+                value means a later caller owns the claim now.
+        """
+        with self._cert_cond:
+            if self._pending_certs.get(key) == value:
+                self._pending_certs.pop(key, None)
             self._cert_cond.notify_all()
 
     def clear_client_certificate(self, host, port):
@@ -777,6 +804,28 @@ class EngineSlot(object):
                 self._inflight -= 1
 
 
+def _engine_budget(value):
+    """Validates the engine ceiling, as every other limit here is validated.
+
+    ``int(max_engines)`` let ``None`` raise a bare ``TypeError`` from inside the
+    cache, accepted ``"8"``, and turned ``0`` or a negative count into 1 without
+    saying so, while the sibling limits all reject a wrong type and report it.
+
+    Args:
+        value: The engine ceiling.
+
+    Returns:
+        The ceiling as an int, at least 1.
+
+    Raises:
+        ValueError: The value is not a positive integer.
+    """
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        raise ValueError("max_engines must be a positive integer, not %r"
+                         % (value,))
+    return value
+
+
 class EngineCache(object):
     """Per-session, bounded, insertion-ordered registry of engines.
 
@@ -794,7 +843,10 @@ class EngineCache(object):
         """Creates a cache holding at most ``max_engines`` engines.
 
         Args:
-            max_engines: Ceiling; coerced to at least 1.
+            max_engines: Ceiling, at least 1.
+
+        Raises:
+            ValueError: ``max_engines`` is not a positive integer.
         """
         self._slots = {}
         #: Insertion-ordered set of keys, oldest first, implemented as a dict whose
@@ -805,7 +857,7 @@ class EngineCache(object):
         #: The values are never read: only key order and membership are. Nothing
         #: may store data here.
         self._order = {}
-        self._max = max(1, int(max_engines))
+        self._max = _engine_budget(max_engines)
         self._lock = threading.RLock()
         self._pid = os.getpid()
         self._closed = False
@@ -835,14 +887,19 @@ class EngineCache(object):
             The matching :class:`EngineSlot`, refreshing its recency.
 
         Raises:
-            RequestException: The session was closed.
+            SessionClosed: The session was closed.
 
         Example:
             >>> slot = cache.get(EngineConfig(proxy="http://127.0.0.1:8080"))  # doctest: +SKIP
         """
         with self._lock:
             if self._closed:
-                raise RequestException("Session is closed")
+                # SessionClosed, not the bare base class: a caller writing
+                # ``except SessionClosed`` around a cookie assignment or an
+                # engine lookup used to miss it, because these paths reach the
+                # closed state through the cache rather than through
+                # BaseSession._ensure_open.
+                raise SessionClosed("Session is closed")
             self._reset_after_fork_locked()
             slot = self._slots.get(config.key)
             if slot is not None:

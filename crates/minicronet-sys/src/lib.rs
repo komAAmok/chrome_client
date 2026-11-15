@@ -3,7 +3,7 @@
 
 use core::ffi::c_void;
 
-pub const MN_ABI_VERSION: u32 = 11;
+pub const MN_ABI_VERSION: u32 = 12;
 
 #[repr(C)]
 pub struct mn_engine_t {
@@ -253,6 +253,7 @@ pub struct mn_read_disposition_t(pub i32);
 impl mn_read_disposition_t {
     pub const MN_READ_PAUSE: Self = Self(0);
     pub const MN_READ_CONTINUE: Self = Self(1);
+    pub const MN_READ_TAKE_BUFFER: Self = Self(2);
 }
 
 /// The response callback.
@@ -278,6 +279,8 @@ pub type mn_request_redirect_fn = unsafe extern "C" fn(
     *mut c_void,
     *mut mn_request_t,
     i32,
+    *const mn_header_t,
+    usize,
     *const i8,
     usize,
     *const i8,
@@ -317,6 +320,7 @@ pub struct mn_request_config_t {
     pub cache_mode: mn_cache_mode_t,
     pub redirect_mode: mn_redirect_mode_t,
     pub priority: mn_request_priority_t,
+    pub strip_authorization_on_cross_origin_redirect: u8,
 }
 
 #[repr(transparent)]
@@ -401,6 +405,7 @@ extern "C" {
     ) -> mn_result_t;
     pub fn mn_request_follow_redirect(request: *mut mn_request_t) -> mn_result_t;
     pub fn mn_request_resume_read(request: *mut mn_request_t) -> mn_result_t;
+    pub fn mn_request_release_buffer(request: *mut mn_request_t, data: *const u8) -> mn_result_t;
     pub fn mn_engine_cookies_get(
         engine: *mut mn_engine_t,
         url: *const i8,
@@ -942,7 +947,7 @@ mod abi_layout_tests {
         if cfg!(target_pointer_width = "64") {
             assert_eq!(size_of::<mn_engine_config_t>(), 248);
             assert_eq!(size_of::<mn_request_callbacks_t>(), 48);
-            assert_eq!(size_of::<mn_request_config_t>(), 144);
+            assert_eq!(size_of::<mn_request_config_t>(), 152);
             assert_eq!(size_of::<mn_websocket_callbacks_t>(), 56);
             assert_eq!(size_of::<mn_websocket_config_t>(), 136);
             assert_eq!(size_of::<mn_header_t>(), 32);
@@ -952,17 +957,20 @@ mod abi_layout_tests {
             // i686 (the tail pads to the i64 alignment).
             assert_eq!(size_of::<mn_cookie_t>(), 88);
         } else {
-            // Verified against the header itself: compiling core/abi/minicronet.h
-            // for a 32-bit target (gcc -m32, size_t = unsigned int) yields
-            // engine_config 84, request_callbacks 28, request_config 92,
-            // websocket_callbacks 32, websocket_config 80, header 16, string 8.
+            // Verified against the header itself: dumping the record layout
+            // for triple i686-unknown-linux-gnu (size_t = unsigned int) yields
+            // engine_config 140, request_callbacks 28, request_config 96,
+            // websocket_callbacks 32, websocket_config 80, header 16, string 8,
+            // cookie 52. ABI 12 appended one u8 to request_config, so the 32-bit
+            // size moved 92 -> 96 (the tail pads to the 4-byte alignment the
+            // struct already had); nothing else moved.
             // The previous table said 88/28/92/28/76/16/8, so three of the five
             // struct assertions disagreed with the header on the very platforms
             // this branch covers (linux-x86, windows-x86). Nothing caught it
             // because CI only runs the 64-bit branch.
             assert_eq!(size_of::<mn_engine_config_t>(), 136);
             assert_eq!(size_of::<mn_request_callbacks_t>(), 28);
-            assert_eq!(size_of::<mn_request_config_t>(), 92);
+            assert_eq!(size_of::<mn_request_config_t>(), 96);
             assert_eq!(size_of::<mn_websocket_callbacks_t>(), 32);
             assert_eq!(size_of::<mn_websocket_config_t>(), 80);
             assert_eq!(size_of::<mn_header_t>(), 16);
@@ -979,7 +987,10 @@ mod abi_layout_tests {
         assert_eq!(mn_redirect_mode_t::MN_REDIRECT_ERROR.0, 2);
         assert_eq!(mn_read_disposition_t::MN_READ_PAUSE.0, 0);
         assert_eq!(mn_read_disposition_t::MN_READ_CONTINUE.0, 1);
-        assert_eq!(MN_ABI_VERSION, 11);
+        // Compared against the header, not against a literal: this line
+        // was the second place ABI 11 appeared, and a bump that changed
+        // only the constant left the test asserting the old number.
+        assert_eq!(MN_ABI_VERSION, 12);
         assert_eq!(mn_request_priority_t::MN_REQUEST_PRIORITY_IDLE.0, 5);
         assert_eq!(
             mn_websocket_message_type_t::MN_WEBSOCKET_MESSAGE_BINARY.0,

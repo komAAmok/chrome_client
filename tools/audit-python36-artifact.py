@@ -53,6 +53,7 @@ sys.path.insert(0, str(ROOT / "tools"))
 
 from python_exe import interpreter  # noqa: E402  (needs ROOT above)
 LEGACY = "chrome_client_native36"
+MODERN = "chrome_client_native"
 CANDIDATES = (
     ROOT / "bindings" / "python36" / "target" / "release" / ("lib%s.so" % LEGACY),
     ROOT / "bindings" / "python36" / "target" / "release" / ("%s.so" % LEGACY),
@@ -131,16 +132,40 @@ def check_not_linked_to_libpython(path: pathlib.Path) -> None:
 
 
 def check_drives_the_facade(module) -> None:
-    """One real request through the shared facade, on this extension."""
+    """Drives the shared facade with THIS extension, not whichever one loads.
+
+    The first version of this check set ``_native.MODULE_NAME`` after importing
+    the module, which does nothing: ``_native.py`` binds ``native = load()`` at
+    import time, and ``engine.py`` does ``from ._native import native``, so both
+    had already captured the modern extension. The check therefore measured
+    ``bindings/python`` and reported it as ``bindings/python36``, and the 3.6
+    wheel shipped unable to send a single request -- the facade passes eleven
+    positional arguments and eleven keywords the legacy ``PyEngine`` did not
+    declare, so the first request raised ``TypeError``.
+
+    What it drives, and which drift each part catches:
+
+    * a plain GET, which catches an engine constructor or request signature
+      that no longer matches what the facade passes;
+    * a redirect, whose hop tuple must have the arity the facade unpacks;
+    * an async GET, whose event tuple must too, and whose body chunks must be
+      ``bytes`` rather than the ``list[int]`` pyo3 0.15 builds from ``Vec<u8>``;
+    * the cookie store, which the facade reads and writes through the engine.
+
+    Args:
+        module: The loaded legacy extension.
+    """
     sys.path.insert(0, str(ROOT / "bindings" / "python"))
+    # Both names, before the facade is imported: ``_native.py`` binds
+    # ``native = load()`` at import time and ``engine.py`` copies it with
+    # ``from ._native import native``, so the extension has to be in
+    # ``sys.modules`` under the name the loader will ask for. Registering it
+    # afterwards is what made the original check silently test the modern
+    # extension instead.
     sys.modules[LEGACY] = module
-    from chrome_client._python_impl import _native
+    sys.modules[MODERN] = module
 
-    # The facade picks its module from sys.version_info; force the legacy one so
-    # this check exercises bindings/python36 even on a modern interpreter.
-    _native.LEGACY_MODULE_NAME = LEGACY
-    _native.MODULE_NAME = LEGACY
-
+    import asyncio
     import http.server
     import socketserver
 
@@ -148,6 +173,13 @@ def check_drives_the_facade(module) -> None:
         protocol_version = "HTTP/1.1"
 
         def do_GET(self):
+            if self.path.startswith("/redirect"):
+                self.send_response(302)
+                self.send_header("Location", "/")
+                self.send_header("Set-Cookie", "hop=1; Path=/")
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
             body = b"python36"
             self.send_response(200)
             self.send_header("Content-Length", str(len(body)))
@@ -163,17 +195,52 @@ def check_drives_the_facade(module) -> None:
     port = server.server_address[1]
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
+    base = "http://127.0.0.1:%d" % port
     try:
         import chrome_client
 
+        from chrome_client._python_impl import engine as facade_engine
+
+        if facade_engine.native is not module:
+            fail("the facade bound %r, not the extension under test"
+                 % (getattr(facade_engine.native, "__name__", facade_engine.native),))
+
         with chrome_client.Session() as session:
-            response = session.get("http://127.0.0.1:%d/" % port)
+            response = session.get(base + "/")
             if response.status_code != 200 or response.content != b"python36":
                 fail("the facade returned %r / %r through the legacy extension"
                      % (response.status_code, response.content))
             if session.cookies.get_dict() != {"gate": "1"}:
                 fail("the legacy extension did not record the response cookie: %r"
                      % (session.cookies.get_dict(),))
+            hop = session.get(base + "/redirect")
+            if hop.status_code != 200 or len(hop.history) != 1:
+                fail("a redirect through the legacy extension reported %r with "
+                     "%d hop(s); the hop tuple the facade unpacks has the wrong "
+                     "arity or the hop never arrived"
+                     % (hop.status_code, len(hop.history)))
+            if "Set-Cookie" not in hop.history[0].headers:
+                fail("the redirect hop carried no headers; the fields the facade "
+                     "reads from it are missing")
+
+        async def one_async_get():
+            async with chrome_client.AsyncSession() as session:
+                return await session.get(base + "/")
+
+        async_response = asyncio.run(one_async_get())
+        if async_response.status_code != 200 or async_response.content != b"python36":
+            fail("the async path through the legacy extension returned %r / %r; "
+                 "its event tuple must be (kind, status, headers, body, error, "
+                 "fields) with the two byte fields as bytes"
+                 % (async_response.status_code, async_response.content))
+    except TypeError as error:
+        # The failure this check exists for: the facade and this extension
+        # disagree about a signature, which surfaces as a TypeError on the
+        # first request rather than at import.
+        fail("the legacy extension cannot serve a request the facade makes: "
+             "%s. bindings/python36/src/lib.rs must accept every argument the "
+             "shared facade passes -- see bindings/python/src/lib.rs for the "
+             "signatures it mirrors." % error)
     finally:
         server.shutdown()
         server.server_close()
@@ -258,8 +325,8 @@ def main() -> int:
     if wheel is not None:
         wheel_note = check_wheel_imports_the_facade(wheel)
 
-    print("python36 artifact audit passed: %s, abi %d, abi3, one live request; %s"
-          % (path.name, expected, wheel_note))
+    print("python36 artifact audit passed: %s, abi %d, abi3, sync/redirect/async "
+          "through the shared facade; %s" % (path.name, expected, wheel_note))
     return 0
 
 

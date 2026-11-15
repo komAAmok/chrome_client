@@ -5,7 +5,97 @@ headers are exposed. Opaque `mn_engine_t`, `mn_request_t`, and
 `mn_websocket_t` handles are reference counted by the Core; Rust is the only
 high-level owner exposed to language adapters.
 
-## v11（当前 ABI）
+## v12（当前 ABI）
+
+`MN_ABI_VERSION` 是 12，导出符号 **29** 个：v12 新增了 `mn_request_release_buffer`。
+
+三件事，两件是正确性修复，一件是如实标注收益的零拷贝选项。
+
+### 1. `mn_request_redirect_fn` 带结构化头字段
+
+回调签名新增 `const mn_header_t *header_fields, size_t header_field_count`（在
+`status_code` 之后、原始块之前）。重定向跳转的 `headers` 原始块此前是绑定层唯一还得
+自己 split 的地方——`on_response` 早就拿到了 `mn_header_t` 数组。现在两者一致，Python
+侧不再重解析。重复的 `Set-Cookie` 与混合大小写头名实测正确：`["a=1", "b=2"]` 两条
+都在，`X-MiXeD-Case` 归一。
+
+**顺序是有意的**：新参数插在 `status_code` 之后而不是末尾。这是一次 break change，
+`MN_ABI_VERSION` 因此升到 12——旧调用方按旧签名调用新库会在版本校验处被拒绝
+（`callbacks.version != MN_ABI_VERSION` 返回 `MN_ERROR_UNSUPPORTED_ABI`），而不是被
+按 11 个参数调用一个 9 参数的函数。
+
+### 2. 跨域重定向的 `Authorization` 剥离（opt-in）
+
+`mn_request_config_t` 追加一个字段：
+
+```c
+uint8_t strip_authorization_on_cross_origin_redirect;  /* 0 = 保留（默认） */
+```
+
+`//net` 本身不做这件事：剥离在 `services/network/url_loader.cc:1025`，而 Core 直接驱动
+`URLRequest` 并调 `FollowDeferredRedirect(std::nullopt, std::nullopt)`，所以什么也没删。
+v12 让 Core 在 `OnReceivedRedirect` 里比 origin 并调 `RemoveRequestHeaderByName`——
+`is_redirecting_` 是 `URLRequest` 允许该调用的唯一窗口
+（`net/url_request/url_request.cc:258-261`）。
+
+**默认 0**，因为 ABI 11 调用方从未得到这个行为，静默改变比保留缺口更糟。实测：
+
+| 配置 | 跨域目标主机收到 |
+| --- | --- |
+| 默认（0） | `Bearer probe` |
+| 开启（1） | `None` |
+
+同源跳转始终保留，即使开启了剥离。
+
+### 3. `MN_READ_TAKE_BUFFER` + `mn_request_release_buffer`（opt-in）
+
+`on_body` 返回这个新 disposition 时，Core 把那一块缓冲的所有权交出去，调用方用新导出
+函数归还：
+
+```c
+MN_EXPORT mn_result_t MN_CALL mn_request_release_buffer(mn_request_t *request,
+                                                       const uint8_t *data);
+```
+
+归还 `data` 必须正是回调收到的指针，且恰好一次。`ReleaseBuffer` 以指针为键查
+`taken_buffers_`，查不到返回 `MN_ERROR_INVALID_STATE`——所以双重归还会失败，而不是
+悄悄破坏堆。
+
+**收益如实标注：实测 0.38%**（64 MiB 本地流，`0.4454 s` → `0.4437 s`）。头文件注释里
+写的是「about 0.7%」，实测更低，因为拷贝本来就是 1.6% 的一部分，而本地传输占 95%。
+这个选项的理由是**内存行为**（大 body、不能阻塞的回调），不是吞吐。
+
+**接管必须与背压配合**：`MN_READ_TAKE_BUFFER` 的语义是「继续读」，所以在队列到达
+1 MiB 上限时不能接管——否则消费者停顿期间服务端会无限推送。实测：消费者停顿 2 秒，
+接管路径让服务端写出 **57.81 MiB**，借出路径只有 **0.94 MiB**。Rust 层的
+`may_take_buffer` 因此要求 `body_bytes < BODY_BUFFER_LIMIT`。
+
+### 结构与布局
+
+| 结构体 | 64 位 | 32 位 | 变化 |
+| --- | --- | --- | --- |
+| `mn_engine_config_t` | 248 | 140 | 不变（v11 的 `max_sockets_per_group` 落在尾部填充里） |
+| `mn_request_config_t` | **152** | **96** | v12 追加一个 `uint8_t`；32 位从 92 到 96，尾部补齐到 4 字节对齐 |
+| `mn_request_callbacks_t` | 48 | 28 | 不变（回调指针宽度不变，签名变了） |
+| `mn_cookie_t` | 88 | 52 | 不变 |
+| `mn_websocket_callbacks_t` | 56 | 32 | 不变 |
+| `mn_websocket_config_t` | 136 | 80 | 不变 |
+| `mn_header_t` | 32 | 16 | 不变 |
+| `mn_string_t` | 16 | 8 | 不变 |
+
+两个 32 位数字是用 clang 直接读头文件得到的，不是推算：
+
+```bash
+clang -cc1 -triple i686-unknown-linux-gnu -fdump-record-layouts-complete \
+  -isystem <clang-resource-dir>/include -I core/abi -x c probe.c
+```
+
+**这一行曾经是错的**：`crates/minicronet-sys/src/lib.rs` 的布局测试把
+`mn_request_config_t` 写成 144 / 92，那是 v11 的值。v12 追加字段后 64 位变成 152，
+而 CI 只跑 64 位分支，`cargo test` 立刻红了——这是这个测试存在的意义。32 位分支
+（92 → 96）本机没有执行路径，数字由上面那条命令给出。
+
+## v11
 
 `MN_ABI_VERSION` 是 11，导出符号仍是 28 个——**v11 没有增删任何符号**。
 

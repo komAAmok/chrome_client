@@ -17,6 +17,13 @@ reason and a review pointer, exactly as AGENTS section 1.1 requires. A new one
 fails, and so does a stale entry that no longer matches anything -- otherwise the
 list would silently describe a tree that no longer exists.
 
+A pattern anchored at ``^NAME =`` DECLARES a table, and one file needs at most
+one of those. The first version used ``re.search``, which reports one hit
+however many times the name is bound, and the key is ``(path, pattern_index)``
+-- so a second declaration of the same table in the same file collapsed onto
+the first and the gate printed "passed". Declarations are counted now; call-site
+patterns are not, because those legitimately repeat.
+
     python3 tools/audit-layer-ownership.py
     python3 tools/audit-layer-ownership.py --json
 """
@@ -85,19 +92,23 @@ KNOWN = {
         "redirect hop, which has the raw block but no parsed reason."),
     ("bindings/python/chrome_client/_python_impl/sessions.py", 4): (
         "the Core accepts every header name, so the refusal has to happen",
-        "somewhere. Moving it needs mn_request_config to reject the six fields",
-        "and return MN_ERROR_INVALID_ARGUMENT (core/source/request.cc:245).",
-        "Scheduled: docs/NEXT_STEPS.md, the three-item header-validation",
-        "proposal -- head-name rejection is item 1."),
+        "somewhere. Moving it needs mn_request_config to reject the seven names",
+        "and return MN_ERROR_INVALID_ARGUMENT, before the loop that calls",
+        "headers.SetHeader in Request::StartOnNetworkThread",
+        "(core/source/request.cc:187-246).",
+        "Scheduled as ABI 13: docs/NEXT_STEPS.md, the ABI 13 plan and the",
+        "three-item header-validation proposal -- head-name rejection is",
+        "item 1."),
     ("bindings/python/chrome_client/_python_impl/sessions.py", 5): (
         "SetExtraRequestHeaders only adds, so a caller-owned removal is a no-op",
         "the Core cannot report. Needs a Core-side per-name removal entry point",
-        "(core/source/request.cc:275). Scheduled: same proposal, item 2."),
+        "alongside the MergeFrom that builds the merged set",
+        "(core/source/request.cc:276-279). Scheduled as ABI 13, item 2."),
     ("bindings/python/chrome_client/_python_impl/sessions.py", 6): (
         "the WebSocket handshake builds its own header block in Chromium",
         "(websocket_basic_handshake_stream.cc), so the ABI never sees which",
         "names are reserved. Needs mn_websocket_config to reject them.",
-        "Scheduled: same proposal, item 3."),
+        "Scheduled as ABI 13, item 3."),
 }
 
 
@@ -125,10 +136,22 @@ def main():
     args = parser.parse_args()
 
     found = {}
+    duplicates = []
     for relative, text in sources():
         for index, (pattern, why) in enumerate(PATTERNS):
-            if re.search(pattern, text, re.MULTILINE):
-                found[(relative, index)] = why
+            hits = len(re.findall(pattern, text, re.MULTILINE))
+            if not hits:
+                continue
+            found[(relative, index)] = why
+            # A pattern anchored at ``^NAME =`` declares a table, and one file
+            # needs exactly one. re.search reported a single hit however many
+            # times the name was bound, and the key is (path, pattern_index),
+            # so a second definition in the same file was invisible: measured
+            # with two ``^_CORE_OWNED_HEADERS =`` blocks in one module, the
+            # gate printed "passed". The call-site patterns are excluded --
+            # those legitimately appear many times in one file.
+            if pattern.startswith("^") and hits > 1:
+                duplicates.append((relative, index, hits))
 
     failures = []
     for key, why in sorted(found.items()):
@@ -143,7 +166,14 @@ def main():
             f"{key[0]}: KNOWN entry for pattern {key[1]} matches nothing now; "
             "the migration happened or the pattern rotted -- delete the entry")
 
-    report = {"violations": len(found), "known": len(KNOWN), "stale": len(stale)}
+    for relative, index, count in duplicates:
+        failures.append(
+            "%s: pattern %d declares its table %d times; one is the reviewed "
+
+            "        site, the rest are unreviewed" % (relative, index, count))
+
+    report = {"violations": len(found), "known": len(KNOWN), "stale": len(stale),
+              "duplicate_definitions": len(duplicates)}
     if args.json:
         print(json.dumps(report, indent=1))
     if failures:

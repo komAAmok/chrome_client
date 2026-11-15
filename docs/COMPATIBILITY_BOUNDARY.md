@@ -29,7 +29,17 @@ behavior fails closed instead of silently using current Chromium defaults.
 ## Redirect, cookie, and cache semantics
 
 - Chromium `URLRequest` owns redirect limits, URL validation, method rewriting,
-  upload replay, referrer updates, and sensitive-header removal.
+  upload replay and referrer updates. It does **not** remove sensitive headers
+  on a cross-origin redirect, and the Core inherits that: `Authorization` set by
+  the caller is re-sent to the new host. Upstream, the removal lives one layer
+  above `//net`, in `services/network/url_loader.cc:1025`, which reaches it by
+  passing `removed_headers` to `FollowDeferredRedirect()`. The Core calls
+  `FollowDeferredRedirect(std::nullopt, std::nullopt)`
+  (`core/source/request.cc:350`), so nothing strips them. Measured: a 302 from
+  127.0.0.1:PORT to a second port kept `Authorization: Bearer x`, while requests
+  drops it. Fixing this needs the Core to compare hop origins in
+  `RedirectInfo` and pass the header name in that call; until then use
+  `allow_redirects=False` and replay the hop yourself when the target differs.
 - Chromium `CookieMonster` owns cookie parsing, selection, storage, and
   attachment. The store is memory-only and does not reproduce Chrome Profile
   persistence or page-frame policy.

@@ -1,14 +1,15 @@
 {
   "project": "chrome_client",
   "core": "minicronet",
-  "abi_version": 11,
+  "abi_version": 12,
   "chromium_revision": "58bcc148f76b8975bbe59f1a6012d4ae409d62a9",
   "target": "windows-x86",
   "triple": "i686-pc-windows-msvc",
   "library": "minicronet.dll",
   "import_library": "minicronet.lib",
-  "sha256": "434aee0ecebfcdece372d98463dfcfc968a379b70f5890a1d05c0c981f87c676",
-  "import_library_sha256": "96e1c74ce84f47dcd2762f89bb8e943a25afe3ddb336484fe8a884280f9d0abf",
-  "size_bytes": 7662080,
-  "runtime_dependencies": []
+  "sha256": "57a05003dd2acb3d8cdff532148e31d63716e9d6e0150c9877fef1bdedb7b580",
+  "import_library_sha256": "4165143a013bb2f12b95e806adba41b45ae5065308ec12b66b3c9e4146801aa7",
+  "size_bytes": 7664128,
+  "runtime_dependencies": [],
+  "core_sources_sha256": "d75f6b28667d8cf382f9dd21af04d4354c953a5ae427e8e86f7fd259eaaced61"
 }

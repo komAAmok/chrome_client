@@ -804,6 +804,7 @@ mn_result_t MN_CALL mn_request_create(mn_engine_t *engine,
       config->priority > MN_REQUEST_PRIORITY_IDLE ||
       (upload_mode != MN_UPLOAD_FIXED && config->body_length != 0) ||
       (config->body_length != 0 && !config->body) ||
+      config->strip_authorization_on_cross_origin_redirect > 1 ||
       (redirect_mode == MN_REDIRECT_MANUAL && !callbacks.on_redirect)) {
     return MN_ERROR_INVALID_ARGUMENT;
   }
@@ -871,6 +872,8 @@ mn_result_t MN_CALL mn_request_create(mn_engine_t *engine,
       engine->impl, std::move(url), std::move(method), std::move(headers),
       std::move(body), upload_mode, cache_mode, redirect_mode,
       config->priority, callbacks, config->timeout_ms, request);
+  request->impl->set_strip_auth_on_cross_origin_redirect(
+      config->strip_authorization_on_cross_origin_redirect != 0);
   *out_request = request;
   return MN_OK;
 }
@@ -924,6 +927,14 @@ mn_result_t MN_CALL mn_request_upload_write(mn_request_t *request,
 
 mn_result_t MN_CALL mn_request_follow_redirect(mn_request_t *request) {
   return request ? request->impl->FollowRedirect() : MN_ERROR_INVALID_ARGUMENT;
+}
+
+mn_result_t MN_CALL mn_request_release_buffer(mn_request_t *request,
+                                             const uint8_t *data) {
+  if (!request) {
+    return MN_ERROR_INVALID_ARGUMENT;
+  }
+  return request->impl->ReleaseBuffer(data);
 }
 
 mn_result_t MN_CALL mn_request_resume_read(mn_request_t *request) {

@@ -93,6 +93,8 @@ def session(
     trust_env: bool = True,
     allow_redirects: bool = True,
     max_response_bytes: Optional[int] = None,
+    strip_authorization: bool = False,
+    take_body_buffers: bool = False,
     base_url: Optional[str] = None,
     http_version: Optional[HttpVersion] = None,
     ja3: Optional[str] = None,
@@ -158,6 +160,8 @@ def session(
         allow_redirects: Default redirect policy.
         max_response_bytes: Body ceiling; exceeding it cancels the request and raises
             :class:`~chrome_client.ResponseTooLarge`.
+        strip_authorization:
+        take_body_buffers:
         base_url: Prefix for relative URLs.
         http_version: Pin ``"v1"``, ``"v2"`` or ``"v3"`` instead of letting Chromium
             negotiate through ALPN and Alt-Svc.
@@ -182,7 +186,7 @@ def session(
         max_recv_speed: Rejected; Chromium owns transfer pacing.
         curl_options: Rejected; there is no libcurl surface here.
         max_engines: How many distinct engine configurations one session keeps alive for
-            per-request overrides.
+            per-request overrides, at least 1.
         response_class: Subclass to instantiate instead of
             :class:`~chrome_client.Response`/``AsyncResponse``.
         host_mapping:
@@ -229,6 +233,8 @@ def async_session(
     trust_env: bool = True,
     allow_redirects: bool = True,
     max_response_bytes: Optional[int] = None,
+    strip_authorization: bool = False,
+    take_body_buffers: bool = False,
     base_url: Optional[str] = None,
     http_version: Optional[HttpVersion] = None,
     ja3: Optional[str] = None,
@@ -295,6 +301,8 @@ def async_session(
         allow_redirects: Default redirect policy.
         max_response_bytes: Body ceiling; exceeding it cancels the request and raises
             :class:`~chrome_client.ResponseTooLarge`.
+        strip_authorization:
+        take_body_buffers:
         base_url: Prefix for relative URLs.
         http_version: Pin ``"v1"``, ``"v2"`` or ``"v3"`` instead of letting Chromium
             negotiate through ALPN and Alt-Svc.
@@ -319,7 +327,7 @@ def async_session(
         max_recv_speed: Rejected; Chromium owns transfer pacing.
         curl_options: Rejected; there is no libcurl surface here.
         max_engines: How many distinct engine configurations one session keeps alive for
-            per-request overrides.
+            per-request overrides, at least 1.
         response_class: Subclass to instantiate instead of
             :class:`~chrome_client.Response`/``AsyncResponse``.
         host_mapping:

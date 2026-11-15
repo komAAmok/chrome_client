@@ -101,6 +101,37 @@ PY
 check "discard-fingerprint: the engine is shared again" \
   run_gate /tmp/mut-discard-shared audit-discard-fingerprint.py
 
+# 6. A layer-crossing table is declared twice in one file. The gate compares
+# (path, pattern_index), so before this case existed a second declaration of a
+# table already listed in KNOWN collapsed onto the first and the gate passed.
+scratch /tmp/mut-own-duplicate
+python3 - <<PY
+import pathlib
+p = pathlib.Path("/tmp/mut-own-duplicate/bindings/python/chrome_client/_python_impl/sessions.py")
+s = p.read_text()
+needle = "def merge_setting(request_setting, session_setting, dict_class=CaseInsensitiveDict):"
+assert needle in s, "merge_setting moved; update this mutation"
+block = '_CORE_OWNED_HEADERS = frozenset((\n    "x-injected",\n))\n\n\n'
+p.write_text(s.replace(needle, block + needle, 1))
+PY
+check "layer-ownership: a table is declared twice in one file" \
+  run_gate /tmp/mut-own-duplicate audit-layer-ownership.py
+
+# 7. A Core artifact records a source fingerprint that no longer matches the
+# tree. Nothing compared core/source/ with core/binaries/ before this gate: a
+# +11 diff sat in core/source/engine.cc for a full round while every other gate
+# stayed green, because the manifests recorded the artifact hash and the
+# Chromium revision but nothing about the sources.
+scratch /tmp/mut-fingerprint-stale
+cp -r "$REPO/core" /tmp/mut-fingerprint-stale/
+python3 /tmp/mut-fingerprint-stale/tools/audit-core-source-fingerprint.py \
+  --record > /dev/null
+printf '\n// mutation probe\n' >> \
+  /tmp/mut-fingerprint-stale/core/source/engine.cc
+check "core-fingerprint: the artifact predates the sources" \
+  run_gate /tmp/mut-fingerprint-stale audit-core-source-fingerprint.py
+
 rm -rf /tmp/mut-hdr-value /tmp/mut-hdr-order /tmp/mut-parity-default \
-       /tmp/mut-parity-missing /tmp/mut-discard-shared
+       /tmp/mut-parity-missing /tmp/mut-discard-shared /tmp/mut-own-duplicate \
+       /tmp/mut-fingerprint-stale
 exit $FAILED

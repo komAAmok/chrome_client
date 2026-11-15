@@ -23,6 +23,7 @@ _mn_websocket_create
 _mn_websocket_retain
 _mn_websocket_release
 _mn_websocket_start
+_mn_request_release_buffer
 _mn_websocket_send
 _mn_websocket_close
 _mn_websocket_cancel

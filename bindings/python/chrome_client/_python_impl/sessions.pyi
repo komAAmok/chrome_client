@@ -641,6 +641,15 @@ class BaseSession:
         max_redirects: Cap on redirects followed in Python.
         allow_redirects: Default redirect policy for every request.
         max_response_bytes: Default body ceiling.
+        strip_authorization: When ``True``, drop a caller-supplied
+            ``Authorization`` on a redirect that changes the origin.
+            Off by default: ABI 11 never stripped it, so turning it on
+            is a change callers opt into.
+        take_body_buffers: When ``True``, wrap the Core body buffer instead of
+            copying it, handing the memory back through the ABI when the chunk
+            is dropped. Off by default: the copy is about 1.6% of a 64 MiB
+            local stream, so this is for the allocation behaviour, not
+            throughput.
         base_url: Prefix applied to relative request URLs.
         default_encoding: Response decoding fallback.
         default_headers: Whether :attr:`headers` starts empty (always empty;
@@ -733,6 +742,8 @@ class BaseSession:
         trust_env: bool = True,
         allow_redirects: bool = True,
         max_response_bytes: Optional[int] = None,
+        strip_authorization: bool = False,
+        take_body_buffers: bool = False,
         base_url: Optional[str] = None,
         http_version: Optional[HttpVersion] = None,
         ja3: Optional[str] = None,
@@ -825,7 +836,7 @@ class BaseSession:
             max_recv_speed: Rejected; Chromium owns transfer pacing.
             curl_options: Rejected; there is no libcurl surface here.
             max_engines: How many distinct engine configurations one session
-                keeps alive for per-request overrides.
+                keeps alive for per-request overrides, at least 1.
             response_class: Subclass to instantiate instead of
                 :class:`~chrome_client.Response`/``AsyncResponse``.
 
@@ -2494,6 +2505,8 @@ class AsyncSession(BaseSession):
         trust_env: bool = True,
         allow_redirects: bool = True,
         max_response_bytes: Optional[int] = None,
+        strip_authorization: bool = False,
+        take_body_buffers: bool = False,
         base_url: Optional[str] = None,
         http_version: Optional[HttpVersion] = None,
         ja3: Optional[str] = None,
@@ -2568,7 +2581,7 @@ class AsyncSession(BaseSession):
             doh_url: Rejected.
             max_recv_speed: Rejected.
             curl_options: Rejected.
-            max_engines: Engines kept alive per session.
+            max_engines: Engines kept alive per session (at least 1).
             response_class: Response subclass to instantiate.
             host_mapping: Chromium MappedHostResolver rules.
             dns_nameservers: Resolver servers for this engine.

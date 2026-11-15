@@ -30,9 +30,18 @@ fn native_error(error: impl std::fmt::Display) -> PyErr {
     PyRuntimeError::new_err(error.to_string())
 }
 
-type PyEvent = (String, i32, Vec<u8>, Vec<u8>, Option<String>);
+type PyEvent = (
+    String,
+    i32,
+    Vec<u8>,
+    Vec<u8>,
+    Option<String>,
+    Vec<(String, String)>,
+);
 type PyWebSocketEvent = (String, Vec<u8>, Option<u16>, Option<String>);
-type PyRedirect = (i32, Vec<u8>, String, String);
+// ABI 12 appends the parsed fields so a hop no longer needs the raw block
+// split again in Python.
+type PyRedirect = (i32, Vec<u8>, String, String, Vec<(String, String)>);
 type PyHead = (i32, Vec<u8>);
 /// `(redirect, head)` with exactly one side set, or both `None` on timeout.
 type PyManualWait = (Option<PyRedirect>, Option<PyHead>);
@@ -43,6 +52,11 @@ fn redirect_tuple(redirect: Redirect) -> PyRedirect {
         redirect.headers,
         redirect.new_url,
         redirect.new_method,
+        redirect
+            .fields
+            .iter()
+            .map(|header| (header.name.clone(), header.value.clone()))
+            .collect(),
     )
 }
 
@@ -764,12 +778,18 @@ impl PyRequest {
         // manual mode the response never arrives until `follow_redirect`, so the
         // hop has to reach the caller as an event of its own.
         if let Some(hop) = self.inner.take_redirect() {
+            let fields = hop
+                .fields
+                .iter()
+                .map(|header| (header.name.clone(), header.value.clone()))
+                .collect();
             return Ok(Some((
                 "redirect".into(),
                 hop.status_code,
                 hop.headers,
                 hop.new_url.into_bytes(),
                 Some(hop.new_method),
+                fields,
             )));
         }
 
@@ -797,6 +817,7 @@ impl PyRequest {
                         response.headers,
                         Vec::new(),
                         None,
+                        Vec::new(),
                     )
                 }
                 Err(error) => {
@@ -810,6 +831,7 @@ impl PyRequest {
                         Vec::new(),
                         Vec::new(),
                         Some(error.to_string()),
+                        Vec::new(),
                     )
                 }
             }));
@@ -824,7 +846,7 @@ impl PyRequest {
         };
         if let Some(body_event) = body_event {
             return Ok(Some(match body_event {
-                Some(Ok(body)) => ("body".into(), 0, Vec::new(), body, None),
+                Some(Ok(body)) => ("body".into(), 0, Vec::new(), body, None, Vec::new()),
                 Some(Err(error)) => {
                     if self.done.swap(true, Ordering::AcqRel) {
                         return Ok(None);
@@ -836,6 +858,7 @@ impl PyRequest {
                         Vec::new(),
                         Vec::new(),
                         Some(error.to_string()),
+                        Vec::new(),
                     )
                 }
                 None => {
@@ -843,7 +866,7 @@ impl PyRequest {
                         return Ok(None);
                     }
                     self.finish();
-                    ("done".into(), 0, Vec::new(), Vec::new(), None)
+                    ("done".into(), 0, Vec::new(), Vec::new(), None, Vec::new())
                 }
             }));
         }
@@ -1101,6 +1124,8 @@ impl PyEngine {
         cache=None,
         priority=None,
         chunked=false,
+        strip_authorization=None,
+        take_body_buffers=None,
     ))]
     #[allow(clippy::too_many_arguments)]
     fn request(
@@ -1115,6 +1140,8 @@ impl PyEngine {
         cache: Option<&str>,
         priority: Option<&str>,
         chunked: bool,
+        strip_authorization: Option<bool>,
+        take_body_buffers: Option<bool>,
     ) -> PyResult<PyRequest> {
         let mut config = RequestConfig::get(url.to_owned());
         config.method = method.to_owned();
@@ -1126,6 +1153,10 @@ impl PyEngine {
         };
         config.cache = cache_mode(cache)?;
         config.priority = request_priority(priority)?;
+        // ABI 12. Off unless asked for: an ABI 11 caller never dropped the
+        // header on a cross-origin hop and must not start doing so silently.
+        config.strip_authorization_on_cross_origin_redirect = strip_authorization.unwrap_or(false);
+        config.take_body_buffers = take_body_buffers.unwrap_or(false);
         config.headers = headers
             .unwrap_or_default()
             .into_iter()

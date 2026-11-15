@@ -1,6 +1,7 @@
 #include "minicronet/request.h"
 
 #include <algorithm>
+#include <map>
 #include <optional>
 #include <utility>
 
@@ -67,11 +68,14 @@ DISABLE_CFI_ICALL void InvokeCompleteCallback(mn_request_complete_fn callback,
 DISABLE_CFI_ICALL void
 InvokeRedirectCallback(mn_request_redirect_fn callback, void *user_data,
                        mn_request_t *request, int status_code,
-                       const char *headers, size_t headers_length,
-                       const char *new_url, size_t new_url_length,
-                       const char *new_method, size_t new_method_length) {
-  callback(user_data, request, status_code, headers, headers_length, new_url,
-           new_url_length, new_method, new_method_length);
+                       const mn_header_t *header_fields,
+                       size_t header_field_count, const char *headers,
+                       size_t headers_length, const char *new_url,
+                       size_t new_url_length, const char *new_method,
+                       size_t new_method_length) {
+  callback(user_data, request, status_code, header_fields, header_field_count,
+           headers, headers_length, new_url, new_url_length, new_method,
+           new_method_length);
 }
 
 int CacheLoadFlags(mn_cache_mode_t mode) {
@@ -373,25 +377,69 @@ void Request::OnReceivedRedirect(net::URLRequest *request,
     redirect_deferred_.store(true);
   }
 
+  // A cross-origin hop must not carry the caller's credentials to the new
+  // host. Upstream this lives one layer above //net, in
+  // services/network/url_loader.cc:1025, which passes the header name to
+  // FollowDeferredRedirect(); //net itself never strips it. The Core drives
+  // URLRequest directly, so it has to do the same removal here, while
+  // is_redirecting_ is set -- the only window URLRequest allows
+  // (net/url_request/url_request.cc:259).
+  if (strip_auth_on_cross_origin_redirect &&
+      redirect_info.new_url.DeprecatedGetOriginAsURL() !=
+          request->original_url().DeprecatedGetOriginAsURL()) {
+    request->RemoveRequestHeaderByName(net::HttpRequestHeaders::kAuthorization);
+  }
+
+  // The parsed form travels with the raw block for the same reason on_response
+  // carries both: every binding re-split the raw bytes otherwise, which is one
+  // implementation of the header grammar per language.
+  std::deque<std::string> header_storage;
+  if (net::HttpResponseHeaders *response_headers =
+          request->response_headers()) {
+    size_t iterator = 0;
+    std::string name;
+    std::string value;
+    while (response_headers->EnumerateHeaderLines(&iterator, &name, &value)) {
+      header_storage.push_back(std::move(name));
+      header_storage.push_back(std::move(value));
+    }
+  }
+
   if (callbacks_.on_redirect) {
     auto callback = callbacks_.on_redirect;
     void *user_data = callbacks_.user_data;
     callback_runner_->PostTask(
         FROM_HERE, base::BindOnce(
                        [](mn_request_redirect_fn callback, void *user_data,
-                          Request *self, int status_code, std::string headers,
-                          std::string new_url, std::string new_method,
+                          Request *self, int status_code,
+                          std::deque<std::string> header_storage,
+                          std::string headers, std::string new_url,
+                          std::string new_method,
                           mn_request_t *public_handle) {
+                         // Built here, not earlier: header_storage has its
+                         // final address by now, so moving it into this task
+                         // cannot leave the pointers dangling.
+                         std::vector<mn_header_t> header_fields;
+                         header_fields.reserve(header_storage.size() / 2);
+                         for (size_t i = 0; i + 1 < header_storage.size();
+                              i += 2) {
+                           header_fields.push_back(mn_header_t{
+                               header_storage[i].data(),
+                               header_storage[i].size(),
+                               header_storage[i + 1].data(),
+                               header_storage[i + 1].size()});
+                         }
                          InvokeRedirectCallback(
                              callback, user_data, public_handle,
-                             status_code, headers.data(), headers.size(),
-                             new_url.data(), new_url.size(), new_method.data(),
-                             new_method.size());
+                             status_code, header_fields.data(),
+                             header_fields.size(), headers.data(),
+                             headers.size(), new_url.data(), new_url.size(),
+                             new_method.data(), new_method.size());
                        },
                        callback, user_data, base::RetainedRef(this),
-                       redirect_info.status_code, std::move(headers),
-                       redirect_info.new_url.spec(), redirect_info.new_method,
-                       public_handle_));
+                       redirect_info.status_code, std::move(header_storage),
+                       std::move(headers), redirect_info.new_url.spec(),
+                       redirect_info.new_method, public_handle_));
   }
 
   if (redirect_mode_ == MN_REDIRECT_ERROR) {
@@ -587,10 +635,32 @@ void Request::OnReadCompleted(net::URLRequest *request, int bytes_read) {
         base::BindOnce(
             [](mn_request_body_fn callback, void *user_data, Request *self,
                scoped_refptr<net::IOBufferWithSize> buffer, int bytes_read) {
+              const uint8_t *data =
+                  reinterpret_cast<const uint8_t *>(buffer->data());
               const mn_read_disposition_t disposition = InvokeBodyCallback(
-                  callback, user_data, self->public_handle_,
-                  reinterpret_cast<const uint8_t *>(buffer->data()),
+                  callback, user_data, self->public_handle_, data,
                   static_cast<size_t>(bytes_read));
+              if (disposition == MN_READ_TAKE_BUFFER) {
+                // The caller keeps this buffer until it releases it. Handing
+                // the same allocation to the next Read would let a later read
+                // overwrite bytes the caller still owns, so the request drops
+                // its reference here and ReadMore allocates a fresh one.
+                self->engine_->task_runner()->PostTask(
+                    FROM_HERE,
+                    base::BindOnce(
+                        [](Request *self,
+                           scoped_refptr<net::IOBufferWithSize> held,
+                           const uint8_t *data) {
+                          {
+                            base::AutoLock guard(self->taken_buffers_lock_);
+                            self->taken_buffers_[data] = std::move(held);
+                          }
+                          self->read_buffer_ = nullptr;
+                          self->ReadMore();
+                        },
+                        base::RetainedRef(self), std::move(buffer), data));
+                return;
+              }
               self->PostReturnBuffer(std::move(buffer), disposition);
             },
             callback, user_data, base::RetainedRef(this), std::move(buffer),
@@ -657,6 +727,25 @@ mn_result_t Request::EchStatus(mn_ech_status_t *out_status) const {
     return MN_ERROR_INVALID_STATE;
   }
   *out_status = static_cast<mn_ech_status_t>(ech_status_.load());
+  return MN_OK;
+}
+
+mn_result_t Request::ReleaseBuffer(const uint8_t *data) {
+  if (!data) {
+    return MN_ERROR_INVALID_ARGUMENT;
+  }
+  scoped_refptr<net::IOBufferWithSize> released;
+  {
+    base::AutoLock guard(taken_buffers_lock_);
+    auto found = taken_buffers_.find(data);
+    if (found == taken_buffers_.end()) {
+      // Either a double release or a pointer this request never handed out.
+      // Both are caller bugs, and returning OK would hide the second.
+      return MN_ERROR_INVALID_STATE;
+    }
+    released = std::move(found->second);
+    taken_buffers_.erase(found);
+  }
   return MN_OK;
 }
 

@@ -19,6 +19,7 @@ MINICRONET_2 {
     mn_request_upload_write;
     mn_request_follow_redirect;
     mn_request_resume_read;
+    mn_request_release_buffer;
     mn_request_negotiated_protocol;
     mn_request_ech_status;
     mn_websocket_create;

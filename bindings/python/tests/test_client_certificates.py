@@ -338,6 +338,63 @@ class RegistrationMemoTests(unittest.TestCase):
         self.assertEqual(engine.calls[-1][0], "clear",
                          "the clear did not perform the last Core call")
 
+    def test_an_interrupted_registration_does_not_wedge_the_engine(self):
+        """One KeyboardInterrupt used to park the claim for that server forever.
+
+        The claim was released only by the ``except RuntimeError`` handler, so a
+        BaseException raised while the caller waited on the Core left
+        ``_pending_certs`` populated. Every later registration and every
+        ``clear_client_certificate`` for the same (host, port) then waited on a
+        condition nothing would notify: measured, both blocked indefinitely, so
+        one Ctrl-C made that engine permanently unable to register a
+        certificate for that server.
+        """
+        engine = _RecordingEngine()
+
+        def interrupted(host, port, cert, key):
+            raise KeyboardInterrupt("caller interrupted the wait")
+
+        engine.set_client_certificate = interrupted
+        slot = self._slot(engine)
+        with self.assertRaises(KeyboardInterrupt):
+            slot.set_client_certificate("example.test", 443, b"CERT", b"KEY")
+        self.assertEqual(slot._pending_certs, {},
+                         "the interrupted call left its claim behind")
+
+        # The engine has to be usable again: without the release this call waits
+        # on a condition nobody will ever notify.
+        engine.set_client_certificate = _RecordingEngine().set_client_certificate
+        done = []
+        worker = threading.Thread(
+            target=lambda: (slot.set_client_certificate("example.test", 443,
+                                                        b"CERT", b"KEY"),
+                            done.append("returned")))
+        worker.daemon = True
+        worker.start()
+        worker.join(5.0)
+        self.assertEqual(done, ["returned"],
+                         "the next registration never returned: the engine is wedged")
+
+    def test_an_interrupted_registration_does_not_block_a_clear(self):
+        """The same claim also blocked ``clear_client_certificate`` forever."""
+        engine = _RecordingEngine()
+        class _Cancelled(BaseException):
+            pass
+
+        engine.set_client_certificate = lambda *args: (_ for _ in ()).throw(
+            _Cancelled("cancelled while waiting"))
+        slot = self._slot(engine)
+        with self.assertRaises(_Cancelled):
+            slot.set_client_certificate("example.test", 443, b"CERT", b"KEY")
+        done = []
+        worker = threading.Thread(
+            target=lambda: (slot.clear_client_certificate("example.test", 443),
+                            done.append("returned")))
+        worker.daemon = True
+        worker.start()
+        worker.join(5.0)
+        self.assertEqual(done, ["returned"],
+                         "the clear waited for a claim nobody would release")
 
 
 if __name__ == "__main__":

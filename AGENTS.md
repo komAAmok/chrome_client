@@ -197,6 +197,11 @@ python3 tools/audit-client-hints.py
 python3 tools/audit-python-typing.py
 tools/audit-core-binaries.sh
 tools/audit-core-inputs.sh
+# Whether each artifact was built from the sources this tree holds now. The
+# manifests carry core_sources_sha256 for exactly this comparison; without it
+# an edited core/source/*.cc and its stale .so look identical to every other
+# gate (measured: a +11 diff stayed invisible for a full round).
+python3 tools/audit-core-source-fingerprint.py
 python3 tools/audit-core-size-ceilings.py
 python3 tools/audit-core-payloads.py
 # Stage 0 (docs/NEXT_STEPS.md) records that the committed args.gn cannot pass

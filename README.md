@@ -40,7 +40,7 @@ WebSocket。同步与异步两套 API 共用同一个引擎，行为只在"怎�
 
 
 每个 Core 产物位于 `core/binaries/<target>/`，带 ABI 版本、Chromium revision、
-SHA-256 和依赖清单。ABI 当前为 v11。Go 和 Node.js 目录目前是绑定设计说明，
+SHA-256 和依赖清单。ABI 当前为 v12。Go 和 Node.js 目录目前是绑定设计说明，
 不是已发布的可安装包。
 
 ### Chrome profile
@@ -567,7 +567,7 @@ Core 体积在 6.1–9.4 MB 之间（Linux ARMv7 最小，Windows x86_64 最大�
 
 | 路径 | 内容 |
 | --- | --- |
-| `core/abi/` | 稳定 C ABI v11 |
+| `core/abi/` | 稳定 C ABI v12 |
 | `core/binaries/` | 9 个已审计平台 Core |
 | `crates/minicronet/` | Rust 安全层、流和生命周期 |
 | `bindings/python/` | Python 3.9–3.15 绑定与共享 facade |

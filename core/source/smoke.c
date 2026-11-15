@@ -110,12 +110,16 @@ static void MN_CALL on_complete(void *user_data, mn_request_t *request,
 }
 
 static void MN_CALL on_redirect(void *user_data, mn_request_t *request,
-                                int status_code, const char *headers,
+                                int status_code,
+                                const mn_header_t *header_fields,
+                                size_t header_field_count, const char *headers,
                                 size_t headers_length, const char *new_url,
                                 size_t new_url_length, const char *new_method,
                                 size_t new_method_length) {
   request_state_t *state = user_data;
   (void)status_code;
+  (void)header_fields;
+  (void)header_field_count;
   (void)headers;
   (void)headers_length;
   (void)new_url;

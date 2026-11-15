@@ -95,6 +95,11 @@ class Headers(CaseInsensitiveDict):
         if isinstance(headers, Headers):
             for name, value in headers.multi_items():
                 self.add(name, value)
+            # A source built from ``{"Name": None}`` carries its removals in a
+            # record, not in its items. Copying the items alone revived the field
+            # on the way to the wire; the same deletion as a plain dict worked.
+            for name in headers.deleted_names:
+                self._deleted.append(name)
             return
         if isinstance(headers, Mapping):
             for name, value in headers.items():
@@ -140,12 +145,36 @@ class Headers(CaseInsensitiveDict):
         self._refresh(lowered)
 
     def __setitem__(self, key, value):
+        """Replaces every field of this name, or removes it when *value* is None.
+
+        A replacement also drops any earlier "the caller removed this" record:
+        the object now holds the field, so a later merge must not treat the name
+        as deleted. requests spells both cases with one assignment, and leaving
+        the record in place made a plain assignment look like a removal.
+
+        Args:
+            key: The field name.
+            value: The value, or ``None`` to remove the field.
+        """
         lowered = _key(key)
-        self._list = [entry for entry in self._list if entry[0] != lowered]
+        self._deleted = [name for name in self._deleted if name != lowered]
         if value is None:
             self._remove(lowered)
             return
+        self._discard(lowered)
         self._list.append((lowered, _text(key), _text(value, self.encoding)))
+        self._refresh(lowered)
+
+    def _discard(self, lowered):
+        """Drops every field called *lowered*, recording nothing.
+
+        The counterpart of :meth:`_remove` for callers that are replacing a
+        value rather than deleting one.
+
+        Args:
+            lowered: The lower-cased field name.
+        """
+        self._list = [entry for entry in self._list if entry[0] != lowered]
         self._refresh(lowered)
 
     def _remove(self, lowered):
@@ -154,8 +183,7 @@ class Headers(CaseInsensitiveDict):
         Args:
             lowered: The lower-cased field name.
         """
-        self._list = [entry for entry in self._list if entry[0] != lowered]
-        self._refresh(lowered)
+        self._discard(lowered)
         if lowered not in self._deleted:
             self._deleted.append(lowered)
 
@@ -197,6 +225,11 @@ class Headers(CaseInsensitiveDict):
     def copy(self):
         """Returns an independent copy, deletions included.
 
+        The constructor replays every surviving field through :meth:`add`, which
+        records no deletion, so the record is carried over explicitly. Losing it
+        made a caller's deletion vanish when the facade copied the headers on
+        its way to the wire (measured: the header was sent anyway).
+
         Returns:
             A new :class:`Headers`.
         """
@@ -205,13 +238,36 @@ class Headers(CaseInsensitiveDict):
         return clone
 
     def update(self, headers=None, **kwargs):
+        """Merges another mapping in, replacing field by field.
+
+        Replacing a field is not a deletion. ``del self[name]`` cleared the old
+        value and recorded the name in ``deleted_names`` as a side effect, so a
+        caller who built headers the ordinary way (defaults, then refine one)
+        ended up with a record saying "remove User-Agent" while holding a good
+        one. Both readers of that record acted on it:
+        ``_reject_core_owned_removals`` refused the request, and
+        ``merge_setting`` dropped the session's value (measured: the session's
+        ``Accept`` vanished instead of being overridden).
+
+        Args:
+            headers: A :class:`Headers`, a mapping, or an iterable of pairs.
+            **kwargs: Extra fields, applied the same way as mapping entries.
+        """
         if headers is not None:
             if isinstance(headers, Headers):
-                for name in list(headers.keys()):
-                    if _key(name) in self._store:
-                        del self[name]
+                # The first occurrence of a name replaces, the rest append, so
+                # duplicates survive. Going through __setitem__ is what keeps a
+                # replacement from being recorded as a removal.
+                seen = set()
                 for name, value in headers.multi_items():
-                    self.add(name, value)
+                    lowered = _key(name)
+                    if lowered in seen:
+                        self.add(name, value)
+                    else:
+                        seen.add(lowered)
+                        self[name] = value
+                for name in headers.deleted_names:
+                    self._remove(name)
             elif isinstance(headers, Mapping):
                 for name, value in headers.items():
                     self[name] = value

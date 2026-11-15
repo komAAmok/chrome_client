@@ -23,6 +23,7 @@ EXPORTS
   mn_request_ech_status
   mn_websocket_create
   mn_websocket_retain
+  mn_request_release_buffer
   mn_websocket_release
   mn_websocket_start
   mn_websocket_send

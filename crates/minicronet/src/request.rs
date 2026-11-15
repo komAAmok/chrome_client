@@ -87,6 +87,13 @@ pub struct RequestConfig {
     pub cache: CacheMode,
     pub redirect: RedirectMode,
     pub priority: RequestPriority,
+    /// ABI 12: drop a caller-supplied Authorization when a redirect changes the
+    /// origin. Off by default, matching what ABI 11 callers got.
+    pub strip_authorization_on_cross_origin_redirect: bool,
+    /// Wrap the Core body buffer instead of copying it while the queue is under
+    /// the ceiling. Rust-side only: the ABI has no field for this, because the
+    /// choice is expressed by returning MN_READ_TAKE_BUFFER from on_body.
+    pub take_body_buffers: bool,
 }
 
 impl RequestConfig {
@@ -99,6 +106,8 @@ impl RequestConfig {
             upload: Upload::None,
             cache: CacheMode::Default,
             redirect: RedirectMode::Follow,
+            strip_authorization_on_cross_origin_redirect: false,
+            take_body_buffers: false,
             priority: RequestPriority::Default,
         }
     }
@@ -167,6 +176,9 @@ impl std::error::Error for RequestError {}
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Redirect {
     pub status_code: i32,
+    /// Parsed fields, duplicates kept in arrival order. ABI 12 sends these so a
+    /// hop no longer needs its raw block re-split in every binding.
+    pub fields: Vec<ResponseHeader>,
     pub headers: Vec<u8>,
     pub new_url: String,
     pub new_method: String,
@@ -240,7 +252,13 @@ pub struct Response {
 struct RequestState {
     response: Option<ResponseHead>,
     response_taken: bool,
-    body: VecDeque<Vec<u8>>,
+    body: VecDeque<BodyChunk>,
+    /// ABI 12: wrap the Core buffer instead of copying it, while the queue is
+    /// under the ceiling. Set once at construction.
+    take_body_buffers: bool,
+    /// The public handle, needed to hand a taken buffer back. Null until the
+    /// request exists, which is why the take path also requires it non-null.
+    public_handle: *mut sys::mn_request_t,
     body_bytes: usize,
     // Set when on_body answered MN_READ_PAUSE. The consumer clears it and calls
     // `Request::resume_read` once the queue drops back under the ceiling.
@@ -255,6 +273,78 @@ struct RequestState {
     response_waker: Option<Waker>,
     body_waker: Option<Waker>,
 }
+
+/// A body chunk the Core lent us, handed back when this is dropped.
+///
+/// The bytes live in a Chromium `IOBufferWithSize`, which partition_alloc
+/// allocates, not the Rust allocator. Taking them into a `Vec` and letting
+/// Rust free that pointer would free partition_alloc memory through the
+/// system allocator, so the buffer is kept as a raw view and returned through
+/// the ABI instead.
+pub struct TakenChunk {
+    request: *mut sys::mn_request_t,
+    data: *const u8,
+    len: usize,
+}
+
+impl TakenChunk {
+    /// Views the bytes. Valid until this value is dropped.
+    pub fn as_slice(&self) -> &[u8] {
+        if self.len == 0 {
+            return &[];
+        }
+        // SAFETY: the Core keeps the pointer valid and unmoved until
+        // mn_request_release_buffer, which only Drop calls.
+        unsafe { std::slice::from_raw_parts(self.data, self.len) }
+    }
+}
+
+impl Drop for TakenChunk {
+    fn drop(&mut self) {
+        if !self.data.is_null() {
+            // SAFETY: data came from this request on_body and has not been
+            // released; Drop runs once.
+            unsafe { sys::mn_request_release_buffer(self.request, self.data) };
+        }
+    }
+}
+
+// SAFETY: the pointer is only read through as_slice and returned on drop; the
+// Core documents both as safe from any thread.
+unsafe impl Send for TakenChunk {}
+
+/// One queued body chunk: an owned copy, or a Core buffer still to be returned.
+pub enum BodyChunk {
+    Owned(Vec<u8>),
+    Taken(TakenChunk),
+}
+
+impl BodyChunk {
+    fn len(&self) -> usize {
+        match self {
+            BodyChunk::Owned(bytes) => bytes.len(),
+            BodyChunk::Taken(chunk) => chunk.len,
+        }
+    }
+
+    fn into_bytes(self) -> Vec<u8> {
+        match self {
+            BodyChunk::Owned(bytes) => bytes,
+            // The Python side needs an owned bytes object, so a taken buffer is
+            // copied once here. The saving is the Core-side copy that no longer
+            // happens, not this one.
+            BodyChunk::Taken(chunk) => chunk.as_slice().to_vec(),
+        }
+    }
+}
+
+// SAFETY: the raw field added for ABI 12 is public_handle, the Core handle
+// this request owns. It is written once, under the state lock, before the
+// request can run, and only read to pass back to mn_request_release_buffer,
+// which the Core documents as safe from any thread. Nothing dereferences it
+// through Rust, so it is an opaque token, exactly like the one RequestInner
+// already stores.
+unsafe impl Send for RequestState {}
 
 struct RequestShared {
     state: Mutex<RequestState>,
@@ -438,6 +528,13 @@ impl Request {
 
     pub(crate) fn new(engine: &Engine, config: RequestConfig) -> Result<Self, Error> {
         let shared = Arc::new(RequestShared::new());
+        {
+            // Seeded before the request exists so on_body never sees a
+            // half-set pair. public_handle is filled in below, once the
+            // Core returns it.
+            let mut state = lock(&shared.state);
+            state.take_body_buffers = config.take_body_buffers;
+        }
         let user_data = Arc::into_raw(Arc::clone(&shared));
         let headers = config.headers;
         let raw_headers: Vec<_> = headers
@@ -484,6 +581,9 @@ impl Request {
             cache_mode: cache_mode(config.cache),
             redirect_mode: redirect_mode(config.redirect),
             priority: priority(config.priority),
+            strip_authorization_on_cross_origin_redirect: u8::from(
+                config.strip_authorization_on_cross_origin_redirect,
+            ),
         };
         let mut raw = std::ptr::null_mut();
         let result = unsafe { sys::mn_request_create(engine.raw(), &raw_config, &mut raw) };
@@ -495,6 +595,13 @@ impl Request {
             release_callback_ref(user_data);
             return Err(Error::InitializationFailed);
         };
+        {
+            // The Core only returns the handle once the request exists, so the
+            // take path could not record it at construction. Without it a taken
+            // buffer could never be returned.
+            let mut state = lock(&shared.state);
+            state.public_handle = raw.as_ptr();
+        }
         Ok(Self(Arc::new(RequestInner {
             raw,
             shared,
@@ -784,10 +891,21 @@ fn clear_pause(state: &mut RequestState) -> bool {
     }
 }
 
+/// Whether on_body may hand the Core buffer over instead of copying it.
+///
+/// A taken buffer makes the Core allocate a fresh one for the next read, and
+/// MN_READ_TAKE_BUFFER means "keep reading" -- so taking at the ceiling would
+/// let the queue grow with no limit. Measured before the guard: a consumer that
+/// stalled for 2 s let the server push 57.81 MiB, against 0.94 MiB on the
+/// lending path.
+fn may_take_buffer(opted_in: bool, body_bytes: usize, has_buffer: bool, length: usize) -> bool {
+    opted_in && body_bytes < BODY_BUFFER_LIMIT && has_buffer && length > 0
+}
+
 fn take_body(state: &mut RequestState) -> Option<Option<Result<Vec<u8>, RequestError>>> {
     if let Some(body) = state.body.pop_front() {
         state.body_bytes = state.body_bytes.saturating_sub(body.len());
-        return Some(Some(Ok(body)));
+        return Some(Some(Ok(body.into_bytes())));
     }
     match state.terminal {
         Some(Ok(_)) => Some(None),
@@ -887,8 +1005,33 @@ unsafe extern "C" fn on_body(
         let mut state = lock(&shared.state);
         // An abandoned queue has no consumer, so storing the chunk would only
         // grow memory that nothing drains. Keep reading and let the Core finish.
+        // A taken buffer costs the Core one fresh allocation for the next read,
+        // so it is only worth it while the queue is under the ceiling. Once the
+        // consumer has stopped draining, copying is the cheaper choice AND it
+        // is the only one that can pause: MN_READ_TAKE_BUFFER means "keep
+        // reading", so a taken chunk at the ceiling left the queue growing with
+        // no limit -- measured, a consumer stalled for 2 s let the server push
+        // 57.81 MiB against 0.94 MiB on the lending path.
+        let take = may_take_buffer(
+            state.take_body_buffers,
+            state.body_bytes,
+            !data.is_null(),
+            data_length,
+        );
+        let handle = state.public_handle;
+        let mut took = false;
         if !state.body_abandoned {
-            state.body.push_back(copy_bytes(data, data_length));
+            let chunk = if take {
+                took = true;
+                BodyChunk::Taken(TakenChunk {
+                    request: handle,
+                    data,
+                    len: data_length,
+                })
+            } else {
+                BodyChunk::Owned(copy_bytes(data, data_length))
+            };
+            state.body.push_back(chunk);
             state.body_bytes = state.body_bytes.saturating_add(data_length);
         }
         // Never pause after a terminal result: nothing would resume the request.
@@ -900,10 +1043,14 @@ unsafe extern "C" fn on_body(
         drop(state);
         wakeups.wake();
         shared.schedule_event();
-        pause
+        (pause, took)
     })) {
-        Ok(true) => sys::mn_read_disposition_t::MN_READ_PAUSE,
-        Ok(false) => sys::mn_read_disposition_t::MN_READ_CONTINUE,
+        // A paused chunk is always copied, so the two never collide:
+        // take requires being under the ceiling, and pause is only set
+        // at or above it.
+        Ok((_, true)) => sys::mn_read_disposition_t::MN_READ_TAKE_BUFFER,
+        Ok((true, false)) => sys::mn_read_disposition_t::MN_READ_PAUSE,
+        Ok((false, false)) => sys::mn_read_disposition_t::MN_READ_CONTINUE,
         Err(_) => {
             shared.callback_panicked();
             // Keep reading so a panicking consumer cannot strand the Core
@@ -917,6 +1064,8 @@ unsafe extern "C" fn on_redirect(
     user_data: *mut std::ffi::c_void,
     _request: *mut sys::mn_request_t,
     status_code: i32,
+    header_fields: *const sys::mn_header_t,
+    header_field_count: usize,
     headers: *const i8,
     headers_length: usize,
     new_url: *const i8,
@@ -929,6 +1078,7 @@ unsafe extern "C" fn on_redirect(
         let mut state = lock(&shared.state);
         state.redirects.push_back(Redirect {
             status_code,
+            fields: copy_header_fields(header_fields, header_field_count),
             headers: copy_bytes(headers.cast(), headers_length),
             new_url: copy_string(new_url, new_url_length),
             new_method: copy_string(new_method, new_method_length),
@@ -1239,6 +1389,50 @@ mod abi_regressions {
         for nanos in [0u64, 1, 999_999, 1_000_000, 1_000_000_000] {
             assert!(timeout_ms(Some(Duration::from_nanos(nanos))) >= 1);
         }
+    }
+
+    #[test]
+    fn a_taken_chunk_is_only_used_below_the_ceiling() {
+        // Calls the same rule on_body uses. An earlier version of this test only
+        // compared two integers, so removing the guard from on_body left it
+        // green -- it asserted the constant, not the decision.
+        assert!(may_take_buffer(true, BODY_BUFFER_LIMIT - 1, true, 1024));
+        assert!(
+            !may_take_buffer(true, BODY_BUFFER_LIMIT, true, 1024),
+            "at the ceiling the chunk must be copied so it can pause"
+        );
+        assert!(!may_take_buffer(false, 0, true, 1024), "opt-in only");
+        assert!(!may_take_buffer(true, 0, false, 1024), "needs a buffer");
+        assert!(!may_take_buffer(true, 0, true, 0), "needs bytes");
+    }
+
+    #[test]
+    fn an_owned_chunk_reports_its_length() {
+        let chunk = BodyChunk::Owned(vec![7u8; 32]);
+        assert_eq!(chunk.len(), 32);
+        assert_eq!(chunk.into_bytes(), vec![7u8; 32]);
+    }
+
+    #[test]
+    fn a_taken_chunk_with_no_handle_releases_nothing() {
+        // Drop skips the ABI call for a null pointer, so this exercises the
+        // path without a live Core request.
+        let chunk = TakenChunk {
+            request: std::ptr::null_mut(),
+            data: std::ptr::null(),
+            len: 0,
+        };
+        assert!(chunk.as_slice().is_empty());
+        drop(chunk);
+    }
+
+    #[test]
+    fn take_body_buffers_defaults_to_off() {
+        assert!(!RequestConfig::get("http://example.test/").take_body_buffers);
+        assert!(
+            !RequestConfig::get("http://example.test/")
+                .strip_authorization_on_cross_origin_redirect
+        );
     }
 
     #[test]

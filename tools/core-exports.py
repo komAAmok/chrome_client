@@ -175,9 +175,19 @@ def _trie_exports(data: bytes, start: int, size: int) -> list[str]:
             raise Unsupported(f"export trie node {node} is outside the trie")
         terminal, offset = _uleb(data, node)
         if terminal:
-            flags, _after = _uleb(data, offset)
+            # A terminal node carries a flags ULEB and, for a regular export,
+            # an address ULEB. The child list starts AFTER that payload.
+            # Reading it from `offset` walked into the flags byte and lost
+            # every node that is both a terminal and a prefix of a longer
+            # name -- measured on libminicronet.dylib, where "release" is a
+            # prefix of "release_buffer" and the walk reported 28 exports
+            # where the trie held 29.
+            flags, after_flags = _uleb(data, offset)
+            offset = after_flags
             if not flags & 0x08:  # not REEXPORT: the name is exported here
                 found.append(prefix)
+                if not flags & 0x10:  # not a stub: an address ULEB follows
+                    _address, offset = _uleb(data, offset)
         if offset >= end:
             continue
         children = data[offset]
@@ -239,6 +249,8 @@ PARSERS = (elf_exports, pe_exports, macho_exports)
 
 
 def main() -> int:
+    if "--self-test" in sys.argv[1:]:
+        return _self_test()
     if len(sys.argv) != 2:
         print(f"usage: {pathlib.Path(sys.argv[0]).name} <binary>", file=sys.stderr)
         return 1
@@ -265,6 +277,90 @@ def main() -> int:
         print(f"  {error}", file=sys.stderr)
     return 1
 
+
+
+
+def _self_test() -> int:
+    """Checks the trie walker against a hand-built trie.
+
+    The case that matters is the one this walker got wrong: a node that is both
+    an export and the prefix of a longer one. "release" is a prefix of
+    "release_buffer" in the real library, and reading the child count from the
+    flags byte instead of after the address payload silently dropped it, so the
+    gate reported 28 exports where the image held 29 -- on macOS only, because
+    that is the only container format that uses a trie.
+
+    Returns:
+        A process exit status.
+    """
+    def uleb(value: int) -> bytes:
+        out = bytearray()
+        while True:
+            byte = value & 0x7F
+            value >>= 7
+            if value:
+                out.append(byte | 0x80)
+            else:
+                out.append(byte)
+                return bytes(out)
+
+    # Leaf offsets first, then parents, so every child offset is known when the
+    # parent is written. The root is at offset 0.
+    n = {}
+
+    def size_of(terminal, address, children):
+        body = len(uleb(1)) + len(uleb(0)) + len(uleb(address)) if terminal else 1
+        body += len(uleb(len(children)))
+        for edge, _child in children:
+            body += len(edge) + 1 + len(uleb(0)) + 1
+        return body
+
+    # Walk worst case: children references, so compute sizes then lay out.
+    specs = {}
+    specs["yz"] = (True, 0x3000, [])
+    specs["x"] = (True, 0x1000, [])
+    specs["y"] = (True, 0x2000, [("z", "yz")])
+    specs["mn"] = (False, 0, [("x", "x"), ("y", "y")])
+    specs["root"] = (False, 0, [("_mn_", "mn")])
+
+    order = ["root", "mn", "x", "y", "yz"]
+    cursor = 0
+    for key in order:
+        terminal, address, children = specs[key]
+        n[key] = cursor
+        if terminal:
+            cursor += len(uleb(1)) + len(uleb(0)) + len(uleb(address))
+        else:
+            cursor += 1
+        cursor += len(uleb(len(children)))
+        for edge, _child in children:
+            cursor += len(edge) + 1 + len(uleb(0))
+
+    blob = bytearray()
+    for key in order:
+        terminal, address, children = specs[key]
+        if terminal:
+            blob.extend(uleb(1))
+            blob.extend(uleb(0))
+            blob.extend(uleb(address))
+        else:
+            blob.append(0)
+        blob.extend(uleb(len(children)))
+        for edge, child in children:
+            blob.extend(edge.encode() + b"\0")
+            blob.extend(uleb(n[child]))
+
+    found = _trie_exports(bytes(blob), 0, len(blob))
+    wanted = {"_mn_x", "_mn_y", "_mn_yz"}
+    if set(found) != wanted:
+        print("core-exports self-test FAILED: a terminal that is also a prefix",
+              file=sys.stderr)
+        print("  expected %s" % sorted(wanted), file=sys.stderr)
+        print("  got      %s" % sorted(found), file=sys.stderr)
+        return 1
+    print("core-exports self-test passed: a terminal that is also a prefix "
+          "survives the walk")
+    return 0
 
 if __name__ == "__main__":
     raise SystemExit(main())

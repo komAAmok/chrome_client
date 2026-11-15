@@ -15,9 +15,10 @@ use std::sync::{
 use std::time::{Duration, Instant};
 
 use minicronet::{
-    CacheMode, CloseInfo, Engine as CoreEngine, EngineConfig, Header, HttpCacheMode, MessageType,
-    Platform, ProtocolMode, Redirect, RedirectMode, RequestConfig, RequestPriority, ResponseFuture,
-    ResponseStream, TlsVerifyMode, Upload, WebSocketConfig, WebSocketEvent, WebSocketEvents,
+    CacheMode, CloseInfo, Cookie, CookieSameSite, EchStatus, Engine as CoreEngine,
+    EngineConfig, Header, HttpCacheMode, HttpVersion, MessageType, Platform, ProtocolMode,
+    Redirect, RedirectMode, RequestConfig, RequestPriority, ResponseFuture, ResponseStream,
+    TlsVerifyMode, Upload, WebSocketConfig, WebSocketEvent, WebSocketEvents,
 };
 use pyo3::{exceptions::PyRuntimeError, prelude::*, types::PyBytes};
 
@@ -25,22 +26,108 @@ fn error(value: impl std::fmt::Display) -> PyErr {
     PyRuntimeError::new_err(value.to_string())
 }
 
-type PyEvent = (String, i32, Vec<u8>, Vec<u8>, Option<String>);
-type PyWebSocketEvent = (String, Vec<u8>, Option<u16>, Option<String>);
-type PyRedirect = (i32, Vec<u8>, String, String);
-type PyHead = (i32, Vec<u8>);
+// The facade is shared with the modern package and unpacks both tuples
+// positionally, so their arity is part of the contract between the two crates.
+// It was 5/4 here while the facade unpacked 6/5: the shapes had drifted and
+// nothing compared them, which is why tools/audit-python36-artifact.py now
+// drives a redirect and an async request through the legacy extension
+// instead of only importing it.
+//
+// The three byte-carrying fields are PyBytes, not Vec<u8>: pyo3 0.15 converts a
+// Vec<u8> into a Python LIST of ints, while the modern binding pyo3 0.30
+// converts it into bytes. The facade is shared, so it treats a body chunk as
+// bytes -- b''.join(state.body) on the async path raised
+// "sequence item 0: expected a bytes-like object, list found" for every
+// non-streaming async request through this extension. Converting at the
+// boundary is what makes both extensions hand the same Python types to the
+// same facade.
+type PyEvent = (
+    String,
+    i32,
+    Py<PyBytes>,
+    Py<PyBytes>,
+    Option<String>,
+    Vec<(String, String)>,
+);
+type PyWebSocketEvent = (String, Py<PyBytes>, Option<u16>, Option<String>);
+type PyRedirect = (i32, Py<PyBytes>, String, String, Vec<(String, String)>);
+type PyHead = (i32, Py<PyBytes>);
 /// `(redirect, head)` with exactly one side set, or both `None` on timeout.
 type PyManualWait = (Option<PyRedirect>, Option<PyHead>);
 
-fn redirect_tuple(redirect: Redirect) -> PyRedirect {
+fn redirect_tuple(py: Python, redirect: Redirect) -> PyRedirect {
     (
         redirect.status_code,
-        redirect.headers,
+        PyBytes::new(py, &redirect.headers).into(),
         redirect.new_url,
         redirect.new_method,
+        redirect
+            .fields
+            .into_iter()
+            .map(|field| (field.name, field.value))
+            .collect(),
     )
 }
 
+
+/// Maps the negotiated protocol onto the string the facade reports.
+fn http_version_name(value: HttpVersion) -> Option<&'static str> {
+    match value {
+        HttpVersion::Http09 => Some("HTTP/0.9"),
+        HttpVersion::Http10 => Some("HTTP/1.0"),
+        HttpVersion::Http11 => Some("HTTP/1.1"),
+        HttpVersion::Http2 => Some("HTTP/2"),
+        HttpVersion::Http3 => Some("HTTP/3"),
+        HttpVersion::Unknown => None,
+    }
+}
+
+fn cookie_same_site_name(value: CookieSameSite) -> &'static str {
+    match value {
+        CookieSameSite::Unspecified => "unspecified",
+        CookieSameSite::NoRestriction => "no_restriction",
+        CookieSameSite::Lax => "lax",
+        CookieSameSite::Strict => "strict",
+    }
+}
+
+fn cookie_same_site(name: &str) -> PyResult<CookieSameSite> {
+    Ok(match name {
+        // The facade passes an empty string for "the jar had no SameSite".
+        "" | "unspecified" => CookieSameSite::Unspecified,
+        "no_restriction" => CookieSameSite::NoRestriction,
+        "lax" => CookieSameSite::Lax,
+        "strict" => CookieSameSite::Strict,
+        other => return Err(error(format!("unknown same_site {other:?}"))),
+    })
+}
+
+/// One cookie, flattened for Python. Same order as the modern binding.
+type PyCookie = (
+    String,
+    String,
+    String,
+    String,
+    i64,
+    bool,
+    bool,
+    bool,
+    &'static str,
+);
+
+fn cookie_tuple(cookie: Cookie) -> PyCookie {
+    (
+        cookie.name,
+        cookie.value,
+        cookie.domain,
+        cookie.path,
+        cookie.expiry_unix_seconds,
+        cookie.has_expiry,
+        cookie.secure,
+        cookie.http_only,
+        cookie_same_site_name(cookie.same_site),
+    )
+}
 fn duration(seconds: Option<f64>) -> PyResult<Option<Duration>> {
     seconds
         .map(|value| {
@@ -98,6 +185,16 @@ fn protocol_mode(name: Option<&str>) -> PyResult<ProtocolMode> {
     })
 }
 
+fn platform_mode(name: Option<&str>) -> PyResult<Platform> {
+    Ok(match name {
+        None | Some("auto") => Platform::Auto,
+        Some("windows") => Platform::Windows,
+        Some("macos") => Platform::Macos,
+        Some("linux") => Platform::Linux,
+        Some(other) => return Err(error(format!("unknown platform {other:?}"))),
+    })
+}
+
 fn profile_identifier(value: String) -> String {
     if let Some(version) = value.strip_prefix("chrome") {
         let version = version.strip_prefix('_').unwrap_or(version);
@@ -147,9 +244,14 @@ struct PyWebSocket {
     notify_scheduled: Arc<AtomicBool>,
 }
 
-fn websocket_event(event: WebSocketEvent) -> PyWebSocketEvent {
+fn websocket_event(py: Python, event: WebSocketEvent) -> PyWebSocketEvent {
     match event {
-        WebSocketEvent::Open { protocol, .. } => ("open".into(), protocol.into_bytes(), None, None),
+        WebSocketEvent::Open { protocol, .. } => (
+            "open".into(),
+            PyBytes::new(py, protocol.as_bytes()).into(),
+            None,
+            None,
+        ),
         WebSocketEvent::Message {
             message_type, data, ..
         } => {
@@ -157,15 +259,21 @@ fn websocket_event(event: WebSocketEvent) -> PyWebSocketEvent {
                 MessageType::Text => "text",
                 MessageType::Binary | MessageType::Continuation => "binary",
             };
-            (kind.into(), data, None, None)
+            (kind.into(), PyBytes::new(py, &data).into(), None, None)
         }
-        WebSocketEvent::Closing => ("closing".into(), Vec::new(), None, None),
-        WebSocketEvent::Closed(CloseInfo { code, reason, .. }) => {
-            ("closed".into(), Vec::new(), Some(code), Some(reason))
-        }
-        WebSocketEvent::Failure(failure) => {
-            ("error".into(), Vec::new(), None, Some(failure.to_string()))
-        }
+        WebSocketEvent::Closing => ("closing".into(), PyBytes::new(py, &[]).into(), None, None),
+        WebSocketEvent::Closed(CloseInfo { code, reason, .. }) => (
+            "closed".into(),
+            PyBytes::new(py, &[]).into(),
+            Some(code),
+            Some(reason),
+        ),
+        WebSocketEvent::Failure(failure) => (
+            "error".into(),
+            PyBytes::new(py, &[]).into(),
+            None,
+            Some(failure.to_string()),
+        ),
     }
 }
 
@@ -182,13 +290,14 @@ impl PyWebSocket {
         self.inner.send_binary(&data).map_err(error)
     }
     fn recv(&self, py: Python) -> PyResult<Option<PyWebSocketEvent>> {
-        py.allow_threads(|| {
+        let event = py.allow_threads(|| {
             let mut events = self.events.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             let events = events
                 .as_mut()
                 .ok_or_else(|| error("WebSocket is not connected"))?;
-            Ok(events.blocking_next().map(websocket_event))
-        })
+            Ok::<Option<WebSocketEvent>, PyErr>(events.blocking_next())
+        })?;
+        Ok(event.map(|event| websocket_event(py, event)))
     }
     fn close(&self, code: u16, reason: &str) -> PyResult<()> {
         let result = self.inner.close(code, reason).map_err(error);
@@ -225,13 +334,13 @@ impl PyWebSocket {
         }));
         self.connect()
     }
-    fn poll_event(&self) -> PyResult<Option<PyWebSocketEvent>> {
+    fn poll_event(&self, py: Python) -> PyResult<Option<PyWebSocketEvent>> {
         self.notify_scheduled.store(false, Ordering::Release);
         let mut events = self.events.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let events = events
             .as_mut()
             .ok_or_else(|| error("WebSocket is not connected"))?;
-        let event = events.try_next().map(websocket_event);
+        let event = events.try_next().map(|event| websocket_event(py, event));
         let terminal = match event.as_ref() {
             Some(event) => event.0 == "closed" || event.0 == "error",
             None => false,
@@ -242,7 +351,7 @@ impl PyWebSocket {
         Ok(event)
     }
     #[args(limit = "64")]
-    fn poll_events(&self, limit: usize) -> PyResult<Vec<PyWebSocketEvent>> {
+    fn poll_events(&self, py: Python, limit: usize) -> PyResult<Vec<PyWebSocketEvent>> {
         self.notify_scheduled.store(false, Ordering::Release);
         let mut events = self.events.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let events = events
@@ -254,7 +363,7 @@ impl PyWebSocket {
         while drained.len() < cap {
             match events.try_next() {
                 Some(event) => {
-                    let event = websocket_event(event);
+                    let event = websocket_event(py, event);
                     terminal = event.0 == "closed" || event.0 == "error";
                     drained.push(event);
                     if terminal {
@@ -281,17 +390,23 @@ impl PyRequest {
         self.response_future.lock().unwrap_or_else(std::sync::PoisonError::into_inner).take();
     }
 
-    fn poll_one(&self) -> PyResult<Option<PyEvent>> {
+    fn poll_one(&self, py: Python) -> PyResult<Option<PyEvent>> {
         // Redirects are reported before the response in every mode, and in
         // manual mode the response never arrives until `follow_redirect`, so the
         // hop has to reach the caller as an event of its own.
         if let Some(hop) = self.inner.take_redirect() {
+            let fields = hop
+                .fields
+                .iter()
+                .map(|field| (field.name.clone(), field.value.clone()))
+                .collect();
             return Ok(Some((
                 "redirect".into(),
                 hop.status_code,
-                hop.headers,
-                hop.new_url.into_bytes(),
+                PyBytes::new(py, &hop.headers).into(),
+                PyBytes::new(py, hop.new_url.as_bytes()).into(),
                 Some(hop.new_method),
+                fields,
             )));
         }
         let response = self
@@ -301,16 +416,23 @@ impl PyRequest {
             .as_mut()
             .and_then(ResponseFuture::try_take);
         if let Some(response) = response {
-            self.response_future.lock().unwrap_or_else(std::sync::PoisonError::into_inner).take();
+            self.response_future
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .take();
             return Ok(Some(match response {
                 Ok(response) => {
-                    *self.body_stream.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Some(response.body);
+                    *self
+                        .body_stream
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(response.body);
                     (
                         "response".into(),
                         response.status_code,
-                        response.headers,
-                        Vec::new(),
+                        PyBytes::new(py, &response.headers).into(),
+                        PyBytes::new(py, &[]).into(),
                         None,
+                        Vec::new(),
                     )
                 }
                 Err(err) => {
@@ -321,9 +443,10 @@ impl PyRequest {
                     (
                         "error".into(),
                         0,
-                        Vec::new(),
-                        Vec::new(),
+                        PyBytes::new(py, &[]).into(),
+                        PyBytes::new(py, &[]).into(),
                         Some(err.to_string()),
+                        Vec::new(),
                     )
                 }
             }));
@@ -336,7 +459,14 @@ impl PyRequest {
             .and_then(ResponseStream::try_next);
         if let Some(body) = body {
             return Ok(Some(match body {
-                Some(Ok(chunk)) => ("body".into(), 0, Vec::new(), chunk, None),
+                Some(Ok(chunk)) => (
+                    "body".into(),
+                    0,
+                    PyBytes::new(py, &[]).into(),
+                    PyBytes::new(py, &chunk).into(),
+                    None,
+                    Vec::new(),
+                ),
                 Some(Err(err)) => {
                     if self.done.swap(true, Ordering::AcqRel) {
                         return Ok(None);
@@ -345,9 +475,10 @@ impl PyRequest {
                     (
                         "error".into(),
                         0,
-                        Vec::new(),
-                        Vec::new(),
+                        PyBytes::new(py, &[]).into(),
+                        PyBytes::new(py, &[]).into(),
                         Some(err.to_string()),
+                        Vec::new(),
                     )
                 }
                 None => {
@@ -355,7 +486,14 @@ impl PyRequest {
                         return Ok(None);
                     }
                     self.finish();
-                    ("done".into(), 0, Vec::new(), Vec::new(), None)
+                    (
+                        "done".into(),
+                        0,
+                        PyBytes::new(py, &[]).into(),
+                        PyBytes::new(py, &[]).into(),
+                        None,
+                        Vec::new(),
+                    )
                 }
             }));
         }
@@ -387,6 +525,35 @@ impl PyRequest {
         py.allow_threads(|| self.inner.upload_finish().map_err(error))
     }
 
+    /// The parsed header fields of the response head, duplicates preserved.
+    fn header_fields(&self) -> Option<Vec<(String, String)>> {
+        self.inner.response_head().map(|head| {
+            head.header_fields
+                .into_iter()
+                .map(|field| (field.name, field.value))
+                .collect()
+        })
+    }
+
+    /// Whether Encrypted ClientHello was used, once a response has started.
+    fn ech_status(&self) -> Option<&'static str> {
+        self.inner.ech_status().map(|value| match value {
+            EchStatus::Success => "success",
+            EchStatus::Rejected => "rejected",
+            EchStatus::NotAttempted => "not_attempted",
+        })
+    }
+
+    /// The reason phrase the Core extracted, if a response has started.
+    fn reason_phrase(&self) -> Option<String> {
+        self.inner.response_head().map(|head| head.reason_phrase)
+    }
+
+    /// The protocol the connection used, or None when the Core does not know.
+    fn http_version(&self) -> Option<&'static str> {
+        http_version_name(self.inner.negotiated_protocol()?)
+    }
+
     fn resume_read(&self) -> PyResult<()> {
         self.inner.resume_read().map_err(error)
     }
@@ -395,10 +562,10 @@ impl PyRequest {
         self.inner.follow_redirect().map_err(error)
     }
 
-    fn take_redirects(&self) -> Vec<PyRedirect> {
+    fn take_redirects(&self, py: Python) -> Vec<PyRedirect> {
         let mut hops = Vec::new();
         while let Some(redirect) = self.inner.take_redirect() {
-            hops.push(redirect_tuple(redirect));
+            hops.push(redirect_tuple(py, redirect));
         }
         hops
     }
@@ -406,12 +573,10 @@ impl PyRequest {
     #[args(timeout = "None")]
     fn wait_redirect(&self, py: Python, timeout: Option<f64>) -> PyResult<Option<PyRedirect>> {
         let deadline = duration(timeout)?.unwrap_or_else(|| Duration::from_secs(86_400));
-        py.allow_threads(|| {
-            self.inner
-                .wait_for_redirect(deadline)
-                .map(|hop| hop.map(redirect_tuple))
-                .map_err(error)
-        })
+        // The hop is taken without the GIL, then turned into Python objects with
+        // it: PyBytes cannot be built inside allow_threads.
+        let hop = py.allow_threads(|| self.inner.wait_for_redirect(deadline).map_err(error))?;
+        Ok(hop.map(|hop| redirect_tuple(py, hop)))
     }
 
     /// Blocks until the Core reports a deferred redirect or the response
@@ -427,10 +592,17 @@ impl PyRequest {
         let deadline = Instant::now()
             .checked_add(total)
             .ok_or_else(|| error("timeout is too large for the system clock"))?;
-        py.allow_threads(|| {
+        // Waits without the GIL, then builds the tuple with it. The hop carries
+        // PyBytes now, which cannot be constructed on a detached thread.
+        enum Waited {
+            Hop(Redirect),
+            Head(i32, Vec<u8>),
+            Nothing,
+        }
+        let waited = py.allow_threads(|| {
             loop {
                 if let Some(hop) = self.inner.take_redirect() {
-                    return Ok((Some(redirect_tuple(hop)), None));
+                    return Ok(Waited::Hop(hop));
                 }
                 let taken = self
                     .response_future
@@ -439,7 +611,10 @@ impl PyRequest {
                     .as_mut()
                     .and_then(ResponseFuture::try_take);
                 if let Some(result) = taken {
-                    self.response_future.lock().unwrap_or_else(std::sync::PoisonError::into_inner).take();
+                    self.response_future
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .take();
                     let response = match result {
                         Ok(response) => response,
                         Err(err) => {
@@ -448,18 +623,29 @@ impl PyRequest {
                         }
                     };
                     let head = (response.status_code, response.headers);
-                    *self.body_stream.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Some(response.body);
-                    return Ok((None, Some(head)));
+                    *self
+                        .body_stream
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(response.body);
+                    return Ok(Waited::Head(head.0, head.1));
                 }
                 let now = Instant::now();
                 if now >= deadline {
-                    return Ok((None, None));
+                    return Ok(Waited::Nothing);
                 }
                 let slice = std::cmp::min(deadline - now, Duration::from_millis(50));
                 if let Some(hop) = self.inner.wait_for_redirect(slice).map_err(error)? {
-                    return Ok((Some(redirect_tuple(hop)), None));
+                    return Ok(Waited::Hop(hop));
                 }
             }
+        })?;
+        Ok(match waited {
+            Waited::Hop(hop) => (Some(redirect_tuple(py, hop)), None),
+            Waited::Head(status_code, headers) => (
+                None,
+                Some((status_code, PyBytes::new(py, &headers).into())),
+            ),
+            Waited::Nothing => (None, None),
         })
     }
 
@@ -549,18 +735,18 @@ impl PyRequest {
         }));
     }
 
-    fn poll_event(&self) -> PyResult<Option<PyEvent>> {
+    fn poll_event(&self, py: Python) -> PyResult<Option<PyEvent>> {
         self.notify_scheduled.store(false, Ordering::Release);
-        self.poll_one()
+        self.poll_one(py)
     }
 
     #[args(limit = "64")]
-    fn poll_events(&self, limit: usize) -> PyResult<Vec<PyEvent>> {
+    fn poll_events(&self, py: Python, limit: usize) -> PyResult<Vec<PyEvent>> {
         self.notify_scheduled.store(false, Ordering::Release);
         let cap = if limit == 0 { 1 } else { limit };
         let mut drained = Vec::new();
         while drained.len() < cap {
-            match self.poll_one()? {
+            match self.poll_one(py)? {
                 Some(event) => {
                     let terminal = event.0 == "done" || event.0 == "error";
                     drained.push(event);
@@ -583,6 +769,14 @@ struct PyEngine {
 #[pymethods]
 impl PyEngine {
     #[new]
+    // The shared facade passes every option the modern extension accepts, by
+    // keyword, and it does so unconditionally: it cannot know which extension it
+    // is talking to. A keyword this constructor does not declare is a TypeError
+    // on the FIRST REQUEST, not at import, so the whole 3.6 wheel was unusable
+    // while tools/audit-python36-artifact.py still passed -- it only imported the
+    // module. Every option is therefore declared here, and forwarded: a keyword
+    // that is accepted and then ignored is the silent ignore AGENTS.md section 8
+    // forbids.
     #[args(
         impersonate = "None",
         proxy = "None",
@@ -594,7 +788,18 @@ impl PyEngine {
         proxy_password = "None",
         http_version = "None",
         cache = "true",
-        profile_namespace = "None"
+        profile_namespace = "None",
+        host_mapping = "None",
+        dns_nameservers = "None",
+        doh_template = "None",
+        dns_secure_mode = "None",
+        dns_over_tls = "false",
+        dns_rotate = "false",
+        dns_padding = "false",
+        hsts_bypass = "None",
+        proxy_chain = "None",
+        platform = "None",
+        max_sockets_per_group = "0"
     )]
     #[allow(clippy::too_many_arguments)]
     fn new(
@@ -609,6 +814,17 @@ impl PyEngine {
         http_version: Option<String>,
         cache: bool,
         profile_namespace: Option<String>,
+        host_mapping: Option<String>,
+        dns_nameservers: Option<String>,
+        doh_template: Option<String>,
+        dns_secure_mode: Option<i32>,
+        dns_over_tls: bool,
+        dns_rotate: bool,
+        dns_padding: bool,
+        hsts_bypass: Option<String>,
+        proxy_chain: Option<String>,
+        platform: Option<String>,
+        max_sockets_per_group: u32,
     ) -> PyResult<Self> {
         let tls_verify = if !verify {
             TlsVerifyMode::Insecure
@@ -633,31 +849,103 @@ impl PyEngine {
             protocol: protocol_mode(http_version.as_deref())?,
             tls_verify,
             custom_ca_pem: ca_pem,
-            // The v9 options are not exposed through the Python 3.6 wheel: that
-            // extension exists to keep an older interpreter working on the same
-            // Core, and every field here defaults to "behave as v8 did".
-            host_mapping_rules: None,
-            dns_nameservers: None,
-            doh_template: None,
-            hsts_bypass_list: None,
-            proxy_chain: None,
-            dns_secure_mode: 0,
-            dns_over_tls: 0,
-            dns_rotate: 0,
-            dns_padding: 0,
-            platform: Platform::Auto,
-            // v11. Not exposed through the 3.6 wheel, for the same reason the v9
-            // options are not: this extension exists to keep an older
-            // interpreter working on the same Core, and 0 is exactly the
-            // behaviour every earlier release had (Chromium's own 6-per-origin
-            // limit).
-            max_sockets_per_group: 0,
+            host_mapping_rules: host_mapping,
+            dns_nameservers,
+            doh_template,
+            hsts_bypass_list: hsts_bypass,
+            proxy_chain,
+            dns_secure_mode: dns_secure_mode.unwrap_or(0) as u8,
+            dns_over_tls: u8::from(dns_over_tls),
+            dns_rotate: u8::from(dns_rotate),
+            dns_padding: u8::from(dns_padding),
+            platform: platform_mode(platform.as_deref())?,
+            max_sockets_per_group,
         };
         Ok(PyEngine {
             inner: CoreEngine::new(config).map_err(error)?,
         })
     }
 
+    /// Reads the store. url=None returns everything; otherwise the cookies a
+    /// request to that URL would carry.
+    #[args(url = "None")]
+    fn cookies(&self, py: Python, url: Option<String>) -> PyResult<Vec<PyCookie>> {
+        py.allow_threads(|| {
+            let cookies = self.inner.cookies(url.as_deref()).map_err(error)?;
+            Ok(cookies.into_iter().map(cookie_tuple).collect())
+        })
+    }
+
+    /// Writes one cookie through the store own validation.
+    ///
+    /// No #[args] defaults: the facade always passes all eleven positionally,
+    /// exactly as it does for the modern extension, and a default here would be
+    /// a second place the argument order could drift.
+    #[allow(clippy::too_many_arguments)]
+    fn set_cookie(
+        &self,
+        py: Python,
+        name: String,
+        value: String,
+        domain: String,
+        path: String,
+        source_url: String,
+        secure: bool,
+        http_only: bool,
+        same_site: &str,
+        has_expiry: bool,
+        expiry_unix_seconds: i64,
+    ) -> PyResult<()> {
+        let cookie = Cookie {
+            name,
+            value,
+            domain,
+            path,
+            expiry_unix_seconds,
+            has_expiry,
+            secure,
+            http_only,
+            same_site: cookie_same_site(same_site)?,
+        };
+        py.allow_threads(|| self.inner.set_cookie(&cookie, &source_url).map_err(error))
+    }
+
+    /// Deletes every cookie matching the triple; returns how many went.
+    fn delete_cookie(
+        &self,
+        py: Python,
+        domain: String,
+        path: String,
+        name: String,
+    ) -> PyResult<usize> {
+        py.allow_threads(|| self.inner.delete_cookie(&domain, &path, &name).map_err(error))
+    }
+
+    /// Empties the store.
+    fn clear_cookies(&self, py: Python) -> PyResult<()> {
+        py.allow_threads(|| self.inner.clear_cookies().map_err(error))
+    }
+
+    /// Registers the client certificate presented to one server.
+    fn set_client_certificate(
+        &self,
+        py: Python,
+        host: String,
+        port: u16,
+        cert_pem: Vec<u8>,
+        key_pem: Vec<u8>,
+    ) -> PyResult<()> {
+        py.allow_threads(|| {
+            self.inner
+                .set_client_certificate(&host, port, &cert_pem, &key_pem)
+                .map_err(error)
+        })
+    }
+
+    /// Forgets the certificate registered for (host, port).
+    fn clear_client_certificate(&self, py: Python, host: String, port: u16) -> PyResult<()> {
+        py.allow_threads(|| self.inner.clear_client_certificate(&host, port).map_err(error))
+    }
     #[staticmethod]
     fn abi_version() -> u32 {
         CoreEngine::core_abi_version()
@@ -668,6 +956,10 @@ impl PyEngine {
         CoreEngine::core_version().map(|value| value.to_string_lossy().into_owned())
     }
 
+    // The facade passes the first eleven positionally, exactly as it does for the
+    // modern extension: strip_authorization is the eleventh and the two body
+    // options follow by keyword. A shorter signature here was a TypeError on the
+    // first request rather than at import.
     #[args(
         headers = "None",
         body = "None",
@@ -676,7 +968,9 @@ impl PyEngine {
         redirect = "None",
         cache = "None",
         priority = "None",
-        chunked = "false"
+        chunked = "false",
+        strip_authorization = "None",
+        take_body_buffers = "None"
     )]
     #[allow(clippy::too_many_arguments)]
     fn request(
@@ -691,6 +985,8 @@ impl PyEngine {
         cache: Option<String>,
         priority: Option<String>,
         chunked: bool,
+        strip_authorization: Option<bool>,
+        take_body_buffers: Option<bool>,
     ) -> PyResult<PyRequest> {
         let mut config = RequestConfig::get(url);
         config.method = method.to_owned();
@@ -702,6 +998,10 @@ impl PyEngine {
         };
         config.cache = cache_mode(cache.as_deref())?;
         config.priority = request_priority(priority.as_deref())?;
+        // ABI 12. Off unless asked for, matching what an ABI 11 caller got.
+        config.strip_authorization_on_cross_origin_redirect =
+            strip_authorization.unwrap_or(false);
+        config.take_body_buffers = take_body_buffers.unwrap_or(false);
         config.headers = headers
             .unwrap_or_default()
             .into_iter()

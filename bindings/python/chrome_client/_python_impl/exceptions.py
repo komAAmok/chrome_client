@@ -207,7 +207,12 @@ _NET_ERRORS = {
     -105: ("ERR_NAME_NOT_RESOLVED", DNSError),
     -106: ("ERR_INTERNET_DISCONNECTED", None),
     -107: ("ERR_SSL_PROTOCOL_ERROR", SSLError),
-    -108: ("ERR_ADDRESS_INVALID", InvalidURL),
+    # Chromium reports this when a literal address is not usable (0.0.0.0, a
+    # broadcast address), and core/source/minicronet/error_mapping.h routes it to
+    # MN_ERROR_NETWORK -- it is not a malformed URL. InvalidURL is not a
+    # ConnectionError subclass, so `except ConnectionError` missed it entirely;
+    # requests raises ConnectionError for http://0.0.0.0:1/ as well.
+    -108: ("ERR_ADDRESS_INVALID", ConnectionError),
     -109: ("ERR_ADDRESS_UNREACHABLE", None),
     -110: ("ERR_SSL_CLIENT_AUTH_CERT_NEEDED", SSLError),
     -113: ("ERR_SSL_VERSION_OR_CIPHER_MISMATCH", SSLError),

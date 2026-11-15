@@ -112,11 +112,17 @@ def requote_uri(uri: str) -> str:
 def get_encoding_from_headers(headers: HeadersLike) -> Optional[str]:
     """Returns the charset a ``Content-Type`` header declares.
 
+    When the header names no charset, a ``text/*`` type is ``ISO-8859-1``
+    (RFC 2616 section 3.7.1, and what requests answer) and ``application/json``
+    is ``"utf-8"``. Everything else is ``None``, so the caller falls back to its
+    own guess.
+
     Args:
         headers: Response headers.
 
     Returns:
-        The charset, ``"utf-8"`` for a JSON content type without one, or ``None``.
+        The charset, ``"ISO-8859-1"`` for an unlabelled text type, ``"utf-8"`` for
+        an unlabelled JSON type, or ``None``.
 
     Example:
         >>> get_encoding_from_headers({"content-type": "text/html; charset=gbk"})
@@ -224,7 +230,11 @@ def urldefragauth(url: str) -> str:
 
 
 def prepend_scheme_if_needed(url: str, new_scheme: str) -> str:
-    """Adds a scheme to a scheme-less URL.
+    """Adds a scheme to a scheme-less URL, keeping one it already has.
+
+    A bare host with a port stays a host: ``"example.com:8080/x"`` comes back as
+    ``"http://example.com:8080/x"``, not as a URL with a scheme named after the
+    host.
 
     Args:
         url: The URL, possibly without a scheme.
@@ -241,13 +251,16 @@ def prepend_scheme_if_needed(url: str, new_scheme: str) -> str:
 
 
 def is_ipv4_address(value: str) -> bool:
-    """Reports whether a string is a dotted-quad IPv4 address.
+    """Reports whether the value parses as an IPv4 address.
+
+    Matches requests, which asks the address parser and accepts every form it
+    takes, including the short ``"1.2.3"``.
 
     Args:
         value: The candidate.
 
     Returns:
-        ``True`` for four dot-separated octets.
+        ``True`` when the address parser accepts it.
 
     Example:
         >>> is_ipv4_address("127.0.0.1"), is_ipv4_address("example.com")
@@ -280,7 +293,8 @@ def should_bypass_proxies(url: str, no_proxy: Optional[str] = None) -> bool:
     Args:
         url: The URL about to be requested.
         no_proxy: The ``NO_PROXY`` value; read from the environment when omitted.
-            Entries may be bare hosts, ``host:port`` or CIDR blocks.
+            Entries may be bare hosts, ``host:port``, CIDR blocks, a domain suffix
+            written with a leading dot, or ``*`` to exclude every host.
 
     Returns:
         ``True`` when the proxy should be skipped. A URL with no host bypasses

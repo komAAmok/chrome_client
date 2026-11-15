@@ -51,6 +51,12 @@ jobs:
       # files sync-core.sh installs or applies are tracked, so it needs no
       # Chromium checkout and belongs in the structure job.
       - run: tools/audit-core-inputs.sh
+      # Whether an artifact was built from the sources in this tree. Nothing
+      # compared core/source/ with core/binaries/ before: a +11 diff sat in
+      # core/source/engine.cc for a full round while every gate stayed green,
+      # because the manifests record the artifact hash and the Chromium
+      # revision but nothing about the sources. Pure static; belongs here.
+      - run: python3 tools/audit-core-source-fingerprint.py
       # Each audit-core-*.sh derives its size ceiling as "largest artifact
       # x 1.02, rounded up to 10,000". Adding profiles grows the artifacts, and a
       # ceiling that was correct last release is then below what its own rule

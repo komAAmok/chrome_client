@@ -190,11 +190,15 @@ class Headers(CaseInsensitiveDict):
         ...
 
     def __setitem__(self, key: str, value: Any) -> None:
-        """Replaces every existing field with this name.
+        """Replaces every existing field with this name, or removes it.
+
+        Assigning ``None`` removes the field and records the removal in
+        :attr:`deleted_names`; assigning a value clears any such record, because
+        a replacement is not a removal.
 
         Args:
             key: Header name.
-            value: Header value.
+            value: Header value, or ``None`` to remove the field.
         """
         ...
 
@@ -272,6 +276,10 @@ class Headers(CaseInsensitiveDict):
         applies such a deletion immediately and records it here, so a merge
         cannot let a session-level default of that name come back.
 
+        Only an actual removal is recorded. Replacing a value (by assignment or
+        by :meth:`update`) is not a removal and clears any earlier record for
+        that name, because the object now holds the field.
+
         Returns:
             A frozenset of lower-cased names.
         """
@@ -292,9 +300,13 @@ class Headers(CaseInsensitiveDict):
     ) -> None:
         """Merges fields in, replacing same-named ones.
 
+        Replacing a field is not a removal: the deleted-name record is not
+        touched, and a deletion the source carries is replayed.
+
         Args:
-            headers: A :class:`Headers` (whose duplicates are preserved), a
-                mapping, or an iterable of pairs.
+            headers: A :class:`Headers` (whose duplicates are preserved, and
+                whose recorded removals are replayed), a mapping, or an iterable
+                of pairs.
             **kwargs: Extra ``name=value`` fields.
 
         Example:

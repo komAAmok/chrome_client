@@ -90,31 +90,42 @@ python3 tools/audit-core-payloads.py
 python3 tools/record-core-build-args.py --check
 ```
 
-### 0.2.12 的实测结果
+### 0.2.13 的实测结果
 
-九个平台全部用 0.2.12 重建，`CHROMIUM_REVISION` 与 ABI 11 都不变：
+九个平台全部用 0.2.13 重建，`CHROMIUM_REVISION` 不变，ABI 从 11 升到 12：
 
-| target | 大小 |
-| --- | --- |
-| linux-x86_64 | 8,658,480 |
-| linux-x86 | 8,258,520 |
-| linux-arm64 | 8,302,752 |
-| linux-armv7 | 6,247,152 |
-| macos-x86_64 | 8,135,664 |
-| macos-arm64 | 7,476,544 |
-| windows-x86_64 | 9,624,064 |
-| windows-x86 | 7,662,080 |
-| windows-arm64 | 8,321,536 |
+| target | 大小 | ABI |
+| --- | --- | --- |
+| linux-x86_64 | 8,658,480 | 12 |
+| linux-x86 | 8,260,920 | 12 |
+| linux-arm64 | 8,304,608 | 12 |
+| linux-armv7 | 6,248,592 | 12 |
+| macos-x86_64 | 8,135,728 | 12 |
+| macos-arm64 | 7,476,608 | 12 |
+| windows-x86_64 | 9,626,112 | 12 |
+| windows-x86 | 7,664,128 | 12 |
+| windows-arm64 | 8,323,584 | 12 |
 
-`tools/audit-core-binaries.sh` 逐个核对版本串为 `minicronet/0.2.12`；
-`audit-core-size-ceilings.py` 三个平台族的余量分别 2.05% / 2.00% / 1.98%；
+`tools/audit-core-binaries.sh` 逐个核对版本串为 `minicronet/0.2.13` 与 29 个导出符号；
+`audit-core-size-ceilings.py` 三个平台族的余量分别 2.05% / 1.97% / 1.98%；
 `audit-core-payloads.py` 27 组 payload 逐字节一致；`record-core-build-args.py --check`
-九个快照全部匹配。
+九个快照全部匹配；`audit-core-source-fingerprint.py` 报告 9 个产物均由当前 22 个
+`core/source/` 文件构建。
 
-构建机的两个环境前提，写在 `docs/BUILD.md` 里：`rg` 必须可用（`RG=` 可覆盖），
-以及交叉构建需要 `CHROMIUM_TOOLCHAIN` / `XWIN_ROOT` / `OSXCROSS_TARGET` 三个变量——
-它们的默认值从 `$HOME` 推导，而本会话的 `HOME` 为空，所以第一次交叉构建把路径解析成
-`/chromium/...` 并失败。显式传这三个变量后全部通过。
+**重建前必须先修 `core/source/smoke.c`**：它的 `on_redirect` 还是 ABI 11 的 8 参数签名，
+v12 加了两个参数后 `minicronet_smoke` 编译失败，`build-core-linux-x86_64.sh` 在链接前就
+停了。也就是说 ABI 升级后「能不能重建」这件事本身没有任何门禁守着——`audit-core-*`
+读的是已提交的产物，`cargo test` 读的是 Rust 层，两者都不会去编 Chromium 侧的那个
+smoke 程序。本轮把它修好并重建，但**这个缺口仍在**：下次动 ABI 时同样的失败还会先出现在
+构建脚本里。
+
+构建机的三个环境变量（本轮实测）：`CHROMIUM_TOOLCHAIN` 必须指向 `/home/sj/chromium`
+（不是 `/home/sj/chromium/toolchains`），`XWIN_ROOT` 指向
+`$CHROMIUM_TOOLCHAIN/xwin-winsysroot`，`OSXCROSS_TARGET` 指向
+`$CHROMIUM_TOOLCHAIN/toolchains/osxcross-target`。默认值按 `$HOME` 推导，本会话的
+`HOME` 是 `/home/sj`，但 `resolve_chromium_toolchain` 期望的是 Chromium 检出**同级**目录，
+两者不一致时第一次交叉构建会把路径解析成 `/chromium/...` 并报「xwin winsysroot is
+incomplete」，而真正的错误是根目录少了一层。
 
 ### 0.2.11 的实测结果
 
@@ -392,9 +403,16 @@ LD_LIBRARY_PATH=core/binaries/linux-x86_64 PYTHONPATH=bindings/python \
 - **gdb 下不复现**。8 个并行 gdb worker 各 30 轮（共 240 轮）一次都没抓到——插桩改变了
   时序，这也正是竞态的特征。
 
-**当前状态（更新）**：用 ABI 11 的产物重测 **200 次，signal=0**；把 Core 换回
-改动前的 ABI 11 基线也测 200 次，同样 signal=0。也就是说这个缺陷**在本机当前
-环境下已复现不出来**，不能声称「已修好」，只能记「200 次未复现」。
+**当前状态（更新，ABI 12 / 0.2.13）**：`leak-hunt` 的 `async-gather` 形态在本轮
+复现了 **1/20（5%）**，且**全部采样都已打印完成之后**才收到 `SIGABRT`（返回码 -6，
+`stdout` 完整）。这与本节开头记录的现象是同一个：进程退出期，结果已经算完。
+
+用 ABI 11 的产物测 200 次曾是 signal=0，所以这条记录现在的准确表述是：**它仍然存在，
+概率在 1/20 量级，与 Core 的 ABI 版本无关**——本轮唯一变化是重建了产物，而
+`docs/review-0.2.13/summary.json` 里的 `leak-hunt` 是重跑一次拿到 13/13 flat 的结果。
+
+因此 `review-before-tag.py` 的 `leak-hunt` 步骤有约 5% 概率报 `12/13 shapes flat`，
+**重跑即可**；判据没有放宽，也没有把这个形态从清单里删掉——那会让它变成没人看的缺口。
 
 期间还发生一次假警报，值得记下：我曾跑出「120/120 abort」，原因是复现脚本
 `/tmp/abort_threads.py` 已被清理，`python3` 报 `can't open file` 并返回非零，
@@ -529,6 +547,40 @@ printing its samples`，`stdout_tail` 保留采样。
 性能相关的两项 ABI 改动不在上面这条链里，它们各自是一次独立的 ABI 版本推进：
 「合并首包等待」可先做（只增不改、风险集中在一处），「批量唤醒投递」要等它的观测
 数据稳定后再动。详见本文「提案：两项性能 ABI 改动」。
+
+### ABI 13 计划：三项头部校验下沉（已排期）
+
+这是 AGENTS §1.1 迁移的**收尾**，也是 `tools/audit-layer-ownership.py` 里仅剩的三条
+`KNOWN`。它们不是新功能：绑定层今天用三张 frozenset 做 Core 本该做的事，只因为 Core
+还不具备拒绝能力。详细论证与逐条改动见本文末尾「提案：三项头部校验下沉」。
+
+| 序 | 改动 | 绑定层要删的表 | Core 侧落点 |
+| --- | --- | --- | --- |
+| 1 | 头名拒绝返回 `MN_ERROR_INVALID_ARGUMENT` | `_CORE_OWNED_HEADERS`（7 名） | `Request::StartOnNetworkThread` 头部循环之前 |
+| 2 | 按名删除入口（或"这个名字不可删"的查询） | 同上表里删除分支的名单 | 合并集构建处 `MergeFrom` 旁 |
+| 3 | WebSocket 保留名拒绝 | `_FORBIDDEN_WS_HEADERS` | `mn_websocket_config_t` 校验 |
+
+**为什么必须一轮做完**：三项都要动 `MN_ABI_VERSION`。分三次就是三次版本升级、三次
+九平台重建、三次绑定层同步；而且它们共享同一个契约问题——"哪些头名不可写"必须只有
+一处定义，否则头名拒绝与删除报告会各写一份名单，重演今天绑定层的问题。
+
+**顺序不可颠倒**：先让 Core 拒绝，再删绑定层表。反过来会让一次失败同时暴露两个原因。
+
+**与 ABI 12 的关系**：ABI 12（结构化重定向头 + 跨域 Authorization 剥离 + 零拷贝接管）
+已经落地并九平台重建完成，是本计划的**前置基线**。三项下沉在它之上叠加，不需要回退任何
+v12 能力。
+
+**完成判据**（与提案一节一致，此处复述以便单点核对）：
+
+- `KNOWN` 里这三条被删除，且 `audit-layer-ownership.py` 仍通过
+- 绑定层三个 frozenset 消失，相关测试同步更新
+- 九平台重建并重新记录 build-args 快照与 manifest
+- `docs/COMPATIBILITY_BOUNDARY.md` 与 README 写明"这些头名现在由 Core 拒绝"
+
+**风险**：三项都是**收紧**——今天被静默接受的调用会开始报错。这是 §8 fail-closed 要的
+方向，但属于对外行为变更，必须写进文档，且头名集合要与 Chromium 实际行为一致
+（判据是 `net/spdy/spdy_http_utils.cc:214-221` 与 `SetExtraRequestHeaders` 的真实语义，
+不是照抄 RFC 列表）。
 
 ## 打 tag 前必须跑 review-before-tag.py（§13）
 
@@ -932,6 +984,9 @@ mn_engine_set_wakeup_batch(mn_engine_t *engine,
 3. 「稳定复现」也可能是自己的错误稳定复现——**先换环境对照一次**，再下结论。
 
 ## 提案：三项头部校验下沉（头名拒绝 / 删除无效报告 / WS 保留名）
+
+> **状态：已排期为 ABI 13**，见本文「当前可执行顺序」下的「ABI 13 计划」。
+> 前置基线是已落地的 ABI 12。本节保留完整论证，作为实施时的判据来源。
 
 **这三项是 AGENTS §1.1 迁移的剩余部分**，不是新功能。绑定层今天有三张表在做 Core
 本该做的事，它们之所以还在，只有一个原因：**Core 还不具备相应的拒绝能力**。

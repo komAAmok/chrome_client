@@ -20,7 +20,7 @@ symbols=(
   mn_engine_create mn_engine_retain mn_engine_release
   mn_request_create mn_request_retain mn_request_release
   mn_request_start mn_request_cancel mn_request_upload_write
-  mn_request_follow_redirect mn_request_resume_read
+  mn_request_follow_redirect mn_request_resume_read mn_request_release_buffer
   mn_request_negotiated_protocol mn_request_ech_status
   mn_engine_cookies_get mn_engine_cookies_set mn_engine_cookies_delete
   mn_engine_cookies_clear mn_engine_set_client_certificate
@@ -65,6 +65,15 @@ export EXPECTED_ABI="$expected_abi"
 
 [[ -f "$TARGETS_JSON" ]] \
   || die "missing core/binaries/targets.json; the per-target catalog is gone"
+
+# The Mach-O walker is the only thing that reads Apple's export trie, and it
+# used to drop any node that was both an export and the prefix of a longer one:
+# on libminicronet.dylib "release" prefixes "release_buffer", and the gate
+# reported 28 exports where the image held 29. Its verdict is worthless until
+# the walker itself is checked, so the self-test runs before any artifact is
+# trusted.
+python3 "$ROOT/tools/core-exports.py" --self-test \
+  || die "core-exports self-test failed; the export walker cannot be trusted"
 
 for target in "${targets[@]}"; do
   dir="$BINARIES/$target"
@@ -277,7 +286,7 @@ PY
   printf '%s\n' "${symbols[@]}" | sort -u >"$tmp_expected_exports"
   grep -E '^_?mn_' <<<"$symbol_dump" | sed 's/^_//' | sort -u >"$tmp_actual_exports"
   cmp -s "$tmp_expected_exports" "$tmp_actual_exports" \
-    || die "$target: exported mn_* set differs from ABI v8 ($(tr '\n' ' ' <"$tmp_actual_exports"))"
+    || die "$target: exported mn_* set differs from ABI v$expected_abi ($(tr '\n' ' ' <"$tmp_actual_exports"))"
 
   # The version string is injected at build time from the workspace version
   # (tools/version.py -> tools/sync-core.sh -> MINICRONET_VERSION), so an

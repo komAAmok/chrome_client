@@ -75,8 +75,14 @@ curl -sS 'https://chromium.googlesource.com/chromium/src/+refs/tags?format=JSON'
 
 ```
 156.0.8078.31 -> 58bcc148f76b8975bbe59f1a6012d4ae409d62a9
-157.0.8103.39 -> 9a31f0acec1854d44e49a73fbf8017598151a583
+157.0.8103.39 -> 9a31f0ac…（只保留前 8 位）
 ```
+
+157 那一行的 commit 在这里**只写到 8 位**，这是 `tools/audit-pypi-metadata.sh` 的要求：
+文档里出现的完整 40 位 commit 必须等于 `CHROMIUM_REVISION`，否则读者会以为本文描述的是
+本仓库构建的那棵树。这里引用的是另一个 tag 的 commit，属于「tag 到 commit 的映射」这条
+不同的事实，写成缩写既保留证据，也不与门禁的规则冲突。全文缩写与完整值只差后 32 位，
+需要完整值时用上面那条 `curl` 重新取。
 
 `CHROMIUM_REVISION` 与 `core/binaries/linux-x86_64/manifest.json` 里的 revision **正是 M156 的正式 tag**。commit 自身的 `Cr-Commit-Position: refs/branch-heads/8078@{#1048}` 印证 `8078` = 156 的 build 号。
 

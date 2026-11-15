@@ -20,7 +20,7 @@
 extern "C" {
 #endif
 
-#define MN_ABI_VERSION 11u
+#define MN_ABI_VERSION 12u
 
 /* tools/sync-core.sh installs core/exports/minicronet.lds, whose node name is
  * part of the link-time contract: every extension already built against this
@@ -419,6 +419,27 @@ typedef enum mn_read_disposition {
   MN_READ_PAUSE = 0,
   /* Keep reading. */
   MN_READ_CONTINUE = 1,
+  /* Keep reading, and take ownership of the buffer the callback was handed.
+   *
+   * The default (MN_READ_CONTINUE) lends the Core single read buffer for the
+   * duration of the call, which forces every binding to copy the bytes out
+   * before returning. Returning this instead transfers that one buffer: the
+   * caller may read it after the callback returns and must hand it back with
+   * mn_request_release_buffer, which is what lets a binding wrap the bytes
+   * without a copy.
+   *
+   * The Core allocates a fresh buffer for the next read, so this trades the copy
+   * for one allocation per chunk. Measured on a 64 MiB local stream that trade
+   * is worth about 0.7% of the wall clock: the copy is 1.6% of the total and
+   * the local transport is 95%. It is offered for bindings that must avoid the
+   * copy for another reason -- a very large body, or a callback that cannot
+   * afford the extra memcpy -- not as a throughput win.
+   *
+   * The buffer stays valid until released and is never reused by the Core while
+   * it is outstanding. Releasing is required: the request cannot finish while a
+   * buffer it handed out is still held.
+   */
+  MN_READ_TAKE_BUFFER = 2,
 } mn_read_disposition_t;
 
 /* The header block reaches the caller twice on purpose:
@@ -454,6 +475,7 @@ typedef void(MN_CALL *mn_request_complete_fn)(void *user_data,
                                               int net_error);
 typedef void(MN_CALL *mn_request_redirect_fn)(
     void *user_data, mn_request_t *request, int status_code,
+    const mn_header_t *header_fields, size_t header_field_count,
     const char *headers, size_t headers_length, const char *new_url,
     size_t new_url_length, const char *new_method, size_t new_method_length);
 
@@ -489,6 +511,12 @@ typedef struct mn_request_config {
   mn_cache_mode_t cache_mode;
   mn_redirect_mode_t redirect_mode;
   mn_request_priority_t priority;
+  /* 1 = drop a caller-supplied Authorization when a redirect changes the
+   * origin, which is what a browser does one layer above //net
+   * (services/network/url_loader.cc:1025). 0 keeps the header, which is what
+   * every ABI 11 caller got, so the default behaviour is unchanged. A hop that
+   * stays on the same origin always keeps it. */
+  uint8_t strip_authorization_on_cross_origin_redirect;
 } mn_request_config_t;
 
 MN_EXPORT mn_result_t MN_CALL
@@ -515,6 +543,21 @@ MN_EXPORT mn_result_t MN_CALL mn_request_follow_redirect(mn_request_t *request);
  * that is already in flight owns the buffer the callback was handed, so the
  * Core only schedules the next read once that callback has returned. */
 MN_EXPORT mn_result_t MN_CALL mn_request_resume_read(mn_request_t *request);
+
+/* Hands back a buffer taken by returning MN_READ_TAKE_BUFFER from on_body.
+ *
+ * `data` must be the exact pointer the callback received, and it must be
+ * released exactly once. Releasing is what lets the request finish: a request
+ * whose handed-out buffer is never returned stays alive, because the Core
+ * cannot know the caller stopped reading it.
+ *
+ * Safe to call from any thread, including the one that received the callback.
+ * Returns MN_ERROR_INVALID_ARGUMENT for a null pointer and
+ * MN_ERROR_INVALID_STATE for a pointer this request never handed out, so a
+ * double release fails instead of corrupting the heap.
+ */
+MN_EXPORT mn_result_t MN_CALL mn_request_release_buffer(mn_request_t *request,
+                                                       const uint8_t *data);
 
 
 /* The protocol the connection actually used.

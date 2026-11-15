@@ -52,6 +52,31 @@ def sha256(path):
     return digest.hexdigest()
 
 
+def core_sources_fingerprint():
+    """Hashes every Core build input, the same way the gate does.
+
+    Returns:
+        The SHA-256 over core/source/, or ``None`` when the directory is absent.
+    """
+    source = ROOT / "core" / "source"
+    files = list(source.glob("*.cc")) + list(source.glob("*.c"))
+    files += list((source / "minicronet").glob("*.h"))
+    files.append(source / "BUILD.gn")
+    # sync-core.sh rewrites this from workspace.package.version, so the
+    # committed placeholder never matches a build and cannot be hashed.
+    files = [path for path in files
+             if path.name != "minicronet_version_generated.h"]
+    if not files:
+        return None
+    digest = hashlib.sha256()
+    for path in sorted(files):
+        digest.update(path.name.encode())
+        digest.update(b"\0")
+        digest.update(path.read_bytes())
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
 def elf_needed(path):
     """Reads DT_NEEDED so the manifest records what the loader actually wants."""
     try:
@@ -118,6 +143,12 @@ def main():
         manifest["chromium_revision"] = revision
         manifest["sha256"] = sha256(installed)
         manifest["size_bytes"] = installed.stat().st_size
+        # Which sources produced this artifact. Without it nothing can tell an
+        # artifact built from the current tree from one that predates a source
+        # edit: measured, a +11 diff sat in core/source/engine.cc for a full
+        # round while every gate stayed green. tools/audit-core-source-
+        # fingerprint.py compares this against the tree.
+        manifest["core_sources_sha256"] = core_sources_fingerprint()
         for source_name, dest_name in extras:
             if dest_name.endswith(".lib"):
                 manifest["import_library_sha256"] = sha256(

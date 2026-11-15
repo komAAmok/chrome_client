@@ -32,11 +32,19 @@ public:
           mn_request_callbacks_t callbacks, uint64_t timeout_ms,
           mn_request_t *public_handle);
 
+  // ABI 12. Must be called before Start, while the request is still owned
+  // by the creating thread; it is not synchronised with the network side.
+  void set_strip_auth_on_cross_origin_redirect(bool value) {
+    strip_auth_on_cross_origin_redirect = value;
+  }
+
   mn_result_t Start();
   mn_result_t Cancel();
   mn_result_t UploadWrite(std::vector<uint8_t> data, bool final_chunk);
   mn_result_t FollowRedirect();
   mn_result_t ResumeRead();
+  // ABI 12. Hands back a buffer taken with MN_READ_TAKE_BUFFER.
+  mn_result_t ReleaseBuffer(const uint8_t *data);
   // v9. Both report MN_ERROR_INVALID_STATE until a response has started, and
   // both keep working after the request completes, which is why they read state
   // captured on the network thread rather than request_ itself.
@@ -85,6 +93,9 @@ private:
   mn_upload_mode_t upload_mode_ = MN_UPLOAD_NONE;
   mn_cache_mode_t cache_mode_ = MN_CACHE_DEFAULT;
   mn_redirect_mode_t redirect_mode_ = MN_REDIRECT_FOLLOW;
+  // Set from mn_request_config_t.abi 12. ABI 11 callers leave it
+  // false, so their behaviour is untouched.
+  bool strip_auth_on_cross_origin_redirect = false;
   mn_request_priority_t priority_ = MN_REQUEST_PRIORITY_DEFAULT;
   mn_request_callbacks_t callbacks_{};
   mn_request_t *public_handle_ = nullptr;
@@ -92,6 +103,14 @@ private:
   std::unique_ptr<net::URLRequest> request_;
   std::unique_ptr<net::ChunkedUploadDataStream::Writer> upload_writer_;
   scoped_refptr<net::IOBufferWithSize> read_buffer_;
+  // ABI 12: buffers handed to the caller by returning MN_READ_TAKE_BUFFER.
+  // Keyed by the data pointer the callback received, so release can prove the
+  // pointer came from this request and refuse a double release.
+  std::map<const uint8_t *, scoped_refptr<net::IOBufferWithSize>>
+      taken_buffers_;
+  // Guards taken_buffers_: the callback task runs on callback_runner_ while
+  // release may arrive from any thread.
+  base::Lock taken_buffers_lock_;
   // Set when a chunk was delivered with MN_READ_PAUSE and the buffer came back:
   // that chunk is consumed but the next read must not start until resume_read,
   // so the buffer waits here. Without it the pause would either drop the buffer

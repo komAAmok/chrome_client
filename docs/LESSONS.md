@@ -1645,3 +1645,804 @@ Chromium 侧的原因各有一句源码可依：
 
 **教训**：不要写「等 ABI 加上就能消掉」这种话——它把一个尚未查证的假设写成了路线图。
 本轮就是照这句话去查 T-1 的，结果三条前提全不成立。
+
+---
+
+## 50. 一个 `except` 只认一种异常，就把「无事发生」写成了「永远等待」
+
+**现象**：mTLS 会话里按下一次 Ctrl-C（或任何让调用方在 Core 等待中退出的异常）之后，
+该引擎对**那个服务器**永远无法再注册证书：下一次 `set_client_certificate` 与
+`clear_client_certificate` 都永久阻塞。实测：`_pending_certs` 停在
+`{("example.test", 443): (b"CERT", b"KEY")}`，随后两个调用都等不满 2 秒的 join。
+
+**根因**：`EngineSlot.set_client_certificate` 用「先占位、再调 Core、再落地」的方式
+让并发注册合并成一次 Core 调用，占位只由 `except RuntimeError` 释放。
+`KeyboardInterrupt` / `asyncio.CancelledError` 是 `BaseException`，不走那个分支，
+占位因此留在表里；而 `wait()` 等的是条件变量，没有第二个人会 `notify`。
+
+**规则**：任何「我先声明占用，后面一定释放」的状态，释放必须写在**所有**退出路径上，
+包括 `BaseException`。用 `except Exception` 去覆盖「所有失败」永远是错的——它覆盖的是
+「所有我认为会发生的失败」。
+
+**门禁**：`test_client_certificates.RegistrationMemoTests` 新增两条——被中断的注册不得
+留下占位，且之后的 `set` 与 `clear` 都必须返回。**变异测试**：把 `BaseException` 分支里的
+`_abandon_pending_cert` 换成 `pass` → 两条立刻红（`{("example.test", 443): ...} != {}`）。
+
+---
+
+## 51. 「替换」被写成了「删除」，于是一个默认值悄悄盖掉了调用方
+
+**现象**：调用方用最自然的方式构造请求头（先给默认值，再改其中一项），发出去的请求
+**丢掉了**会话级同名字段。实测：`Headers({"Accept": "one"}).update(Headers({"Accept": "two"}))`
+之后 `deleted_names == {"accept"}`，`merge_setting` 于是把会话的 `Accept` 整条删掉。
+
+**根因**：`Headers.update` 为了替换同名字段调了 `del self[name]`，而 `__delitem__` 的定义
+就是「记录一次删除」——它同时被 `{"Name": None}` 的删除语义使用。一个内部实现动作
+复用了另一个公开语义。
+
+**规则**：当一个类型的某个操作**有语义**（删除会被合并层读取）时，内部实现不得调用它来
+达到别的目的。替换与删除要在实现里分开写，哪怕它们最终都改动同一条记录。
+
+**门禁**：`test_session_defects.HeaderDeletionRecordTests`（6 条）覆盖两个方向——替换不留下
+删除记录、真正的删除仍然穿过 `merge_setting` 生效。**变异测试**：删掉 `__setitem__` 里清理
+记录的那一行 → `test_assignment_clears_an_earlier_deletion` 立刻红。
+
+**同一形状的第二处**：`Headers(Headers({"Sec-Fetch-User": None}))` 丢掉了删除记录，于是
+profile 的默认值又被发了出去——删除只存在于记录里，而复制只复制了 items。
+
+---
+
+## 52. 代理绕过名单错的方向只有一个：**该绕的没绕**
+
+**现象**：`NO_PROXY=*` 与 `NO_PROXY=.example.com` 两种写法都不生效，请求走了调用方
+明确排除掉的代理。实测：`HTTP_PROXY` 指向死端口 + `NO_PROXY=*`，
+`_effective_proxy` 仍返回该代理。
+
+**根因**：`should_bypass_proxies` 只做了「后缀匹配 + CIDR」两件事。`*` 不是任何主机的后缀，
+而前导点是 cookie 文件的写法，比较时没被剥掉。两者都不报错，只是静默地不匹配。
+
+**规则**：一份**排除**名单，失效的方向必然是「该排除的没排除」。凡是依赖名单默认行为的
+开关（`*`、前导点、空字符串）都必须有单独的用例，且用例要断言**排除生效**，不是断言
+「函数返回了布尔值」。
+
+**门禁**：`test_session_defects.NoProxyWildcardTests`（4 条，含一条走完整环境变量的路径）。
+**变异测试**：删掉 `*` 分支 → 两条立刻红。
+
+---
+
+## 53. 同一个响应，`.text` 与流式解码给出了两个不同的答案
+
+**现象**：一个 `Content-Type: text/plain`（无 charset）的 Latin-1 响应，`.text` 正确，
+`iter_content(decode_unicode=True)` 把重音字符变成 U+FFFD。
+
+**根因**：`get_encoding_from_headers` 对没有 charset 的 `text/*` 返回 `None`。`.text` 于是
+落到 `apparent_encoding`（探测，猜中 Latin-1），流式路径落到 `default_encoding`（utf-8）。
+两条路径各自「合理」，合起来是矛盾。RFC 2616 §3.7.1 对这一格有明确默认值，requests 也用它。
+
+**规则**：**规范没有留白的地方不要返回 `None`**。返回 `None` 等于把这件事交给下游各自猜，
+而下游不止一个。
+
+**门禁**：`test_session_defects.TextEncodingAgreementTests`——同一条响应必须两条路径解出
+同一个字符串，且不含替换字符。**变异测试**：删掉 `text/*` 分支 → 两条立刻红。
+
+---
+
+## 54. 发送一个请求，不等于可以改写调用方的那个请求对象
+
+**现象**：`session.send(prepared, discard_cookies=True)` 之后再 `session.send(prepared)`，
+第二次也没有 Cookie 头。实测：调用方对象上的 `Cookie` 头在第一次发送后就是 `None`。
+
+**根因**：`discard_cookies` 的实现在 `prepared.headers` 上直接 `pop("Cookie")`。那个对象是
+调用方构造并持有的，requests 的契约是 `send()` 不改写它。
+
+**规则**：**入参是借来的**。一个函数为了自己这次的语义需要「同一份数据但少一项」时，
+复制出它需要的那份，不要就地修改。
+
+**门禁**：`test_session_defects.DiscardDoesNotRewriteTheCallersRequestTests`（3 条，含异步路径）。
+**变异测试**：把复制去掉、改回就地 `pop` → 两条立刻红。
+
+---
+
+## 55. 「构造时规范化」不等于「入口规范化」
+
+**现象**：`Session(http_version="h2")` 一直可用，而 `get(url, http_version="h2")` 报
+`unknown http version`。同一个值在两个入口一个接受一个拒绝。此外 `"v2"`、`"h2"`、
+`"HTTP/2"` 在引擎缓存里是三个不同的键，一个会话为同一条线路身份建了三个上下文。
+
+**根因**：`__init__` 里调了 `normalize_http_version`，而 `_binding()` 里直接写
+`http_version if http_version is not None else self.http_version`——把每请求值原样透传。
+旁边 `impersonate` 就先规范化再传，因为它曾经踩过同一个坑（`"CHROME_155"`）。
+**同一个文件里已经有一条修好的先例，新字段却没有照抄。**
+
+**规则**：一个字段的取值只要有规范形式，规范化就必须发生在**所有**通往 Core 的入口，
+而不是构造函数的末尾。缓存键由这个字段组成时，未规范化的值还会**复制**出多余的
+上下文——缺陷从「一次报错」变成「持续多花一个引擎」。
+
+**门禁**：`test_session_defects.PerRequestHttpVersionTests`（4 条：同义写法归一、
+缓存键相同、非法值仍然 fail-closed、缺省沿用会话值）。**变异测试**：把每请求的
+`normalize_http_version` 去掉 → 3 条立刻红。
+
+---
+
+## 56. 同级参数各有各的校验规则，等于没有规则
+
+**现象**：`max_engines=None` 从引擎缓存内部抛出一个裸 `TypeError`；`max_engines="8"`
+被静默接受；`max_engines=0` 与 `-1` 被静默改成 1。而 `max_response_bytes`、
+`max_redirects`、`max_sockets_per_group` 对同样的输入都抛 `ValueError`/
+`UnsupportedFeature` 并说明原因。
+
+**根因**：`EngineCache.__init__` 里一行 `max(max(1, int(max_engines))` 就完成了「校验」，
+而它旁边的三个兄弟各有一个具名校验函数。写新参数时**没有先看同一族参数怎么校验**。
+
+**规则**：同一个对象的同级参数必须共用一套校验风格——类型错、越界、缺省，三者要么都
+报错要么都不报，且异常类型一致。读取时才发现不一致，说明缺的不是一个校验函数，
+而是一条「新参数照抄兄弟参数」的纪律。
+
+**门禁**：`test_session_defects.EngineBudgetValidationTests`（4 条）。**变异测试**：
+换回 `max(1, int(max_engines))` → 1 条 failure + 1 条 error 立刻红。
+
+---
+
+## 57. 同一个失败有两条到达路径，就只有一个路径上的异常类是对的
+
+**现象**：会话 `close()` 之后，`session.get()` 抛 `SessionClosed`，而
+`session.cookies.set()` 与 `session.cookies.clear()` 抛的是基类 `RequestException`。
+调用方写 `except SessionClosed` 包住 cookie 操作时**漏掉了它**。
+
+**根因**：关闭状态有两个入口。`BaseSession._ensure_open` 显式抛 `SessionClosed`；
+而 cookie jar 走 `_store_slot()` → `EngineCache.get()`，那里写的是
+`raise RequestException("Session is closed")`。两条路径的字符串一模一样，类不一样——
+**字符串相同掩盖了类型不同**，所以读代码时看不出来，只有实际 catch 才发现。
+
+**规则**：一个状态如果有多条查询路径，它抛出的异常类必须由**一个**定义决定。
+判据不是「消息写对了」，而是「`except <最具体的类>` 在每条路径上都成立」。
+消息是给人看的，类型是给程序看的，前者一致不构成任何保证。
+
+**门禁**：`test_session_defects.ClosedSessionExceptionTests`（4 条：请求、cookie 写、
+cookie 清、引擎查找）。**变异测试**：把缓存改回抛基类 → 3 条立刻 error。
+
+---
+
+## 58. 一个选项的失败被归到另一个选项头上，比没有错误信息更糟
+
+**现象**：`verify="/missing.pem"` 抛出裸 `FileNotFoundError`；把内容换成非 PEM 文本后，
+同一个选项抛 `InvalidURL`，消息是 `InvalidArgument`——**告诉调用方 URL 格式有误**。
+前者还不是 `RequestException`，写 `except RequestException` 包住请求的代码完全漏掉它。
+
+**根因**：两条不同的失败都被压成了一个没有上下文的令牌。读取失败发生在 `open()` 里，
+类型是文件系统的；解析失败发生在 Core 里，Core 对「CA 解析不了」和「URL 不合法」
+回的是同一个 `InvalidArgument`，而 `map_native_error` 只能按令牌分类。
+
+**规则**：**在上下文还在的那一层做归类**。`EngineConfig.build()` 知道 `ca_pem` 是否被设置，
+所以那里能判定这是 SSL 问题；下游拿到 `InvalidArgument` 时已经不可能知道。同样，
+绑定层不能靠解析 PEM 来提前判断——那是 Core 的职责（AGENTS §1.1），能做的只是把
+上下文映射对。
+
+**门禁**：`test_session_defects.CaBundleErrorTests`（4 条）。其中 `test_neither_case_...`
+直接断言「不得报成 URL 问题」，而不是只断言新异常类型——只断言新类型的话，改回
+`InvalidURL` 会红，但改出第三个错误类型不会。**变异测试**：两处 CA 读取各自改回裸
+`open()` 各红一次，`build()` 的归类去掉红两次——三个变异点分别对应三条独立的路径。
+
+---
+
+## 59. `bool(None)` 是 `False`，于是「没传」被读成了「关掉」
+
+**现象**：五个参数都写着默认 `True`、文档只列 `True`/`False`（或再加一个路径），
+但显式传 `None` 会静默选中**关闭**状态：
+
+| 参数 | `None` 的实际效果 |
+| --- | --- |
+| `verify` | 关掉证书校验 |
+| `cache` | 关掉 HTTP 缓存 |
+| `default_headers` | 丢掉 profile 的全部 12 个请求头 |
+| `trust_env` | 忽略环境代理 |
+| `allow_redirects` | 不跟随重定向 |
+
+**根因**：赋值写成了 `self.x = x` 或 `bool(x)`，而消费侧一律 `if self.x:`。
+`None` 于是走完了「真值判断 → False → 关」这条链，全程没有任何一步报错。
+这四个字里没有一处是错的，**错的是它们串起来的语义**。
+
+**规则**：一个布尔开关如果文档只说 `True`/`False`，那 `None` 就不该是一个含义
+未被定义的值。要么在入口把它读成「保持默认」，要么显式拒绝。**静默取 False 是最坏
+的第三种**：`verify` 那一行让「配置里手滑写了个 None」变成「不再校验证书」。
+
+**门禁**：`test_session_defects.NoneMeansDefaultTests`（5 条，四个 `None` + 一条
+「显式 `False` 仍然是关」）。最后那条是必须的：只测 `None` 的话，把守卫写成
+`True if x is None else True` 也能通过。**变异测试**：把五处守卫一起去掉 → 4 条红，
+而「显式 False」那条保持绿，说明它测的是另一件事。
+
+---
+
+## 60. 「下层会拒绝」不是理由：拒绝的时机和归因同样是契约的一部分
+
+**现象**：两个 `proxy_chain=` 的问题，都因为「反正 Core 会拒绝」而没在绑定层检查：
+
+| 输入 | 修复前 | 修复后 |
+| --- | --- | --- |
+| `proxy=` + `proxy_chain=` | 首次请求时 `InvalidURL` / `InvalidArgument` | 构造时 `InvalidProxyURL`，指出两个选项 |
+| `proxy_chain="not a proxy"` | 首次请求时 `InitializationFailed` | 构造时 `UnsupportedFeature`，指出是哪一条 |
+
+**根因**：Core 确实会拒绝第一种（`minicronet.cc:569`），但拒绝发生在**第一次请求**、
+并且借用了 `InvalidArgument` 这个「URL 不合法」的令牌——调用方看到的是「你的 URL 有问题」，
+而实际是「你配了两个互斥选项」。第二种更糟：Core 在 `InitializeOnNetworkThread` 里遇到
+解析不了的条目就静默 `return`，`context_` 保持空，`Start()` 返 false，绑定层只能报
+`InitializationFailed`，**没有任何一处提到 chain**。
+
+**规则**：一个错误在**哪个时刻**报、归到**哪个选项**头上，都是对外契约。
+「下层会拒绝」只保证不会静默接受，不保证调用方能看懂。凡是在本层就能判定的冲突，
+就在本层判——**判据是「我这层是否已经知道答案」，不是「下层会不会兜住」**。
+
+**门禁**：`test_session_defects.ProxyChainValidationTests`（6 条）。其中
+`test_the_refusal_does_not_wait_for_a_request` 单独断言「不得报成 URL 问题」，
+`test_every_accepted_scheme_still_works` 断言六种合法形状（含 IPv6）原样通过——
+少了后者，一个「全部拒绝」的实现也能让前几条变绿。**变异测试**：去掉两处守卫 →
+3 条红。
+
+---
+
+## 61. 门禁用 `re.search` 时，**同一个文件里的第二处违规是不可见的**
+
+**现象**：在 `sessions.py` 里再声明一次 `_CORE_OWNED_HEADERS = frozenset(...)`，
+文件里于是有两处（第 222、1148 行），而 `tools/audit-layer-ownership.py` 仍打印
+`passed`、退出码 0。
+
+**根因**：门禁的三层叠加：
+
+1. `re.search` 只回答「有没有」，不回答「有几处」；
+2. `found` 字典的键是 `(path, pattern_index)`，同一文件的同一模式必然折叠成一条；
+3. 那条键本来就在 `KNOWN` 里，于是「没有新增违规」，门禁通过。
+
+三条各自都合理，合起来的效果是：**AGENTS §1.1 为同一条规则新增第二个检查点时，
+门禁不会响**。这正是 §6 那句「改门禁前先问还有哪些同类载体没被扫到」要防的情况，
+只不过这次漏掉的是**同一个文件里的第二处**。
+
+**规则**：用模式匹配做门禁时，先分清这条模式是「调用点」还是「声明点」。
+调用点本来就该出现多次；声明点在一个文件里出现两次就是重复实现，必须计数。
+判据不是「消息对不对」，而是「把违规复制一份，门禁还响不响」。
+
+**修法与门禁**：`^NAME =` 这类声明模式改用 `re.findall` 计数，`> 1` 即失败，并在
+`--json` 里多报一个 `duplicate_definitions`；调用点模式仍然只判断存在。
+同时在 `tools/mutation-fingerprint-gates.sh` 里加了第 6 个变异用例，**并验证了该用例
+本身的翻转**：把守卫改成 `if False and ...` 之后，套件输出 `MUTATION NOT DETECTED`。
+
+**顺带记两条被证伪的假设**（都实测过，写在这里免得下一个人重走）：
+
+- 「凡模式匹配到多次就失败」**不成立**：`_negotiated_http_version` 在同一个文件里
+  合法出现 2 次、`reason_from_status_line` 出现 3 次。按「多次即失败」改，门禁立刻
+  对 5 处合法调用报红——我改成那样之后马上就回退了。
+- 「用 `_CORE_OWNED_HEADERS_BACKUP` 这种改名能绕过」是**我的变异脚本自己避开了模式**，
+  不是门禁的问题；换成精确名字后问题才暴露。变异测试写错会得到一个假结论。
+
+---
+
+## 62. `insecure_dns_mode` 不设，等于 `dns_nameservers` 被接受后忽略
+
+**现象**：`dns_nameservers="127.0.0.1:1"`（保证没人监听）配上去之后，请求仍在 0.3–0.5 秒内
+返回 200，且本地起的 UDP 监听**收不到任何包**。README 把这一行标成 ✓。
+
+**根因**（Chromium 侧，逐层追到）：
+
+1. `HostResolverManager::PushDnsTasks` 的第一行是
+   `insecure_tasks_allowed = (insecure_dns_mode != kDisabled)`
+   （`net/dns/host_resolver_manager.cc:1355`），禁用时不 push `TaskType::DNS`；
+2. 只剩 `TaskType::SYSTEM` 兜底，所以请求照样成功、延迟正常，**看不出任何异常**；
+3. `ManagerOptions::insecure_dns_mode` 的默认值就是 `kDisabled`
+   （`net/dns/host_resolver.h:354`），而 Core 建 `ManagerOptions` 时从不设它。
+
+**为什么 DoH 没受影响**：DoH 走 `SecureDnsMode`，`CanUseSecureDnsTransactions()` 只看
+`doh_config.servers()` 是否为空，与 `insecure_dns_mode` 无关。所以同一个表格里 DoH 的 ✓
+是真的，plain DNS 的 ✓ 是假的——**一行里混着两种状态，最容易被整体当成可信**。
+
+**修法**：`resolver_options.insecure_dns_mode = InsecureDnsMode::kEnabledBuiltIn`，
+并显式 include `net/dns/public/insecure_dns_mode.h`。
+
+**验证（必须两端都测，只测一端会得到相反结论）**：
+
+- 修复前：配置的 nameserver 上 **0 个 UDP 包**；
+- 修复后：**4 个 UDP 包**，临时探针打印 `insecure=1 nameservers=1`；
+- 失败回退仍正常（`127.0.0.1:1` 最终 200，但耗时从 0.3 s 升到 1.6 s，说明先试了配置的
+  服务器再退到 SYSTEM，这是 `kEnabledBuiltIn` 的上游语义，不是回归）。
+
+**这一条还有一个流程教训**：我先直接改了 `$CHROMIUM_SRC/minicronet/engine.cc`，
+重建后行为毫无变化，因为**仓库里的 `core/source/engine.cc` 才是源头**，构建用的是
+`tools/sync-core.sh` 装过去的副本。同一个文件在两处存在、只有一处参与编译时，
+「改了没生效」的默认解释应该是**改错了副本**，而不是「我的分析错了」。
+
+**产物状态（如实登记）**：源码修复已落在 `core/source/engine.cc`；`core/binaries/` 下
+**八个平台产物未重建**——本机只能编 linux-x86_64，替换单个目标会让跨平台产物不一致，
+而那正是本项目 profile 证据链禁止的状态。因此这条修复在**下一次全平台重建**时才生效于
+发布物，在那之前 `core/binaries/` 里的 `.so` 仍表现为「忽略 dns_nameservers」。
+
+---
+
+## 63. 没有任何门禁比较 `core/source/` 与 `core/binaries/`
+
+**现象**：`core/source/engine.cc` 上一轮加了 DNS 修复（`+11`），而 `core/binaries/`
+里九个产物全部构建于**改动前一天**。全部门禁绿灯：版本串一致、体积上限一致、
+payload 一致、revision 一致——因为 manifest 记录的正是这些，唯独**没有记录
+「这份产物由哪份源码构建」**。于是「改了源码忘了重建」在仓库里完全不可见。
+
+**根因**：manifest 的字段是为别的目的设计的（防篡改、防 ABI 漂移、防 profile
+丢失），artifact 哈希只证明「文件没被改」，不证明「它与源码同步」。
+两者是不同的问题，却看起来都在回答「产物对不对」。
+
+**修法**：
+
+- `tools/install-core-binaries.py` 在写 manifest 时记录 `core_sources_sha256`
+  （`core/source/` 下 22 个输入的 SHA-256，跳过 `minicronet_version_generated.h`，
+  因为 `sync-core.sh` 每次构建都会重写它）；
+- `tools/audit-core-source-fingerprint.py` 重算并与九个 manifest 比较；
+- 两个文件各自实现了一份哈希，所以**实测核对过它们给出同一个值**
+  （`cf394cf2…`，22 files）——同一规则的第二份实现如果不核对，本身就是新的漂移源。
+
+**门禁**：`tools/mutation-fingerprint-gates.sh` 第 7 例。变异测试覆盖六个方向：
+未记录 → 1、记录后 → 0、改一个源码 → 1、还原 → 0、删掉一个 manifest 的键 → 1、
+还原 manifest → 1。**六个方向都跑过**，不是只测「坏的时候会红」。
+
+**当前状态（如实登记）**：这个门禁现在**是红的**，因为九个产物确实早于源码改动。
+它红得正确——它说的就是事实。要让它变绿只有一条路：一次全平台重建 + 重新记录指纹。
+在那之前，`AGENTS.md` §5 的「提交前必须全绿」对这一条无法满足，这是**已知且被登记的
+状态**，不是被绕过的门禁。
+
+**这一轮我自己犯的两个错，一并记下**：
+
+- 变异测试里用 `git checkout core/source/engine.cc` 还原，把上一轮的 DNS 修复一起
+  冲掉了。**在带未提交改动的文件上做变异测试，必须自己备份、用备份还原**，
+  不能用版本控制命令；
+- 探测时跑了 `--record`，等于给九个产物写上了「由当前源码构建」的假记录。
+  这正是我在同一轮里说过不能做的事。已全部 `git checkout` 还原。
+  **一个门禁的 `--record` 如果会写下无法证实的断言，跑它之前必须先确认自己有权做这个断言。**
+
+---
+
+## 64. 绑定层的错误表可以把 Core 的分类改到**另一个层级**去
+
+**现象**：`http://0.0.0.0:8080/` 抛 `InvalidURL`，而 `except ConnectionError` 完全接不住。
+
+**根因**：两张表各自都对，合起来错。
+
+- `core/source/minicronet/error_mapping.h` 把 `ERR_ADDRESS_INVALID` 归入
+  `MN_ERROR_NETWORK`（它确实不是格式错误的 URL，是地址不可用）；
+- `exceptions.py` 的 `_NET_ERRORS` 把同一个 -108 精化成 `InvalidURL`；
+- `InvalidURL` 的 MRO 是 `RequestException → OSError → ValueError`，**不在
+  `ConnectionError` 之下**，于是调用方按 Core 的分类写的 `except ConnectionError` 漏掉了它。
+
+**为什么这不是"精化"而是"改层级"**：其余精化都是安全的——`ConnectTimeout` 是 `Timeout`
+的子类，`DNSError` 是 `ConnectionError` 的子类。判断标准只有一条：**精化后的类必须是被
+精化类的子类**。不是子类，就不是精化，是把错误挪到了另一个 catch 分支。
+
+**requests 也不同意原来的做法**：对 `http://0.0.0.0:1/` 它抛 `ConnectionError`。
+所以这一条同时是层级错误和兼容性差异。
+
+**修法**：`-108` 改为 `ConnectionError`。**没改** `-312 ERR_UNSAFE_PORT`（仍是
+`InvalidURL`）——端口被禁用确实是 URL 配置问题，与地址不可用不是一回事。
+
+**验证**：直接映射 -108 → `ConnectionError`；真实请求 `0.0.0.0:8080` →
+`ConnectionError`/`-102`、`255.255.255.255:8080` → `ConnectionError`/`-109`；
+变异把 -108 改回 `InvalidURL` → 1 条红。
+
+**排查方法（可复用）**：把 Core 的 54 条 `case` 与绑定的 70 行逐条配对，然后对每一对
+问一句 `issubclass(binding_class, core_class)`。70 行里 11 行映射为 `None`（交回 Core
+分类）、证书类走 `IsCertificateError` 兜底、其余逐条核对 —— 最后只有 1 条越级。
+**这类分歧不会在任何一边的测试里暴露**，因为两边各自都是自洽的。
+
+---
+
+## 65. 文档说「由 Chromium 负责」，可它负责的那一层 Core 没有编译进去
+
+**现象**：跨域重定向时 `Authorization` 被原样发给新主机。requests 会丢掉它。
+实测：`127.0.0.1:A` 上 302 到 `127.0.0.1:B`，B 收到 `Authorization: Bearer probe`。
+
+**根因不是 bug 而是分工**：
+
+- `net::URLRequest` **不做**跨域敏感头剥离。剥离在它上面一层：
+  `services/network/url_loader.cc:1025`，通过
+  `FollowDeferredRedirect(removed_headers, modified_headers)` 把要删的头传下去；
+- Core 用的是 `//net` 的 `URLRequest`，调用点是
+  `core/source/request.cc:350` 的 `FollowDeferredRedirect(std::nullopt, std::nullopt)`，
+  两个参数都是空的，于是没有任何东西被删掉；
+- `docs/COMPATIBILITY_BOUNDARY.md` 却把它写成「Chromium `URLRequest` owns ...
+  **sensitive-header removal**」。这句话审阅时看起来是在陈述一个已有保证，
+  实际上是把上一层的行为记到了这一层头上。
+
+**为什么绑定层修不了**：`follow=True` 时 Chromium 在 `start_stream()` 里内部跟随，
+绑定层拿不到中间跳；`kind == "redirect"` 事件是**跟随之后**才到的通知。
+唯一的注入点是手动模式（`allow_redirects=False`），那时根本没有第二跳。
+要修只能改 Core：在 `RedirectInfo` 里比较 origin，把 `Authorization` 传进
+`removed_headers`。
+
+**处置**：
+
+1. 改正文档：写明「不剥离」、上游剥离在哪一行、Core 的空参数在哪一行、
+   以及当下的规避方式是 `allow_redirects=False` 自行重放；
+2. 加 3 条测试**锁定当前行为**（跨域保留、同源保留、不跟随则不出门），
+   注释里写明「这是已知缺口，Core 开始剥离时这些测试会失败并应当**反转**而不是删除」；
+3. 变异验证：模拟「Core 已剥离」→ 跨域那条红。
+
+**教训**：`COMPATIBILITY_BOUNDARY.md` 里每一句「X owns Y」，都要能回答
+**「X 在我们编译进来的那一层里吗」**。`//net` 与 `services/network` 是两层，
+Chromium 把不少策略放在后者；Core 只编前者，继承的是前者的默认行为，
+而前者的默认行为里常常**没有**后者补上的那些策略。
+
+---
+
+## 66. 门禁「为什么还不能迁移」的理由，会随代码漂移而不报错
+
+`tools/audit-layer-ownership.py` 的 `KNOWN` 里 12 条各写着「等下层补上某个缺口再迁移」，
+每条都带一个复核指针（文件:行）。这些指针**从不被检查**——门禁只验证「这个模式还在」
+和「这条 KNOWN 还有匹配」，不验证指针是否仍指向它说的那段代码。
+
+本轮实测的两处偏差：
+
+| KNOWN 里的说法 | 实际 |
+| --- | --- |
+| 「reject the **six** fields」 | `_CORE_OWNED_HEADERS` 有 **7** 项 |
+| `core/source/request.cc:245` | 那是 `headers.SetHeader(name, value)`，不是拒绝点 |
+| `core/source/request.cc:275` | 那是循环的收尾 `}`，不是删除入口 |
+
+三处都不影响门禁判决（模式确实还在、条目确实有效），但**会让按它干活的人找错地方**。
+一条「等 X 修好就能迁移」的记录，如果 X 的位置是错的，它就只是一句安慰。
+
+**已改成**：`core/source/request.cc:187-246`（`Request::StartOnNetworkThread` 的整个头部
+处理段，拒绝逻辑要插在循环之前）与 `core/source/request.cc:276-279`
+（`MergeFrom` 到 `SetExtraRequestHeaders` 这四行，按名删除要加在这里）。
+两处都已逐行核对命中。
+
+**可推广的判据**：一条「暂缓」理由里出现的**数量和位置**，都是可以验证的断言，
+和文档里的其他断言一样会腐坏。数量要能从代码里数出来，位置要能一眼看出指向什么；
+`X:245` 指不到东西的时候，写 `X:187-246（函数名 + 干什么）` 比写行号更耐久。
+
+---
+
+## 67. ABI v12：两件正确性修复，加一个如实标注 0.38% 的零拷贝选项
+
+**这次版本升级承载三件事，收益与代价都写在头文件里。**
+
+### 1. `mn_request_redirect_fn` 带结构化头字段
+
+重定向跳转的 `headers` 原始块此前是绑定层唯一还得自己 split 的地方——`on_response`
+早就拿到了 `mn_header_t` 数组。现在两者一致，Python 侧不再重解析（`_headers_from_fields`
+取代 `parse_raw_headers` 的那条路径）。重复的 `Set-Cookie` 与混合大小写头名实测正确：
+`["a=1", "b=2"]` 两条都在，`X-MiXeD-Case` 归一。
+
+### 2. 跨域重定向的 `Authorization` 剥离（opt-in）
+
+上一轮查明：`//net` 本身不做这件事，剥离在 `services/network/url_loader.cc:1025`，
+Core 调 `FollowDeferredRedirect(std::nullopt, std::nullopt)` 所以什么也没删。v12 让 Core 在
+`OnReceivedRedirect` 里比 origin 并调 `RemoveRequestHeaderByName`——`is_redirecting_` 是
+`URLRequest` 允许该调用的唯一窗口（`net/url_request/url_request.cc:259`）。
+
+**默认关闭**，因为 ABI 11 调用方从未得到这个行为，静默改变比保留缺口更糟。实测：
+
+| 配置 | 目标主机收到 |
+| --- | --- |
+| 默认 | `Bearer probe` |
+| `strip_authorization=True` | `None` |
+
+同源跳转始终保留，即使开启了剥离。
+
+### 3. `MN_READ_TAKE_BUFFER` + `mn_request_release_buffer`（opt-in）
+
+`on_body` 返回这个 disposition 时，Core 把那一块缓冲的所有权交出去，调用方用新导出
+函数归还。这样绑定层可以包住字节而不拷贝。
+
+**收益如实标注：实测 0.38%**（64 MiB 本地流，`0.4454 s` → `0.4437 s`）。头文件里写的是
+“about 0.7%”，实测更低，因为拷贝本来就是 1.6% 的一部分，而本地传输占 95%。这个选项的
+理由是**内存行为**（大 body、不能阻塞的回调），不是吞吐。
+
+**为什么 Rust 侧不能直接把 Core 缓冲变成 `Vec`**：Core 用 Chromium `partition_alloc`，
+Rust 用系统分配器。接管那个指针并让 Rust 释放，等于用错误的分配器释放内存。所以
+`TakenChunk` 保持裸指针视图，在 `Drop` 里调 `mn_request_release_buffer`。
+
+**实测无泄漏**：15 条 8 MiB 接管流后 fd 13 → 13，RSS +172 KiB，会话仍可用。
+
+### 交付清单
+
+- 头文件：版本 12、回调签名、新字段、新 disposition、新导出函数（29 个符号）
+- `core/abi/ABI_VERSION`、Rust FFI 常量与布局、三个导出表、`audit-abi.sh` 的清单
+- Core：重定向字段 + 剥离 + 接管/归还；`RequestState` 新增两个字段并附 `Send` 的安全论证
+- Rust：`TakenChunk` / `BodyChunk`、`take_body_buffers` 开关、3 条单元测试
+- Python：`strip_authorization`、`take_body_buffers`、stub、verb 签名表、4 条回归
+- 变异测试：把剥离改成默认开启 → 2 条红
+
+### 尚未完成的一环（必须写明）
+
+`core/binaries/` 下**九个产物仍是 ABI 11**。本机只能编 linux-x86_64，替换单个目标会让
+跨平台产物不一致。因此：
+
+- 用 `core/binaries/` 里的旧库跑，v12 绑定会报 `InvalidArgument`（版本校验生效）
+- 用新编的 `libminicronet.so` 跑，542 条测试全过、全部门禁绿
+- `audit-core-binaries.sh` 的 `permitted = {EXPECTED_ABI, EXPECTED_ABI - 1}` 允许这个
+  中间状态，但 `audit-core-source-fingerprint.py` 会红——它如实报告产物早于源码
+
+发布前需要一次全平台重建 + 重新记录 build-args 快照 + 刷新 manifest。
+
+---
+
+## 68. 门禁解析错了，我差点据此「修复」一个本来就是正确的产物
+
+**现象**：九个目标重建为 ABI 12 后，`audit-core-binaries.sh` 报 `macos-x86_64:`
+`missing public symbol mn_request_release_buffer`。Linux 与 Windows 全绿，只有两个 macOS
+目标红。
+
+**我做了什么，以及为什么都错了**：九轮排查，每一步都排除一个假设——清 `thinlto-cache`、
+移除 `-dead_strip`、给函数体加独特分支对抗 ICF、`rm -rf obj/minicronet` 全量重编、
+把条目移到导出列表首行、给定义补 `MN_EXPORT`。**全部无效。**
+
+**真正的一步**是让 LLVM 自己回答：
+
+```
+$ llvm-objdump --macho --exports-trie libminicronet.dylib | grep release_buffer
+0x00035CFB  _mn_request_release_buffer
+```
+
+**产物从第一次构建起就是对的**（29 个导出）。错的是 `tools/core-exports.py` 的 trie
+遍历。
+
+**根因**（一个字节）：终端节点的结构是 `terminal | flags | address | child_count | edges`，
+而代码在读到 terminal 后只取了 `flags`，把 `_after` 丢掉，**用旧的 `offset` 去读 child
+`count`**——于是 children 从 flags 字节处开始读。普通终端节点没有子节点，读错也不影响
+（后面本来就没有内容）；但**既是终端、又是更长名字前缀**的节点会把整棵子树读歪。
+
+真实数据：`release` 是 `release_buffer` 的前缀。原始字节 `... 01 5f 62 75 66 66 65 72`
+——`01` 是「我是终端」，紧接着 `_buffer` 是它的子节点。旧代码把 `01` 当成了「1 个子节点」，
+于是走进了 `_buffer` 的边缘字符串里。
+
+**为什么只有 macOS 中招**：trie 是 dyld 的格式。PE 用导出目录、ELF 用动态符号表，都不经过
+这段代码。一个只在三个容器之一上执行的解析分支，其正确性没有被任何东西检查过。
+
+**修法**：读到 terminal 后，先 `_uleb` 取 flags，**把 `offset` 推进到 payload 之后**；
+再按 `flags & 0x10` 判断是否有 address ULEB 要跳过；然后才读 child count。
+
+**保护**：`tools/core-exports.py --self-test` 用手工构造的 trie 钉住「终端兼前缀」这个形状，
+并由 `audit-core-binaries.sh` 在信任任何产物**之前**先跑它。变异测试：把修复改回旧写法，
+自检从 0 变 1，真实 dylib 的导出数从 29 变 **0**（不是变少，是整个遍历崩掉）。
+
+**教训**：
+
+- **门禁报错时，先证明门禁能读对，再证明产物错了。** 这轮的九次猜测全部花在后者上。
+- 「三个容器里只有一个走到这条分支」的代码，等于没有第二双眼睛；给它一个自检，
+  成本是三十行，收益是这九轮。
+- 我一度准备把门禁改成「允许 macOS 缺符号」。那会让一个**不存在的**不一致永久固化，
+  并且把一个正确的产物当成坏的——比沉默更糟。
+
+---
+
+## 69. 体积优化的天花板：这个构建已经压在 88% 之外没有低垂果实
+
+需求是「所有平台二进制精简优化，保证功能不变」。先量测，结论是**现有构建已在优化配置的
+上限附近**，可动的只剩边角，而边角的风险高于收益。
+
+### 已有的优化（全部生效）
+
+| 手段 | 状态 |
+| --- | --- |
+| `optimize_for_size` → `-Oz` | 已开 |
+| `is_official_build`（去 DCHECK、去日志） | 已开 |
+| `symbol_level = 0` | 已开 |
+| thin-LTO | 已开 |
+| `-Wl,--icf=all`（相同代码折叠） | 已开 |
+| `-Wl,--gc-sections`（去未引用段） | 已开 |
+| `-Wl,--lto-O1` | 已开。仓库实测过：O0 多 57,456 字节，**O2 反而大 12,176 字节** |
+| `-fno-unwind-tables` / `-fno-asynchronous-unwind-tables` | 已开 |
+| `llvm-strip --strip-unneeded` | 九个产物全部已剥离 |
+
+### 实测：strip 已到极限
+
+| 选项 | linux-x86_64 |
+| --- | --- |
+| `--strip-debug` | 8,659,096 |
+| `--strip-unneeded` | 8,659,096 |
+| `--strip-all` | 8,658,568（仅多 528 字节） |
+
+`--strip-all` 只多省 528 字节，而它连 `.dynsym` 的局部符号也去掉，
+对崩溃回溯有害。不值得。
+
+### 实测：体积分布
+
+| 段 | 字节 | 占比 |
+| --- | --- | --- |
+| `.text` | 5,276,560 | 61% |
+| `.rodata` | 2,384,958 | 28% |
+| `.rela.dyn` | 562,320 | 6.5% |
+| `.data.rel.ro` | 297,320 | 3.4% |
+| 其余（`.eh_frame`、`.bss`、`.data`、符号表等） | ~139,000 | 1.6% |
+
+`.text` 与 `.rodata` 合计 88%。这两块要再压只能改代码或改数据布局。
+
+### 评估过但**没有做**的三件事
+
+**1. 删 `.eh_frame`（29,724 字节，0.34%）**
+
+`-fno-unwind-tables` 已经在用，剩下的 29 KB 是 C++ 异常展开需要的最小集合。
+Core 源码里没有 `throw`/`try`，但 `std::vector`、`std::string` 在分配失败时会抛，
+去掉后遇到 `bad_alloc` 就是直接 `std::terminate`，而正常路径的 catch 会静默失效。
+**为 0.34% 换掉异常安全，不做。**
+
+**2. 合并 72 条 User-Agent 字符串（可省约 5,900 字节，0.07%）**
+
+精确测量：72 条共 8,139 字节，其中 **88 字节前缀 + 14 字节后缀完全共享**，
+只有版本串（如 `97.0.4692.99`）不同。改成「共享前缀 + 版本号」可省约 5.9 KB。
+
+但 `merge-all-constants` 只能合并**完全相同**的字符串，合并不了「前缀相同」。
+要省这 5.9 KB 必须改 profile 表的生成代码和 Core 的读取路径——**一次数据布局改动，
+换 0.07%**。收益与风险不成比例，且 72 条 UA 的字节级正确性是 profile 证据链的核心，
+动它等于动最容易出错的地方。**不做。**
+
+**3. 重新链接去掉 `.note.gnu.build-id`（36 字节）**
+
+build-id 是崩溃回溯时定位构建的凭据。36 字节。**不做。**
+
+### 结论
+
+九个产物（6.2–9.6 MB）已经处于 `-Oz` + thin-LTO + ICF=all + `lto-O1` + strip 的组合下。
+剩下的空间需要牺牲异常安全、动数据布局或放弃结构化符号表，每一项的代价都超出
+0.07%–0.34% 的收益。
+
+**这不是「优化失败」，是「优化已经做完了」。** 如果目标是让产物变小一个量级，
+需要的是改变**功能范围**（例如把 72 个 profile 拆成可选的数据包），那是产品决策，
+不是构建优化。
+
+---
+
+## 70. 定位结果：`.rodata` 里是四张数据表，`.text` 里没有巨块
+
+用链接器 map（`-Wl,-Map`，不改 `symbol_level`、不影响发布包）做的归属分析。
+
+### `.rodata`：1.73 MB，前四名占 88%
+
+| 来源 | 字节 | 占比 | 能否裁 |
+| --- | --- | --- | --- |
+| HSTS preload 全表 | 753,998 | 44% | **不能**（见下） |
+| Chrome 根证书列表 | 354,464 | 20% | **不能**（见下） |
+| `<internal>`（LTO 合并的字符串常量） | 277,440 | 16% | 部分可 |
+| ICU IDNA 数据 | 194,064 | 11% | 可 |
+| simdutf 表 | 55,536 | 3% | 必需 |
+| 公共后缀表 | 52,906 | 3% | 可 |
+
+### `.text`：没有单一巨块
+
+最大符号 20,822 字节（`net::HttpCache::Transaction::DoLoop`），其后依次是
+`QuicFramer::ProcessIetfDataPacket`（17,063）、`ssl_client_handshake`（13,313）、
+`ZSTD_decompressBlock_internal`（13,154）。全部是 Chromium `net`、BoringSSL、zstd 的
+正常组成，**没有任何一个模块值得单独裁**。
+
+### 为什么最大的两块不能裁
+
+`docs/COMPATIBILITY_BOUNDARY.md:8-9` 写着：**「The Core retains the pinned Chromium
+defaults for Brotli, Zstd, HSTS preload, DNS caching, connection pools, TLS sessions,
+Alt-Svc, the Chrome Root Store...」**——HSTS preload 与 Chrome Root Store 是这份文档
+明确保留的对外承诺，裁掉就等于改契约。
+
+而且 `tools/audit-core-payloads.py:13` 用 `trust_anchors (0xca34)` 作为「最锐利的证人」
+验证九个产物的 profile payload 逐字节一致。裁掉根证书表，这个门禁同时失效。
+
+### 结论
+
+真要减 1.1 MB（HSTS + 根证书），需要的是**改产品契约**：把这两张表从编译期数据变成
+可选的运行时数据源。那会让「单文件分发」变成「库 + 数据文件」，并需要重写
+`audit-core-payloads.py`。这是产品决策，不是构建优化。
+
+**定位这一步的价值**：在没有 map 之前，我上一轮把 `.rodata` 的大头猜成了 72 条 User-Agent
+（8,139 字节）。实际 UA 连前六名都进不去，真正的大头是两张我根本没想到的 Chromium 数据表。
+
+---
+
+## 71. 零拷贝让回压失效：`TAKE_BUFFER` 的语义里没有「停」
+
+**缺陷**：`take_body_buffers=True` 时，消费者停顿 2 秒，服务端写出了 **57.81 MiB**
+（借出模式只有 0.94 MiB）。回压完全消失，队列无上限增长。
+
+**根因**：`MN_READ_TAKE_BUFFER` 的契约只有「接管缓冲，继续读」。Core 收到它就不再看
+`read_paused`。而 Rust 侧的 `on_body` 同时做了两件事：
+
+```
+let pause = state.body_bytes >= BODY_BUFFER_LIMIT && state.terminal.is_none();
+state.read_paused |= pause;
+...
+Ok((_, true)) => MN_READ_TAKE_BUFFER,   // took 为真时无条件返回 TAKE
+```
+
+标志被单方面置位，Core 却被告知继续读——**两边对「停没停」的认知不一致**，而没有任何
+东西检查这个不一致。
+
+**修法**：take 只在**队列低于上限时**使用；到上限就退回拷贝并返回 `PAUSE`。
+
+```
+fn may_take_buffer(opted_in, body_bytes, has_buffer, length) -> bool {
+    opted_in && body_bytes < BODY_BUFFER_LIMIT && has_buffer && length > 0
+}
+```
+
+两个分支因此互斥：take 要求低于上限，pause 只在达到上限时置位。修后实测 1.00 MiB，
+与借出路径持平。
+
+**第一版测试是假的**：我只写了两条断言比较 `BODY_BUFFER_LIMIT - 1` 与
+`BODY_BUFFER_LIMIT` 的大小，然后**变异测试通过了**——把守卫从 `on_body` 里删掉，
+测试照样绿。因为它断言的是常量，不是决策。改成调用抽出来的 `may_take_buffer` 后，
+删掉守卫立刻 1 条红。
+
+**我这一轮犯的两次操作错误**：
+
+- 又一次用 `git checkout crates/minicronet/src/request.rs` 回退，把 ABI 12 在该文件的
+  **全部**改动冲掉（`TakenChunk`、`BodyChunk`、`public_handle`、`Send` 声明）。这是我
+  第三次犯同一个错误。**在带未提交改动的文件上，永远用备份还原，不要用版本控制命令。**
+- 重放时我凭记忆写了个 ABI 里不存在的 `take_body_buffers` 配置字段，编译立刻报错——
+  这说明「重放补丁」不能靠回忆，要对着头文件确认每个字段真实存在。
+
+**教训**：一个「接管资源并继续」的原语，如果调用方同时有「暂停」的诉求，两者必须在
+**同一个决策点**上互斥，而不是各自置位后指望对方理解。
+
+---
+
+## 69. 门禁测的不是它说自己在测的东西
+
+**现象**：`bindings/python36` 在 0.2.12 上无法发出任何一个请求。
+
+```python
+>>> import chrome_client  # 用 cp36-abi3 扩展
+>>> chrome_client.Session().get(url)
+TypeError: PyEngine.__new__() got an unexpected keyword argument 'host_mapping'
+```
+
+而 `tools/audit-python36-artifact.py` 报 `python36 artifact audit passed: ... one live
+request`，`review-before-tag.py` 把它记成 `pass`。
+
+**根因（两层，都在门禁里）**：
+
+1. 检查函数的顺序反了。它先 `import chrome_client._python_impl._native`，再改
+   `_native.MODULE_NAME = LEGACY`。但 `_native.py` 在模块级执行 `native = load()`，
+   `engine.py` 又 `from ._native import native` —— 两处都早已绑定现代扩展。改名字
+   发生在装载之后，对已经绑定的对象没有任何影响。所以这项检查从头到尾测的是
+   `bindings/python`，报告上写的却是 `bindings/python36`。
+2. 共享 facade 与 3.6 扩展的签名已经漂移，而没有任何东西比对过它们：
+   - `PyEngine.__new__`：facade 传 11 个关键字（`host_mapping` … `max_sockets_per_group`），
+     3.6 扩展只声明 11 个位置参数，一个关键字都没有；
+   - `PyEngine.request`：facade 传 11 个位置参数，3.6 扩展只接受 10 个；
+   - `PyEvent` / `PyRedirect`：facade 按 6 元 / 5 元解包，3.6 扩展返回 5 元 / 4 元；
+   - 事件里的字节：pyo3 0.15 把 `Vec<u8>` 转成 **`list[int]`**，pyo3 0.30 转成 `bytes`。
+     共享 facade 的 `b"".join(state.body)` 因此抛
+     `sequence item 0: expected a bytes-like object, list found`。
+
+**规则**：**一个门禁必须先证明它拿到的是被测对象，再去测它。** 具体到本仓库：
+
+- 门禁要断言 `facade_engine.native is module`（同一个对象），而不是信任自己刚设的名字；
+- 跨 crate 的共享契约（元组元数、参数表、Python 类型）必须有静态比对，不能只靠
+  「两边都 import 成功」。`test_session_defects.Py36BindingShapeTests` 现在解析两个
+  `lib.rs` 的参数表与元组元数直接比；
+- 静态比对要**比声明**，不能比子串。第一版形状测试用 `assertIn("take_body_buffers",
+  legacy)`，在参数被删掉、但赋值语句里还留着这个名字的树上照样通过（实测）。
+
+**门禁**：`audit-python36-artifact.py` 现在在 import 之前把扩展登记进
+`sys.modules`（两个名字都登记），断言 facade 绑定的就是它，然后跑 sync GET、
+重定向、异步 GET 三条路径；`audit-session-parity.py` 新增
+`check_options_reach_the_core()`。变异测试：删掉 `platform=` 参数 → 门禁报
+`the legacy extension cannot serve a request the facade makes: TypeError ...`；
+删掉 `take_body_buffers=self.take_body_buffers` → 门禁报
+`never reads self.take_body_buffers`。
+
+---
+
+## 70. 构造选项被接受、然后被丢掉
+
+**现象**：`Session(take_body_buffers=True)` 完全不起作用。
+
+**根因**：构造函数把值存进 `self.take_body_buffers`，`_native_request` 从没读过它。
+`engine.request(...)` 的最后一个实参是 `self.strip_authorization`，选项到此为止。
+
+**为什么没有门禁能发现**：这个选项的两种取值**返回完全相同的字节**。它省掉的是 Core
+侧的一次 memcpy（实测 0.38%），不是任何可观测的输出。所以：
+
+- 请求测试通过（数据正确）；
+- 类型检查通过（属性存在、类型正确）；
+- 布局/ABI 门禁无关（选项不跨 ABI，靠 disposition 表达）。
+
+**规则**：**「被接受」不是「被实现」**。一个构造选项必须在某个可检查的地方到达下层，
+否则它就是 AGENTS §8 禁止的静默忽略。
+
+**门禁**：`tools/audit-session-parity.py` 的 `check_options_reach_the_core()` 读取
+`_native_request` 的函数体（先剥掉注释——第一版没剥，注释里提到了选项名，删掉转发后
+门禁仍然是绿的，实测），要求每个登记在 `FORWARDED` 里的选项以 `self.<name>` 的形式
+出现在那里。运行时那一半由 `test_session_defects.EngineOptionForwardingTests` 用
+一个假 engine 断言它收到的 kwargs。两者都做了变异测试。
+

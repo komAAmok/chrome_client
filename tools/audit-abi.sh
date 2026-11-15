@@ -12,6 +12,7 @@ symbols=(
   mn_request_create mn_request_retain mn_request_release
   mn_request_start mn_request_cancel mn_request_upload_write
   mn_request_follow_redirect mn_request_resume_read
+  mn_request_release_buffer
   mn_request_negotiated_protocol mn_request_ech_status
   mn_engine_cookies_get mn_engine_cookies_set mn_engine_cookies_delete
   mn_engine_cookies_clear mn_engine_set_client_certificate

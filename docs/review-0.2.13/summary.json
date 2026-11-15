@@ -1,0 +1,213 @@
+{
+  "context": {
+    "release": "docs/review-0.2.13",
+    "smoke_binary": "$CHROMIUM_SRC/out/MiniCronet-linux-x86_64/minicronet_smoke"
+  },
+  "environment": {
+    "core": "core/binaries/linux-x86_64",
+    "cpus": 8,
+    "machine": "x86_64",
+    "platform": "Linux-7.0.0-38-generic-x86_64-with-glibc2.39",
+    "python": "3.12.3"
+  },
+  "failures": 0,
+  "groups": {
+    "bindings": {
+      "python-tests": {
+        "exit_code": 0,
+        "seconds": 155.0,
+        "status": "pass",
+        "summary": ""
+      },
+      "python36-artifact": {
+        "exit_code": 0,
+        "seconds": 1.2,
+        "status": "pass",
+        "summary": "python36 artifact audit passed: libchrome_client_native36.so, abi 12, abi3, sync/redirect/async through the shared facade; chrome_client-0.2.13-cp36-abi3-manylinux_2_38_x86_64.whl: facade imports, abi 12"
+      },
+      "rust-check": {
+        "exit_code": 0,
+        "seconds": 0.2,
+        "status": "pass",
+        "summary": ""
+      },
+      "rust-clippy": {
+        "exit_code": 0,
+        "seconds": 0.2,
+        "status": "pass",
+        "summary": ""
+      },
+      "rust-format": {
+        "exit_code": 0,
+        "seconds": 0.3,
+        "status": "pass",
+        "summary": ""
+      },
+      "rust-tests": {
+        "exit_code": 0,
+        "seconds": 0.5,
+        "status": "pass",
+        "summary": "test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+      }
+    },
+    "concurrency": {
+      "bench": {
+        "exit_code": 0,
+        "seconds": 3.3,
+        "status": "pass",
+        "summary": "}"
+      }
+    },
+    "fingerprint": {
+      "discard-fingerprint": {
+        "exit_code": 0,
+        "seconds": 1.4,
+        "status": "pass",
+        "summary": "discard fingerprint: 3 connections per arm, resumption is the only documented difference, cache is not shared"
+      },
+      "frozen-headers": {
+        "exit_code": 0,
+        "seconds": 0.2,
+        "status": "pass",
+        "summary": "frozen headers: 6 arms, 14 baseline fields, only documented arms move them, order pinned"
+      },
+      "h1-alps": {
+        "exit_code": 0,
+        "seconds": 0.1,
+        "status": "pass",
+        "summary": "HTTP/1.1 ALPS audit passed: 72 profiles; h1 never offers ALPS, h2 does from 91, and both protocols agree on supported_groups, signature_algorithms and supported_versions"
+      },
+      "h3-support": {
+        "exit_code": 0,
+        "seconds": 0.1,
+        "status": "pass",
+        "summary": "H3 profile support audit passed: 72 profiles, 7 marked unsupported (86..92)"
+      },
+      "net-error-names": {
+        "exit_code": 0,
+        "seconds": 0.0,
+        "status": "pass",
+        "summary": "net error names audit passed: every row matches net_error_list.h"
+      },
+      "padding-rule": {
+        "exit_code": 0,
+        "seconds": 0.2,
+        "status": "pass",
+        "summary": "padding rule audit passed: 144 profile/protocol pairs; 86..118 fixed widths, 119..123 conditional, 124+ never; compiled table pins no override"
+      },
+      "profile-addition": {
+        "exit_code": 0,
+        "seconds": 11.5,
+        "status": "pass",
+        "summary": "    h3: {\"captures\": 6, \"status\": \"CAPTURED\", \"stable_fields\": [\"ciphers\", \"extensions\", \"h3_hash\", \"h3_settings\", \"h3_text\", \"ja4\", \"quic_version\", \"selected_version\","
+      },
+      "profile-probes": {
+        "exit_code": 0,
+        "seconds": 41.3,
+        "status": "pass",
+        "summary": "profile probes passed: feature boundaries, profile isolation; state isolation SKIPPED (no HTTP_BASE/HTTPS_BASE)"
+      },
+      "tls-version-range": {
+        "exit_code": 0,
+        "seconds": 0.1,
+        "status": "pass",
+        "summary": "TLS version range audit passed: 72 profiles; 86..97 advertise TLS 1.3/1.2/1.1/1.0 on the wire, 98.. advertise TLS 1.3/1.2, and the compiled table carries the matching floor"
+      },
+      "wire-smoke": {
+        "exit_code": 0,
+        "seconds": 3.5,
+        "status": "pass",
+        "summary": "request cancel smoke passed"
+      }
+    },
+    "gates": {
+      "abi": {
+        "exit_code": 0,
+        "seconds": 0.5,
+        "status": "pass",
+        "summary": "ABI v12 audit passed: 29 symbols, header/FFI/Core/export tables agree."
+      },
+      "abi-layout": {
+        "exit_code": 0,
+        "seconds": 0.2,
+        "status": "pass",
+        "summary": "  mn_websocket_config_t        136 bytes, 12 fields"
+      },
+      "client-hints": {
+        "exit_code": 0,
+        "seconds": 0.1,
+        "status": "pass",
+        "summary": "0 error(s)"
+      },
+      "core-binaries": {
+        "exit_code": 0,
+        "seconds": 4.6,
+        "status": "pass",
+        "summary": "Core binary audit passed for 9 targets."
+      },
+      "core-inputs": {
+        "exit_code": 0,
+        "seconds": 0.6,
+        "status": "pass",
+        "summary": "Core input audit: 25 BUILD.gn names, 22 installed files, 15 patches -- all tracked"
+      },
+      "core-payloads": {
+        "exit_code": 0,
+        "seconds": 0.2,
+        "status": "pass",
+        "summary": "core payload audit passed: 27 artifact/payload pairs across 9 targets; every artifact embeds the header's 572 payload bytes byte for byte"
+      },
+      "core-size": {
+        "exit_code": 0,
+        "seconds": 0.1,
+        "status": "pass",
+        "summary": "core size ceiling audit passed: every MAX_BYTES satisfies its own 2% rule"
+      },
+      "extra-fp": {
+        "exit_code": 0,
+        "seconds": 0.1,
+        "status": "pass",
+        "summary": "extra_fp verdict audit passed: 15 curl_cffi fields classified (MEANINGLESS 6, PROFILE_OWNED 7, HONOURED 2)"
+      },
+      "pypi-metadata": {
+        "exit_code": 0,
+        "seconds": 0.2,
+        "status": "pass",
+        "summary": "ok redirect ceiling: CHROMIUM_MAX_REDIRECTS=20 (bindings/python/chrome_client/_python_impl/sessions.py:82) == 5 prose carriers"
+      },
+      "python-stubs": {
+        "exit_code": 0,
+        "seconds": 0.6,
+        "status": "pass",
+        "summary": "19 stub modules, 0 error(s), 0 warning(s)"
+      },
+      "python-typing": {
+        "exit_code": 0,
+        "seconds": 3.7,
+        "status": "pass",
+        "summary": "Python typing audit passed: stubs and consumer both clean."
+      },
+      "readme": {
+        "exit_code": 0,
+        "seconds": 0.1,
+        "status": "pass",
+        "summary": "README audit passed: PyPI description matches README.md for both wheels."
+      }
+    },
+    "leaks": {
+      "leak-hunt": {
+        "exit_code": 0,
+        "seconds": 44.9,
+        "status": "pass",
+        "summary": "leak hunt: 13/13 shapes flat"
+      },
+      "leak-probe": {
+        "exit_code": 0,
+        "seconds": 4.4,
+        "status": "pass",
+        "summary": "leak probe: 6/6 shapes flat"
+      }
+    }
+  },
+  "seconds": 279.2
+}
