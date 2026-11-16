@@ -749,7 +749,7 @@ manifest（`--abi-version 8`）：
 Core」这一项）、`audit-python36-artifact`；Rust 四项
 （`cargo fmt` / `check` / `clippy -D warnings` / `test`）全过。
 
-Python 套件 **542 个用例通过、2 个 skip**。
+Python 套件 **561 个用例通过、2 个 skip**。
 
 **九平台产物全部为 ABI 12**：linux-x86/x86_64/arm64/armv7、
 windows-x86/x86_64/arm64、macos-x86_64/arm64。

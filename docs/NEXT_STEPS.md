@@ -90,6 +90,26 @@ python3 tools/audit-core-payloads.py
 python3 tools/record-core-build-args.py --check
 ```
 
+### 0.2.14 的实测结果
+
+九个平台全部用 0.2.14 重建，`CHROMIUM_REVISION` 与 ABI 12 都不变：
+
+| target | 大小 | ABI |
+| --- | --- | --- |
+| linux-x86_64 | 8,658,480 | 12 |
+| linux-x86 | 8,260,920 | 12 |
+| linux-arm64 | 8,304,608 | 12 |
+| linux-armv7 | 6,248,592 | 12 |
+| macos-x86_64 | 8,135,728 | 12 |
+| macos-arm64 | 7,476,608 | 12 |
+| windows-x86_64 | 9,626,112 | 12 |
+| windows-x86 | 7,664,128 | 12 |
+| windows-arm64 | 8,323,584 | 12 |
+
+本轮唯一的源码变化是 `core/source/minicronet.cc` 对两个 DNS 字段的拒绝
+（`dns_over_tls`、`dns_padding`），产物大小与 0.2.13 逐字节相同，只有版本串和
+hash 变了——这是预期结果：拒绝发生在一个已有的 `if` 链里，没有新增代码路径。
+
 ### 0.2.13 的实测结果
 
 九个平台全部用 0.2.13 重建，`CHROMIUM_REVISION` 不变，ABI 从 11 升到 12：
