@@ -1813,9 +1813,46 @@ class BaseSession(object):
         self.dns_nameservers = normalize_dns_nameservers(dns_nameservers)
         self.doh_template, self.dns_secure_mode = normalize_doh(
             doh_template, dns_secure_mode)
-        self.dns_over_tls = bool(dns_over_tls)
+        # `dns_over_tls` is REFUSED, not honoured, and this is the one option
+        # in this group where accepting it was worse than rejecting it.
+        #
+        # Chromium desktop has no DoT client at all: `net/dns/` contains only a
+        # plaintext TCP attempt, no `dns_over_tls_hostname` consumer, and no
+        # 853 anywhere. `DnsConfig::dns_over_tls_active` is not a transport
+        # selector -- it is a gate that makes
+        # `DnsClient::CanUseInsecureDnsTransactions` return false
+        # (net/dns/dns_client.cc:168), so the built-in resolver declines every
+        # job and TaskType::SYSTEM answers instead.
+        #
+        # Measured before this refusal: with `dns_nameservers` pointed at a
+        # local UDP port, `dns_over_tls=False` delivered 4 queries (A and
+        # HTTPS); `dns_over_tls=True` delivered 0 on UDP *and* 0 on TCP, while
+        # the request still returned 200 from the system resolver. The caller
+        # asked for an encrypted resolver and silently got the plaintext system
+        # one, with `dns_nameservers` dropped -- exactly the silent ignore
+        # AGENTS section 8 forbids.
+        if dns_over_tls:
+            raise UnsupportedFeature(
+                "dns_over_tls= is not supported: Chromium's desktop build has "
+                "no DNS-over-TLS client. Setting it only disables the built-in "
+                "resolver (net/dns/dns_client.cc:168), so the request would "
+                "fall back to the system resolver and silently ignore "
+                "dns_nameservers/doh_template. Use doh_template= with "
+                "dns_secure_mode=2 for an encrypted resolver.")
+        self.dns_over_tls = False
         self.dns_rotate = bool(dns_rotate)
-        self.dns_padding = bool(dns_padding)
+        # Refused for the same reason dns_over_tls is: Chromium has no EDNS0
+        # padding control at all. The option used to travel from here into
+        # EngineOptions and stop -- core/source/engine.cc never read it -- so a
+        # caller who asked for padded queries silently got unpadded ones.
+        if dns_padding:
+            raise UnsupportedFeature(
+                "dns_padding= is not supported: Chromium exposes no EDNS0 "
+                "padding control, and net/dns/ has no option for it. The value "
+                "used to reach EngineOptions and stop there, so the queries "
+                "were sent unpadded with no error. Removing the option here "
+                "is what makes that visible.")
+        self.dns_padding = False
         self.hsts_bypass = normalize_hsts_bypass(hsts_bypass)
         # The ABI rejects both at once (core/abi/minicronet.h: proxy_chain and
         # proxy_rules "describe the same connection path twice"), but the

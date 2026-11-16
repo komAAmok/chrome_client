@@ -119,6 +119,51 @@ def check_options_reach_the_core() -> list[str]:
     return errors
 
 
+#: Options the ABI accepts but Chromium cannot honour, with the reason. Each
+#: must be REFUSED, not stored -- AGENTS section 8. The list is explicit
+#: because "does the lower layer implement this" is not decidable from source
+#: alone; it took measuring DNS packets to settle both entries.
+REFUSED_NOT_STORED = {
+    "dns_over_tls": (
+        "Chromium desktop has no DoT client; setting it only makes "
+        "DnsClient::CanUseInsecureDnsTransactions() return false "
+        "(net/dns/dns_client.cc:168) and fall back to TaskType::SYSTEM, "
+        "dropping dns_nameservers and doh_template. Measured: 4 queries "
+        "reached the configured server with it off, 0 with it on."),
+    "dns_padding": (
+        "Chromium exposes no EDNS0 padding control. The value travelled into "
+        "EngineOptions and stopped there -- core/source/engine.cc never read "
+        "it -- so queries were sent unpadded with no error."),
+}
+
+
+def check_refused_options_are_refused() -> list[str]:
+    """Returns an error per option that is stored instead of refused.
+
+    A value assigned to ``self.<option>`` and forwarded to the Core is the
+    defect LESSONS 75/76 describe: the option looks supported, the layer below
+    ignores or subverts it, and the caller gets a behaviour nobody chose. The
+    only honest handling is to raise from the constructor.
+
+    Returns:
+        A list of error strings, empty when every listed option raises.
+    """
+    source = (REPO / "bindings" / "python" / "chrome_client" / "_python_impl"
+              / "sessions.py").read_text()
+    errors = []
+    for option, why in sorted(REFUSED_NOT_STORED.items()):
+        if option + "=" not in source:
+            errors.append(
+                "%s is listed as refused but no message names %s=; the refusal "
+                "was removed or reports the wrong option. It must be refused "
+                "because: %s" % (option, option, why))
+        if "self.%s = bool(" % option in source:
+            errors.append(
+                "%s is stored as a live option instead of refused: %s"
+                % (option, why))
+    return errors
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--verbose", action="store_true")
@@ -180,6 +225,7 @@ def main() -> int:
         print("AsyncSession : %d options" % len(asynchronous))
         print("shared       : %d" % len(shared_sync))
     errors.extend(check_options_reach_the_core())
+    errors.extend(check_refused_options_are_refused())
     for error in errors:
         print("error: " + error)
     if errors:

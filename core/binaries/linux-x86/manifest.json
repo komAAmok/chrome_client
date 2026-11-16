@@ -6,8 +6,8 @@
   "target": "linux-x86",
   "triple": "i686-unknown-linux-gnu",
   "library": "libminicronet.so",
-  "sha256": "282a38481d71f552efceb2382ca59c65c3c27eba39d9f7588e806f0625655ec8",
-  "size_bytes": 8260920,
+  "sha256": "6276fb4fa0bdc764cf824c80faccddde307f159ab8a748cac14b3765f856627a",
+  "size_bytes": 8260952,
   "runtime_dependencies": [
     "libc.so.6",
     "libdl.so.2",
@@ -19,5 +19,5 @@
     "libpthread.so.0",
     "ld-linux.so.2"
   ],
-  "core_sources_sha256": "d75f6b28667d8cf382f9dd21af04d4354c953a5ae427e8e86f7fd259eaaced61"
+  "core_sources_sha256": "f7c90973c26f7c1b8dc9af242fdb6d201b872d282e4e2b93bf071683a7f90ca7"
 }

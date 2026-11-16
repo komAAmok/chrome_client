@@ -535,10 +535,30 @@ mn_result_t MN_CALL mn_engine_create(const mn_engine_config_t *config,
   if (config->dns_secure_mode > 2) {
     return MN_ERROR_INVALID_ARGUMENT;
   }
+  // Refused rather than accepted-and-ignored. Chromium's desktop build has no
+  // DoT client, and setting dns_over_tls_active only makes
+  // DnsClient::CanUseInsecureDnsTransactions() return false
+  // (net/dns/dns_client.cc:168): the built-in resolver then declines every job
+  // and TaskType::SYSTEM answers, so dns_nameservers and doh_template are
+  // dropped while the request still succeeds. Measured -- 4 queries on the
+  // configured server with this 0, 0 queries (UDP and TCP) with it 1, and a
+  // 200 from the system resolver either way. See the field's comment in
+  // core/abi/minicronet.h.
+  if (config->dns_over_tls != 0) {
+    return MN_ERROR_INVALID_ARGUMENT;
+  }
   options.dns_secure_mode = config->dns_secure_mode;
-  options.dns_over_tls = config->dns_over_tls;
+  options.dns_over_tls = 0;
   options.dns_rotate = config->dns_rotate;
-  options.dns_padding = config->dns_padding;
+  // Refused rather than accepted-and-ignored, for the same reason as
+  // dns_over_tls above: Chromium has no EDNS0 padding control, so the value
+  // used to reach EngineOptions and stop there -- core/source/engine.cc never
+  // read it, and a caller asking for padded queries silently got unpadded
+  // ones. See the field's comment in core/abi/minicronet.h.
+  if (config->dns_padding != 0) {
+    return MN_ERROR_INVALID_ARGUMENT;
+  }
+  options.dns_padding = 0;
   // A DoH template with secure DNS off is a contradiction: one says DoH may be
   // used, the other says it must not.
   if (!options.doh_template.empty() && options.dns_secure_mode == 0) {

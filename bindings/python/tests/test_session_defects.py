@@ -1714,6 +1714,56 @@ class EchStatusReportingTests(unittest.TestCase):
         async_value = asyncio.run(one())
         self.assertEqual(sync_value, async_value)
 
+class DnsOverTlsRefusalTests(unittest.TestCase):
+    "    dns_over_tls must fail closed, not silently disable the resolver."
+
+    "    Chromium desktop has no DoT client. Setting DnsConfig::dns_over_tls_active"
+    "    only makes DnsClient::CanUseInsecureDnsTransactions() return false"
+    "    (net/dns/dns_client.cc:168), so the built-in resolver declines every job"
+    "    and TaskType::SYSTEM answers. Measured before the refusal: with"
+    "    dns_nameservers on a local UDP port, dns_over_tls=False delivered 4"
+    "    queries and =True delivered 0 on UDP and 0 on TCP, while the request"
+    "    still returned 200 through the system resolver."
+    "    "
+
+    def test_the_constructor_refuses_it(self):
+        with self.assertRaises(chrome_client.UnsupportedFeature) as caught:
+            chrome_client.Session(dns_over_tls=True)
+        message = str(caught.exception)
+        self.assertIn("dns_over_tls", message)
+        self.assertIn("doh_template", message,
+                      "the message must name the option that does work")
+
+    def test_the_refusal_does_not_wait_for_a_request(self):
+        "        Same rule as proxy=/proxy_chain=: decidable at construction."
+        with self.assertRaises(chrome_client.UnsupportedFeature):
+            chrome_client.Session(dns_nameservers="1.1.1.1", dns_over_tls=True)
+
+    def test_the_async_constructor_refuses_it_too(self):
+        with self.assertRaises(chrome_client.UnsupportedFeature):
+            chrome_client.AsyncSession(dns_over_tls=True)
+
+    def test_dns_padding_is_refused_too(self):
+        "        Same defect class: Chromium has no EDNS0 padding control, so the"
+        "        value reached EngineOptions and stopped. Accepted silently, it"
+        "        promised padded queries and sent unpadded ones."
+        with self.assertRaises(chrome_client.UnsupportedFeature) as caught:
+            chrome_client.Session(dns_padding=True)
+        self.assertIn("dns_padding", str(caught.exception))
+
+    def test_dns_rotate_is_still_honoured(self):
+        "        The control case: rotate IS applied (DnsConfigOverrides::rotate),"
+        "        so it must not have been swept up in the refusal."
+        with chrome_client.Session(dns_rotate=True) as session:
+            self.assertTrue(session.dns_rotate)
+
+    def test_the_async_constructor_refuses_padding_too(self):
+        with self.assertRaises(chrome_client.UnsupportedFeature):
+            chrome_client.AsyncSession(dns_padding=True)
+    def test_false_still_works(self):
+        with chrome_client.Session(dns_over_tls=False) as session:
+            self.assertFalse(session.dns_over_tls)
+
 
 if __name__ == "__main__":
     unittest.main()

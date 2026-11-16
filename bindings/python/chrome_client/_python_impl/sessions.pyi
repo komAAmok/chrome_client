@@ -768,7 +768,7 @@ class BaseSession:
         dns_nameservers: Optional[str] = None,
         doh_template: Optional[str] = None,
         dns_secure_mode: Optional[int] = None,
-        dns_over_tls: bool = False,
+        dns_over_tls: bool = False,  # refused; see the constructor docstring
         dns_rotate: bool = False,
         dns_padding: bool = False,
         hsts_bypass: Optional[str] = None,
@@ -2532,7 +2532,7 @@ class AsyncSession(BaseSession):
         dns_nameservers: Optional[str] = None,
         doh_template: Optional[str] = None,
         dns_secure_mode: Optional[int] = None,
-        dns_over_tls: bool = False,
+        dns_over_tls: bool = False,  # refused; see the constructor docstring
         dns_rotate: bool = False,
         dns_padding: bool = False,
         hsts_bypass: Optional[str] = None,
@@ -2587,7 +2587,10 @@ class AsyncSession(BaseSession):
             dns_nameservers: Resolver servers for this engine.
             doh_template: DNS-over-HTTPS template; needs ``dns_secure_mode``.
             dns_secure_mode: 0 system resolver, 1/2 secure DNS modes.
-            dns_over_tls: Send the resolver's queries over TLS.
+            dns_over_tls: Refused with ``UnsupportedFeature``. Chromium desktop has no
+                DoT client; setting it only disables the built-in resolver and falls
+                back to the system one, silently dropping ``dns_nameservers`` and
+                ``doh_template``. Use ``doh_template`` with ``dns_secure_mode=2``.
             dns_rotate: Rotate the resolver's servers.
             dns_padding: Pad the resolver's queries.
             hsts_bypass: Single-label hosts that skip HSTS.

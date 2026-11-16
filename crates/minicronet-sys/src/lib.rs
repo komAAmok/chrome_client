@@ -1060,4 +1060,31 @@ mod abi_layout_tests {
             assert_eq!(offset_of!(mn_cookie_t, same_site), 51);
         }
     }
+
+    // `dns_over_tls` is documented as must-be-0 in core/abi/minicronet.h and
+    // the Core returns MN_ERROR_INVALID_ARGUMENT for any other value. That
+    // guard is what stops a binding from silently disabling the built-in
+    // resolver: DnsClient::CanUseInsecureDnsTransactions() returns false when
+    // DnsConfig::dns_over_tls_active is set (net/dns/dns_client.cc:168), so the
+    // request falls back to TaskType::SYSTEM and dns_nameservers/doh_template
+    // are dropped. Measured: 4 queries reached the configured server with the
+    // field 0, 0 queries with it 1, and a 200 either way.
+    //
+    // The field must therefore stay reachable and stay one byte wide; a later
+    // ABI edit that widened it would change every offset after it, and the
+    // layout assertions above are the only thing that would notice.
+    #[test]
+    fn dns_over_tls_is_a_single_byte_in_the_config() {
+        assert_eq!(
+            size_of::<mn_engine_config_t>(),
+            if cfg!(target_pointer_width = "64") {
+                248
+            } else {
+                140
+            }
+        );
+        // Named so a rename in the header breaks this test rather than the
+        // guard silently disappearing along with the field.
+        let _: fn(&mn_engine_config_t) -> u8 = |config| config.dns_over_tls;
+    }
 }

@@ -203,8 +203,37 @@ typedef struct mn_engine_config {
   size_t proxy_chain_length;
   /* 0=off 1=automatic 2=secure. Any other value is rejected. */
   uint8_t dns_secure_mode;
+  /* DNS-over-TLS. MUST be 0; any other value is rejected with
+   * MN_ERROR_INVALID_ARGUMENT.
+   *
+   * Chromium's desktop build has no DoT client. `net/dns/` contains only a
+   * plaintext TCP attempt, nothing consumes DnsConfig::dns_over_tls_hostname,
+   * and 853 appears nowhere in the resolver. DnsConfig::dns_over_tls_active is
+   * not a transport selector: it makes
+   * DnsClient::CanUseInsecureDnsTransactions() return false
+   * (net/dns/dns_client.cc:168), so the built-in resolver declines every job
+   * and TaskType::SYSTEM answers instead.
+   *
+   * Measured: with dns_nameservers pointed at a local UDP port, this field 0
+   * delivered 4 queries (A and HTTPS) and 1 delivered 0 on UDP *and* 0 on TCP,
+   * while the request still returned 200 through the system resolver. The
+   * caller asked for an encrypted resolver and got the plaintext system one,
+   * with dns_nameservers silently dropped -- the silent ignore AGENTS section
+   * 8 forbids, which is why the field is now rejected rather than accepted.
+   * Use doh_template + dns_secure_mode=2 for an encrypted resolver. */
   uint8_t dns_over_tls;
+  /* 0/1. Rotates the resolver's nameserver order between queries
+   * (DnsConfigOverrides::rotate). Honoured. */
   uint8_t dns_rotate;
+  /* EDNS0 padding on DNS queries. MUST be 0; any other value is rejected with
+   * MN_ERROR_INVALID_ARGUMENT.
+   *
+   * Chromium has no such control: `net/dns/` contains no padding option,
+   * `DnsConfigOverrides` has no field for it, and the resolver emits its
+   * queries unpadded. Before this refusal the value travelled from the ABI into
+   * EngineOptions and stopped there -- core/source/engine.cc never read it -- so
+   * a caller who asked for padded queries got unpadded ones and no error.
+   * That is the silent ignore AGENTS section 8 forbids. */
   uint8_t dns_padding;
   /* 0 = follow Chrome's default cookie access semantics, which is what the
    * Core already does. Values 1..3 would be a policy engine of our own, which

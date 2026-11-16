@@ -2560,3 +2560,70 @@ RFC 6265bis 把 `SameSite` 的取值定义为大小写不敏感，所以比较�
 `net/dns/host_resolver.h` 后发现是 **156**：86/95/118/130/152 都没有该字段，156/157 有。
 差一个版本号看起来无关紧要，但它决定了「这套注入点能不能用在更早的 Chromium 上」，
 所以文档里改成了逐 tag 列出的具体版本。**否定性结论同样需要证据**（AGENTS §11）。
+
+---
+
+## 75. `dns_over_tls` 不是「用 DoT 解析」，是「关掉内置解析器」
+
+**现象**：README 把 DoT 标成 ✓。实测 `dns_over_tls=True` 配 `dns_nameservers` 指向本地
+UDP 端口时，服务端收到 **0 个查询**（TCP 也 0 个），而请求照样返回 200。
+
+**根因**：Chromium 桌面版**根本没有 DoT 客户端**。`net/dns/` 里只有明文的
+`dns_tcp_attempt`，没有任何地方消费 `DnsConfig::dns_over_tls_hostname`，853 端口在
+整个解析器里一次都不出现。`dns_over_tls_active` 的语义是**闸门**，不是传输选择：
+
+```cpp
+// net/dns/dns_client.cc:168
+case InsecureDnsMode::kEnabledBuiltIn: {
+  const DnsConfig& config = GetEffectiveConfig();
+  return !config.nameservers.empty() && !config.unhandled_options &&
+         !config.dns_over_tls_active;   // <- 置 1 就返回 false
+}
+```
+
+内置解析器因此拒绝每一个 job，`TaskType::SYSTEM` 接手；`dns_nameservers` 与
+`doh_template` 全部被丢弃。**调用方要求加密解析，静默拿到明文系统解析。**
+
+**实测对照**（本地 UDP 探针数包）：
+
+| 配置 | 到达配置服务器的查询 | 结果 |
+| --- | --- | --- |
+| `dns_nameservers` | 4 个（A(1) + HTTPS(65)） | 200 |
+| 同上 + `dns_over_tls=True` | **0 个**（UDP 与 TCP 都是 0） | 200（系统解析） |
+| 同上 + `dns_rotate` | 4 个 | 200 |
+| 同上 + `dns_padding` | 4 个 | 200 |
+
+**修法**：绑定层与 Core 各拒绝一次，`MN_ERROR_INVALID_ARGUMENT` /
+`UnsupportedFeature`，并在错误信息里指向能用的替代（`doh_template` +
+`dns_secure_mode=2`）。ABI 头文件相应把该字段改成「必须为 0」。
+
+**为什么这是 fail-closed 而不是功能缩水**：AGENTS §8 的承诺是「无法用 Chromium
+忠实实现的选项必须抛错」。DoT 正是这种情况——不是没实现，是上游没有可用的实现，
+接受它只会改变一个与它同名但语义相反的东西。
+
+**教训**：一个选项「被传给下层」不等于「下层做了这件事」。`dns_over_tls` 一路传递
+到 `DnsConfigOverrides::dns_over_tls_active` 完全正确，错的是**那个字段的语义**。
+判断一个开关是否真的生效，唯一可靠的方法是**数下层的可观测行为**（这里是 DNS 包），
+而不是看它有没有被写到某个结构体里。
+
+## 76. 同一个缺陷模式在同一张表里出现了两次
+
+修完 `dns_over_tls`（LESSONS 75）之后，我用同一把尺子量了它旁边的一格，
+`dns_padding` 立刻掉出来：
+
+| 选项 | ABI 接收 | Core 传给下层 | 下层真的做了吗 |
+| --- | --- | --- | --- |
+| `dns_nameservers` | ✓ | `overrides.nameservers` | ✓ 数到 4 个查询 |
+| `dns_rotate` | ✓ | `overrides.rotate` | ✓ |
+| `dns_over_tls` | ✓ | `overrides.dns_over_tls_active` | ✗ 反而是**关掉**内置解析器 |
+| `dns_padding` | ✓ | `options.dns_padding`，**到此为止** | ✗ `engine.cc` 一次都没读过 |
+
+四个选项里两个是假的，而 README 当时把四个都标成 ✓。
+
+**规则**：修一个「被接受但没生效」的选项时，**先把同一组里每一个选项都数一遍**。
+它们共享同一条传递路径，所以同一个断点往往不止掐断一个值——`dns_padding` 断在
+`EngineOptions` 与 `engine.cc` 之间，而 `dns_over_tls` 断在下层的语义上，两个断点
+不同，但都藏在这张表的同一行附近。
+
+**判据（可执行）**：对每个选项问「我在下层能数到什么」。数得出来的才算 ✓，
+数不出来的要么修，要么改成抛错。**「它被写进了某个结构体」不算证据。**

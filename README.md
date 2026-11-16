@@ -78,7 +78,7 @@ Profile 影响 TLS ClientHello、ALPN、HTTP/2 设置、QUIC/H3 和相关 Chromi
 | HTTPS/TLS、证书校验 | ✓ | ✓ | `verify=False` 或 `verify="/path/ca.pem"` 自定义 CA；证书失败按具体检查项报错 |
 | mTLS 客户端证书 | ✓ | ✓ | `cert=("c.pem","k.pem")` 或单个合并 PEM；服务端要求时自动出示，不改变 ClientHello |
 | 域名映射到指定 IP | ✓ | ✓ | `host_mapping="MAP cdn.test 93.184.216.34"`；**只改写解析结果**，SNI、Host 头、证书校验仍用域名 |
-| DNS 服务器 / DoH / DoT | ✓ | ✓ | `dns_nameservers="1.1.1.1"`、`doh_template=...` 需配 `dns_secure_mode=1/2`、`dns_over_tls`、`dns_rotate`、`dns_padding`。实测：指向死服务器的 `dns_nameservers` 仍返回 200（Chromium 的 SYSTEM 兜底）；`dns_secure_mode=2` 的 DoH 不回退 |
+| DNS 服务器 / DoH（DoT 不支持，抛错） | ✓ | ✓ | `dns_nameservers="1.1.1.1"`、`doh_template=...` 需配 `dns_secure_mode=1/2`、`dns_rotate`（`dns_padding` 不支持，抛错）。实测：指向死服务器的 `dns_nameservers` 仍返回 200（Chromium 的 SYSTEM 兜底）；`dns_secure_mode=2` 的 DoH 不回退 |
 | ECH（Encrypted ClientHello） | ✓ GREASE | ✓ | `Response.ech_status` 报告 `success` / `rejected` / `not_attempted`。**版本边界：`chrome_118` 及以前不发 ECH 扩展，`chrome_119` 起发 GREASE**（payload 长度在 372/436/500/564 间随机，正是 GREASE 的特征）。桌面 Chromium 只从 DNS HTTPS 记录取 ECHConfigList，本引擎不取，所以真实配置永远不出现，`ech_status` 恒为 `not_attempted`。逐版本证据见 `docs/ABI.md` 末节 |
 | 平台身份 | ✓ | ✓ | `platform="windows"/"macos"/"linux"`；UA 组、`sec-ch-ua-platform`、`sec-ch-ua-mobile` 同源，Linux 主机可发 Windows UA |
 | 每 origin 连接上限 | ✓ | ✓ | `max_sockets_per_group=32`；默认 0 保留 Chromium 自身的 6，提高是对被模仿浏览器的可观测偏离 |
@@ -504,12 +504,14 @@ Cookie 会按 URL 匹配后附加到握手上。
 | `params`、`data`、`json`、`content`、`files`、`multipart` | ✓ |
 | `headers`、`cookies`、`auth`、`timeout` | ✓ |
 | 删除 Core 自有的头（`User-Agent`、`Accept-Encoding` 等） | ✗ 抛 `UnsupportedFeature`；覆盖仍然可以 |
+| `dns_padding=True` | ✗ 抛 `UnsupportedFeature`；Chromium 没有任何 EDNS0 padding 控制，这个值曾经一路传到 `EngineOptions` 就断了（`core/source/engine.cc` 从不读它），调用方要求填充查询、实际发出未填充的，且没有任何提示 |
+| `dns_over_tls=True` | ✗ 抛 `UnsupportedFeature`；Chromium 桌面版没有 DoT 客户端，设了只会禁用内置解析器（`net/dns/dns_client.cc:168`）并静默退回系统解析，`dns_nameservers`/`doh_template` 全部失效。加密解析请用 `doh_template` + `dns_secure_mode=2` |
 | 设置 hop-by-hop 头（`Connection`、`Keep-Alive`、`TE`、`Trailer`、`Upgrade`、`Proxy-Connection`） | ✗ 抛 `UnsupportedFeature`；Chromium 拥有连接生命周期，h2/h3 上这些字段被直接丢弃 |
 | `timeout=(connect, read)` 两值不同 | ✗ 抛 `UnsupportedFeature`（ABI v11 只有一个期限）；两值相同可用 |
 | `proxies`、`proxy`、`proxy_auth`、`trust_env`、`NO_PROXY` | ✓ |
 | `verify=True/False/"/path/ca.pem"` | ✓ |
 | `host_mapping="MAP <域名> <IP>[:端口]"`、`EXCLUDE <域名>`、以及它们的列表 | ✓ 只改写解析结果，SNI/Host/证书校验仍是域名；写错关键字抛 `UnsupportedFeature` |
-| `dns_nameservers`、`doh_template`、`dns_secure_mode`、`dns_over_tls`、`dns_rotate`、`dns_padding` | ✓ 任一非空即改由 Chromium 自带解析器处理；`doh_template` 缺 `dns_secure_mode` 抛错而不是被忽略。**实测**：`dns_nameservers` 指向本地 53 端口时服务端真的收到 A(1) 与 HTTPS(65) 两类查询；`doh_template` 指向 `127.0.0.1:1` 在 `dns_secure_mode=2` 下失败、在 `=1` 下回退到系统解析成功——这正是 secure 与 opportunistic 的区别 |
+| `dns_nameservers`、`doh_template`、`dns_secure_mode`、`dns_rotate` | ✓ 任一非空即改由 Chromium 自带解析器处理；`doh_template` 缺 `dns_secure_mode` 抛错而不是被忽略。**实测**：`dns_nameservers` 指向本地 53 端口时服务端真的收到 A(1) 与 HTTPS(65) 两类查询；`doh_template` 指向 `127.0.0.1:1` 在 `dns_secure_mode=2` 下失败、在 `=1` 下回退到系统解析成功——这正是 secure 与 opportunistic 的区别 |
 | `platform`、`max_sockets_per_group`、`hsts_bypass`、`proxy_chain` | ✓ 都是引擎级、进 engine 缓存键；`platform` 同时决定 UA 组与 client hints |
 | `cert=("c.pem","k.pem")`、`cert="combined.pem"`、`set_client_certificate()` | ✓ 服务端发 CertificateRequest 时才出示，不影响 ClientHello 指纹 |
 | `allow_redirects`、`max_redirects`、`history`、最终 URL | ✓ |

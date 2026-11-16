@@ -89,7 +89,7 @@ class SessionBinding:
         dns_nameservers: Optional[str] = None,
         doh_template: Optional[str] = None,
         dns_secure_mode: int = 0,
-        dns_over_tls: bool = False,
+        dns_over_tls: bool = False,  # refused; see the constructor docstring
         dns_rotate: bool = False,
         dns_padding: bool = False,
         hsts_bypass: Optional[str] = None,
@@ -264,7 +264,7 @@ class EngineConfig:
         dns_nameservers: Optional[str] = None,
         doh_template: Optional[str] = None,
         dns_secure_mode: int = 0,
-        dns_over_tls: bool = False,
+        dns_over_tls: bool = False,  # refused; see the constructor docstring
         dns_rotate: bool = False,
         dns_padding: bool = False,
         hsts_bypass: Optional[str] = None,
