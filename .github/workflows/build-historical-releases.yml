@@ -133,6 +133,19 @@ jobs:
         with:
           ref: ${{ matrix.tag }}
           lfs: true
+      # 历史 tag 里没有本次新增的校验工具（它们只存在于 main）。
+      # 从 workflow 所在的提交把它们取下来，而不是要求每个 tag 都有。
+      - name: Fetch release tooling from the workflow commit
+        shell: bash
+        run: |
+          git fetch --depth=1 origin "${{ github.sha }}" 2>/dev/null || true
+          for f in tools/verify-release-wheel.py; do
+            if [[ ! -f "$f" ]]; then
+              git show "${{ github.sha }}:$f" > "$f"
+              chmod +x "$f"
+              echo "restored $f from ${{ github.sha }}"
+            fi
+          done
 
       # 0.2.7 / 0.2.8 只带 8 个平台产物，没有 linux-armv7；用 test 显式判断而不是
       # 让 checkout 失败，这样该组合记 skipped 而不是把整个 tag 判红。
