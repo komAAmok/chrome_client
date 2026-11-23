@@ -19,7 +19,6 @@ So a release wheel is checked on three independent facts:
         --core-target linux-x86_64
 """
 
-from __future__ import annotations
 
 import argparse
 import pathlib
@@ -44,25 +43,25 @@ RUNTIME_BY_TARGET = {
 VERSION_RE = re.compile(rb"\b\d+\.\d+\.\d+\b")
 
 
-def die(message: str) -> None:
+def die(message):
     print(f"::error::{message}", file=sys.stderr)
     raise SystemExit(1)
 
 
-def wheels_for(dist: pathlib.Path) -> list[pathlib.Path]:
+def wheels_for(dist):
     found = sorted(dist.glob("*.whl"))
     if not found:
         die(f"no wheel under {dist}")
     return found
 
 
-def version_from_tag(tag: str) -> str:
+def version_from_tag(tag):
     if not tag.startswith("v"):
         die(f"tag {tag!r} does not start with v")
     return tag[1:]
 
 
-def main(argv: list[str]) -> int:
+def main(argv):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dist", type=pathlib.Path, required=True)
     parser.add_argument("--tag", required=True)

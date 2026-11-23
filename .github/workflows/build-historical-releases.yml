@@ -106,7 +106,9 @@ jobs:
               have = set(row["targets"])
               for p in PLATFORMS:
                   if p["core-target"] in have:
-                      matrix.append({**p, "tag": row["tag"], "version": row["version"]})
+                      pytag = p["py"].replace(".", "")
+                      matrix.append({**p, "tag": row["tag"], "version": row["version"],
+                                     "pytag": pytag})
           print(f"::notice::matrix is {len(matrix)} jobs", file=sys.stderr)
           print("tags=" + json.dumps([r["tag"] for r in rows]))
           print("map=" + json.dumps(rows))
@@ -124,6 +126,11 @@ jobs:
       max-parallel: 6
       matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
     runs-on: ${{ matrix.runner }}
+    env:
+      # Linux 上用 manylinux 容器自带的解释器（/opt/python/cp39-cp39/bin/python3.9），
+      # 因为 ubuntu-latest 现在是 26.04，setup-python 装不到 3.9。其他平台用 runner
+      # 自带的 python3，由 setup-python 保证版本。
+      PY: ${{ startsWith(matrix.runner, 'ubuntu') && format('/opt/python/cp{0}-cp{0}/bin/python{1}', matrix.pytag, matrix.py) || 'python3' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -160,7 +167,7 @@ jobs:
         if: steps.gate.outputs.present == 'true'
         shell: bash
         run: |
-          python3 - "${{ matrix.core-target }}" <<"PY"
+          "${PY}" - "${{ matrix.core-target }}" <<"PY"
           import hashlib, json, pathlib, sys
           target = sys.argv[1]
           root = pathlib.Path("core/binaries") / target
@@ -174,8 +181,12 @@ jobs:
           print(f"core ok: {target} {manifest.get('chromium_revision', '')[:12]}")
           PY
 
+      # setup-python 在 ubuntu-latest 上装不到 3.9：runner 已经是 Ubuntu 26.04，
+      # 该版本的 Python 清单里没有 3.9（实测报 "version 3.9 ... was not found
+      # for Ubuntu 26.04"）。build-wheels.yml 的做法是用 manylinux 容器自带的
+      # /opt/python/cp39，本文件沿用：Linux 上不跑 setup-python，其他平台照旧。
       - uses: actions/setup-python@v5
-        if: steps.gate.outputs.present == 'true'
+        if: steps.gate.outputs.present == 'true' && !startsWith(matrix.runner, 'ubuntu')
         with:
           python-version: ${{ matrix.py }}
           architecture: ${{ matrix.arch }}
@@ -214,7 +225,7 @@ jobs:
         if: steps.gate.outputs.present == 'true' && startsWith(matrix.runner, 'macos')
         shell: bash
         run: |
-          python3 -m pip install --disable-pip-version-check delocate
+          "${PY}" -m pip install --disable-pip-version-check delocate
           mkdir -p repaired
           DYLD_LIBRARY_PATH="$PWD/core/binaries/${{ matrix.core-target }}" \
             delocate-wheel -w repaired dist/*.whl
@@ -223,10 +234,10 @@ jobs:
           # Core 是按 mac_deployment_target 13.0 编的，delocate 只改 install name，
           # 不改 wheel 的 platform tag。历史 tag 里不一定有这个脚本，缺就跳过。
           if [[ -f tools/macos-wheel-floor.py ]]; then
-            python3 tools/macos-wheel-floor.py dist/*.whl
+            "${PY}" tools/macos-wheel-floor.py dist/*.whl
           else
             git show "${{ github.sha }}:tools/macos-wheel-floor.py" > tools/macos-wheel-floor.py
-            python3 tools/macos-wheel-floor.py dist/*.whl
+            "${PY}" tools/macos-wheel-floor.py dist/*.whl
           fi
 
       # 构建成功 ≠ 能用。wheel 里必须真的有对应版本的 Core，且版本串与 tag 一致。
@@ -234,7 +245,7 @@ jobs:
         if: steps.gate.outputs.present == 'true'
         shell: bash
         run: |
-          python3 tools/verify-release-wheel.py \
+          "${PY}" tools/verify-release-wheel.py \
             --dist dist \
             --tag "${{ matrix.tag }}" \
             --version "${{ matrix.tag }}" \
