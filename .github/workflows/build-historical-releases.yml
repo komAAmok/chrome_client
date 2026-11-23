@@ -1,0 +1,279 @@
+name: Build historical releases (v0.2.7 – v0.2.15)
+
+# 为已经存在的 tag 补建 wheel，并（可选地）发布到 GitHub Release / PyPI。
+#
+# 为什么需要单独一个 workflow：build-wheels.yml 只在 push tag 时触发，而这 9 个
+# tag 早已推上去，不会重跑。这里按 tag 逐个 checkout，复用同一套构建方式。
+#
+# Core 不在这里编译：每个 tag 已经把 core/binaries/<target>/ 的产物提交进仓库，
+# 构建只把 Rust 扩展链上去。这正是 build-wheels.yml 里 “Verify Core artifact”
+# 那一步的前提。
+
+on:
+  workflow_dispatch:
+    inputs:
+      tags:
+        description: 逗号分隔的 tag 列表
+        required: true
+        default: v0.2.7,v0.2.8,v0.2.9,v0.2.10,v0.2.11,v0.2.12,v0.2.13,v0.2.14,v0.2.15
+      upload_github_release:
+        description: 把 wheel 挂到对应 tag 的 GitHub Release
+        type: boolean
+        required: true
+        default: true
+      upload_pypi:
+        description: 同时发布到 PyPI（版本号不可重发，确认后再开）
+        type: boolean
+        required: true
+        default: false
+
+permissions:
+  contents: write    # 创建/更新 Release 需要
+  id-token: write    # PyPI Trusted Publishing 需要
+
+concurrency:
+  group: historical-releases
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  MINICRONET_REQUIRE_NATIVE: "1"
+
+jobs:
+  plan:
+    name: Plan the tag × platform matrix
+    runs-on: ubuntu-latest
+    outputs:
+      map: ${{ steps.plan.outputs.map }}
+      tags: ${{ steps.plan.outputs.tags }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0      # 需要读历史 tag 的树
+      - id: plan
+        shell: bash
+        env:
+          TAGS: ${{ inputs.tags }}
+        run: |
+          python3 - <<"PY" >> "$GITHUB_OUTPUT"
+          import json, os, subprocess
+
+          tags = [t.strip() for t in os.environ["TAGS"].split(",") if t.strip()]
+          if not tags:
+              raise SystemExit("no tags given")
+
+          def ls(tag, path):
+              out = subprocess.run(["git", "ls-tree", "--name-only", tag, path],
+                                   capture_output=True, text=True, check=True).stdout
+              return [line.strip() for line in out.splitlines() if line.strip()]
+
+          rows = []
+          for tag in tags:
+              # core/binaries/ 里既有目录也有文件（README.md、targets.json）。
+              # 只有目录才是平台；用 -d 判定，不要靠文件名黑名单。
+              # core/binaries/ 里既有目录也有文件（README.md、targets.json）。
+              # ls-tree --name-only 返回的是完整路径，所以先取 basename 再问
+              # git 它是什么类型；只保留 tree（目录）。
+              targets = set()
+              for path in ls(tag, "core/binaries/"):
+                  name = path.rstrip("/").rsplit("/", 1)[-1]
+                  probe = subprocess.run(
+                      ["git", "cat-file", "-t", f"{tag}:core/binaries/{name}"],
+                      capture_output=True, text=True)
+                  if probe.stdout.strip() == "tree":
+                      targets.add(name)
+              version = subprocess.run(["git", "show", f"{tag}:Cargo.toml"],
+                                       capture_output=True, text=True,
+                                       check=True).stdout
+              version = next(l.split(chr(34))[1] for l in version.splitlines()
+                             if l.startswith("version"))
+              rows.append({"tag": tag, "version": version,
+                           "targets": sorted(targets)})
+              print(f"::notice::{tag} {version} -> {len(targets)} core targets",
+                    file=sys.stderr)
+          print("tags=" + json.dumps([r["tag"] for r in rows]))
+          print("map=" + json.dumps(rows))
+          PY
+
+  # 每个 tag 一个 build 作业，内部再用静态矩阵展开成 12 个 wheel。
+  # 用静态矩阵而不是动态 matrix，是因为 GitHub 的 matrix 不能按 tag 变化；
+  # 做不到的条件（0.2.7 没有 linux-armv7 产物）在步骤里用 test -f 显式跳过并记 note。
+  build:
+    name: ${{ matrix.tag }} / ${{ matrix.core-target }} / ${{ matrix.binding }}
+    needs: plan
+    strategy:
+      fail-fast: false
+      max-parallel: 6
+      matrix:
+        tag: ${{ fromJSON(needs.plan.outputs.tags) }}
+        include:
+          # ---- linux ----
+          - { core-target: linux-x86_64,  binding: python,   runner: ubuntu-latest,      manifest: bindings/python/Cargo.toml,   py: "3.9",  rusttarget: x86_64-unknown-linux-gnu,  manylinux: "2014", lib: libminicronet.so }
+          - { core-target: linux-x86_64,  binding: python36, runner: ubuntu-latest,      manifest: bindings/python36/Cargo.toml, py: "3.9",  rusttarget: x86_64-unknown-linux-gnu,  manylinux: "2014", lib: libminicronet.so, maturin: "0.14.17", rustflags: '--cfg=py_sys_config="WITH_THREAD"' }
+          - { core-target: linux-x86,     binding: python,   runner: ubuntu-latest,      manifest: bindings/python/Cargo.toml,   py: "3.9",  rusttarget: i686-unknown-linux-gnu,    manylinux: "2014", lib: libminicronet.so }
+          - { core-target: linux-x86,     binding: python36, runner: ubuntu-latest,      manifest: bindings/python36/Cargo.toml, py: "3.9",  rusttarget: i686-unknown-linux-gnu,    manylinux: "2014", lib: libminicronet.so, maturin: "0.14.17", rustflags: '--cfg=py_sys_config="WITH_THREAD"' }
+          - { core-target: linux-arm64,   binding: python,   runner: ubuntu-24.04-arm,   manifest: bindings/python/Cargo.toml,   py: "3.10", rusttarget: aarch64-unknown-linux-gnu, manylinux: "2014", lib: libminicronet.so }
+          - { core-target: linux-arm64,   binding: python36, runner: ubuntu-24.04-arm,   manifest: bindings/python36/Cargo.toml, py: "3.10", rusttarget: aarch64-unknown-linux-gnu, manylinux: "2014", lib: libminicronet.so, maturin: "0.14.17", rustflags: '--cfg=py_sys_config="WITH_THREAD"' }
+          # ---- windows ----
+          - { core-target: windows-x86_64, binding: python,   runner: windows-2022, manifest: bindings/python/Cargo.toml,   py: "3.10", arch: x64, rusttarget: x86_64-pc-windows-msvc,  lib: minicronet.dll }
+          - { core-target: windows-x86_64, binding: python36, runner: windows-2022, manifest: bindings/python36/Cargo.toml, py: "3.6",  arch: x64, rusttarget: x86_64-pc-windows-msvc,  lib: minicronet.dll, maturin: "0.14.17" }
+          - { core-target: windows-x86,    binding: python,   runner: windows-2022, manifest: bindings/python/Cargo.toml,   py: "3.10", arch: x86, rusttarget: i686-pc-windows-msvc,    lib: minicronet.dll }
+          - { core-target: windows-x86,    binding: python36, runner: windows-2022, manifest: bindings/python36/Cargo.toml, py: "3.6",  arch: x86, rusttarget: i686-pc-windows-msvc,    lib: minicronet.dll, maturin: "0.14.17" }
+          - { core-target: windows-arm64,  binding: python,   runner: windows-2022, manifest: bindings/python/Cargo.toml,   py: "3.10", arch: x64, rusttarget: aarch64-pc-windows-msvc, lib: minicronet.dll }
+          # ---- macos ----
+          - { core-target: macos-arm64,  binding: python,   runner: macos-15,       manifest: bindings/python/Cargo.toml,   py: "3.10", rusttarget: aarch64-apple-darwin, lib: libminicronet.dylib }
+          - { core-target: macos-arm64,  binding: python36, runner: macos-15,       manifest: bindings/python36/Cargo.toml, py: "3.10", rusttarget: aarch64-apple-darwin, lib: libminicronet.dylib, maturin: "0.14.17" }
+          - { core-target: macos-x86_64, binding: python,   runner: macos-15-intel, manifest: bindings/python/Cargo.toml,   py: "3.10", rusttarget: x86_64-apple-darwin,  lib: libminicronet.dylib }
+          - { core-target: macos-x86_64, binding: python36, runner: macos-15-intel, manifest: bindings/python36/Cargo.toml, py: "3.10", rusttarget: x86_64-apple-darwin,  lib: libminicronet.dylib, maturin: "0.14.17" }
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.tag }}
+          lfs: true
+
+      # 0.2.7 / 0.2.8 只带 8 个平台产物，没有 linux-armv7；用 test 显式判断而不是
+      # 让 checkout 失败，这样该组合记 skipped 而不是把整个 tag 判红。
+      - name: Skip when this tag has no artifact for the target
+        id: gate
+        shell: bash
+        run: |
+          if [[ -f "core/binaries/${{ matrix.core-target }}/${{ matrix.lib }}" ]]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::${{ matrix.tag }} has no ${{ matrix.core-target }} artifact; skipping"
+          fi
+
+      - name: Verify Core artifact matches its manifest
+        if: steps.gate.outputs.present == 'true'
+        shell: bash
+        run: |
+          python3 - "${{ matrix.core-target }}" <<"PY"
+          import hashlib, json, pathlib, sys
+          target = sys.argv[1]
+          root = pathlib.Path("core/binaries") / target
+          manifest = json.loads((root / "manifest.json").read_text())
+          path = root / manifest["library"]
+          assert hashlib.sha256(path.read_bytes()).hexdigest() == manifest["sha256"],
+                 f"{target}: sha256 mismatch vs manifest"
+          assert path.stat().st_size == manifest["size_bytes"],
+                 f"{target}: size mismatch vs manifest"
+          print(f"core ok: {target} {manifest.get('chromium_revision', '')[:12]}")
+          PY
+
+      - uses: actions/setup-python@v5
+        if: steps.gate.outputs.present == 'true'
+        with:
+          python-version: ${{ matrix.py }}
+          architecture: ${{ matrix.arch }}
+
+      - name: Install Rust target
+        if: steps.gate.outputs.present == 'true'
+        shell: bash
+        run: rustup target add ${{ matrix.rusttarget }}
+
+      - name: Stage Windows runtime next to the extension
+        if: steps.gate.outputs.present == 'true' && startsWith(matrix.runner, 'windows')
+        shell: pwsh
+        run: .\tools\stage-windows-wheel.ps1 -Target ${{ matrix.core-target }} -Binding ${{ matrix.binding }}
+
+      - name: Build wheel
+        if: steps.gate.outputs.present == 'true'
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.rusttarget }}
+          manylinux: ${{ matrix.manylinux }}
+          maturin-version: ${{ matrix.maturin || 'latest' }}
+          args: >-
+            --release --locked
+            --manifest-path ${{ matrix.manifest }}
+            --target ${{ matrix.rusttarget }}
+            --out dist
+        env:
+          RUSTFLAGS: ${{ matrix.rustflags }}
+          LD_LIBRARY_PATH: ${{ github.workspace }}/core/binaries/${{ matrix.core-target }}:/io/core/binaries/${{ matrix.core-target }}:/usr/lib64:/lib64:/usr/lib:/lib
+          AUDITWHEEL_LD_LIBRARY_PATH: ${{ github.workspace }}/core/binaries/${{ matrix.core-target }}:/io/core/binaries/${{ matrix.core-target }}:/usr/lib64:/lib64:/usr/lib:/lib
+
+      # 构建成功 ≠ 能用。wheel 里必须真的有对应版本的 Core，且版本串与 tag 一致。
+      - name: Verify the wheel embeds the matching Core
+        if: steps.gate.outputs.present == 'true'
+        shell: bash
+        run: |
+          python3 tools/verify-release-wheel.py \
+            --dist dist \
+            --tag "${{ matrix.tag }}" \
+            --version "${{ matrix.tag }}" \
+            --core-target "${{ matrix.core-target }}"
+
+      - uses: actions/upload-artifact@v4
+        if: steps.gate.outputs.present == 'true'
+        with:
+          name: wheel-${{ matrix.tag }}-${{ matrix.core-target }}-${{ matrix.binding }}
+          path: dist/*.whl
+          if-no-files-found: error
+
+  release:
+    name: Attach wheels to GitHub Releases
+    needs: [plan, build]
+    if: inputs.upload_github_release
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        tag: ${{ fromJSON(needs.plan.outputs.tags) }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: wheel-${{ matrix.tag }}-*
+          path: dist
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ matrix.tag }}
+          name: ${{ matrix.tag }}
+          files: dist/*.whl
+          fail_on_unmatched_files: true
+          # 已存在的 Release 追加附件而不是覆盖说明
+          append_body: true
+
+  pypi:
+    name: Publish to PyPI
+    needs: [plan, build]
+    if: inputs.upload_pypi
+    runs-on: ubuntu-latest
+    environment: pypi
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: wheel-*
+          path: dist
+          merge-multiple: true
+      # 版本号不可重发：先检查这些版本在 PyPI 上是否已存在，存在就停。
+      - name: Refuse to overwrite an existing release
+        shell: bash
+        run: |
+          python3 - <<"PY"
+          import json, urllib.request, sys, pathlib, re
+          versions = set()
+          for whl in pathlib.Path("dist").glob("*.whl"):
+              m = re.match(r"chrome_client-([0-9.]+)-", whl.name)
+              if m:
+                  versions.add(m.group(1))
+          print("versions in dist:", sorted(versions))
+          try:
+              data = json.load(urllib.request.urlopen(
+                  "https://pypi.org/pypi/chrome_client/json", timeout=30))
+              existing = set(data.get("releases", {}))
+          except Exception as exc:
+              print("could not read PyPI index:", exc)
+              sys.exit(1)
+          clash = sorted(versions & existing)
+          if clash:
+              print(f"::error::versions already on PyPI: {clash}")
+              sys.exit(1)
+          print("no clash; safe to upload")
+          PY
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/
