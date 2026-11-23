@@ -126,11 +126,10 @@ jobs:
       max-parallel: 6
       matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
     runs-on: ${{ matrix.runner }}
-    env:
-      # Linux 上用 manylinux 容器自带的解释器（/opt/python/cp39-cp39/bin/python3.9），
-      # 因为 ubuntu-latest 现在是 26.04，setup-python 装不到 3.9。其他平台用 runner
-      # 自带的 python3，由 setup-python 保证版本。
-      PY: ${{ startsWith(matrix.runner, 'ubuntu') && format('/opt/python/cp{0}-cp{0}/bin/python{1}', matrix.pytag, matrix.py) || 'python3' }}
+    # 注意：/opt/python/cp39-* 只存在于 manylinux 容器内（maturin-action 自己会进
+    # 容器，用的是 --manylinux 参数）。宿主机上的步骤一律用 runner 自带的 python3，
+    # 因为宿主路径里没有 cp39。第一版把 PY 全局设成容器路径，导致 Core 校验在宿主
+    # 上 exit 127。
     steps:
       - uses: actions/checkout@v4
         with:
@@ -167,7 +166,7 @@ jobs:
         if: steps.gate.outputs.present == 'true'
         shell: bash
         run: |
-          "${PY}" - "${{ matrix.core-target }}" <<"PY"
+          python3 - "${{ matrix.core-target }}" <<"PY"
           import hashlib, json, pathlib, sys
           target = sys.argv[1]
           root = pathlib.Path("core/binaries") / target
@@ -225,7 +224,7 @@ jobs:
         if: steps.gate.outputs.present == 'true' && startsWith(matrix.runner, 'macos')
         shell: bash
         run: |
-          "${PY}" -m pip install --disable-pip-version-check delocate
+          python3 -m pip install --disable-pip-version-check delocate
           mkdir -p repaired
           DYLD_LIBRARY_PATH="$PWD/core/binaries/${{ matrix.core-target }}" \
             delocate-wheel -w repaired dist/*.whl
@@ -234,10 +233,10 @@ jobs:
           # Core 是按 mac_deployment_target 13.0 编的，delocate 只改 install name，
           # 不改 wheel 的 platform tag。历史 tag 里不一定有这个脚本，缺就跳过。
           if [[ -f tools/macos-wheel-floor.py ]]; then
-            "${PY}" tools/macos-wheel-floor.py dist/*.whl
+            python3 tools/macos-wheel-floor.py dist/*.whl
           else
             git show "${{ github.sha }}:tools/macos-wheel-floor.py" > tools/macos-wheel-floor.py
-            "${PY}" tools/macos-wheel-floor.py dist/*.whl
+            python3 tools/macos-wheel-floor.py dist/*.whl
           fi
 
       # 构建成功 ≠ 能用。wheel 里必须真的有对应版本的 Core，且版本串与 tag 一致。
@@ -245,7 +244,7 @@ jobs:
         if: steps.gate.outputs.present == 'true'
         shell: bash
         run: |
-          "${PY}" tools/verify-release-wheel.py \
+          python3 tools/verify-release-wheel.py \
             --dist dist \
             --tag "${{ matrix.tag }}" \
             --version "${{ matrix.tag }}" \
