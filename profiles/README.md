@@ -62,11 +62,11 @@ narrows ALPN to `[h2]` and, because the ClientHello then loses the
 
 | Protocol | Releases with captures | Note |
 | --- | --- | --- |
-| h1 | 72 (86..157) | 6 connections each |
-| h2 | 72 (86..157) | 6 connections each |
-| h3 | 65 (93..157) | 86..92 could not complete a QUIC handshake against the reference endpoint; the failure is recorded per release |
+| h1 | 73 (86..158) | 6 connections each |
+| h2 | 73 (86..158) | 6 connections each |
+| h3 | 66 (93..158) | 86..92 could not complete a QUIC handshake against the reference endpoint; the failure is recorded per release |
 
-209 protocol/release pairs in total. The h3 gap is a property of those Chrome
+212 protocol/release pairs in total. The h3 gap is a property of those Chrome
 builds, not a missing capture: they predate Chrome's QUIC fingerprint reaching
 the shape the endpoint requires, and the Core rejects a forced-H3 engine on
 those profiles with `MN_ERROR_PROFILE_UNSUPPORTED` rather than pretending

@@ -14,7 +14,7 @@
 - Chromium revision：`58bcc148f76b8975bbe59f1a6012d4ae409d62a9`（Chrome 156.0.8078.31 stable）
 - Python 发布版本与 crate 版本同号（不再有四段版本号映射）；具体版本号只在根
   `Cargo.toml` 的 `workspace.package.version` 里，本文件不再复述，以免再次漂移
-- Chrome profile：`chrome_86` — `chrome_157`，72 个
+- Chrome profile：`chrome_86` — `chrome_158`，73 个
 
 ## 已完成
 
@@ -191,6 +191,29 @@ wire gate：各 5 条连接、5 个源端口，全部稳定字段一致，`wire_
 `patch_release_comparison.identical_across_patch_releases` 记 `null` 而非编造结果。
 
 证据与复现命令见 `profiles/chrome_156/README.md` 与 `profiles/chrome_157/README.md`。
+
+### chrome_158 已加入（73 个 profile）
+
+抓包来自 `158.0.8127.37`，h1/h2/h3 **各 6 条**完整连接（不是 156/157 的 5 条）。
+源码基准按 AGENTS §9 取该大版本**最新 tag** `158.0.8127.99`（commit `a67074ee`），
+而不是抓包所在的那个 patch tag；这两个事实都记录在 `profiles/chrome_158/source-evidence.json`。
+
+**必须写明的一处不一致**：抓包是 `.37`，源码基准是 `.99`。实测两个 tag 的差异是局部的——
+`boringssl_revision`（`ea9f3a34`）与 `quiche_revision`（`132bfd90`）**完全相同**；
+九份审计源码里八份逐字节相同，只有 `base/rand_util.cc` 变化。该文件承载的是 QUIC
+随机源信号（`quic_random`），不是线缆可观测字段，因此 `.99` 的审计结论适用于 `.37` 的抓包。
+
+wire gate：三协议各 6 条、6 个不同 session，稳定字段六条全等，随机字段（client_random、
+session_id、扩展顺序、GREASE）六条互不相同；trust-anchor ID 与表 28/28 一致。
+
+与 chrome_157 相比，**de-GREASEd cipher 列表、扩展集合、HTTP/2 指纹
+（`1:65536;2:0;4:6291456;6:262144|15663105|0|m,a,s,p`）、supported_versions、
+trust-anchor ID 全部不变**，A 级差异只有 UA 主版本与 BoringSSL/QUICHE revision。
+
+三级证据链全部通过：`--levels 1`（tag/DEPS/12 份源码哈希）、`--levels 2`（三协议各 6 条）、
+`--levels 3`（真实产物 6 次真实请求，`live_connections: 6`）。
+验收记录见 [`CHROME_158_SUPPORT.md`](CHROME_158_SUPPORT.md)，证据与复现命令见
+`profiles/chrome_158/README.md`。
 
 ### chrome_154 与 chrome_155 已加入（57 个 profile）
 
@@ -407,7 +430,7 @@ chrome_86..chrome_98 加入 profile 表后又重算一次（8 平台同批重建
 chrome_86..chrome_98 加入 profile 表之后，8 个平台**再次同批重建**，合计
 **64,748,688 字节**（+28,624，+0.04%：多出的 13 个 profile 条目与 `HistoricalUserAgent`
 的版本串）。下表是这次重建后的产物值；`tools/audit-core-binaries.sh` 会逐个断言
-产物里含 `chrome_86` 与 `chrome_157`，所以「只重建了一个平台」不会再通过门禁：
+产物里含 `chrome_86` 与 `chrome_158`，所以「只重建了一个平台」不会再通过门禁：
 
 | 目标 | 大小（字节） | SHA-256 前缀 |
 | --- | --- | --- |
@@ -482,7 +505,7 @@ SHA-256 `a4cf93ff913b868e`，ELF32 / `ARM` / `EABI5`，DT_NEEDED 与另外两个
 | 结论 | 怎么证明 | 强度 |
 | --- | --- | --- |
 | 8 个产物都由同一份 `core/source/` 编译 | 六个源文件与 Chromium 树里的安装副本 `cmp` 逐字节相同 | 强 |
-| 8 个产物都含全部 72 个 profile id，缺失 0、多余 0、无重复 | `tools/audit-core-binaries.sh` 逐个 grep 首尾 id | 强 |
+| 产物都含全部 73 个 profile id，缺失 0、多余 0、无重复 | `tools/audit-core-binaries.sh` 逐个 grep 首尾 id | 强 |
 | 8 个产物嵌入的 profile 载荷**逐字节相同** | `tools/audit-core-payloads.py`：从生成头取 `trust_anchor_ids_*` 数组，要求每个产物都含这段字节 | 强 |
 | 载荷与 `profiles/normalized_profiles.json` 一致 | 同一个门禁先比对头与输入，头陈旧即失败 | 强 |
 | trust anchor 代码路径没有平台分支 | 所有相关文件里 `trust_anchor` 与 `BUILDFLAG(IS_*)`/`ARCH_CPU_*` 同窗口出现 0 次 | 强 |
@@ -943,7 +966,7 @@ Core 的 `Request::OnAuthRequired` 一次都不执行。逐层证据与调用点
 | --- | --- | --- |
 | `tools/audit-abi.sh` | 20 个符号，header / FFI / Core / 三份导出表一致；注释掉的声明不算声明 | 是 |
 | `tools/audit-abi-layout.py` | 7 个结构体、70 个字段：用 C 编译器取头文件真实的 `offsetof`/`sizeof`，与 Rust `#[repr(C)]` 声明逐字段比对 | 是 |
-| `tools/audit-core-binaries.sh` | 8 个平台通过；比对 manifest 的 `chromium_revision` 与 `CHROMIUM_REVISION`，并**从产物字节里断言含 `chrome_86` 与 `chrome_157`**，所以「只重建了一个平台」不再通过 | 是 |
+| `tools/audit-core-binaries.sh` | 9 个平台通过；比对 manifest 的 `chromium_revision` 与 `CHROMIUM_REVISION`，并**从产物字节里断言含 `chrome_86` 与 `chrome_158`**，所以「只重建了一个平台」不再通过 | 是 |
 | `tools/audit-core-payloads.py` | 8 个平台产物必须逐字节嵌入生成头里的 profile 载荷 |
 | `tools/audit-core-size-ceilings.py` | 三档 `MAX_BYTES` 必须等于「该平台最大产物 × 1.02，向上取整到 1 万」。实测 Linux 8,540,000 / Windows 9,610,000 / macOS 8,120,000 全部满足；**新增 profile 使产物变大时，上限必须同批重算**，否则这里失败 | 是 |
 | `tools/audit-net-error-names.py` | `_NET_ERRORS` 的 69 行逐条与 `net_error_list.h` 比对：0 处错标、0 处陈旧、**0 个未映射的代理类错误**。注释掉的 `// NET_ERROR(...)` 不算定义（17 个已移除码因此不会被误认为当前码） | 否，需 Chromium 树 |

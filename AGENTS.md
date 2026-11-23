@@ -239,7 +239,7 @@ python3 tools/audit-v9-profile-fields.py --evidence-dir $PROFILE_EVIDENCE_DIR
 # protocol, and the built artifact reproducing them. See section 9.
 # Level 3 needs the network and a built Core, so CI runs 1,2 and a
 # developer runs the whole chain before claiming support.
-python3 tools/audit-profile-addition.py --levels 1,2 --profile chrome_157
+python3 tools/audit-profile-addition.py --levels 1,2 --profile chrome_158
 # The four profile gates above read profiles/chrome_<major>/<proto>/captures.json,
 # so profiles/ must stay tracked. Without it they fail on a clean clone instead
 # of skipping: evidence that is absent must not read as evidence that agreed.

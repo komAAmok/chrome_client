@@ -90,6 +90,45 @@ python3 tools/audit-core-payloads.py
 python3 tools/record-core-build-args.py --check
 ```
 
+### 0.2.15 的实测结果
+
+九个平台全部用 0.2.15 重建，`CHROMIUM_REVISION` 与 ABI 12 都不变：
+
+| target | 大小 | ABI |
+| --- | --- | --- |
+| linux-x86_64 | 8,662,576 | 12 |
+| linux-x86 | 8,261,520 | 12 |
+| linux-arm64 | 8,305,952 | 12 |
+| linux-armv7 | 6,249,328 | 12 |
+| macos-x86_64 | 8,135,728 | 12 |
+| macos-arm64 | 7,476,608 | 12 |
+| windows-x86_64 | 9,626,624 | 12 |
+| windows-x86 | 7,664,128 | 12 |
+| windows-arm64 | 8,324,096 | 12 |
+
+本轮源码变化是 `kLastProfileMajor` 从 157 改为 158，加上 profile 表新增一条。
+相对 0.2.14 的产物大小增量（实测，非估算）：
+
+| target | 0.2.14 | 0.2.15 | delta |
+| --- | --- | --- | --- |
+| linux-x86_64 | 8,658,480 | 8,662,576 | +4,096 |
+| linux-x86 | 8,260,920 | 8,261,520 | +600 |
+| linux-arm64 | 8,304,608 | 8,305,952 | +1,344 |
+| linux-armv7 | 6,248,592 | 6,249,328 | +736 |
+| macos-x86_64 | 8,135,728 | 8,135,728 | 0 |
+| macos-arm64 | 7,476,608 | 7,476,608 | 0 |
+| windows-x86_64 | 9,626,112 | 9,626,624 | +512 |
+| windows-x86 | 7,664,128 | 7,664,128 | 0 |
+| windows-arm64 | 8,323,584 | 8,324,096 | +512 |
+
+三个目标大小增量为 0 但确实重建过：它们的 sha256 都变了
+（macos-arm64 `4fe50df4`→`66157efd`、macos-x86_64 `1291977c`→`f4cd0123`、
+windows-x86 `adb52954`→`cbdcb235`），版本串从 0.2.14 变成 0.2.15，只是新增内容
+落进了已有的段填充里，没有推动文件长度。这些数字取自各自 `manifest.json`，不是估算。
+
+`chrome_158` 走完了三级证据链（`--levels 1,2,3` 全 PASS），验收记录见
+[`CHROME_158_SUPPORT.md`](CHROME_158_SUPPORT.md)。
+
 ### 0.2.14 的实测结果
 
 九个平台全部用 0.2.14 重建，`CHROMIUM_REVISION` 与 ABI 12 都不变：
@@ -512,9 +551,9 @@ printing its samples`，`stdout_tail` 保留采样。
   `effective_protocol_params.json`、`network_feature_snapshots.json`，以及每个发布
   版本一个证据目录 `profiles/chrome_152/`、`profiles/chrome_153/`）；运行时只编译
   精简只读表，不把源码证据文本编入二进制。
-- [x] 验证 `chrome_86`--`chrome_157` 的 TLS/ALPN、H2 SETTINGS、QUIC/H3、WS
+- [x] 验证 `chrome_86`--`chrome_158` 的 TLS/ALPN、H2 SETTINGS、QUIC/H3、WS
   和关键 FeatureList 差异；未验证版本保持拒绝或明确降级状态。
-  -> 72 个 profile 全部有三级证据；`audit-tls-version-range.py`、`audit-h1-alps-absence.py`、
+  -> 73 个 profile 全部有三级证据；`audit-tls-version-range.py`、`audit-h1-alps-absence.py`、
      `audit-h3-profile-support.py`、`audit-padding-rule.py` 四个门禁守着，86-92 的 h3
      标为不支持并 fail-closed（实测 chrome_86 + v3 → MN_ERROR_PROFILE_UNSUPPORTED）。
 - [ ] 确认 ProfileContext 在 Engine 创建时冻结，profile namespace 进入连接池、

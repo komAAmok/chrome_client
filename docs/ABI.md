@@ -347,7 +347,7 @@ Python 自己的 32 KiB 级增长——**计数正确，归因错误**。这是�
 | 版本 | ClientHello 里的 ECH 扩展（`0xfe0d`） | payload 长度 |
 | --- | --- | --- |
 | chrome_86 – chrome_118 | **不存在** | — |
-| chrome_119 – chrome_157 | 存在，6 条连接的 payload 各不相同 | 372 / 436 / 500 / 564 |
+| chrome_119 – chrome_158 | 存在，6 条连接的 payload 各不相同 | 372 / 436 / 500 / 564 |
 
 **payload 长度在 372/436/500/564 之间随机浮动**，这正是 GREASE 的判据：真实配置会在六条连接
 里稳定，只有填充的 GREASE 才会每次不同。这条判据由 `tools/verify-wire-capture.py:117`

@@ -49,7 +49,7 @@ SHA-256 和依赖清单。ABI 当前为 v12。Go 和 Node.js 目录目前是绑�
 `chrome<major>` 别名）。**不接受**裸的 `chrome`/`chromium`：那会解析到本构建恰好
 最后收录的 profile，一旦新增 profile，调用方的指纹就会在无人要求的情况下改变，
 因此抛 `ImpersonateError` 并要求写明确切版本。当前支持
-Chrome 86–157，共 72 个 profile；范围外的版本抛 `ImpersonateError`，不会静默降级。
+Chrome 86–158，共 73 个 profile；范围外的版本抛 `ImpersonateError`，不会静默降级。
 `available_profiles()` 返回完整列表。Edge、Safari、Firefox、Tor 等非 Chromium 目标
 同样显式报错，而不是当作 Chrome 处理。
 
@@ -65,6 +65,7 @@ Chrome 86–157，共 72 个 profile；范围外的版本抛 `ImpersonateError`�
 | 134–140 | `chrome_134` … `chrome_140` |
 | 141–147 | `chrome_141` … `chrome_147` |
 | 148–157 | `chrome_148` … `chrome_157`（`chrome_154`–`chrome_157` 用基于 156 内核的 Core，指纹分别按各自 tag 审计） |
+| 158 | `chrome_158`（同样用基于 156 内核的 Core；抓包来自 158.0.8127.37，源码基准取该大版本最新 tag 158.0.8127.99） |
 
 Profile 影响 TLS ClientHello、ALPN、HTTP/2 设置、QUIC/H3 和相关 Chromium 网络
 参数；它不是完整 Chrome 浏览器，也不包含 Blink、扩展、Service Worker 或持久化
@@ -122,7 +123,7 @@ from chrome_client import Session
 
 with Session(impersonate="chrome_155") as session:
     session.get(url, timeout=(5, 15))
-    # 悬停 impersonate= 会列出 chrome_86 … chrome_157，以及 curl-cffi 的
+    # 悬停 impersonate= 会列出 chrome_86 … chrome_158，以及 curl-cffi 的
     # chrome<major> 别名；裸 chrome/chromium 会被拒绝
     # session.get(...) 会补全 headers/cookies/data/json/timeout/proxies/verify/...
 ```
@@ -346,7 +347,7 @@ normal/H2 才对 h2 抓包**；拿 `v1` 去对 h2 抓包必然只报这两处。
 与那个版本的 Chrome 在 `profiles/chrome_155/h1/captures.json` 里留下的六条抓包逐字节
 一致——顺序也一致，包含 `sec-ch-ua`、`sec-ch-ua-mobile`、`sec-ch-ua-platform`、
 `Upgrade-Insecure-Requests`、`Accept`、四个 `Sec-Fetch-*`、`Accept-Encoding`、
-`Accept-Language`。72 个 profile 全部如此，`bindings/python/tests/test_client_hints.py`
+`Accept-Language`。73 个 profile 全部如此，`bindings/python/tests/test_client_hints.py`
 逐个比对，`tools/audit-client-hints.py` 在提交前重新从抓包推导整张表。
 
 **这些头现在由 Core 自己发。** ABI v9 把这 3 组不同的头集合（9 / 11 / 12 个字段，

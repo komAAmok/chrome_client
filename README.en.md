@@ -56,7 +56,7 @@ Pass an exact `chrome_<major>` string through `impersonate` (the curl-cffi-style
 accepted: it would resolve to whichever profile this build happens to ship last,
 so a caller's fingerprint would change whenever a profile is added, silently and
 without the caller asking -- it raises `ImpersonateError` and asks for the exact
-major instead. Chrome 86 through 157 are supported (72 profiles); a version
+major instead. Chrome 86 through 158 are supported (73 profiles); a version
 outside that range raises `ImpersonateError` rather than being downgraded, and
 `available_profiles()` returns the full list. Non-Chromium targets such as Edge,
 Safari, Firefox and Tor also raise rather than being treated as Chrome.
@@ -73,6 +73,7 @@ Safari, Firefox and Tor also raise rather than being treated as Chrome.
 | 134–140 | `chrome_134` … `chrome_140` |
 | 141–147 | `chrome_141` … `chrome_147` |
 | 148–157 | `chrome_148` … `chrome_157` (`chrome_154`–`chrome_157` use the 156-kernel Core; each is audited against its own tag) |
+| 158 | `chrome_158` (same 156-kernel Core; captured from 158.0.8127.37, source baseline is that release line's latest tag 158.0.8127.99) |
 
 Profiles control TLS ClientHello, ALPN, HTTP/2 settings, QUIC/H3 and related
 Chromium network parameters. This is not a full browser: Blink, extensions,
@@ -132,7 +133,7 @@ from chrome_client import Session
 
 with Session(impersonate="chrome_155") as session:
     session.get(url, timeout=(5, 15))
-    # hovering impersonate= lists chrome_86 ... chrome_157 and the curl-cffi
+    # hovering impersonate= lists chrome_86 ... chrome_158 and the curl-cffi
     # chrome<major> aliases; bare chrome/chromium is rejected
     # session.get(...) completes headers/cookies/data/json/timeout/proxies/verify/...
 ```
@@ -346,7 +347,7 @@ left in `profiles/chrome_155/h1/captures.json` across six independent
 connections: `sec-ch-ua`, `sec-ch-ua-mobile`, `sec-ch-ua-platform`,
 `Upgrade-Insecure-Requests`, `User-Agent`, `Accept`, four `Sec-Fetch-*`,
 `Accept-Encoding`, `Accept-Language` -- in capture order. ABI v9 compiles
-those sets into `libminicronet` (three distinct sets cover all 72 profiles: 9,
+those sets into `libminicronet` (three distinct sets cover all 73 profiles: 9,
 11 and 12 fields, 39 KB of text) and `Request::StartOnNetworkThread` sends them
 through `SetExtraRequestHeaders`.
 

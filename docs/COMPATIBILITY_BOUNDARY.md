@@ -344,7 +344,7 @@ ABI v9 item in `docs/NEXT_STEPS.md`.
 | `curl_options` | No libcurl handle exists |
 | `max_recv_speed` | Chromium owns transfer pacing |
 | `referer=` or a `Referer` header | Routed to `URLRequest::SetReferrer`, so it is sent like a real Chrome's |
-| `impersonate` outside `chrome_86`–`chrome_157`, or a non-Chromium family | The Core registers Chromium desktop profiles only |
+| `impersonate` outside `chrome_86`–`chrome_158`, or a non-Chromium family | The Core registers Chromium desktop profiles only |
 
 ### Headers: hop-by-hop fields are refused outright
 

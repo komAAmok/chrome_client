@@ -63,7 +63,7 @@ docstring（Args/Returns/Yields/Raises/Example）。剩下 14 个是**故意**�
 
 `impersonate=` 的类型是三个 `Literal` 的并集：
 
-- `ChromeProfileName`：`chrome_86` … `chrome_157`，共 72 个规范名；
+- `ChromeProfileName`：`chrome_86` … `chrome_158`，共 73 个规范名；
 - `ChromeProfileAlias`：curl_cffi 拼法 `chrome86` … `chrome157`，共 72 个；
 - `ChromeFamilyAlias`：`chrome`、`chromium`，解析到最新 pinned 版本。
 
