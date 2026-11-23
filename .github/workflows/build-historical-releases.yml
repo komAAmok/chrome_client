@@ -29,7 +29,9 @@ on:
 
 permissions:
   contents: write    # 创建/更新 Release 需要
-  id-token: write    # PyPI Trusted Publishing 需要
+  # id-token 只在用 PyPI Trusted Publishing 时需要。用 API token（本项目的默认）
+  # 时它是多余的，但授予它不会改变 token 方式的行为，留着便于将来切换。
+  id-token: write
 
 concurrency:
   group: historical-releases
@@ -242,6 +244,8 @@ jobs:
     needs: [plan, build]
     if: inputs.upload_pypi
     runs-on: ubuntu-latest
+    # environment 只是一个闸门：在仓库 Settings -> Environments 里给它加必需审批，
+    # 就能让每次上 PyPI 都过一个人工确认。它不提供任何凭据。
     environment: pypi
     steps:
       - uses: actions/download-artifact@v4
@@ -274,6 +278,11 @@ jobs:
               sys.exit(1)
           print("no clash; safe to upload")
           PY
+      # 认证方式二选一，按仓库里配了哪一个自动选：
+      #   PYPI_API_TOKEN  secret -> API token 方式（本项目采用）
+      #   否则                   -> Trusted Publishing（需在 PyPI 端预配 publisher）
+      # action 在两者都缺时会失败，不会静默跳过，所以这里不需要额外守卫。
       - uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: dist/
+          password: ${{ secrets.PYPI_API_TOKEN }}
