@@ -19,6 +19,7 @@ from ._python_impl.sessions import (
     normalize_max_sockets as normalize_max_sockets,
     retire_engine_slot as retire_engine_slot,
     check_discard_cache_mode as check_discard_cache_mode,
+    check_discard_explicit_cookies as check_discard_explicit_cookies,
     normalize_host_mapping as normalize_host_mapping,
     normalize_client_cert as normalize_client_cert,
     RetryStrategy as RetryStrategy,

@@ -185,6 +185,13 @@ session.cookies.clear()
 一跳（含重定向）的 `Set-Cookie` 同步进 `session.cookies` 和 `response.cookies`。
 当调用方改动 jar 与 Core 已存的 cookie 冲突时，Core 会覆盖请求头，因此 facade 会
 换一个空 cookie store 的同配置 Engine，让改动真正生效——连接池仍按配置复用。
+`cookies={...}` 只作用于**这一次请求**：实测 `get(url, cookies={"per": "P"})` 之后
+再发一个不带该参数的请求，不会带上 `per`（与 requests 一致）。同名覆盖在请求结束后
+还原成会话里的值，而不是把会话值删掉。已知例外：`discard_cookies=True` 的 302 链，
+第二跳仍会带上第一跳设下的 cookie——抑制需要 per-hop 开关，而 M156 没有
+（`docs/TBD_VERIFICATION.md` T-1），`allow_redirects=False` 是保持承诺的写法。
+同时传 `cookies=` 与 `discard_cookies=True` 会抛 `UnsupportedFeature`（不再静默丢弃）；
+字面 `Cookie` 头则仍以 `discard_cookies` 为准，且不改写调用方传入的请求对象。
 
 `session.proxies` 是普通可变映射，运行期改动立即生效：
 

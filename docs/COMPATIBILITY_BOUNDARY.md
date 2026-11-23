@@ -116,9 +116,10 @@ two sessions with identical configuration must not see each other's cookies.
 ### Cookies: two stores, one of which wins
 
 Chromium's `CookieMonster` parses `Set-Cookie`, applies domain, path, `SameSite`
-and `Secure` policy, and attaches the `Cookie` header itself. ABI v8 exposes no
-handle to it: cookies cannot be read, written, cleared or persisted through the
-ABI. Two consequences the facade works around:
+and `Secure` policy, and attaches the `Cookie` header itself. ABI v8 exposed no
+handle to it; **ABI v9 does** (`mn_engine_cookies_get` / `_set` / `_delete` /
+`_clear`), and since then `session.cookies` is a view over the Core store rather
+than a second copy. What is left is the header-ownership consequence:
 
 - The Core's store *overrides* a caller-supplied `Cookie` header for any URL it
   already holds a cookie for, so sending that header is only meaningful when the
@@ -133,6 +134,32 @@ ABI. Two consequences the facade works around:
 carries domain, path, secure and expiry metadata and `get_dict(domain=...)`
 answers from it. Cookie state survives a proxy or profile change because the jar
 is re-sent to the new Engine.
+
+### Cookies: ``cookies=`` is scoped to one request
+
+A plain mapping has no scope of its own, so `cookielib` records an empty domain
+and an empty path and the store files the cookie under the request host and `/`.
+That made it indistinguishable from a session cookie once the request ended:
+measured, `get(url, cookies={"per": "P"})` followed by a plain `get(url)` sent
+`Cookie: per=P` again, while requests sends nothing on the second call.
+
+Both entry points now retire those rows after the request returns, including the
+error path and both the synchronous and asyncio transfers. Two consequences that
+are part of the contract rather than implementation detail:
+
+- **A shadowed cookie is restored, not dropped.** `session.cookies.set("a", "1")`
+  plus `get(url, cookies={"a": "2"})` sends `a=2` for that request and `a=1`
+  afterwards. Deleting the name outright left the store empty while the jar still
+  held the value, which is the jar-versus-store divergence this section exists to
+  remove.
+- **Every redirect hop carries the value.** Chromium follows the chain inside one
+  `URLRequest`, so the retire runs when the whole request is finished, never
+  mid-chain.
+
+`headers={"Cookie": None}` is now refused, like the other Core-owned fields:
+`CookieMonster` attaches the header itself and outranks a caller value, so the
+removal used to send the stored cookie and raise nothing. `discard_cookies=True`
+is the working spelling of "send no cookie this time".
 
 ### Cookies: a caller write retires, a server write merges
 
@@ -299,7 +326,15 @@ On HTTP/2 and HTTP/3 the situation is worse than "no effect":
 RFC 9113 §8.2.2 / RFC 9114 §4.2 forbid all of them. So accepting a value would
 make the behaviour depend on the negotiated protocol -- silently.
 
-All six are now refused with `UnsupportedFeature`, whether set or removed.
+All six are now refused with `UnsupportedFeature`, whether set or removed,
+and on **every** entry point. That last clause is not decoration: the refusal
+originally sat on `request()` alone, and two ordinary spellings of the same
+request went straight past it -- a session-level `session.headers["Connection"]
+= "close"`, and a `PreparedRequest` built by hand and handed to `send()`.
+Measured before the fix, all five fields reached the wire on HTTP/1.1 down both
+paths, which is the same degradation this section refuses, only spelled
+differently. The check now runs inside both `send()` implementations, which is
+where `request()`, `prepare_request()` + `send()`, and `AsyncSession` converge.
 `transfer-encoding` and `content-length` stay settable: they are body framing,
 which the caller does control, and removing them was already fail-closed.
 
@@ -509,9 +544,12 @@ each abandoned connection leaves a `TIME_WAIT` entry, and once the ephemeral
 port range is consumed a `connect()` to the proxy cannot get a source port.
 
 **`discard_cookies=True` costs one connection per request.** That option has to
-reach a cookie store with nothing in it, and ABI v8 exposes no way to clear one,
-so the facade builds a throwaway Engine for the call and drops it afterwards
-(`sessions.py`, `_one_shot_slot`). A new Engine is a new
+reach a cookie store with nothing in it, so the facade builds a throwaway Engine
+for the call and drops it afterwards (`sessions.py`, `_throwaway_slot`).
+(Before ABI v9 this was the workaround for having no way to clear a store; the
+`mn_engine_cookies_clear` call exists now, but per-request isolation still needs
+a store no other request shares -- see the concurrency measurement below.)
+A new Engine is a new
 `URLRequestContext`: no TLS session cache, no socket pool, no HTTP/2 session.
 Measured over 20 requests to one origin:
 
@@ -536,6 +574,46 @@ replayed (any non-idempotent method, and any streamed body, whose iterator is
 already consumed), and for `ERR_TOO_MANY_RETRIES` (-375), which means the proxy
 rejected the credentials. A configured policy replaces the default rather than
 stacking on it: `retry=2` means three attempts however the request failed.
+### `discard_cookies=True`: what it covers, and the one hop it does not
+
+The option means "neither send nor record a cookie" for the request. Both halves
+hold for every hop the caller starts and for the session afterwards, with one
+documented exception that belongs to Chromium rather than to this facade.
+
+**A redirect hop still carries the cookie an earlier hop set.** Measured on a
+302 chain: the first hop answers `Set-Cookie: hop=SENT`, and the second hop then
+goes out with `Cookie: hop=SENT`. The session jar is empty afterwards, so
+"record" holds; "send" holds only for the first hop.
+
+The cause is in the Core, not in the facade: one `URLRequest` follows its whole
+redirect chain on one `URLRequestContext`, so `CookieMonster` has already
+accepted the hop's `Set-Cookie` by the time
+`URLRequestHttpJob::AddCookieHeaderAndStart` attaches the header for the next
+hop (`net/url_request/url_request_http_job.cc:761`). A per-engine store isolates
+requests from each other, not one request from its own later hops.
+
+Suppressing that would need a per-hop cookie switch, and this Chromium build has
+none: `LOAD_DO_NOT_SEND_COOKIES` was removed in M87 and
+`set_disallow_credentials` also changes private-network behaviour and client
+certificates (`docs/TBD_VERIFICATION.md` T-1 records the tag-by-tag check). Until
+a Core option exists, `allow_redirects=False` is the workaround that keeps the
+promise -- it returns the 3xx and never sends the second hop.
+
+A `cookies=...` mapping is refused instead. It says "carry this on this
+request", which contradicts the option, and the value used to be dropped without
+a word: measured, `get(url, cookies={"d": "4"}, discard_cookies=True)` reached
+the origin with no `Cookie` header and raised nothing, so the caller got a
+request it had not described. Two neighbouring cases are deliberately left
+alone, because each is already pinned by a test:
+
+- A **session** cookie stays silently suppressed -- that is what the option is
+  for, so `Session(cookies={...}).get(url, discard_cookies=True)` keeps
+  working.
+- A literal `Cookie` **header** also loses to the option, and
+  `_discard_config` drops the field from a *copy* so the caller's own
+  `PreparedRequest` keeps it and can be sent again
+  (`test_session_defects.DiscardDoesNotRewriteTheCallersRequest`).
+
 ### Redirects
 
 `allow_redirects=True` lets Chromium follow inside one `URLRequest`, which

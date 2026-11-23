@@ -201,6 +201,16 @@ Core. The facade mirrors every `Set-Cookie` -- including redirect hops -- into
 the Core already stored, the Core would override the request header, so the
 facade switches to an identically configured Engine with an empty cookie store,
 which is what makes the edit take effect.
+A `cookies={...}` mapping is scoped to **that one request**: measured, a plain
+`get(url)` after `get(url, cookies={"per": "P"})` carries no `per` (as requests
+does), and a same-name override is restored to the session value afterwards
+rather than deleting it. One documented exception: on a `discard_cookies=True`
+302 chain the second hop still carries the cookie the first hop set --
+suppressing it needs a per-hop switch this Chromium build does not have
+(`docs/TBD_VERIFICATION.md` T-1), and `allow_redirects=False` is the spelling that
+keeps the promise. Passing `cookies=` together with `discard_cookies=True` now raises
+`UnsupportedFeature` instead of dropping the value silently; a literal `Cookie`
+header still loses to the option, without rewriting the caller's request object.
 
 `session.proxies` is an ordinary mutable mapping, applied on the next request:
 

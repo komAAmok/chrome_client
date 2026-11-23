@@ -15,11 +15,6 @@ import json as _json
 from collections import deque
 from urllib.parse import urlsplit, urlunsplit
 
-try:
-    from collections.abc import Mapping
-except ImportError:  # Python 3.6
-    from collections import Mapping
-
 from . import multipart
 from .cookies import RequestsCookieJar, cookiejar_from_dict
 from .exceptions import (HTTPError, InvalidURL, JSONDecodeError, MissingSchema,
@@ -345,19 +340,22 @@ class PreparedRequest(object):
         self.url = build_url(url, params, quote=self.quote)
 
     def prepare_headers(self, headers):
-        self.headers = Headers()
-        if headers:
-            if isinstance(headers, Headers):
-                for name, value in headers.multi_items():
-                    if value is None:
-                        continue
-                    self.headers.add(name, value)
-            else:
-                for name, value in (headers.items() if isinstance(headers, Mapping)
-                                    else headers):
-                    if value is None:
-                        continue
-                    self.headers[name] = value
+        """Copies the caller's headers, keeping the removals they asked for.
+
+        A ``None`` value is requests' spelling of a deletion. It used to be
+        dropped here without a trace, so the intent never reached the header
+        guards: a hand-built ``PreparedRequest(headers={"Connection": None})``
+        sent the Core's own ``Connection: keep-alive`` with no error, which is
+        the same silent no-op the guards exist to remove. ``Headers`` records
+        the name in ``deleted_names``, which is what they read.
+        """
+        # ``Headers(...)`` rather than a field-by-field copy: its ``_ingest``
+        # also carries the removal record across, and losing that record is what
+        # let a deletion reach the wire as the Core's own value.
+        # ``is not None``, not a truth test: a Headers carrying only removals has
+        # no items, so it is falsy, and copying it with ``if headers`` dropped
+        # exactly the record this method exists to keep.
+        self.headers = Headers(headers) if headers is not None else Headers()
 
     def prepare_body(self, data, files, json=None):
         body = None

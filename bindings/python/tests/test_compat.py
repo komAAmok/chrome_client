@@ -1963,6 +1963,83 @@ class HopByHopHeaderTests(unittest.TestCase):
         self.assertEqual(_ECHOED[-1]["X-Custom"], "1")
         self.assertEqual(_ECHOED[-1]["Content-Type"], "text/plain")
 
+    def test_session_level_headers_are_refused_too(self):
+        """The guard lived on request() only, and session.headers bypassed it.
+
+        Measured before the fix: a session-level Connection, Keep-Alive,
+        Upgrade, Trailer and TE all reached the wire on HTTP/1.1, which is the
+        same degradation the per-request refusal exists to stop, only spelled
+        differently.
+        """
+        for name, value in (("Connection", "close"),
+                            ("Keep-Alive", "timeout=5"),
+                            ("Upgrade", "h2c"),
+                            ("Trailer", "X-Checksum"),
+                            ("TE", "trailers")):
+            with chrome_client.Session() as session:
+                session.headers[name] = value
+                with self.assertRaises(chrome_client.UnsupportedFeature) as caught:
+                    session.get(self.base)
+            self.assertIn(name.lower(), str(caught.exception))
+
+    def test_a_hand_built_prepared_request_is_refused(self):
+        """prepare_request + send is a second documented entry point.
+
+        The same header sent down it reached the wire untouched, so the refusal
+        has to sit on send(), where every path converges, not on request().
+        """
+        with chrome_client.Session() as session:
+            prepared = chrome_client.PreparedRequest()
+            prepared.prepare(method="GET", url=self.base,
+                             headers={"Connection": "close"})
+            with self.assertRaises(chrome_client.UnsupportedFeature):
+                session.send(prepared)
+
+    def test_the_none_spelling_survives_into_send(self):
+        """``headers={"Connection": None}`` is requests' spelling of a removal.
+
+        prepare_headers used to discard every None value without recording it,
+        and the guard then saw a request with no opinion about Connection at
+        all. Measured before the fix: the Core sent its own
+        ``Connection: keep-alive`` and no UnsupportedFeature was raised.
+        """
+        with chrome_client.Session() as session:
+            request = chrome_client.Request("GET", self.base,
+                                            headers={"Connection": None})
+            prepared = session.prepare_request(request)
+            self.assertIn("connection", prepared.headers.deleted_names)
+            with self.assertRaises(chrome_client.UnsupportedFeature):
+                session.send(prepared)
+
+    def test_a_headerless_prepared_request_still_sends(self):
+        """The removal record must not become a reason to reject plain traffic."""
+        with chrome_client.Session() as session:
+            prepared = chrome_client.PreparedRequest()
+            prepared.prepare(method="GET", url=self.base)
+            self.assertEqual(session.send(prepared).status_code, 200)
+
+    def test_the_async_entry_points_are_refused_too(self):
+        """AsyncSession.send never touched the guard either."""
+        async def run():
+            async with chrome_client.AsyncSession() as session:
+                prepared = chrome_client.PreparedRequest()
+                prepared.prepare(method="GET", url=self.base,
+                                 headers={"Upgrade": "h2c"})
+                with self.assertRaises(chrome_client.UnsupportedFeature):
+                    await session.send(prepared)
+                request = chrome_client.Request("GET", self.base,
+                                                headers={"Trailer": "X"})
+                with self.assertRaises(chrome_client.UnsupportedFeature):
+                    await session.send(session.prepare_request(request))
+
+        loop = asyncio.new_event_loop()
+        try:
+            asyncio.set_event_loop(loop)
+            loop.run_until_complete(run())
+        finally:
+            asyncio.set_event_loop(None)
+            loop.close()
+
 class CoreOwnedHeaderTests(unittest.TestCase):
     """A removal the Core cannot honour must fail, not silently send the value."""
 
@@ -1988,6 +2065,52 @@ class CoreOwnedHeaderTests(unittest.TestCase):
         with chrome_client.Session(impersonate="chrome_124") as session:
             with self.assertRaises(chrome_client.UnsupportedFeature):
                 session.get(self.base, headers={"Accept-Encoding": None})
+
+    def test_a_session_level_removal_fails_closed_too(self):
+        """session.headers.pop() reached no check, so the value came back.
+
+        Measured before the fix: after
+        Session(impersonate="chrome_124").headers.pop("User-Agent"), the
+        request carried the profile UA and no error was raised -- the silent
+        no-op this class exists to remove, spelled the session-level way.
+        """
+        with chrome_client.Session(impersonate="chrome_124") as session:
+            session.headers["User-Agent"] = "mine/1.0"
+            session.headers.pop("User-Agent")
+            with self.assertRaises(chrome_client.UnsupportedFeature) as caught:
+                session.get(self.base)
+        self.assertIn("user-agent", str(caught.exception).lower())
+
+    def test_removing_the_cookie_header_fails_closed(self):
+        """``Cookie`` is attached by CookieMonster, so removing it does nothing.
+
+        Measured before the fix: a store holding ``c=3`` still sent
+        ``Cookie: c=3`` after the request asked to delete the header, and
+        nothing raised -- the silent no-op this class exists to remove, in the
+        one header the guard had left out.
+        """
+        with chrome_client.Session() as session:
+            session.cookies.set("c", "3", domain="127.0.0.1")
+            with self.assertRaises(chrome_client.UnsupportedFeature) as caught:
+                session.get(self.base, headers={"Cookie": None})
+        self.assertIn("cookie", str(caught.exception).lower())
+
+    def test_the_requests_spelling_of_a_session_removal_fails_too(self):
+        with chrome_client.Session(impersonate="chrome_124") as session:
+            session.headers["Accept-Encoding"] = None
+            with self.assertRaises(chrome_client.UnsupportedFeature):
+                session.get(self.base)
+
+    def test_a_streaming_body_keeps_its_own_content_length_removal(self):
+        """prepare_content_length() drops Content-Length on purpose.
+
+        That deletion is internal and must not be read as the caller asking to
+        remove a Core-owned header, or every streaming upload would fail.
+        """
+        with chrome_client.Session() as session:
+            response = session.post(self.base, data=iter([b"a", b"b"]))
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(_ECHOED[-1].get("Transfer-Encoding"), "chunked")
 
     def test_several_removals_are_all_named(self):
         with chrome_client.Session(impersonate="chrome_124") as session:
@@ -2022,6 +2145,31 @@ class _EchoHeaderHandler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         _ECHOED.append({name: value for name, value in self.headers.items()})
+        body = b"ok"
+        self.send_response(200)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+    def do_POST(self):
+        """Accepts both framings so a streaming upload can be observed.
+
+        Chromium sends a caller-supplied iterator as chunked, which this
+        handler has to consume before it can answer; without it the streaming
+        test only ever saw the fixture's own 501.
+        """
+        _ECHOED.append({name: value for name, value in self.headers.items()})
+        if "chunked" in self.headers.get("Transfer-Encoding", "").lower():
+            while True:
+                size = int(self.rfile.readline().strip() or b"0", 16)
+                if size == 0:
+                    self.rfile.readline()
+                    break
+                self.rfile.read(size)
+                self.rfile.readline()
+        else:
+            length = int(self.headers.get("Content-Length") or 0)
+            if length:
+                self.rfile.read(length)
         body = b"ok"
         self.send_response(200)
         self.send_header("Content-Length", str(len(body)))
@@ -2156,6 +2304,90 @@ class SilentLossRegressionTests(unittest.TestCase):
                                     discard_cookies=True).text
             self.assertNotIn("sid=ABC", discarded)
             self.assertNotIn("taste=sweet", discarded)
+
+    def test_a_cookie_supplied_while_discarding_fails_closed(self):
+        """Both options promise different things, and one used to lose silently.
+
+        Measured before the refusal: `get(url, cookies={"d": "4"},
+        discard_cookies=True)` reached the origin with no Cookie header and
+        raised nothing, so the caller got a request it had not described.
+        """
+        with chrome_client.Session() as session:
+            with self.assertRaises(chrome_client.UnsupportedFeature) as caught:
+                session.get(self.base + "/echo-cookie", cookies={"d": "4"},
+                            discard_cookies=True)
+        self.assertIn("discard_cookies", str(caught.exception))
+
+    def test_a_literal_cookie_header_still_loses_to_discard_cookies(self):
+        """The loud option wins here: discard promise beats a supplied header.
+
+        Pinned by test_session_defects.DiscardDoesNotRewriteTheCallersRequest,
+        which also requires the caller's own object to keep its header -- the
+        field is dropped from a copy, never from the request that was passed in.
+        """
+        with chrome_client.Session() as session:
+            body = session.get(self.base + "/echo-cookie",
+                               headers={"Cookie": "raw=1"},
+                               discard_cookies=True).text
+            self.assertEqual(ast.literal_eval(body), [])
+
+    def test_a_session_cookie_is_still_suppressed_by_discard_cookies(self):
+        """The option exists to suppress stored cookies; that must keep working."""
+        with chrome_client.Session(cookies={"stored": "S"}) as session:
+            body = session.get(self.base + "/echo-cookie",
+                               discard_cookies=True).text
+            self.assertEqual(ast.literal_eval(body), [],
+                             "discard_cookies must send no stored cookie")
+            self.assertEqual(session.cookies.get_dict(), {"stored": "S"},
+                             "discard_cookies must not record either")
+
+    def test_discard_cookies_does_not_suppress_a_plain_request(self):
+        with chrome_client.Session() as session:
+            body = session.get(self.base + "/echo-cookie",
+                               cookies={"d": "4"}).text
+            self.assertEqual(ast.literal_eval(body), ["d=4"])
+
+    def test_a_per_request_cookie_does_not_outlive_its_request(self):
+        """``cookies=`` is request-scoped, and the store is not.
+
+        Measured before the fix: ``get(url, cookies={"per": "P"})`` followed by
+        a plain ``get(url)`` sent ``Cookie: per=P`` again. requests sends
+        nothing on the second call, so a value the caller scoped to one request
+        leaked into every later one.
+        """
+        with chrome_client.Session() as session:
+            first = session.get(self.base + "/echo-cookie",
+                                cookies={"per": "P"}).text
+            self.assertEqual(ast.literal_eval(first), ["per=P"])
+            after = session.get(self.base + "/echo-cookie").text
+            self.assertEqual(ast.literal_eval(after), [],
+                             "a request-scoped cookie reached the next request")
+
+    def test_a_per_request_cookie_does_not_delete_the_session_cookie(self):
+        """Restoring matters as much as deleting.
+
+        Deleting the name outright left the store empty while the jar still held
+        the session value, so every later request sent nothing at all -- the jar
+        and the store had diverged, which is the failure this module exists to
+        remove.
+        """
+        with chrome_client.Session() as session:
+            session.cookies.set("sess", "S", domain="127.0.0.1")
+            overridden = session.get(self.base + "/echo-cookie",
+                                     cookies={"sess": "OVR"}).text
+            self.assertEqual(ast.literal_eval(overridden), ["sess=OVR"])
+            restored = session.get(self.base + "/echo-cookie").text
+            self.assertEqual(ast.literal_eval(restored), ["sess=S"])
+
+    def test_a_per_request_cookie_covers_every_redirect_hop(self):
+        """One URLRequest follows the chain, so the retire must wait for it."""
+        with chrome_client.Session() as session:
+            response = session.get(self.base + "/redirect/0",
+                                   cookies={"per": "P"})
+            self.assertEqual(response.status_code, 200)
+            inner = session.get(self.base + "/echo-cookie").text
+            self.assertEqual(ast.literal_eval(inner), [],
+                             "the per-request cookie outlived the request")
 
     def test_editing_the_cookie_jar_does_not_fill_the_engine_cache(self):
         """A caller edit must not cost a whole Chromium context per request.

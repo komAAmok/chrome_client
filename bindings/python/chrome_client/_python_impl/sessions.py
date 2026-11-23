@@ -228,6 +228,12 @@ _CORE_OWNED_HEADERS = frozenset((
     "connection",
     "content-length",
     "transfer-encoding",
+    # ``CookieMonster`` attaches this field itself and outranks a caller value,
+    # so removing it cannot be honoured: measured, a store holding ``c=3``
+    # still sent ``Cookie: c=3`` after a request asked to delete the header,
+    # and nothing raised. "Use discard_cookies=True" is the working spelling of
+    # the same intent, which is what the refusal message tells the caller.
+    "cookie",
 ))
 
 
@@ -254,6 +260,16 @@ _HOP_BY_HOP_HEADERS = frozenset((
 def _reject_hop_by_hop_headers(headers):
     """Fails closed for fields only the connection layer can honour.
 
+    Called from ``send()`` rather than only from ``_prepare_call``, because
+    ``request()`` is not the only way a header reaches the wire: a session-level
+    ``session.headers["Connection"]`` lands in the prepared set during
+    ``prepare_request``, and the requests contract also lets a caller build a
+    ``PreparedRequest`` by hand and pass it straight to ``send()``. Both bypassed
+    the guard when it lived on the ``request()`` path only -- measured before
+    this moved: ``connection: close``, ``keep-alive``, ``upgrade``, ``trailer``
+    and ``te`` were all sent on HTTP/1.1, which is exactly the degradation the
+    refusal exists to prevent.
+
     Args:
         headers: The prepared request headers, or ``None``.
 
@@ -274,12 +290,15 @@ def _reject_hop_by_hop_headers(headers):
         "accepting a value would make behaviour depend on the negotiated "
         "protocol." % (", ".join(offending),))
 
-def _reject_core_owned_removals(headers, method):
+def _reject_core_owned_removals(headers):
     """Fails closed when a caller asks to remove a header the Core owns.
 
+    Checked on the request headers and again on the session's own: a removal
+    recorded on ``session.headers`` used to reach no check at all, because the
+    merge copies only the caller's deletion record.
+
     Args:
-        headers: The prepared request headers, or ``None``.
-        method: The request method, so the body-framing headers can be judged.
+        headers: A header mapping, or ``None``.
 
     Raises:
         UnsupportedFeature: A removal was requested for a header the binding
@@ -1046,6 +1065,54 @@ def check_discard_cache_mode(discard, cache_mode):
             "discard_cookies=True and read the session's cache."
             % (cache_mode, cache_mode))
     return None
+
+
+def check_discard_explicit_cookies(discard, prepared):
+    """Refuses a ``cookies=`` mapping on a request that discards cookies.
+
+    ``discard_cookies=True`` promises "neither send nor record", measured as an
+    empty ``Cookie`` header; ``cookies=...`` promises "carry this on THIS
+    request". They cannot both hold, and the implementation used to resolve the
+    contradiction by silently dropping what the caller passed: measured,
+    ``get(url, cookies={"d": "4"}, discard_cookies=True)`` reached the origin
+    with no ``Cookie`` header at all and raised nothing, so the caller got a
+    request it had not described. AGENTS section 8: refuse what cannot be
+    honoured.
+
+    Deliberately NOT extended to a literal ``Cookie`` header. That case is
+    already pinned by ``test_session_defects.DiscardDoesNotRewriteTheCallers
+    RequestTests`` as "discard wins, and the caller's own object keeps its
+    header": ``_discard_config`` drops the field from a COPY, so the option
+    keeps its promise without rewriting a request the caller may send again.
+    Refusing it here would break that contract without fixing a silent loss --
+    the caller already expressed the intent twice, and the loud one wins.
+
+    Args:
+        discard: Whether this request asked for "neither send nor record".
+        prepared: The prepared request.
+
+    Returns:
+        ``None``.
+
+    Raises:
+        UnsupportedFeature: The request passed a ``cookies=`` mapping the
+            option would drop.
+
+    Example:
+        >>> check_discard_explicit_cookies(False, None) is None
+        True
+    """
+    if not discard or prepared is None:
+        return None
+    supplied = list(getattr(prepared, "_cookie_additions", None) or [])
+    if not supplied:
+        return None
+    raise UnsupportedFeature(
+        "cookies=%r with discard_cookies=True: the option means neither send "
+        "nor record a cookie, and this mapping asks for one. Measured, the "
+        "value was dropped without a word. Drop discard_cookies=True to send "
+        "it, or drop cookies= to discard cookies."
+        % (sorted(cookie.name for cookie in supplied),))
 
 
 def _join_entries(value, name):
@@ -2050,6 +2117,15 @@ class BaseSession(object):
                                  or self.header_order)
         prepared.quote = getattr(request, "quote", None)
         headers = self._browser_headers(request, prepared)
+        # A removal recorded on the session object reached no check at all: the
+        # merge below only copies the *caller's* deletion record, so
+        # ``session.headers.pop("User-Agent")`` sent the profile UA with no
+        # error -- measured -- which is exactly the silent no-op this module
+        # refuses for the per-request spelling of the same removal. Judged here
+        # and only here because ``PreparedRequest.prepare`` has not run yet: the
+        # Content-Length that ``prepare_content_length`` drops for a streaming
+        # body is not on this object, so no legitimate deletion can be caught.
+        _reject_core_owned_removals(self.headers)
         prepared.prepare(
             method=request.method.upper() if request.method else "GET",
             url=self._absolute_url(request.url),
@@ -2813,14 +2889,16 @@ class BaseSession(object):
             discard: Whether the caller asked for "neither send nor record".
 
         Returns:
-            ``(slot, prepared)``. *slot* is the engine the request runs on --
-            the session's own unless ``discard_cookies`` asked for a throwaway;
-            *prepared* is the request to send, which is a copy when the caller's
-            own object had to lose its Cookie header.
+            ``(slot, prepared, written)``. *slot* is the engine the request runs
+            on -- the session's own unless ``discard_cookies`` asked for a
+            throwaway; *prepared* is the request to send, which is a copy when
+            the caller's own object had to lose its Cookie header; *written* is
+            the list of ``(domain, path, name)`` triples this call put into the
+            store for one request only, which the caller must delete again.
         """
         if discard:
             config, effective = self._discard_config(slot, prepared)
-            return self._throwaway_slot(config), effective
+            return self._throwaway_slot(config), effective, [], []
         # A per-request ``cookies=`` mapping goes into the store for this
         # request. A header would not do: CookieMonster owns the Cookie header
         # and re-attaches whatever it holds, so a cookie the store also has
@@ -2831,6 +2909,17 @@ class BaseSession(object):
         # it -- once, so the seeding does not overwrite that engine's own
         # cookies on every later request.
         self._seed_store_from_jar(slot, prepared.url)
+        # ``(domain, path, name)`` for every cookie this call writes into the
+        # store on the caller's behalf. They are removed again when the request
+        # finishes: a store is not request-scoped, and without this the value
+        # was still on the wire for every later request -- measured,
+        # ``get(url, cookies={"per": "P"})`` followed by a plain ``get(url)``
+        # sent ``Cookie: per=P`` again, while requests sends nothing. The
+        # triples recorded here are the ones the STORE accepted, read back from
+        # it rather than guessed, because it normalises the empty domain to the
+        # request host and an unnormalised delete would not match.
+        written = []
+        previous = []
         per_request = getattr(prepared, "_cookies", None)
         if per_request:
             # Only the cookies the CALLER added for this one request, not the
@@ -2852,6 +2941,10 @@ class BaseSession(object):
                 # back to writing them all. Correct, just not free.
                 additions = list(per_request)
             if additions:
+                # Read the rows this request is about to shadow BEFORE it
+                # shadows them, so the session can be restored afterwards.
+                previous = self._overridden_cookies(slot, prepared.url, additions)
+                host, path = self._request_cookie_scope(prepared.url)
                 with self._cookie_lock:
                     for cookie in additions:
                         try:
@@ -2863,9 +2956,115 @@ class BaseSession(object):
                             # and failing the whole transfer over one bad entry
                             # is not a faithful reading of that.
                             continue
+                        # A cookie that carries its own scope keeps it; a plain
+                        # ``cookies={"k": "v"}`` has none, and the store files it
+                        # under the request host and ``/``
+                        # (``net/cookies/canonical_cookie.cc``). Deleting any
+                        # other triple would miss the row that was actually
+                        # written, and an unnormalised delete is a silent no-op.
+                        written.append(((cookie.domain or host),
+                                        (cookie.path or path), cookie.name))
         # The jar writes through to the store, so the header the Core emits is
         # the one the jar describes. Nothing to compare, nothing to replace.
-        return slot, prepared
+        return slot, prepared, written, previous
+    @staticmethod
+    def _request_cookie_scope(url):
+        """Returns the ``(domain, path)`` a per-request cookie is stored at.
+
+        ``cookies=`` is a plain mapping with no scope of its own, so
+        ``cookielib`` records an empty domain and an empty path, and the store
+        normalises those to the request host and ``/``
+        (``net/cookies/canonical_cookie.cc``). Retiring anything else would
+        miss the row that was actually written, or delete a same-named cookie
+        the caller set at a narrower path.
+
+        Args:
+            url: The request URL.
+
+        Returns:
+            ``(host, "/")``, or ``("", "/")`` when the URL carries no host.
+        """
+        return urlsplit(url or "").hostname or "", "/"
+
+    @staticmethod
+    def _overridden_cookies(slot, url, additions):
+        """Returns the store rows a per-request ``cookies=`` about to replace.
+
+        Without this a request-scoped cookie that shadows a session cookie
+        would DELETE the session cookie on the way out instead of restoring it:
+        measured, ``session.cookies.set("a", "1")`` then
+        ``get(url, cookies={"a": "2"})`` left the store empty, so every later
+        request sent no ``a`` at all while the jar still said ``a=1`` -- the jar
+        and the store had diverged, which is the failure this module existed to
+        remove in the first place.
+
+        Args:
+            slot: The engine the request runs on.
+            url: The request URL.
+            additions: The ``cookielib.Cookie`` objects this request will add.
+
+        Returns:
+            The matching 9-tuples from :meth:`EngineSlot.cookies`.
+        """
+        names = {cookie.name for cookie in additions}
+        if not names:
+            return []
+        host, path = BaseSession._request_cookie_scope(url)
+        scope = {((cookie.domain or host), (cookie.path or path))
+                 for cookie in additions}
+        try:
+            stored = slot.cookies(url)
+        except Exception:
+            return []
+        return [row for row in stored
+                if row[0] in names and (row[2], row[3]) in scope]
+
+    def _retire_request_cookies(self, slot, written, previous, url):
+        """Undoes the store writes a ``cookies=`` mapping made for one request.
+
+        A store is not request-scoped, so a per-request cookie used to outlive
+        the request that asked for it: measured,
+        ``get(url, cookies={"per": "P"})`` then a plain ``get(url)`` still sent
+        ``Cookie: per=P``, while requests sends nothing on the second call.
+        That made "request-level" the only level that silently persisted.
+
+        Deleting afterwards rather than skipping the store is the only way that
+        works: ``CookieMonster`` owns the header, so a per-request cookie has to
+        BE in the store to be sent at all. Following redirects is one
+        ``URLRequest``, so every hop already carried the value before this runs.
+
+        A cookie this request shadowed is written back afterwards, so the
+        session keeps the value it had. That is the difference between
+        "request-scoped" and "destroyed on the way out".
+
+        Args:
+            slot: The engine the request ran on.
+            written: ``(domain, path, name)`` triples from ``_resolve_cookies``.
+            previous: The rows those triples replaced, from
+                :meth:`_overridden_cookies`.
+            url: The request URL, used as the restore source.
+        """
+        if not written and not previous:
+            return
+        with self._cookie_lock:
+            for domain, path, name in written:
+                try:
+                    slot.delete_cookie(domain, path, name)
+                except Exception:
+                    # Teardown must not replace the caller's own exception, and
+                    # a session already closed has no store left to clean.
+                    continue
+            for row in previous:
+                try:
+                    (name, value, domain, path, expiry, has_expiry, secure,
+                     http_only, same_site) = row
+                    slot.set_cookie(
+                        (name, value, domain, path,
+                         expiry if has_expiry else None, secure, http_only,
+                         same_site), url)
+                except Exception:
+                    continue
+
     def _seed_store_from_jar(self, slot, source_url):
         """Writes the session jar into a store the session has not filled yet.
 
@@ -3202,7 +3401,7 @@ class BaseSession(object):
         )
         request.quote = values.get("quote")
         request.header_order = header_order
-        _reject_core_owned_removals(request.headers, request.method)
+        _reject_core_owned_removals(request.headers)
         _reject_hop_by_hop_headers(request.headers)
         allow_redirects = self.allow_redirects \
             if values.get("allow_redirects") is None \
@@ -3427,6 +3626,7 @@ class Session(BaseSession):
                 request, stream=bool(options.get("stream")),
                 timeout=options.get("timeout"), verify=options.get("verify", True),
                 cert=options.get("cert"), proxies=options.get("proxies"))
+        _reject_hop_by_hop_headers(request.headers)
         retry = options.get("retry") or self.retry
         attempt = 0
         proxy_attempt = 0
@@ -3486,6 +3686,7 @@ class Session(BaseSession):
         discard = options.get("discard_cookies")
         discard = self.discard_cookies if discard is None else discard
         check_discard_cache_mode(discard, options.get("cache_mode"))
+        check_discard_explicit_cookies(discard, prepared)
         lease = self._lease(prepared.url, options.get("impersonate"),
                             options.get("proxy"), options.get("proxies"),
                             options.get("verify"), options.get("http_version"))
@@ -3504,7 +3705,8 @@ class Session(BaseSession):
         Returns:
             The assembled :class:`Response`.
         """
-        slot, prepared = self._resolve_cookies(lease.slot, prepared, discard)
+        slot, prepared, written, previous = self._resolve_cookies(
+            lease.slot, prepared, discard)
         # Cookie resolution may have replaced the engine, and the replacement is
         # the one this request runs on: move the pin so the in-flight count
         # follows the request instead of the engine it abandoned. It may also
@@ -3527,6 +3729,9 @@ class Session(BaseSession):
                 slot, prepared, options, discard, throwaway, limit, stream,
                 started, follow)
         finally:
+            # Before the throwaway engine is retired: a per-request cookie
+            # belongs to this request, and the store it landed in is this one.
+            self._retire_request_cookies(slot, written, previous, prepared.url)
             if throwaway:
                 # The request is finished or has failed, and the Core holds its
                 # own reference for as long as it runs. Releasing the engine here
@@ -3903,6 +4108,7 @@ class AsyncSession(BaseSession):
         if not isinstance(request, PreparedRequest):
             raise ValueError("You can only send PreparedRequests")
         options = self._with_session_defaults(options)
+        _reject_hop_by_hop_headers(request.headers)
         retry = options.get("retry") or self.retry
         attempt = 0
         proxy_attempt = 0
@@ -3982,9 +4188,12 @@ class AsyncSession(BaseSession):
         discard = options.get("discard_cookies")
         discard = self.discard_cookies if discard is None else discard
         check_discard_cache_mode(discard, options.get("cache_mode"))
+        check_discard_explicit_cookies(discard, prepared)
         # ``_discard_config`` returns the request to send as well as the config:
         # it drops the caller's Cookie header from a COPY, because the caller
         # owns the PreparedRequest and may send it again.
+        written = []
+        previous = []
         if discard:
             config, prepared = self._discard_config(lease.slot, prepared)
             # The build posts to the Core's network thread and waits there
@@ -3993,7 +4202,8 @@ class AsyncSession(BaseSession):
             # request; in an executor it is 3.4 ms of a worker thread.
             slot = await loop.run_in_executor(None, self._throwaway_slot, config)
         else:
-            slot, prepared = self._resolve_cookies(lease.slot, prepared, discard)
+            slot, prepared, written, previous = self._resolve_cookies(
+                lease.slot, prepared, discard)
         cert = self._effective_client_cert(prepared.url, options)
         if cert is not None:
             slot.set_client_certificate(*cert)
@@ -4004,6 +4214,12 @@ class AsyncSession(BaseSession):
         try:
             return await self._perform_on_slot(slot, prepared, options, loop, discard)
         finally:
+            # ``mn_engine_cookies_delete`` runs on the Core's store directly and
+            # does not post a round trip the way a context teardown does, so this
+            # stays on the loop: measured, one delete per request-scoped cookie,
+            # which is a handful of microseconds rather than the 83 ms a context
+            # shutdown costs.
+            self._retire_request_cookies(slot, written, previous, prepared.url)
             if throwaway:
                 # Dropping this engine blocks on the Core's network thread
                 # (core/source/engine.cc:493-521 posts a shutdown task and waits

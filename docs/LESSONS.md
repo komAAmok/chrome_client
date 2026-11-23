@@ -2627,3 +2627,51 @@ case InsecureDnsMode::kEnabledBuiltIn: {
 
 **判据（可执行）**：对每个选项问「我在下层能数到什么」。数得出来的才算 ✓，
 数不出来的要么修，要么改成抛错。**「它被写进了某个结构体」不算证据。**
+
+## 77. fail-closed 的守卫挂在哪一层，决定了它有没有用
+
+`_HOP_BY_HOP_HEADERS` 拒绝 `Connection` 等六个字段，测试也全绿。但守卫挂在
+`request()` 的 `_prepare_call` 里，而 requests 的契约里还有两条路能到达同一张网：
+`session.headers["Connection"] = "close"`（会话级 header 在 `prepare_request` 里
+才合并进来，那时 `request()` 早已跑完），以及 `prepare_request()` + `send()`（或
+由调用方手工构造 `PreparedRequest` 直接 `send()`）。实测三条路都把五个字段原样发到
+了 HTTP/1.1 的网线上——正是这个守卫存在的理由。
+
+**规则**：fail-closed 的检查必须挂在**所有入口的汇合点**，而不是「主要入口」。
+判断方法是把「值最终落到哪」倒着走一遍：这里所有路径都经过 `Session.send` /
+`AsyncSession.send`，所以检查移进两个 `send()` 才算完成。
+
+**同一个缺陷的第二个形状**：`headers={"Cookie": None}` 静默失效。请求级删除被
+`prepare_headers` 用 `if value is None: continue` 丢掉了，删除意图没有留下任何
+记录，守卫看到的是一个「对 Cookie 没有意见」的请求。修法不是再加一条判断，而是让
+`Headers` 的删除记录（`deleted_names`）穿过 `prepare`——**丢弃意图本身**就是那个
+缺陷。这里还踩了一个自己的坑：`Headers(headers) if headers else Headers()` 里，
+只含删除记录的对象没有条目、是 falsy，于是记录又丢了；必须是 `is not None`。
+
+## 78. 请求级参数被写进会话级存储，就等于把作用域改成了会话
+
+`cookies={"per": "P"}` 的实现把 cookie 写进引擎的 `CookieMonster`。存储不是请求
+作用域的，写进去就再也没人收回：实测 `get(url, cookies={"per": "P"})` 之后的
+一个普通 `get(url)` 仍然发出 `Cookie: per=P`，而 requests 不发。
+
+修的时候有两个反直觉之处，都是先按直觉写错、被测试抓住的：
+
+1. **删对不上的三元组等于没删。** 空 domain / 空 path 由 `cookielib` 记录，store
+   归一化成「请求 host + `/`」（`net/cookies/canonical_cookie.cc`）。按调用方给的
+   名字删是静默 no-op——和要修的缺陷是同一个形状，只是换了位置。
+2. **只删不还原，会把会话 cookie 删掉。** `session.cookies.set("a", "1")` 之后
+   `get(url, cookies={"a": "2"})`，删完 store 是空的而 jar 里还是 `a=1`——jar 与
+   store 分叉，正是这个模块存在的目的所反对的事。必须**写入前读走将被覆盖的行，
+   请求结束后写回**。
+
+**规则**：给某个参数实现「只影响这一次」时，先问它的落点是不是共享的。落点是会话级
+存储时，「临时写进去再删掉」需要额外回答三个问题：删的条件与写入的归一化一致吗、
+被覆盖的旧值怎么办、异常与重定向路径都覆盖到了吗。三个问题里任何一个没有答案，
+那就不该写进共享存储。
+
+**顺带的一条**：`discard_cookies=True` 与显式 `cookies=` 是互斥的两个承诺
+（「一个都不发」对「这一次带这个」），原来的实现选了前者且不报错。按 AGENTS §8
+应当抛错。但**字面 `Cookie` 头**不能一起拒——那一侧已经被
+`DiscardDoesNotRewriteTheCallersRequest` 钉死为「discard 赢，且不改写调用方对象」
+（字段从副本上 drop），把两种写法一起拒会破坏既有契约。**要拒的是「丢了就再没有
+等价表达」的那一种，而不是「看起来同类」的全部。**

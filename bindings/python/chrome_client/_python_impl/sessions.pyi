@@ -193,6 +193,31 @@ def check_discard_cache_mode(discard: bool, cache_mode: Optional[str]) -> None:
     """
     ...
 
+def check_discard_explicit_cookies(discard: bool,
+                                     prepared: Optional[PreparedRequest]) -> None:
+    """Refuses a ``cookies=`` mapping on a request that discards cookies.
+
+    The two say opposite things: ``cookies=`` asks for a cookie on this request,
+    ``discard_cookies=True`` asks for neither a send nor a record. The mapping
+    used to be dropped without a word, so the caller got a request it had not
+    described. A session cookie stays silently suppressed, which is what the
+    option is for; a literal ``Cookie`` header also loses to the option, but
+    ``_discard_config`` drops it from a copy, so the caller's request object is
+    never rewritten.
+
+    Args:
+        discard: Whether this request asked for "neither send nor record".
+        prepared: The prepared request.
+
+    Returns:
+        ``None``.
+
+    Raises:
+        UnsupportedFeature: The request passed a ``cookies=`` mapping the
+            option would drop.
+    """
+    ...
+
 def normalize_host_mapping(rules: Optional[HostMappingRules]) -> Optional[str]:
     """Validates the shape of a MappedHostResolver rule list.
 
