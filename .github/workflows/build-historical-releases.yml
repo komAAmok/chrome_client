@@ -157,10 +157,11 @@ jobs:
           root = pathlib.Path("core/binaries") / target
           manifest = json.loads((root / "manifest.json").read_text())
           path = root / manifest["library"]
-          assert hashlib.sha256(path.read_bytes()).hexdigest() == manifest["sha256"],
-                 f"{target}: sha256 mismatch vs manifest"
-          assert path.stat().st_size == manifest["size_bytes"],
-                 f"{target}: size mismatch vs manifest"
+          digest = hashlib.sha256(path.read_bytes()).hexdigest()
+          if digest != manifest["sha256"]:
+              raise SystemExit(f"{target}: sha256 mismatch vs manifest")
+          if path.stat().st_size != manifest["size_bytes"]:
+              raise SystemExit(f"{target}: size mismatch vs manifest")
           print(f"core ok: {target} {manifest.get('chromium_revision', '')[:12]}")
           PY
 
