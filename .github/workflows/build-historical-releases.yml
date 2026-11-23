@@ -58,7 +58,7 @@ jobs:
           TAGS: ${{ inputs.tags }}
         run: |
           python3 - <<"PY" >> "$GITHUB_OUTPUT"
-          import json, os, subprocess
+          import json, os, subprocess, sys
 
           tags = [t.strip() for t in os.environ["TAGS"].split(",") if t.strip()]
           if not tags:
