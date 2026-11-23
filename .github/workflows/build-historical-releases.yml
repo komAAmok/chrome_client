@@ -190,6 +190,16 @@ jobs:
           python-version: ${{ matrix.py }}
           architecture: ${{ matrix.arch }}
 
+      # i686 / arm64 的 manylinux 容器要靠 binfmt 才能在这个 runner 上跑起来。
+      # build-wheels.yml 有这一步，本文件第一版漏了：linux-x86 直接死在
+      # manylinux2014_i686 里，yum 连 CentOS-7 仓库失败（CentOS 7 已 EOL），
+      # 而同一台 runner 上跑现有 CI 却成功——差别就是这两个 binfmt 命令。
+      - name: Set up QEMU for cross-architecture containers
+        if: steps.gate.outputs.present == 'true' && startsWith(matrix.runner, 'ubuntu')
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64,386
+
       - name: Install Rust target
         if: steps.gate.outputs.present == 'true'
         shell: bash
