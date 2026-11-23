@@ -47,6 +47,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       map: ${{ steps.plan.outputs.map }}
+      matrix: ${{ steps.plan.outputs.matrix }}
       tags: ${{ steps.plan.outputs.tags }}
     steps:
       - uses: actions/checkout@v4
@@ -56,6 +57,7 @@ jobs:
         shell: bash
         env:
           TAGS: ${{ inputs.tags }}
+          PLATFORMS: '[{"core-target":"linux-x86_64","binding":"python","runner":"ubuntu-latest","manifest":"bindings/python/Cargo.toml","py":"3.9","rusttarget":"x86_64-unknown-linux-gnu","lib":"libminicronet.so","manylinux":"2014","os":"linux"},{"core-target":"linux-x86_64","binding":"python36","runner":"ubuntu-latest","manifest":"bindings/python36/Cargo.toml","py":"3.9","rusttarget":"x86_64-unknown-linux-gnu","lib":"libminicronet.so","manylinux":"2014","maturin":"0.14.17","rustflags":"--cfg=py_sys_config=\"WITH_THREAD\"","os":"linux"},{"core-target":"linux-x86","binding":"python","runner":"ubuntu-latest","manifest":"bindings/python/Cargo.toml","py":"3.9","rusttarget":"i686-unknown-linux-gnu","lib":"libminicronet.so","manylinux":"2014","os":"linux"},{"core-target":"linux-x86","binding":"python36","runner":"ubuntu-latest","manifest":"bindings/python36/Cargo.toml","py":"3.9","rusttarget":"i686-unknown-linux-gnu","lib":"libminicronet.so","manylinux":"2014","maturin":"0.14.17","rustflags":"--cfg=py_sys_config=\"WITH_THREAD\"","os":"linux"},{"core-target":"linux-arm64","binding":"python","runner":"ubuntu-24.04-arm","manifest":"bindings/python/Cargo.toml","py":"3.10","rusttarget":"aarch64-unknown-linux-gnu","lib":"libminicronet.so","manylinux":"2014","os":"linux"},{"core-target":"linux-arm64","binding":"python36","runner":"ubuntu-24.04-arm","manifest":"bindings/python36/Cargo.toml","py":"3.10","rusttarget":"aarch64-unknown-linux-gnu","lib":"libminicronet.so","manylinux":"2014","maturin":"0.14.17","rustflags":"--cfg=py_sys_config=\"WITH_THREAD\"","os":"linux"},{"core-target":"windows-x86_64","binding":"python","runner":"windows-2022","manifest":"bindings/python/Cargo.toml","py":"3.10","rusttarget":"x86_64-pc-windows-msvc","lib":"minicronet.dll","os":"windows"},{"core-target":"windows-x86_64","binding":"python36","runner":"windows-2022","manifest":"bindings/python36/Cargo.toml","py":"3.6","rusttarget":"x86_64-pc-windows-msvc","lib":"minicronet.dll","maturin":"0.14.17","os":"windows"},{"core-target":"windows-x86","binding":"python","runner":"windows-2022","manifest":"bindings/python/Cargo.toml","py":"3.10","rusttarget":"i686-pc-windows-msvc","lib":"minicronet.dll","os":"windows"},{"core-target":"windows-x86","binding":"python36","runner":"windows-2022","manifest":"bindings/python36/Cargo.toml","py":"3.6","rusttarget":"i686-pc-windows-msvc","lib":"minicronet.dll","maturin":"0.14.17","os":"windows"},{"core-target":"windows-arm64","binding":"python","runner":"windows-2022","manifest":"bindings/python/Cargo.toml","py":"3.10","rusttarget":"aarch64-pc-windows-msvc","lib":"minicronet.dll","os":"windows"},{"core-target":"macos-arm64","binding":"python","runner":"macos-15","manifest":"bindings/python/Cargo.toml","py":"3.10","rusttarget":"aarch64-apple-darwin","lib":"libminicronet.dylib","os":"macos"},{"core-target":"macos-arm64","binding":"python36","runner":"macos-15","manifest":"bindings/python36/Cargo.toml","py":"3.10","rusttarget":"aarch64-apple-darwin","lib":"libminicronet.dylib","maturin":"0.14.17","os":"macos"},{"core-target":"macos-x86_64","binding":"python","runner":"macos-15-intel","manifest":"bindings/python/Cargo.toml","py":"3.10","rusttarget":"x86_64-apple-darwin","lib":"libminicronet.dylib","os":"macos"},{"core-target":"macos-x86_64","binding":"python36","runner":"macos-15-intel","manifest":"bindings/python36/Cargo.toml","py":"3.10","rusttarget":"x86_64-apple-darwin","lib":"libminicronet.dylib","maturin":"0.14.17","os":"macos"}]'
         run: |
           python3 - <<"PY" >> "$GITHUB_OUTPUT"
           import json, os, subprocess, sys
@@ -93,8 +95,22 @@ jobs:
                            "targets": sorted(targets)})
               print(f"::notice::{tag} {version} -> {len(targets)} core targets",
                     file=sys.stderr)
+          # GitHub 的 matrix 里，动态的 tag 列表与静态的 include 列表不会自动做笛卡尔
+          # 积：tag: fromJSON(...) 配 include: 只会取第一个 tag 的首个 include 项。
+          # 实测：第一版 workflow 只跑了一个组合（macos-x86_64/python36），Release
+          # 上也只挂了一个 wheel。所以矩阵在这里就展开成 tag × 平台，交给 build 直接
+          # 消费，不再让 matrix 自己组合。
+          PLATFORMS = json.loads(os.environ["PLATFORMS"])
+          matrix = []
+          for row in rows:
+              have = set(row["targets"])
+              for p in PLATFORMS:
+                  if p["core-target"] in have:
+                      matrix.append({**p, "tag": row["tag"], "version": row["version"]})
+          print(f"::notice::matrix is {len(matrix)} jobs", file=sys.stderr)
           print("tags=" + json.dumps([r["tag"] for r in rows]))
           print("map=" + json.dumps(rows))
+          print("matrix=" + json.dumps({"include": matrix}))
           PY
 
   # 每个 tag 一个 build 作业，内部再用静态矩阵展开成 12 个 wheel。
@@ -106,27 +122,7 @@ jobs:
     strategy:
       fail-fast: false
       max-parallel: 6
-      matrix:
-        tag: ${{ fromJSON(needs.plan.outputs.tags) }}
-        include:
-          # ---- linux ----
-          - { core-target: linux-x86_64,  binding: python,   runner: ubuntu-latest,      manifest: bindings/python/Cargo.toml,   py: "3.9",  rusttarget: x86_64-unknown-linux-gnu,  manylinux: "2014", lib: libminicronet.so }
-          - { core-target: linux-x86_64,  binding: python36, runner: ubuntu-latest,      manifest: bindings/python36/Cargo.toml, py: "3.9",  rusttarget: x86_64-unknown-linux-gnu,  manylinux: "2014", lib: libminicronet.so, maturin: "0.14.17", rustflags: '--cfg=py_sys_config="WITH_THREAD"' }
-          - { core-target: linux-x86,     binding: python,   runner: ubuntu-latest,      manifest: bindings/python/Cargo.toml,   py: "3.9",  rusttarget: i686-unknown-linux-gnu,    manylinux: "2014", lib: libminicronet.so }
-          - { core-target: linux-x86,     binding: python36, runner: ubuntu-latest,      manifest: bindings/python36/Cargo.toml, py: "3.9",  rusttarget: i686-unknown-linux-gnu,    manylinux: "2014", lib: libminicronet.so, maturin: "0.14.17", rustflags: '--cfg=py_sys_config="WITH_THREAD"' }
-          - { core-target: linux-arm64,   binding: python,   runner: ubuntu-24.04-arm,   manifest: bindings/python/Cargo.toml,   py: "3.10", rusttarget: aarch64-unknown-linux-gnu, manylinux: "2014", lib: libminicronet.so }
-          - { core-target: linux-arm64,   binding: python36, runner: ubuntu-24.04-arm,   manifest: bindings/python36/Cargo.toml, py: "3.10", rusttarget: aarch64-unknown-linux-gnu, manylinux: "2014", lib: libminicronet.so, maturin: "0.14.17", rustflags: '--cfg=py_sys_config="WITH_THREAD"' }
-          # ---- windows ----
-          - { core-target: windows-x86_64, binding: python,   runner: windows-2022, manifest: bindings/python/Cargo.toml,   py: "3.10", arch: x64, rusttarget: x86_64-pc-windows-msvc,  lib: minicronet.dll }
-          - { core-target: windows-x86_64, binding: python36, runner: windows-2022, manifest: bindings/python36/Cargo.toml, py: "3.6",  arch: x64, rusttarget: x86_64-pc-windows-msvc,  lib: minicronet.dll, maturin: "0.14.17" }
-          - { core-target: windows-x86,    binding: python,   runner: windows-2022, manifest: bindings/python/Cargo.toml,   py: "3.10", arch: x86, rusttarget: i686-pc-windows-msvc,    lib: minicronet.dll }
-          - { core-target: windows-x86,    binding: python36, runner: windows-2022, manifest: bindings/python36/Cargo.toml, py: "3.6",  arch: x86, rusttarget: i686-pc-windows-msvc,    lib: minicronet.dll, maturin: "0.14.17" }
-          - { core-target: windows-arm64,  binding: python,   runner: windows-2022, manifest: bindings/python/Cargo.toml,   py: "3.10", arch: x64, rusttarget: aarch64-pc-windows-msvc, lib: minicronet.dll }
-          # ---- macos ----
-          - { core-target: macos-arm64,  binding: python,   runner: macos-15,       manifest: bindings/python/Cargo.toml,   py: "3.10", rusttarget: aarch64-apple-darwin, lib: libminicronet.dylib }
-          - { core-target: macos-arm64,  binding: python36, runner: macos-15,       manifest: bindings/python36/Cargo.toml, py: "3.10", rusttarget: aarch64-apple-darwin, lib: libminicronet.dylib, maturin: "0.14.17" }
-          - { core-target: macos-x86_64, binding: python,   runner: macos-15-intel, manifest: bindings/python/Cargo.toml,   py: "3.10", rusttarget: x86_64-apple-darwin,  lib: libminicronet.dylib }
-          - { core-target: macos-x86_64, binding: python36, runner: macos-15-intel, manifest: bindings/python36/Cargo.toml, py: "3.10", rusttarget: x86_64-apple-darwin,  lib: libminicronet.dylib, maturin: "0.14.17" }
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
