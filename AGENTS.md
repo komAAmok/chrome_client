@@ -333,7 +333,41 @@ python3 -m unittest discover -s bindings/python/tests -p "test_*.py"
 强制 H3 会真的发出 QUIC 并拿到 HTTP 200，等于报告了一个那些版本从未有过的指纹。
 只做第 2 级（抓包）发现不了这件事，因为缺的那一级正是源码。
 
-## 10. 产物与仓库体积
+## 10. 两个远端必须同步（强制）
+
+本仓库有两个远端，**每次提交都必须同时推到两边，并校验进度一致**：
+
+| 远端 | 账号 | 角色 |
+| --- | --- | --- |
+| `origin` | komAAmok | 主仓库 |
+| `backup` | dafatyu | 镜像（小号） |
+
+推送用一条命令完成，不要手工推两次：
+
+```bash
+tools/sync-remotes.sh          # 推送 origin + backup，然后校验
+tools/sync-remotes.sh --check  # 只校验，不推送
+```
+
+它推送完成后逐项比对，任何一项不一致就非零退出：两个远端的 `refs/heads/<branch>`
+与本地 `HEAD` 逐字相同；两个远端的 tag 集合与本地 `git tag` 逐行相同。统计 tag 时
+必须去掉 annotated tag 的 `^{}` 解引用行，否则 30 个 tag 会数成 41 个——这正是
+第一次核对时踩到的误判。
+
+**凭据**：`backup` 的 token 只在仓库外的 `$HOME/.config/chrome_client/backup.token`
+（`chmod 600`），不写进 URL、`.git/config` 或任何被提交的文件。可用
+`BACKUP_TOKEN_FILE` 指向别处。
+
+**凭据陷阱**：push 到 `backup` 时必须先清空 helper 链（`-c credential.helper=`）
+再挂自定义 helper。全局的 `credential.helper=store` 会先命中
+`~/.git-credentials` 里的 `komAAmok`，于是一个推 `dafatyu` 仓库的命令会报
+`denied to komAAmok`——看起来像权限问题，实际是身份用错了。脚本已处理这一点。
+
+这条规则由 `tools/sync-remotes.sh --check` 把守，四类变异实测都会让它非零退出：
+本地多一个未推送的 tag、工作区脏、token 文件缺失、远端被删掉一个 tag。
+
+
+## 11. 产物与仓库体积
 
 - `core/binaries/<target>/` 的**二进制与 manifest 都提交**（CI 需要离线可用）。
   不要给它们加回 `.gitignore`：曾经忽略过，结果是重建的 Core 不出现在
@@ -342,21 +376,21 @@ python3 -m unittest discover -s bindings/python/tests -p "test_*.py"
 - 不要提交超过 1 MB 的新二进制，除非它是发布产物的一部分；提交前先问
   「旧版本需要留在历史里吗」。
 
-## 11. 结论的验证责任
+## 12. 结论的验证责任
 
 - 任何外部结论（子代理、审查报告、issue、本文件的某条）在写进代码或文档前，
   **必须回到源码验证**，并在提交信息或注释里给出复核位置（文件:行）或复现命令。
 - **否定性结论同样需要证据**：判定「不是缺陷」也要指出是哪几行使其不成立。
 - 不要因为某个结论听起来严重就照做，也不要因为听起来轻微就跳过。
 
-## 12. 测试的诚实性
+## 13. 测试的诚实性
 
 - 构建成功 ≠ 能加载 ≠ 能发请求。平台矩阵的每一格都需要一次真实运行，
   否则不要在 README 打 ✓。
 - 需要外部依赖的测试要么在 CI 里满足依赖，要么在文档里明确标注为「长期跳过」——
   不允许悄悄 skip 掉一个曾经有效的门禁。
 
-## 13. 打 tag 前必须全量 review
+## 14. 打 tag 前必须全量 review
 
 一个 tag 是「这一刻仓库里每一条断言都成立」的唯一凭据，而这些断言由不同的工具
 把守、从来没有在同一份 commit 上一起跑过：静态门禁、真实请求、并发基准、泄漏测量、
