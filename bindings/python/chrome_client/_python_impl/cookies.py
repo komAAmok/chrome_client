@@ -120,7 +120,13 @@ def create_cookie(name, value, **kwargs):
     result = {
         "version": 0, "name": name, "value": value, "port": None, "domain": "",
         "path": "/", "secure": False, "expires": None, "discard": True,
-        "comment": None, "comment_url": None, "rest": {"HttpOnly": None},
+        # ``rest`` stays empty unless the caller passes one. requests seeds
+        # ``{"HttpOnly": None}`` here, and that placeholder is indistinguishable
+        # from a real ``HttpOnly`` once ``extract_cookies`` has run (both spell
+        # ``{"HttpOnly": None}``); keeping it made every caller-set cookie claim
+        # to be HttpOnly when mirrored into the Core store, which then refused
+        # any response that wanted to replace it with a non-HttpOnly value.
+        "comment": None, "comment_url": None, "rest": {},
         "rfc2109": False,
     }
     unsupported = set(kwargs) - set(result)

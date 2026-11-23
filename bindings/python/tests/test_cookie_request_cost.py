@@ -134,8 +134,18 @@ class PerRequestCookieCostTests(_Server):
         self.assertEqual(copies["n"], 0,
                          "a plain request still built the merged jar copy")
 
-    def test_store_writes_scale_with_per_request_cookies_only(self):
-        """The count follows the caller's cookies, not the jar's size."""
+    def test_a_per_request_cookie_never_touches_the_session_store(self):
+        """The count is zero, and that is the fix rather than a regression.
+
+        This used to assert exactly one write: the per-request cookie was
+        written into the SESSION store and retired afterwards. That is not
+        request-scoped, and it was measurably wrong under concurrency -- two
+        requests borrowing the same cookie name overwrote each other before
+        either reached the wire (6 threads x 15 requests: 1 of 90 went out with
+        another thread's value). A ``cookies=`` request now runs on its own
+        engine, so the session sink is never involved and the bound is the
+        stronger one: no session-store write at all.
+        """
         import chrome_client
 
         with chrome_client.Session() as session:
@@ -155,9 +165,9 @@ class PerRequestCookieCostTests(_Server):
                 session.get(self.base + "/probe", cookies={"one": "1"})
             finally:
                 sessions._SessionJarSink.write_cookie = original
-        self.assertEqual(calls["n"], 1,
-                         "one per-request cookie must cost one store write, not "
-                         "one per session cookie plus one")
+        self.assertEqual(calls["n"], 0,
+                         "a per-request cookie must not be written into the "
+                         "session store; it gets a store of its own")
 
     def test_per_request_cookies_still_reach_the_wire(self):
         """A per-request mapping must merge with the session jar on the wire.

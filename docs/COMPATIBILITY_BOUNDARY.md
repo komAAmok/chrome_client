@@ -161,6 +161,43 @@ are part of the contract rather than implementation detail:
 removal used to send the stored cookie and raise nothing. `discard_cookies=True`
 is the working spelling of "send no cookie this time".
 
+### Cookies: `cookies=` runs on its own engine, and that is not free
+
+A store is not request-scoped. Writing a per-request mapping into the session
+store and retiring it afterwards looks like it works in a single thread, and it
+is measurably wrong under concurrency: measured with 6 threads x 15 requests,
+each carrying `cookies={"k": <its index>}`, **1 of 90 requests went out with
+another thread's value**, because both had written `k` into the one store before
+either request started. Retiring afterwards cannot repair that -- the collision
+happens on the way in.
+
+So a `cookies=` request now runs on a throwaway engine seeded with the session
+jar plus the caller's mapping, exactly like `discard_cookies`. Consequences that
+are part of the contract:
+
+- **It costs one Engine per such request.** A new Engine is a new
+  `URLRequestContext`: no TLS session cache, no socket pool, no HTTP/2 session.
+  The same table in the `discard_cookies` section applies.
+- **The session store is never written.** 50 session cookies plus one
+  per-request cookie costs zero session-store writes, and no cleanup is owed
+  afterwards.
+- **Every redirect hop still carries the value**, because the whole chain runs
+  inside one `URLRequest` on that one engine.
+
+### Cookies: `HttpOnly` is the server's flag, not a placeholder
+
+`create_cookie` used to seed `{"HttpOnly": None}` so that
+`has_nonstandard_attr("HttpOnly")` -- which only asks whether the key exists --
+answered `True` for **every** cookie `session.cookies.set(...)` produced. Those
+were then mirrored into the Core store marked `HttpOnly`.
+
+That is not cosmetic, because Chromium refuses to downgrade: replacing an
+`HttpOnly` cookie with a non-`HttpOnly` one is rejected outright. Measured, a
+server answering `Set-Cookie: a=NEW` for a name the caller had already set raised
+`InvalidURL` out of the store instead of storing the cookie. The placeholder is
+gone; a `Set-Cookie: ...; HttpOnly` from the server still lands as
+`http_only=True`, which is the direction that matters.
+
 ### Cookies: a caller write retires, a server write merges
 
 The jar has two kinds of writer and they must not share one rule.

@@ -56,6 +56,11 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_GET(self):
+        if self.path.startswith("/set-cookie-httponly"):
+            return self._send(b"ok", extra=[("Set-Cookie", "ho=1; Path=/; HttpOnly")])
+        if self.path.startswith("/set-cookie-a"):
+            # Overwrites a cookie the caller shadowed for this one request.
+            return self._send(b"ok", extra=[("Set-Cookie", "a=NEW; Path=/")])
         if self.path.startswith("/set-cookie"):
             return self._send(b"ok", extra=[("Set-Cookie", "sid=ABC; Path=/"),
                                             ("Set-Cookie", "taste=sweet; Path=/"),
@@ -2362,6 +2367,51 @@ class SilentLossRegressionTests(unittest.TestCase):
             after = session.get(self.base + "/echo-cookie").text
             self.assertEqual(ast.literal_eval(after), [],
                              "a request-scoped cookie reached the next request")
+
+    def test_a_caller_set_cookie_is_not_http_only(self):
+        """``cookies.set()`` is a script write; the store must not see HttpOnly.
+
+        ``create_cookie`` seeds ``{"HttpOnly": None}`` for every cookie, and
+        ``has_nonstandard_attr`` only asks whether the key exists, so every
+        caller-set cookie was mirrored into the store as HttpOnly. Chromium
+        refuses to replace an HttpOnly cookie with a non-HttpOnly one, so the
+        wrong flag turned an ordinary response into ``InvalidURL``: measured,
+        a server answering ``Set-Cookie: a=NEW`` for a name the caller had
+        already set failed outright.
+        """
+        with chrome_client.Session() as session:
+            session.cookies.set("mine", "1", domain="127.0.0.1")
+            stored = [row for row in session._store_slot().cookies(None)
+                      if row[0] == "mine"]
+        self.assertEqual(len(stored), 1)
+        self.assertFalse(stored[0][7], "a caller-set cookie reached the store "
+                                        "marked HttpOnly")
+
+    def test_a_server_http_only_cookie_is_still_http_only(self):
+        """The flag has to keep working in the direction that matters."""
+        with chrome_client.Session() as session:
+            session.get(self.base + "/set-cookie-httponly")
+            stored = [row for row in session._store_slot().cookies(None)
+                      if row[0] == "ho"]
+        self.assertEqual(len(stored), 1)
+        self.assertTrue(stored[0][7], "a server HttpOnly cookie lost its flag")
+
+    def test_a_server_set_cookie_outranks_the_restore(self):
+        """A response that sets the shadowed name has the last word.
+
+        Measured before the fix, and this was a regression from the restore
+        itself: the response set ``a=NEW``, the jar recorded ``NEW``, and then
+        the restore wrote ``OLD`` back into the store, so the next request sent
+        a value the jar no longer described.
+        """
+        with chrome_client.Session() as session:
+            session.cookies.set("a", "OLD", domain="127.0.0.1")
+            session.get(self.base + "/set-cookie-a", cookies={"a": "OVERRIDE"})
+            self.assertEqual(session.cookies.get_dict().get("a"), "NEW")
+            body = session.get(self.base + "/echo-cookie").text
+            self.assertEqual(ast.literal_eval(body), ["a=NEW"],
+                             "the restore resurrected a value the server had "
+                             "already replaced")
 
     def test_a_per_request_cookie_does_not_delete_the_session_cookie(self):
         """Restoring matters as much as deleting.

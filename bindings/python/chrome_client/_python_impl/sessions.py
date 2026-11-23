@@ -2889,7 +2889,7 @@ class BaseSession(object):
             discard: Whether the caller asked for "neither send nor record".
 
         Returns:
-            ``(slot, prepared, written)``. *slot* is the engine the request runs
+            ``(slot, prepared, written, previous)``. *slot* is the engine the request runs
             on -- the session's own unless ``discard_cookies`` asked for a
             throwaway; *prepared* is the request to send, which is a copy when
             the caller's own object had to lose its Cookie header; *written* is
@@ -2899,6 +2899,20 @@ class BaseSession(object):
         if discard:
             config, effective = self._discard_config(slot, prepared)
             return self._throwaway_slot(config), effective, [], []
+        if getattr(prepared, "_cookie_additions", None):
+            # A ``cookies=`` mapping gets its own store, for the same reason
+            # ``discard_cookies`` does: a store is not request-scoped, and
+            # writing the caller's value into the session's store made two
+            # concurrent requests that borrowed the same cookie name overwrite
+            # each other. Measured with 6 threads x 15 requests carrying
+            # ``cookies={"k": <their index>}``: 1 of 90 requests went out with
+            # ANOTHER thread's value, because both had written ``k`` into the
+            # one store before either request started. Retiring afterwards
+            # cannot fix that -- the collision happens before the wire.
+            #
+            # The isolation also makes the retire bookkeeping unnecessary: this
+            # store belongs to one request and is dropped with the engine.
+            return (self._request_scoped_slot(slot, prepared), prepared, [], [])
         # A per-request ``cookies=`` mapping goes into the store for this
         # request. A header would not do: CookieMonster owns the Cookie header
         # and re-attaches whatever it holds, so a cookie the store also has
@@ -2963,7 +2977,8 @@ class BaseSession(object):
                         # other triple would miss the row that was actually
                         # written, and an unnormalised delete is a silent no-op.
                         written.append(((cookie.domain or host),
-                                        (cookie.path or path), cookie.name))
+                                        (cookie.path or path), cookie.name,
+                                        cookie.value))
         # The jar writes through to the store, so the header the Core emits is
         # the one the jar describes. Nothing to compare, nothing to replace.
         return slot, prepared, written, previous
@@ -3019,6 +3034,73 @@ class BaseSession(object):
         return [row for row in stored
                 if row[0] in names and (row[2], row[3]) in scope]
 
+    def _request_scoped_slot(self, slot, prepared):
+        """Builds a throwaway engine seeded with the jar plus ``cookies=``.
+
+        A per-request ``cookies=`` mapping cannot live in the session store:
+        the store is shared by every in-flight request, so two requests that
+        borrow the same cookie name overwrite each other BEFORE either reaches
+        the wire. Measured with 6 threads x 15 requests carrying
+        ``cookies={"k": <thread index>}``: 1 of 90 went out with another
+        thread's value. Retiring afterwards cannot repair that, because the
+        collision happens on the way in.
+
+        A throwaway engine gives the request a store of its own, which is what
+        "request-scoped" actually requires. It costs a Chromium context build
+        for that request -- the same trade ``discard_cookies`` already makes,
+        and the same warning applies (see docs/COMPATIBILITY_BOUNDARY.md).
+
+        Args:
+            slot: The slot the request would otherwise have used.
+            prepared: The prepared request, carrying ``_cookie_additions``.
+
+        Returns:
+            A fresh :class:`EngineSlot` the caller must retire.
+        """
+        fresh = self._throwaway_slot(slot.config)
+        source = prepared.url or self.cookies.default_source
+        with self._cookie_lock:
+            for cookie in list(self.cookies):
+                try:
+                    fresh.write_cookie(cookie, source)
+                except Exception:
+                    # One entry the store refuses must not keep the rest of the
+                    # jar off this engine; same rule as the seed path.
+                    continue
+            for cookie in (getattr(prepared, "_cookie_additions", None) or []):
+                try:
+                    fresh.write_cookie(cookie, source)
+                except Exception:
+                    continue
+        return fresh
+
+    def _jar_holds(self, row, url):
+        """Whether the session jar corroborates a stored row.
+
+        Only a row the jar actually holds is a session value worth restoring.
+        The store is shared by every in-flight request, so a row read from it
+        can just as well be another request's borrowed value.
+
+        Args:
+            row: A 9-tuple from :meth:`EngineSlot.cookies`.
+            url: The request URL, used to check the jar the same way the store
+                scoped the row.
+
+        Returns:
+            ``True`` when the jar holds this exact ``(domain, path, name)``.
+        """
+        name, value = row[0], row[1]
+        domain, path = row[2], row[3]
+        for cookie in self.cookies:
+            if cookie.name != name:
+                continue
+            if (cookie.domain or "") != (domain or ""):
+                continue
+            if (cookie.path or "/") != (path or "/"):
+                continue
+            return True
+        return False
+
     def _retire_request_cookies(self, slot, written, previous, url):
         """Undoes the store writes a ``cookies=`` mapping made for one request.
 
@@ -3034,12 +3116,23 @@ class BaseSession(object):
         ``URLRequest``, so every hop already carried the value before this runs.
 
         A cookie this request shadowed is written back afterwards, so the
-        session keeps the value it had. That is the difference between
-        "request-scoped" and "destroyed on the way out".
+        session keeps the value it had. Two things can outrank that restore:
+
+        * **The server.** A response carrying ``Set-Cookie`` for the same name
+          has the last word. Measured before this check: ``cookies={"a":
+          "OVERRIDE"}`` against a hop that answered ``Set-Cookie: a=NEW`` left
+          the jar holding ``NEW`` and the store holding the restored ``OLD``, so
+          the next request sent a value the jar no longer described -- the
+          jar/store divergence this path exists to prevent, reintroduced by the
+          restore itself.
+        * **A later write by the same session.** If the store no longer holds
+          the value this request put there, something else owns it now and it is
+          left alone.
 
         Args:
             slot: The engine the request ran on.
-            written: ``(domain, path, name)`` triples from ``_resolve_cookies``.
+            written: ``(domain, path, name, value)`` as this request wrote them,
+                from :meth:`_resolve_cookies`.
             previous: The rows those triples replaced, from
                 :meth:`_overridden_cookies`.
             url: The request URL, used as the restore source.
@@ -3047,7 +3140,25 @@ class BaseSession(object):
         if not written and not previous:
             return
         with self._cookie_lock:
-            for domain, path, name in written:
+            kept = set()
+            try:
+                current = {(row[2], row[3], row[0]): row[1]
+                           for row in slot.cookies(url)}
+            except Exception:
+                # A store that cannot be read cannot be reasoned about either;
+                # fall back to the unconditional retire rather than leave the
+                # caller's borrowed value behind.
+                current = None
+            if current is not None:
+                for domain, path, name, value in written:
+                    if current.get((domain, path, name)) != value:
+                        # The server overwrote it (or someone else did), so the
+                        # borrow is already gone and the restore must not
+                        # resurrect the older value on top of it.
+                        kept.add((domain, path, name))
+            for domain, path, name, _value in written:
+                if (domain, path, name) in kept:
+                    continue
                 try:
                     slot.delete_cookie(domain, path, name)
                 except Exception:
@@ -3055,6 +3166,18 @@ class BaseSession(object):
                     # a session already closed has no store left to clean.
                     continue
             for row in previous:
+                if (row[2], row[3], row[0]) in kept:
+                    continue
+                if not self._jar_holds(row, url):
+                    # ``previous`` is read from the shared store, so under
+                    # concurrency it can also hold the value ANOTHER request
+                    # borrowed for the same triple. Restoring that value would
+                    # resurrect a request-scoped cookie after its own request
+                    # retired it: measured with two threads, the final request
+                    # carried ``k=A`` and nothing retired it again. The jar is
+                    # the authority for what the session holds, so a row the
+                    # jar does not corroborate is simply not restored.
+                    continue
                 try:
                     (name, value, domain, path, expiry, has_expiry, secure,
                      http_only, same_site) = row

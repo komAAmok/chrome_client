@@ -634,8 +634,7 @@ class EngineSlot(object):
         expires = cookie.expires
         self.set_cookie(
             (cookie.name, cookie.value, cookie.domain or "", cookie.path or "/",
-             expires, cookie.secure, cookie.has_nonstandard_attr("HttpOnly")
-             or bool(getattr(cookie, "_rest", {}).get("HttpOnly")),
+             expires, cookie.secure, cookie.has_nonstandard_attr("HttpOnly"),
              (cookie._rest.get("SameSite", "") if isinstance(
                  getattr(cookie, "_rest", None), dict) else "")),
             source_url)
