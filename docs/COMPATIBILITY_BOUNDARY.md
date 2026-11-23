@@ -375,6 +375,59 @@ where `request()`, `prepare_request()` + `send()`, and `AsyncSession` converge.
 `transfer-encoding` and `content-length` stay settable: they are body framing,
 which the caller does control, and removing them was already fail-closed.
 
+### Body framing: a caller-supplied `Transfer-Encoding` is passed through
+
+When a caller sets `Transfer-Encoding: chunked` on a request whose body is
+`bytes`, the framing headers collide: `Content-Length` is computed from the body
+and `Transfer-Encoding` is the caller's, so both reach the wire and RFC 9112
+§6.3 says the recipient must ignore `Content-Length` in that case. Measured:
+
+```
+ours     POST data=b"abc" + TE: chunked   Content-Length: 3, Transfer-Encoding: chunked
+requests same input                       Transfer-Encoding: chunked, Content-Length: 3
+```
+
+**This is left as it is, on purpose.** `requests` produces the same pair, so
+refusing or rewriting it would make a request that works against `requests` fail
+here -- a divergence this project does not take on for a call the caller spelled
+out. What the caller is asking for is "send this with chunked framing"; the body
+was already encoded as `bytes`, so the pair is what reaches the wire in both
+libraries.
+
+The two differ only in field ORDER: this client appends the caller's field after
+the profile's header block, while `requests` emits both from urllib3 with
+`Transfer-Encoding` first. RFC 9112 §6.3 makes that a difference in principle --
+a message carrying both fields is exactly the smuggling-shaped input servers are
+told to reject -- and in practice a recipient that only looks at the first
+framing field it finds reads the two libraries differently. That is a real
+consequence of the choice, not a detail: a body of `b"abc"` cannot be parsed as
+chunks at all, so a strict chunked reader blocks.
+
+It is still left alone, because the alternative is worse. Rejecting the
+combination breaks callers who do exactly this against `requests` today; dropping
+the computed `Content-Length` silently changes a header the caller did not ask to
+change. The caller spelled out the framing, both libraries send it, and the
+divergence from `requests` would be this project inventing a refusal for a
+request that has a defined meaning.
+
+What the project does guarantee is narrower and testable: **a body the facade
+frames itself is sent correctly.** The streaming path below emits one framing
+field and a chunk-encoded body, and that is pinned by a test rather than by this
+paragraph.
+
+A **streamed** body (an iterator or file object) does not hit this at all:
+`prepare_content_length` drops `Content-Length` and sets `Transfer-Encoding:
+chunked` itself, and the Core encodes the chunks. Measured, that path emits one
+framing field and a properly chunked body:
+
+```
+POST iterator (with or without a caller TE)   Transfer-Encoding: chunked
+                                             4\r\naabb\r\n0\r\n\r\n
+```
+
+Setting either field to `None` is still refused (`_CORE_OWNED_HEADERS`), because
+the binding cannot delete a header the Core attaches.
+
 ### Headers: what a caller can add, override and remove
 
 A caller may add any header, and may override any header the Core itself would

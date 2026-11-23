@@ -1960,6 +1960,32 @@ class HopByHopHeaderTests(unittest.TestCase):
             with self.assertRaises(chrome_client.UnsupportedFeature):
                 session.get(self.base, headers={"Connection": None})
 
+    def test_a_caller_transfer_encoding_is_passed_through(self):
+        """A deliberate decision, pinned so it cannot drift silently.
+
+        `Transfer-Encoding: chunked` on a bytes body produces the same framing
+        pair `requests` produces (measured: both send Content-Length and
+        Transfer-Encoding, and RFC 9112 section 6.3 says the recipient ignores
+        Content-Length). Rewriting it here would make a request that works
+        against requests fail, which this project does not do for a call the
+        caller spelled out.
+        """
+        with chrome_client.Session() as session:
+            session.post(self.base, headers={"Transfer-Encoding": "chunked"},
+                         data=b"abc")
+        self.assertEqual(_ECHOED[-1].get("Transfer-Encoding"), "chunked")
+        self.assertEqual(_ECHOED[-1].get("Content-Length"), "3")
+
+    def test_a_streamed_body_chunks_without_a_content_length(self):
+        """The path that must stay clean: the facade owns the framing here."""
+        with chrome_client.Session() as session:
+            session.post(self.base,
+                         headers={"Transfer-Encoding": "chunked"},
+                         data=iter([b"aa", b"bb"]))
+        self.assertEqual(_ECHOED[-1].get("Transfer-Encoding"), "chunked")
+        self.assertIsNone(_ECHOED[-1].get("Content-Length"),
+                          "a chunked body must not also declare a length")
+
     def test_ordinary_headers_are_unaffected(self):
         """The guard must not swallow body framing or caller-owned fields."""
         with chrome_client.Session(impersonate="chrome_124") as session:
@@ -2163,9 +2189,22 @@ class _EchoHeaderHandler(BaseHTTPRequestHandler):
         test only ever saw the fixture's own 501.
         """
         _ECHOED.append({name: value for name, value in self.headers.items()})
-        if "chunked" in self.headers.get("Transfer-Encoding", "").lower():
+        # RFC 9112 section 6.3 (and RFC 7230 before it): a message with both
+        # framing fields is a smuggling-shaped input that a server SHOULD reject
+        # outright. A test server cannot reject, so it takes the ONE reading that
+        # does not need to guess -- again ``Content-Length``, which is what the
+        # ``Transfer-Encoding``-wins rule exists to stop -- and, more to the
+        # point here, reads exactly the bytes the body actually is. Reading it as
+        # chunks hangs on ``abc``, which is how this decision showed up in the
+        # first place.
+        chunked = ("chunked" in self.headers.get("Transfer-Encoding", "").lower()
+                   and "content-length" not in self.headers)
+        if chunked:
             while True:
-                size = int(self.rfile.readline().strip() or b"0", 16)
+                line = self.rfile.readline().strip()
+                if not line:
+                    break
+                size = int(line.split(b";", 1)[0], 16)
                 if size == 0:
                     self.rfile.readline()
                     break
