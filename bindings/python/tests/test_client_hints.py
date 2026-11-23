@@ -37,6 +37,7 @@ except ImportError:  # Python 3.6
 
 import chrome_client
 from chrome_client._python_impl import browser_headers as hints
+from chrome_client._python_impl.impersonate import LATEST_CHROME, OLDEST_CHROME
 from chrome_client._python_impl.client_hints import CAPTURED_HEADERS
 
 PROFILES = pathlib.Path(__file__).resolve().parents[3] / "profiles"
@@ -180,11 +181,31 @@ class SyncWireTests(Base):
         self.assertIn("Sec-Fetch-Site", names)
 
     def test_every_pinned_profile_reproduces_its_capture(self):
-        """72 profiles, byte for byte, in capture order."""
-        for major in sorted(CAPTURED_HEADERS):
+        """Every profile the ENGINE serves, byte for byte, in capture order.
+
+        The table can be ahead of the Core: profiles/chrome_<major>/ and this
+        table gain a release as soon as its captures are imported, while the
+        Core only serves it after a rebuild raises its kLastProfileMajor.
+        Those are two different facts and the test has to state which one it
+        covers. A profile in the table but outside the engine range is
+        asserted to be REFUSED, so the gap cannot silently widen: if the
+        engine starts accepting it, this test fails and the loop above this
+        line is what has to change.
+        """
+        served = {major for major in CAPTURED_HEADERS
+                  if OLDEST_CHROME <= major <= LATEST_CHROME}
+        pending = sorted(set(CAPTURED_HEADERS) - served)
+        self.assertTrue(served, "no profile in the table is within the engine range")
+        for major in sorted(served):
             self.assertEqual(self.headers_of(impersonate="chrome_%d" % major),
                              expected_pairs(major, self.port),
                              "chrome_%d did not reproduce its capture" % major)
+        for major in pending:
+            with self.assertRaises(chrome_client.ImpersonateError):
+                chrome_client.Session(impersonate="chrome_%d" % major)
+            self.assertGreater(major, LATEST_CHROME,
+                               "chrome_%d is below the engine floor yet was "
+                               "treated as pending" % major)
 
     def test_no_profile_means_no_browser_headers(self):
         names = [name for name, _value in self.headers_of()]

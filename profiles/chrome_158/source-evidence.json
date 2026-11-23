@@ -1,0 +1,85 @@
+{
+  "schema": "chrome_client.profile_source_evidence.v1",
+  "profile_id": "chrome_158",
+  "chrome_version": "158.0.8127.37",
+  "chromium_tag": "158.0.8127.99",
+  "chromium_commit": "a67074eecdccb011f041a2684df8ad0f869d59f2",
+  "boringssl_revision": "ea9f3a34c3977144c45d272be81842fd891a0bdb",
+  "quiche_revision": "132bfd90ea370faeacee616c70d10210bb12ba66",
+  "source": "fetched from chromium.googlesource.com at the tag above",
+  "note": "The wire capture was collected from 158.0.8127.37, while the source baseline is the release line latest tag 158.0.8127.99, as section 9 requires. The two tags share boringssl_revision and quiche_revision, and every audited chromium file except base/rand_util.cc is byte-identical between them; the ledger below is the .99 revision.",
+  "source_files": {
+    "alpn": {
+      "bytes": 19125,
+      "path": "net/http/http_network_session.cc",
+      "repository": "chromium",
+      "sha256": "ce48d6ddbfd82e43628ece7a1555401ac9bc4d464e3e9add4ebe809dcd27bae6"
+    },
+    "boringssl_extensions": {
+      "bytes": 177295,
+      "path": "ssl/extensions.cc",
+      "repository": "boringssl",
+      "sha256": "65c73a76c8be76288e39b338c9f717293d4080856930eacc579c52a1185d7c92"
+    },
+    "boringssl_handshake_client": {
+      "bytes": 68031,
+      "path": "ssl/handshake_client.cc",
+      "repository": "boringssl",
+      "sha256": "7d5d0b6d9c2f89c52f4cc9284d3ad4a9b07325cd42403da59ba5e884e3828052"
+    },
+    "boringssl_random": {
+      "bytes": 2178,
+      "path": "crypto/rand/rand.cc",
+      "repository": "boringssl",
+      "sha256": "02ed874ccac8b05c48eae239760207e55691e1a0fa6436312aeb85fae39c94ec"
+    },
+    "chromium_base_random": {
+      "bytes": 7426,
+      "path": "base/rand_util.cc",
+      "repository": "chromium",
+      "sha256": "7a3143f6c874fbfb546dc565124a846d5e3b274aa3f074281f33b18bbc93ef76"
+    },
+    "features": {
+      "bytes": 43381,
+      "path": "net/base/features.cc",
+      "repository": "chromium",
+      "sha256": "34fa5fc46343c193b46b55c6ba4277624a7180560be299f119d6ca924bcd9163"
+    },
+    "http2": {
+      "bytes": 129380,
+      "path": "net/spdy/spdy_session.cc",
+      "repository": "chromium",
+      "sha256": "721cff0260ffbe58320c47aec8a0a96f2aec446bfdeea114e97881b2b6eef5aa"
+    },
+    "http3": {
+      "bytes": 185508,
+      "path": "net/quic/quic_chromium_client_session.cc",
+      "repository": "chromium",
+      "sha256": "830d3efe43f5c6bebcb80294345190e80bd551762b9f5078c1e69dd7dbeff306"
+    },
+    "quiche_h3": {
+      "bytes": 56033,
+      "path": "quiche/quic/core/quic_config.cc",
+      "repository": "quiche",
+      "sha256": "408ed26a4e5a11c9ae87abf8d9c567b0efd937f13bde3da7e4ec819d4410ee77"
+    },
+    "quiche_random": {
+      "bytes": 2717,
+      "path": "quiche/common/quiche_random.cc",
+      "repository": "quiche",
+      "sha256": "21880ad8cc1eb618e880436419207840ebb094f965fdb3e3dda522c828333078"
+    },
+    "tls": {
+      "bytes": 68770,
+      "path": "net/socket/ssl_client_socket_impl.cc",
+      "repository": "chromium",
+      "sha256": "361f86011d6376ff1827107340b67174444c02d84fbe358d9fe85f27944b6ad5"
+    },
+    "websocket": {
+      "bytes": 19923,
+      "path": "net/websockets/websocket_basic_handshake_stream.cc",
+      "repository": "chromium",
+      "sha256": "9c09b957485095d19190b639d150e33d7acd0cfd9a8b8875d7fe0cc83ebe419a"
+    }
+  }
+}

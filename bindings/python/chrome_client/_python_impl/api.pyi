@@ -132,8 +132,8 @@ def session(
     Args:
         impersonate: The pinned Chromium profile that owns the TLS ClientHello, ALPN,
             HTTP/2 SETTINGS and HTTP/3 transport parameters. Accepts
-            ``chrome_86``..``chrome_157``, the curl_cffi spelling
-            ``chrome86``..``chrome157``. The bare family names
+            ``chrome_86``..``chrome_158``, the curl_cffi spelling
+            ``chrome86``..``chrome158``. The bare family names
             ``chrome``/``chromium`` are rejected.
         proxy: A single proxy URL for every request, e.g.
             ``"http://user:pass@127.0.0.1:8080"`` or ``"socks5://127.0.0.1:1080"``.
@@ -273,8 +273,8 @@ def async_session(
     Args:
         impersonate: The pinned Chromium profile that owns the TLS ClientHello, ALPN,
             HTTP/2 SETTINGS and HTTP/3 transport parameters. Accepts
-            ``chrome_86``..``chrome_157``, the curl_cffi spelling
-            ``chrome86``..``chrome157``. The bare family names
+            ``chrome_86``..``chrome_158``, the curl_cffi spelling
+            ``chrome86``..``chrome158``. The bare family names
             ``chrome``/``chromium`` are rejected.
         proxy: A single proxy URL for every request, e.g.
             ``"http://user:pass@127.0.0.1:8080"`` or ``"socks5://127.0.0.1:1080"``.

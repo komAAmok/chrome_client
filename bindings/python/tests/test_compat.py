@@ -41,6 +41,7 @@ except ImportError:  # Python 3.6
         daemon_threads = True
 
 import chrome_client
+from chrome_client._python_impl.impersonate import LATEST_CHROME, OLDEST_CHROME
 from chrome_client import requests as cc_requests
 
 
@@ -878,7 +879,11 @@ class CurlCffiSurfaceTests(Base):
                 self.assertEqual(session.get(self.url).status_code, 200)
         self.assertEqual(chrome_client.normalize_impersonate("chrome136"), "chrome_136")
         self.assertEqual(chrome_client.normalize_impersonate("chrome_136"), "chrome_136")
-        self.assertEqual(chrome_client.available_profiles()[-1], "chrome_157")
+        # Derived from the constant, not spelled out: a literal here fails the
+        # build for the right reason only once, and then silently has to be
+        # edited again for every release after it.
+        self.assertEqual(chrome_client.available_profiles()[-1],
+                         "chrome_%d" % LATEST_CHROME)
 
     def test_bare_family_names_are_rejected(self):
         # A family name would resolve to whatever profile ships last, so the
@@ -895,9 +900,9 @@ class CurlCffiSurfaceTests(Base):
 
     def test_available_profiles_has_no_family_names(self):
         profiles = chrome_client.available_profiles()
-        self.assertEqual(profiles[0], "chrome_86")
-        self.assertEqual(profiles[-1], "chrome_157")
-        self.assertEqual(len(profiles), 157 - 86 + 1)
+        self.assertEqual(profiles[0], "chrome_%d" % OLDEST_CHROME)
+        self.assertEqual(profiles[-1], "chrome_%d" % LATEST_CHROME)
+        self.assertEqual(len(profiles), LATEST_CHROME - OLDEST_CHROME + 1)
         for name in profiles:
             self.assertRegex(name, r"^chrome_\d+$")
 
@@ -1986,6 +1991,32 @@ class HopByHopHeaderTests(unittest.TestCase):
         self.assertIsNone(_ECHOED[-1].get("Content-Length"),
                           "a chunked body must not also declare a length")
 
+    def test_a_file_part_carries_no_invented_content_type(self):
+        """The facade must not guess a part type from the filename.
+
+        requests -- and therefore curl_cffi, which this facade follows --
+        renders a 2-tuple as a bare Content-Disposition and lets the caller add
+        a type only by passing one explicitly. Guessing looked harmless and was
+        not: measured against a server that stores what it receives,
+        files={"f": ("a.html", b"<script>...")} arrived as text/html where
+        requests sends no type at all, so an upload endpoint that echoes the
+        stored type starts serving attacker HTML.
+        """
+        with chrome_client.Session() as session:
+            session.post(self.base, files={"f": ("a.html", b"<script>x</script>")})
+        content_type = _ECHOED[-1].get("Content-Type") or ""
+        self.assertTrue(content_type.startswith("multipart/form-data;"))
+        body = _POSTED[-1]
+        self.assertNotIn(b"Content-Type: text/html", body)
+        self.assertNotIn(b"Content-Type: application/octet-stream", body)
+
+    def test_an_explicit_part_content_type_is_still_sent(self):
+        """The other direction: what the caller asks for must reach the wire."""
+        with chrome_client.Session() as session:
+            session.post(self.base,
+                         files={"f": ("a.txt", b"xy", "image/png")})
+        self.assertIn(b"Content-Type: image/png", _POSTED[-1])
+
     def test_ordinary_headers_are_unaffected(self):
         """The guard must not swallow body framing or caller-owned fields."""
         with chrome_client.Session(impersonate="chrome_124") as session:
@@ -2165,6 +2196,7 @@ class CoreOwnedHeaderTests(unittest.TestCase):
 
 
 _ECHOED = []
+_POSTED = []
 
 Session = chrome_client.Session
 
@@ -2208,12 +2240,11 @@ class _EchoHeaderHandler(BaseHTTPRequestHandler):
                 if size == 0:
                     self.rfile.readline()
                     break
-                self.rfile.read(size)
+                _POSTED.append(self.rfile.read(size))
                 self.rfile.readline()
         else:
             length = int(self.headers.get("Content-Length") or 0)
-            if length:
-                self.rfile.read(length)
+            _POSTED.append(self.rfile.read(length) if length else b"")
         body = b"ok"
         self.send_response(200)
         self.send_header("Content-Length", str(len(body)))

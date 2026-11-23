@@ -232,7 +232,7 @@ std::string HistoricalUserAgent(const minicronet::ProfileContext& profile,
     }
   }
   constexpr int kFirstProfileMajor = 86;
-  constexpr int kLastProfileMajor = 157;
+  constexpr int kLastProfileMajor = 158;
   // User-Agent Reduction: from this major Chrome sends <major>.0.0.0.
   constexpr int kReducedUserAgentFirstMajor = 105;
   static_assert(std::size(kFullVersions) ==

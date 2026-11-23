@@ -2714,3 +2714,27 @@ case InsecureDnsMode::kEnabledBuiltIn: {
 两个写入方（`create_cookie` 与 `morsel_to_cookie`/`extract_cookies`）写进去的值
 在语义上是否相同——这里两者都写 `None`，唯一区别是键存不存在，而我第一版修法
 正好判反了方向。
+
+## 81. 「更聪明」的默认值是一种指纹，也是一种攻击面
+
+`files={"f": ("a.html", b"<script>…")}` 里的 2 元组只说了「字段 f，文件名
+a.html，内容这些字节」。facade 却调用 `mimetypes.guess_type()` 给 part 补了一个
+`Content-Type: text/html`——requests 与 curl_cffi 都不补，只在你显式传第 3 个
+元素时才发这一行。
+
+实测（服务端按收到的 part 类型回报）：
+
+| files= | 修前 | requests |
+| --- | --- | --- |
+| `("a.txt", b"xy")` | part `text/plain` | 无 part 类型 |
+| `("a.html", b"<script>x</script>")` | part **`text/html`** | 无 part 类型 |
+| `("a.bin", b"xy")` | part `application/octet-stream` | 无 part 类型 |
+
+**后果不是格式差异**：把附件存进对象存储、再把 part 类型原样回显的服务端，
+从这一刻起把调用方上传的 HTML 当 HTML 提供出去了。第二个凭空发明的断言是
+`application/octet-stream`——对每个不认识的后缀都这样标，同样是一句调用方没说过的话。
+
+**判据**：给一个可选字段补默认值时，先问「这个值是谁的断言」。文件名只是文件名，
+它不是类型声明；`RFC 7578 §4.4` 让 part 类型可省略，所以省略才是既兼容又互操作的选择。
+「猜得更准」在协议层面不是优点——多出的每一个字节都是对方能观测到的指纹，也是
+调用方没授权过的语义。

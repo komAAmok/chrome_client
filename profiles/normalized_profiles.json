@@ -174130,6 +174130,2753 @@
           }
         ]
       }
+    },
+    {
+      "alpn": {
+        "note": "Extract from the matching build; source markers are not wire values.",
+        "source_audited": true,
+        "source_values": [
+          {
+            "line": 212,
+            "text": "next_protos_.push_back(NextProto::kProtoHTTP2);"
+          },
+          {
+            "line": 215,
+            "text": "application_settings_[NextProto::kProtoHTTP2] = {};"
+          },
+          {
+            "line": 219,
+            "text": "next_protos_.push_back(NextProto::kProtoHTTP11);"
+          },
+          {
+            "line": 428,
+            "text": "context_.http_server_properties, &next_protos_, &application_settings_,"
+          }
+        ],
+        "wire_protocols": null
+      },
+      "boringssl_revision": "ea9f3a34c3977144c45d272be81842fd891a0bdb",
+      "chrome_version": "158.0.8127.37",
+      "chromium_commit": "a67074eecdccb011f041a2684df8ad0f869d59f2",
+      "chromium_tag": "158.0.8127.99",
+      "evidence": {
+        "source_files": {
+          "alpn": {
+            "bytes": 19125,
+            "path": "net/http/http_network_session.cc",
+            "repository": "chromium",
+            "sha256": "ce48d6ddbfd82e43628ece7a1555401ac9bc4d464e3e9add4ebe809dcd27bae6",
+            "signals": {
+              "alpn": {
+                "count": 3,
+                "lines": [
+                  212,
+                  215,
+                  219
+                ]
+              },
+              "h1": {
+                "count": 1,
+                "lines": [
+                  219
+                ]
+              },
+              "h2": {
+                "count": 26,
+                "lines": [
+                  47,
+                  56,
+                  58,
+                  59,
+                  61,
+                  63,
+                  65,
+                  66,
+                  67,
+                  70,
+                  71,
+                  72,
+                  76,
+                  77,
+                  78,
+                  82,
+                  175,
+                  179,
+                  180,
+                  181,
+                  182,
+                  211,
+                  212,
+                  213,
+                  214,
+                  215
+                ]
+              },
+              "h3": {
+                "count": 0,
+                "lines": []
+              }
+            }
+          },
+          "boringssl_extensions": {
+            "bytes": 177295,
+            "path": "ssl/extensions.cc",
+            "repository": "boringssl",
+            "sha256": "65c73a76c8be76288e39b338c9f717293d4080856930eacc579c52a1185d7c92",
+            "signals": {
+              "csprng": {
+                "count": 1,
+                "lines": [
+                  4340
+                ]
+              },
+              "extension_permutation": {
+                "count": 9,
+                "lines": [
+                  4331,
+                  4332,
+                  4351,
+                  4409,
+                  4410,
+                  4412,
+                  4519,
+                  4520,
+                  4522
+                ]
+              },
+              "grease": {
+                "count": 21,
+                "lines": [
+                  1032,
+                  1034,
+                  1643,
+                  2471,
+                  2473,
+                  2678,
+                  2679,
+                  2742,
+                  2743,
+                  4399,
+                  4402,
+                  4403,
+                  4404,
+                  4437,
+                  4440,
+                  4441,
+                  4442,
+                  4512,
+                  4514,
+                  4539,
+                  4542
+                ]
+              },
+              "key_share": {
+                "count": 75,
+                "lines": [
+                  208,
+                  2390,
+                  2394,
+                  2396,
+                  2397,
+                  2399,
+                  2412,
+                  2419,
+                  2424,
+                  2425,
+                  2429,
+                  2435,
+                  2436,
+                  2437,
+                  2438,
+                  2442,
+                  2443,
+                  2445,
+                  2451,
+                  2455,
+                  2458,
+                  2461,
+                  2464,
+                  2475,
+                  2481,
+                  2482,
+                  2483,
+                  2486,
+                  2487,
+                  2492,
+                  2495,
+                  2498
+                ]
+              },
+              "quic_random": {
+                "count": 0,
+                "lines": []
+              }
+            }
+          },
+          "boringssl_handshake_client": {
+            "bytes": 68031,
+            "path": "ssl/handshake_client.cc",
+            "repository": "boringssl",
+            "sha256": "7d5d0b6d9c2f89c52f4cc9284d3ad4a9b07325cd42403da59ba5e884e3828052",
+            "signals": {
+              "csprng": {
+                "count": 4,
+                "lines": [
+                  379,
+                  383,
+                  397,
+                  1429
+                ]
+              },
+              "extension_permutation": {
+                "count": 1,
+                "lines": [
+                  412
+                ]
+              },
+              "grease": {
+                "count": 2,
+                "lines": [
+                  98,
+                  99
+                ]
+              },
+              "key_share": {
+                "count": 6,
+                "lines": [
+                  291,
+                  369,
+                  411,
+                  645,
+                  1451,
+                  1452
+                ]
+              },
+              "quic_random": {
+                "count": 0,
+                "lines": []
+              }
+            }
+          },
+          "boringssl_random": {
+            "bytes": 2178,
+            "path": "crypto/rand/rand.cc",
+            "repository": "boringssl",
+            "sha256": "02ed874ccac8b05c48eae239760207e55691e1a0fa6436312aeb85fae39c94ec",
+            "signals": {
+              "csprng": {
+                "count": 5,
+                "lines": [
+                  25,
+                  26,
+                  30,
+                  36,
+                  60
+                ]
+              },
+              "extension_permutation": {
+                "count": 0,
+                "lines": []
+              },
+              "grease": {
+                "count": 0,
+                "lines": []
+              },
+              "key_share": {
+                "count": 0,
+                "lines": []
+              },
+              "quic_random": {
+                "count": 0,
+                "lines": []
+              }
+            }
+          },
+          "chromium_base_random": {
+            "bytes": 7426,
+            "path": "base/rand_util.cc",
+            "repository": "chromium",
+            "sha256": "7a3143f6c874fbfb546dc565124a846d5e3b274aa3f074281f33b18bbc93ef76",
+            "signals": {
+              "csprng": {
+                "count": 0,
+                "lines": []
+              },
+              "extension_permutation": {
+                "count": 0,
+                "lines": []
+              },
+              "grease": {
+                "count": 0,
+                "lines": []
+              },
+              "key_share": {
+                "count": 0,
+                "lines": []
+              },
+              "quic_random": {
+                "count": 10,
+                "lines": [
+                  33,
+                  53,
+                  57,
+                  115,
+                  134,
+                  135,
+                  143,
+                  158,
+                  164,
+                  168
+                ]
+              }
+            }
+          },
+          "features": {
+            "bytes": 43381,
+            "path": "net/base/features.cc",
+            "repository": "chromium",
+            "sha256": "34fa5fc46343c193b46b55c6ba4277624a7180560be299f119d6ca924bcd9163",
+            "signals": {
+              "base_feature": {
+                "count": 246,
+                "lines": [
+                  32,
+                  34,
+                  37,
+                  40,
+                  49,
+                  53,
+                  55,
+                  57,
+                  61,
+                  65,
+                  70,
+                  79,
+                  83,
+                  85,
+                  112,
+                  114,
+                  116,
+                  126,
+                  128,
+                  129,
+                  134,
+                  136,
+                  142,
+                  144,
+                  149,
+                  156,
+                  163,
+                  165,
+                  167,
+                  169,
+                  170,
+                  179
+                ]
+              },
+              "http2": {
+                "count": 8,
+                "lines": [
+                  32,
+                  265,
+                  440,
+                  443,
+                  515,
+                  843,
+                  845,
+                  952
+                ]
+              },
+              "quic": {
+                "count": 64,
+                "lines": [
+                  16,
+                  53,
+                  153,
+                  160,
+                  254,
+                  256,
+                  304,
+                  344,
+                  345,
+                  352,
+                  353,
+                  354,
+                  356,
+                  358,
+                  359,
+                  362,
+                  364,
+                  365,
+                  368,
+                  370,
+                  371,
+                  374,
+                  375,
+                  378,
+                  379,
+                  445,
+                  848,
+                  850,
+                  851,
+                  852,
+                  853,
+                  856
+                ]
+              },
+              "tls": {
+                "count": 22,
+                "lines": [
+                  32,
+                  175,
+                  176,
+                  177,
+                  179,
+                  188,
+                  300,
+                  302,
+                  443,
+                  445,
+                  542,
+                  571,
+                  573,
+                  576,
+                  578,
+                  743,
+                  999,
+                  1002,
+                  1003,
+                  1004,
+                  1039,
+                  1043
+                ]
+              },
+              "variation": {
+                "count": 1,
+                "lines": [
+                  484
+                ]
+              },
+              "websocket": {
+                "count": 2,
+                "lines": [
+                  304,
+                  1058
+                ]
+              }
+            }
+          },
+          "http2": {
+            "bytes": 129380,
+            "path": "net/spdy/spdy_session.cc",
+            "repository": "chromium",
+            "sha256": "721cff0260ffbe58320c47aec8a0a96f2aec446bfdeea114e97881b2b6eef5aa",
+            "signals": {
+              "connect": {
+                "count": 93,
+                "lines": [
+                  69,
+                  92,
+                  168,
+                  535,
+                  536,
+                  584,
+                  600,
+                  707,
+                  729,
+                  735,
+                  736,
+                  811,
+                  853,
+                  854,
+                  857,
+                  858,
+                  888,
+                  890,
+                  893,
+                  907,
+                  920,
+                  930,
+                  931,
+                  1063,
+                  1304,
+                  1306,
+                  1307,
+                  1310,
+                  1505,
+                  1515,
+                  1520,
+                  1524
+                ]
+              },
+              "priority": {
+                "count": 102,
+                "lines": [
+                  194,
+                  197,
+                  205,
+                  206,
+                  209,
+                  346,
+                  349,
+                  354,
+                  361,
+                  367,
+                  579,
+                  595,
+                  646,
+                  647,
+                  651,
+                  653,
+                  654,
+                  655,
+                  685,
+                  821,
+                  836,
+                  1019,
+                  1035,
+                  1039,
+                  1046,
+                  1047,
+                  1050,
+                  1051,
+                  1080,
+                  1091,
+                  1092,
+                  1094
+                ]
+              },
+              "pseudo_headers": {
+                "count": 6,
+                "lines": [
+                  967,
+                  1327,
+                  2717,
+                  3222,
+                  3240,
+                  3250
+                ]
+              },
+              "settings": {
+                "count": 85,
+                "lines": [
+                  96,
+                  104,
+                  151,
+                  154,
+                  156,
+                  158,
+                  161,
+                  163,
+                  165,
+                  168,
+                  244,
+                  245,
+                  246,
+                  247,
+                  248,
+                  250,
+                  252,
+                  255,
+                  265,
+                  269,
+                  523,
+                  524,
+                  816,
+                  817,
+                  832,
+                  833,
+                  846,
+                  848,
+                  870,
+                  871,
+                  937,
+                  954
+                ]
+              },
+              "window": {
+                "count": 182,
+                "lines": [
+                  107,
+                  161,
+                  162,
+                  273,
+                  280,
+                  281,
+                  282,
+                  814,
+                  839,
+                  841,
+                  842,
+                  843,
+                  844,
+                  847,
+                  848,
+                  871,
+                  1145,
+                  1171,
+                  1178,
+                  1183,
+                  1185,
+                  1190,
+                  1195,
+                  1218,
+                  1221,
+                  1342,
+                  1343,
+                  1347,
+                  1452,
+                  1453,
+                  1454,
+                  1650
+                ]
+              }
+            }
+          },
+          "http3": {
+            "bytes": 185508,
+            "path": "net/quic/quic_chromium_client_session.cc",
+            "repository": "chromium",
+            "sha256": "830d3efe43f5c6bebcb80294345190e80bd551762b9f5078c1e69dd7dbeff306",
+            "signals": {
+              "connection_id": {
+                "count": 66,
+                "lines": [
+                  270,
+                  273,
+                  278,
+                  279,
+                  359,
+                  360,
+                  371,
+                  387,
+                  388,
+                  581,
+                  1211,
+                  1212,
+                  2502,
+                  2520,
+                  2533,
+                  2711,
+                  2782,
+                  2837,
+                  3086,
+                  3115,
+                  3136,
+                  3149,
+                  3269,
+                  3272,
+                  3444,
+                  3453,
+                  3486,
+                  3498,
+                  3510,
+                  3523,
+                  3539,
+                  3540
+                ]
+              },
+              "flow_control": {
+                "count": 1,
+                "lines": [
+                  1647
+                ]
+              },
+              "grease": {
+                "count": 1,
+                "lines": [
+                  1845
+                ]
+              },
+              "settings": {
+                "count": 1,
+                "lines": [
+                  1751
+                ]
+              },
+              "transport": {
+                "count": 8,
+                "lines": [
+                  53,
+                  216,
+                  217,
+                  1102,
+                  1175,
+                  1697,
+                  1717,
+                  2353
+                ]
+              },
+              "websocket": {
+                "count": 583,
+                "lines": [
+                  38,
+                  60,
+                  71,
+                  80,
+                  89,
+                  90,
+                  106,
+                  146,
+                  188,
+                  189,
+                  194,
+                  196,
+                  197,
+                  200,
+                  209,
+                  211,
+                  216,
+                  218,
+                  223,
+                  227,
+                  229,
+                  234,
+                  241,
+                  245,
+                  258,
+                  259,
+                  270,
+                  273,
+                  278,
+                  279,
+                  319,
+                  359
+                ]
+              }
+            }
+          },
+          "quiche_h3": {
+            "bytes": 56033,
+            "path": "quiche/quic/core/quic_config.cc",
+            "repository": "quiche",
+            "sha256": "408ed26a4e5a11c9ae87abf8d9c567b0efd937f13bde3da7e4ec819d4410ee77",
+            "signals": {
+              "connection_id": {
+                "count": 96,
+                "lines": [
+                  20,
+                  441,
+                  459,
+                  717,
+                  718,
+                  719,
+                  722,
+                  723,
+                  726,
+                  727,
+                  730,
+                  731,
+                  734,
+                  735,
+                  738,
+                  739,
+                  742,
+                  743,
+                  746,
+                  747,
+                  938,
+                  939,
+                  943,
+                  945,
+                  948,
+                  949,
+                  952,
+                  955,
+                  958,
+                  959,
+                  960,
+                  961
+                ]
+              },
+              "flow_control": {
+                "count": 45,
+                "lines": [
+                  448,
+                  449,
+                  770,
+                  771,
+                  772,
+                  774,
+                  776,
+                  777,
+                  779,
+                  782,
+                  783,
+                  786,
+                  787,
+                  790,
+                  791,
+                  795,
+                  797,
+                  805,
+                  821,
+                  823,
+                  831,
+                  847,
+                  848,
+                  855,
+                  866,
+                  867,
+                  868,
+                  870,
+                  872,
+                  873,
+                  875,
+                  878
+                ]
+              },
+              "grease": {
+                "count": 0,
+                "lines": []
+              },
+              "settings": {
+                "count": 0,
+                "lines": []
+              },
+              "transport": {
+                "count": 36,
+                "lines": [
+                  19,
+                  438,
+                  587,
+                  594,
+                  595,
+                  597,
+                  1073,
+                  1074,
+                  1075,
+                  1076,
+                  1077,
+                  1078,
+                  1079,
+                  1081,
+                  1082,
+                  1124,
+                  1125,
+                  1128,
+                  1129,
+                  1138,
+                  1139,
+                  1208,
+                  1214,
+                  1215,
+                  1258,
+                  1277,
+                  1315,
+                  1322,
+                  1323,
+                  1330,
+                  1331,
+                  1332
+                ]
+              }
+            }
+          },
+          "quiche_random": {
+            "bytes": 2717,
+            "path": "quiche/common/quiche_random.cc",
+            "repository": "quiche",
+            "sha256": "21880ad8cc1eb618e880436419207840ebb094f965fdb3e3dda522c828333078",
+            "signals": {
+              "csprng": {
+                "count": 2,
+                "lines": [
+                  18,
+                  59
+                ]
+              },
+              "extension_permutation": {
+                "count": 0,
+                "lines": []
+              },
+              "grease": {
+                "count": 0,
+                "lines": []
+              },
+              "key_share": {
+                "count": 0,
+                "lines": []
+              },
+              "quic_random": {
+                "count": 14,
+                "lines": [
+                  44,
+                  46,
+                  47,
+                  48,
+                  49,
+                  51,
+                  53,
+                  55,
+                  58,
+                  62,
+                  68,
+                  82,
+                  89,
+                  90
+                ]
+              }
+            }
+          },
+          "tls": {
+            "bytes": 68770,
+            "path": "net/socket/ssl_client_socket_impl.cc",
+            "repository": "chromium",
+            "sha256": "361f86011d6376ff1827107340b67174444c02d84fbe358d9fe85f27944b6ad5",
+            "signals": {
+              "alpn": {
+                "count": 10,
+                "lines": [
+                  819,
+                  821,
+                  822,
+                  824,
+                  974,
+                  975,
+                  976,
+                  977,
+                  978,
+                  1780
+                ]
+              },
+              "alps": {
+                "count": 7,
+                "lines": [
+                  500,
+                  506,
+                  815,
+                  817,
+                  825,
+                  826,
+                  828
+                ]
+              },
+              "compression": {
+                "count": 2,
+                "lines": [
+                  58,
+                  220
+                ]
+              },
+              "ech": {
+                "count": 43,
+                "lines": [
+                  39,
+                  318,
+                  321,
+                  323,
+                  325,
+                  523,
+                  860,
+                  968,
+                  972,
+                  1119,
+                  1120,
+                  1121,
+                  1124,
+                  1125,
+                  1126,
+                  1127,
+                  1128,
+                  1131,
+                  1140,
+                  1169,
+                  1241,
+                  1245,
+                  1821,
+                  1822,
+                  1824,
+                  1825,
+                  1826,
+                  1828,
+                  1829,
+                  1830,
+                  1832,
+                  1834
+                ]
+              },
+              "grease": {
+                "count": 4,
+                "lines": [
+                  210,
+                  211,
+                  212,
+                  1836
+                ]
+              },
+              "groups": {
+                "count": 8,
+                "lines": [
+                  704,
+                  706,
+                  707,
+                  710,
+                  711,
+                  712,
+                  713,
+                  714
+                ]
+              },
+              "ticket": {
+                "count": 2,
+                "lines": [
+                  1042,
+                  1044
+                ]
+              }
+            }
+          },
+          "websocket": {
+            "bytes": 19923,
+            "path": "net/websockets/websocket_basic_handshake_stream.cc",
+            "repository": "chromium",
+            "sha256": "9c09b957485095d19190b639d150e33d7acd0cfd9a8b8875d7fe0cc83ebe419a",
+            "signals": {
+              "connect": {
+                "count": 38,
+                "lines": [
+                  64,
+                  157,
+                  159,
+                  160,
+                  161,
+                  164,
+                  166,
+                  182,
+                  183,
+                  189,
+                  190,
+                  195,
+                  201,
+                  262,
+                  286,
+                  290,
+                  329,
+                  330,
+                  333,
+                  334,
+                  337,
+                  338,
+                  389,
+                  410,
+                  414,
+                  427,
+                  428,
+                  431,
+                  452,
+                  489,
+                  497,
+                  498
+                ]
+              },
+              "extensions": {
+                "count": 13,
+                "lines": [
+                  186,
+                  192,
+                  259,
+                  280,
+                  391,
+                  415,
+                  416,
+                  417,
+                  419,
+                  516,
+                  528,
+                  529,
+                  530
+                ]
+              },
+              "origin": {
+                "count": 1,
+                "lines": [
+                  260
+                ]
+              },
+              "sec_headers": {
+                "count": 2,
+                "lines": [
+                  151,
+                  269
+                ]
+              },
+              "upgrade": {
+                "count": 14,
+                "lines": [
+                  118,
+                  122,
+                  124,
+                  132,
+                  165,
+                  166,
+                  261,
+                  408,
+                  461,
+                  499,
+                  514,
+                  518,
+                  519,
+                  544
+                ]
+              }
+            }
+          }
+        },
+        "status": "wire_verified",
+        "wire_verified": true
+      },
+      "feature_list": {
+        "source_markers": {
+          "base_feature": {
+            "count": 246,
+            "lines": [
+              32,
+              34,
+              37,
+              40,
+              49,
+              53,
+              55,
+              57,
+              61,
+              65,
+              70,
+              79,
+              83,
+              85,
+              112,
+              114,
+              116,
+              126,
+              128,
+              129,
+              134,
+              136,
+              142,
+              144,
+              149,
+              156,
+              163,
+              165,
+              167,
+              169,
+              170,
+              179
+            ]
+          },
+          "http2": {
+            "count": 8,
+            "lines": [
+              32,
+              265,
+              440,
+              443,
+              515,
+              843,
+              845,
+              952
+            ]
+          },
+          "quic": {
+            "count": 64,
+            "lines": [
+              16,
+              53,
+              153,
+              160,
+              254,
+              256,
+              304,
+              344,
+              345,
+              352,
+              353,
+              354,
+              356,
+              358,
+              359,
+              362,
+              364,
+              365,
+              368,
+              370,
+              371,
+              374,
+              375,
+              378,
+              379,
+              445,
+              848,
+              850,
+              851,
+              852,
+              853,
+              856
+            ]
+          },
+          "tls": {
+            "count": 22,
+            "lines": [
+              32,
+              175,
+              176,
+              177,
+              179,
+              188,
+              300,
+              302,
+              443,
+              445,
+              542,
+              571,
+              573,
+              576,
+              578,
+              743,
+              999,
+              1002,
+              1003,
+              1004,
+              1039,
+              1043
+            ]
+          },
+          "variation": {
+            "count": 1,
+            "lines": [
+              484
+            ]
+          },
+          "websocket": {
+            "count": 2,
+            "lines": [
+              304,
+              1058
+            ]
+          }
+        },
+        "source_values": [
+          {
+            "line": 32,
+            "text": "BASE_FEATURE(kAlpsForHttp2, base::FEATURE_ENABLED_BY_DEFAULT);"
+          },
+          {
+            "line": 34,
+            "text": "BASE_FEATURE(kAsyncRetryOnTooManyConnectionErrors,"
+          },
+          {
+            "line": 37,
+            "text": "BASE_FEATURE(kDeriveConnectionTypeFromCapabilities,"
+          },
+          {
+            "line": 40,
+            "text": "BASE_FEATURE(kAsyncDns,"
+          },
+          {
+            "line": 49,
+            "text": "BASE_FEATURE(kOptimisticDnsForTcp, base::FEATURE_DISABLED_BY_DEFAULT);"
+          },
+          {
+            "line": 53,
+            "text": "BASE_FEATURE(kOptimisticDnsForQuic, base::FEATURE_DISABLED_BY_DEFAULT);"
+          },
+          {
+            "line": 55,
+            "text": "BASE_FEATURE(kAddressSorterConnectCache, base::FEATURE_DISABLED_BY_DEFAULT);"
+          },
+          {
+            "line": 57,
+            "text": "BASE_FEATURE_PARAM(size_t,"
+          },
+          {
+            "line": 61,
+            "text": "BASE_FEATURE_PARAM(size_t,"
+          },
+          {
+            "line": 65,
+            "text": "BASE_FEATURE_PARAM(size_t,"
+          },
+          {
+            "line": 70,
+            "text": "BASE_FEATURE(kDnsTransactionDynamicTimeouts, base::FEATURE_DISABLED_BY_DEFAULT);"
+          },
+          {
+            "line": 79,
+            "text": "BASE_FEATURE(kDnsPlatformFailFastAndRetry, base::FEATURE_DISABLED_BY_DEFAULT);"
+          },
+          {
+            "line": 83,
+            "text": "BASE_FEATURE(kUseDnsHttpsSvcb, base::FEATURE_ENABLED_BY_DEFAULT);"
+          },
+          {
+            "line": 85,
+            "text": "BASE_FEATURE(kUseDnsHttpsSvcbAddressHints, base::FEATURE_DISABLED_BY_DEFAULT);"
+          },
+          {
+            "line": 112,
+            "text": "BASE_FEATURE(kUseStructuredDnsErrors, base::FEATURE_DISABLED_BY_DEFAULT);"
+          },
+          {
+            "line": 114,
+            "text": "BASE_FEATURE(kUseHostResolverCache, base::FEATURE_DISABLED_BY_DEFAULT);"
+          },
+          {
+            "line": 116,
+            "text": "BASE_FEATURE(kHappyEyeballsV2,"
+          },
+          {
+            "line": 126,
+            "text": "BASE_FEATURE(kHappyEyeballsV3, base::FEATURE_DISABLED_BY_DEFAULT);"
+          },
+          {
+            "line": 128,
+            "text": "BASE_FEATURE(kEnableIntermediateDnsResults, base::FEATURE_DISABLED_BY_DEFAULT);"
+          },
+          {
+            "line": 129,
+            "text": "BASE_FEATURE_PARAM(bool,"
+          },
+          {
+            "line": 134,
+            "text": "BASE_FEATURE(kAdjustIPv6FallbackTime, base::FEATURE_DISABLED_BY_DEFAULT);"
+          },
+          {
+            "line": 136,
+            "text": "BASE_FEATURE_PARAM(base::TimeDelta,"
+          },
+          {
+            "line": 142,
+            "text": "BASE_FEATURE(kIPv6FallbackBasedOnRTT, base::FEATURE_DISABLED_BY_DEFAULT);"
+          },
+          {
+            "line": 144,
+            "text": "BASE_FEATURE_PARAM(double,"
+          },
+          {
+            "line": 149,
+            "text": "BASE_FEATURE_PARAM(base::TimeDelta,"
+          },
+          {
+            "line": 156,
+            "text": "BASE_FEATURE_PARAM(base::TimeDelta,"
+          },
+          {
+            "line": 163,
+            "text": "BASE_FEATURE(kCacheControlImmutable, base::FEATURE_DISABLED_BY_DEFAULT);"
+          },
+          {
+            "line": 165,
+            "text": "BASE_FEATURE(kHttpCacheZstdDecompression, base::FEATURE_ENABLED_BY_DEFAULT);"
+          },
+          {
+            "line": 167,
+            "text": "BASE_FEATURE(kHttpCacheZstdCompression, base::FEATURE_ENABLED_BY_DEFAULT);"
+          },
+          {
+            "line": 169,
+            "text": "BASE_FEATURE(kRendererAccessibleHttpCache, base::FEATURE_DISABLED_BY_DEFAULT);"
+          },
+          {
+            "line": 170,
+            "text": "BASE_FEATURE_PARAM(bool,"
+          },
+          {
+            "line": 179,
+            "text": "BASE_FEATURE(kUseAlternativePortForGloballyReachableCheck,"
+          },
+          {
+            "line": 182,
+            "text": "BASE_FEATURE(kEnableIPv6ReachabilityOverride,"
+          },
+          {
+            "line": 185,
+            "text": "BASE_FEATURE(kMaintainConnectionsOnIpv6TempAddrChange,"
+          },
+          {
+            "line": 188,
+            "text": "BASE_FEATURE(kEnableTLS13EarlyData, base::FEATURE_DISABLED_BY_DEFAULT);"
+          },
+          {
+            "line": 190,
+            "text": "BASE_FEATURE(kNetworkQualityEstimator, base::FEATURE_DISABLED_BY_DEFAULT);"
+          },
+          {
+            "line": 192,
+            "text": "BASE_FEATURE(kNetworkQualityEstimatorIsPrivateHostCache,"
+          },
+          {
+            "line": 210,
+            "text": "BASE_FEATURE(kSplitCacheByIncludeCredentials,"
+          },
+          {
+            "line": 213,
+            "text": "BASE_FEATURE(kSplitCacheByNetworkIsolationKey,"
+          },
+          {
+            "line": 216,
+            "text": "BASE_FEATURE(kSplitCodeCacheByNetworkIsolationKey,"
+          },
+          {
+            "line": 219,
+            "text": "BASE_FEATURE(kPartitionConnectionsByNetworkIsolationKey,"
+          },
+          {
+            "line": 222,
+            "text": "BASE_FEATURE(kSplitHostCacheByNetworkAnonymizationKey,"
+          },
+          {
+            "line": 225,
+            "text": "BASE_FEATURE(kSearchEnginePreconnectInterval,"
+          },
+          {
+            "line": 228,
+            "text": "BASE_FEATURE(kSearchEnginePreconnect2, base::FEATURE_ENABLED_BY_DEFAULT);"
+          },
+          {
+            "line": 230,
+            "text": "BASE_FEATURE_PARAM(int,"
+          },
+          {
+            "line": 236,
+            "text": "BASE_FEATURE_PARAM(base::TimeDelta,"
+          },
+          {
+            "line": 247,
+            "text": "BASE_FEATURE_PARAM(int,"
+          },
+          {
+            "line": 253,
+            "text": "BASE_FEATURE_PARAM(std::string,"
+          },
+          {
+            "line": 259,
+            "text": "BASE_FEATURE_PARAM(bool,"
+          },
+          {
+            "line": 265,
+            "text": "BASE_FEATURE(kConnectionKeepAliveForHttp2, base::FEATURE_DISABLED_BY_DEFAULT);"
+          },
+          {
+            "line": 267,
+            "text": "BASE_FEATURE(kShortLaxAllowUnsafeThreshold, base::FEATURE_DISABLED_BY_DEFAULT);"
+          },
+          {
+            "line": 269,
+            "text": "BASE_FEATURE(kSameSiteDefaultChecksMethodRigorously,"
+          },
+          {
+            "line": 272,
+            "text": "BASE_FEATURE(kTimeoutTcpConnectAttempt, base::FEATURE_DISABLED_BY_DEFAULT);"
+          },
+          {
+            "line": 289,
+            "text": "BASE_FEATURE(kCookieSameSiteConsidersRedirectChain,"
+          },
+          {
+            "line": 292,
+            "text": "BASE_FEATURE(kStaticKeyPinningEnforcement, base::FEATURE_ENABLED_BY_DEFAULT);"
+          },
+          {
+            "line": 294,
+            "text": "BASE_FEATURE(kCookieDomainRejectNonASCII, base::FEATURE_DISABLED_BY_DEFAULT);"
+          },
+          {
+            "line": 298,
+            "text": "BASE_FEATURE(kThirdPartyStoragePartitioning, base::FEATURE_ENABLED_BY_DEFAULT);"
+          },
+          {
+            "line": 300,
+            "text": "BASE_FEATURE(kAlpsParsing, base::FEATURE_ENABLED_BY_DEFAULT);"
+          },
+          {
+            "line": 302,
+            "text": "BASE_FEATURE(kAlpsClientHintParsing, base::FEATURE_ENABLED_BY_DEFAULT);"
+          },
+          {
+            "line": 304,
+            "text": "BASE_FEATURE(kEnableWebsocketsOverHttp3, base::FEATURE_DISABLED_BY_DEFAULT);"
+          },
+          {
+            "line": 308,
+            "text": "BASE_FEATURE(kEnableGetNetworkConnectivityHintAPI,"
+          },
+          {
+            "line": 311,
+            "text": "BASE_FEATURE(kTcpPortRandomizationWin, base::FEATURE_ENABLED_BY_DEFAULT);"
+          },
+          {
+            "line": 313,
+            "text": "BASE_FEATURE_PARAM(int,"
+          },
+          {
+            "line": 319,
+            "text": "BASE_FEATURE(kTcpPortReuseMetricsWin, base::FEATURE_ENABLED_BY_DEFAULT);"
+          },
+          {
+            "line": 321,
+            "text": "BASE_FEATURE(kTcpSocketIoCompletionPortWin, base::FEATURE_DISABLED_BY_DEFAULT);"
+          },
+          {
+            "line": 323,
+            "text": "BASE_FEATURE(kDeferConnectionTypeAtStartup, base::FEATURE_DISABLED_BY_DEFAULT);"
+          },
+          {
+            "line": 327,
+            "text": "BASE_FEATURE(kTcpPortRandomizationMac, base::FEATURE_DISABLED_BY_DEFAULT);"
+          },
+          {
+            "line": 328,
+            "text": "BASE_FEATURE_PARAM(int,"
+          },
+          {
+            "line": 333,
+            "text": "BASE_FEATURE_PARAM(bool,"
+          },
+          {
+            "line": 339,
+            "text": "BASE_FEATURE(kAvoidEntryCreationForNoStore, base::FEATURE_DISABLED_BY_DEFAULT);"
+          },
+          {
+            "line": 345,
+            "text": "BASE_FEATURE(kAsyncQuicSession,"
+          },
+          {
+            "line": 354,
+            "text": "BASE_FEATURE(kAsyncDnsQuicJob, base::FEATURE_DISABLED_BY_DEFAULT);"
+          },
+          {
+            "line": 356,
+            "text": "BASE_FEATURE_PARAM(bool, kAsyncDnsQuicJobFastFail, &kAsyncDnsQuicJob, false);"
+          },
+          {
+            "line": 357,
+            "text": "BASE_FEATURE_PARAM(bool,"
+          },
+          {
+            "line": 362,
+            "text": "BASE_FEATURE(kAdjustQuicSlowTimerDelay, base::FEATURE_DISABLED_BY_DEFAULT);"
+          },
+          {
+            "line": 363,
+            "text": "BASE_FEATURE_PARAM(base::TimeDelta,"
+          },
+          {
+            "line": 368,
+            "text": "BASE_FEATURE(kQuicSlowTimerBasedOnRTT, base::FEATURE_DISABLED_BY_DEFAULT);"
+          },
+          {
+            "line": 369,
+            "text": "BASE_FEATURE_PARAM(double,"
+          },
+          {
+            "line": 373,
+            "text": "BASE_FEATURE_PARAM(base::TimeDelta,"
+          },
+          {
+            "line": 377,
+            "text": "BASE_FEATURE_PARAM(base::TimeDelta,"
+          },
+          {
+            "line": 383,
+            "text": "BASE_FEATURE(kAsyncMultiPortPath,"
+          },
+          {
+            "line": 390,
+            "text": "BASE_FEATURE(kExcludeLargeBodyReports,"
+          },
+          {
+            "line": 394,
+            "text": "BASE_FEATURE_PARAM(size_t,"
+          },
+          {
+            "line": 400,
+            "text": "BASE_FEATURE(kRelatedWebsitePartitionAPI, base::FEATURE_DISABLED_BY_DEFAULT);"
+          },
+          {
+            "line": 412,
+            "text": "BASE_FEATURE(kMigrateSessionsOnNetworkChangeV2,"
+          },
+          {
+            "line": 416,
+            "text": "BASE_FEATURE(kEnablePortBoundCookies, base::FEATURE_DISABLED_BY_DEFAULT);"
+          },
+          {
+            "line": 419,
+            "text": "NET_EXPORT BASE_DECLARE_FEATURE(kEnableSchemeBoundCookies);"
+          },
+          {
+            "line": 420,
+            "text": "BASE_FEATURE(kEnableSchemeBoundCookies, base::FEATURE_DISABLED_BY_DEFAULT);"
+          },
+          {
+            "line": 423,
+            "text": "NET_EXPORT BASE_DECLARE_FEATURE(kDisallowNonAsciiCookies);"
+          },
+          {
+            "line": 424,
+            "text": "BASE_FEATURE(kDisallowNonAsciiCookies, base::FEATURE_DISABLED_BY_DEFAULT);"
+          },
+          {
+            "line": 426,
+            "text": "BASE_FEATURE(kTimeLimitedInsecureCookies, base::FEATURE_DISABLED_BY_DEFAULT);"
+          },
+          {
+            "line": 429,
+            "text": "BASE_FEATURE(kForceThirdPartyCookieBlocking,"
+          },
+          {
+            "line": 433,
+            "text": "BASE_FEATURE(kEnableEarlyHintsOnHttp11, base::FEATURE_DISABLED_BY_DEFAULT);"
+          },
+          {
+            "line": 435,
+            "text": "BASE_FEATURE(kEnableWebTransportDraft07, base::FEATURE_DISABLED_BY_DEFAULT);"
+          },
+          {
+            "line": 437,
+            "text": "BASE_FEATURE(kWebTransportFineGrainedThrottling,"
+          },
+          {
+            "line": 440,
+            "text": "BASE_FEATURE(kSpdyHeadersToHttpResponseUseBuilder,"
+          },
+          {
+            "line": 443,
+            "text": "BASE_FEATURE(kUseNewAlpsCodepointHttp2, base::FEATURE_ENABLED_BY_DEFAULT);"
+          },
+          {
+            "line": 445,
+            "text": "BASE_FEATURE(kUseNewAlpsCodepointQUIC, base::FEATURE_ENABLED_BY_DEFAULT);"
+          },
+          {
+            "line": 447,
+            "text": "BASE_FEATURE(kTruncateBodyToContentLength, base::FEATURE_ENABLED_BY_DEFAULT);"
+          },
+          {
+            "line": 450,
+            "text": "BASE_FEATURE(kUseNetworkPathMonitorForNetworkChangeNotifier,"
+          },
+          {
+            "line": 460,
+            "text": "BASE_FEATURE(kDeviceBoundSessions, base::FEATURE_ENABLED_BY_DEFAULT);"
+          },
+          {
+            "line": 462,
+            "text": "BASE_FEATURE(kDeviceBoundSessions, base::FEATURE_DISABLED_BY_DEFAULT);"
+          },
+          {
+            "line": 464,
+            "text": "BASE_FEATURE(kDeviceBoundSessionsBypassDeferralsForRefreshRequests,"
+          },
+          {
+            "line": 466,
+            "text": "BASE_FEATURE(kDeviceBoundSessionsRetryTransientRefreshErrors,"
+          },
+          {
+            "line": 468,
+            "text": "BASE_FEATURE_PARAM(bool,"
+          },
+          {
+            "line": 473,
+            "text": "BASE_FEATURE_PARAM(bool,"
+          },
+          {
+            "line": 478,
+            "text": "BASE_FEATURE_PARAM(int,"
+          },
+          {
+            "line": 492,
+            "text": "BASE_FEATURE(kDeviceBoundSessionsFederatedRegistration,"
+          },
+          {
+            "line": 494,
+            "text": "BASE_FEATURE_PARAM(bool,"
+          },
+          {
+            "line": 500,
+            "text": "BASE_FEATURE(kDeviceBoundSessionsForRestrictedSites,"
+          },
+          {
+            "line": 503,
+            "text": "BASE_FEATURE(kDeviceBoundSessionsClientCertSelection,"
+          },
+          {
+            "line": 506,
+            "text": "BASE_FEATURE(kDeviceBoundSessionsForSingleSignOn,"
+          },
+          {
+            "line": 509,
+            "text": "BASE_FEATURE(kDeviceBoundSessionsPersistExpiryOnRefresh,"
+          },
+          {
+            "line": 512,
+            "text": "BASE_FEATURE(kDeviceBoundSessionsIncludeAudienceClaim,"
+          },
+          {
+            "line": 515,
+            "text": "BASE_FEATURE(kSpdySessionForProxyAdditionalChecks,"
+          },
+          {
+            "line": 518,
+            "text": "BASE_FEATURE(kCompressionDictionaryTransportRequireKnownRootCert,"
+          },
+          {
+            "line": 521,
+            "text": "BASE_FEATURE(kReportingApiEnableEnterpriseCookieIssues,"
+          },
+          {
+            "line": 524,
+            "text": "BASE_FEATURE(kSimdutfBase64Support,"
+          },
+          {
+            "line": 532,
+            "text": "BASE_FEATURE(kFurtherOptimizeParsingDataUrls, base::FEATURE_ENABLED_BY_DEFAULT);"
+          },
+          {
+            "line": 534,
+            "text": "BASE_FEATURE(kDataUrlMimeTypeParameterPreservation,"
+          }
+        ]
+      },
+      "http2": {
+        "source_markers": {
+          "connect": {
+            "count": 93,
+            "lines": [
+              69,
+              92,
+              168,
+              535,
+              536,
+              584,
+              600,
+              707,
+              729,
+              735,
+              736,
+              811,
+              853,
+              854,
+              857,
+              858,
+              888,
+              890,
+              893,
+              907,
+              920,
+              930,
+              931,
+              1063,
+              1304,
+              1306,
+              1307,
+              1310,
+              1505,
+              1515,
+              1520,
+              1524
+            ]
+          },
+          "priority": {
+            "count": 102,
+            "lines": [
+              194,
+              197,
+              205,
+              206,
+              209,
+              346,
+              349,
+              354,
+              361,
+              367,
+              579,
+              595,
+              646,
+              647,
+              651,
+              653,
+              654,
+              655,
+              685,
+              821,
+              836,
+              1019,
+              1035,
+              1039,
+              1046,
+              1047,
+              1050,
+              1051,
+              1080,
+              1091,
+              1092,
+              1094
+            ]
+          },
+          "pseudo_headers": {
+            "count": 6,
+            "lines": [
+              967,
+              1327,
+              2717,
+              3222,
+              3240,
+              3250
+            ]
+          },
+          "settings": {
+            "count": 85,
+            "lines": [
+              96,
+              104,
+              151,
+              154,
+              156,
+              158,
+              161,
+              163,
+              165,
+              168,
+              244,
+              245,
+              246,
+              247,
+              248,
+              250,
+              252,
+              255,
+              265,
+              269,
+              523,
+              524,
+              816,
+              817,
+              832,
+              833,
+              846,
+              848,
+              870,
+              871,
+              937,
+              954
+            ]
+          },
+          "window": {
+            "count": 182,
+            "lines": [
+              107,
+              161,
+              162,
+              273,
+              280,
+              281,
+              282,
+              814,
+              839,
+              841,
+              842,
+              843,
+              844,
+              847,
+              848,
+              871,
+              1145,
+              1171,
+              1178,
+              1183,
+              1185,
+              1190,
+              1195,
+              1218,
+              1221,
+              1342,
+              1343,
+              1347,
+              1452,
+              1453,
+              1454,
+              1650
+            ]
+          }
+        },
+        "source_values": [
+          {
+            "line": 154,
+            "text": "case spdy::SETTINGS_HEADER_TABLE_SIZE:"
+          },
+          {
+            "line": 156,
+            "text": "case spdy::SETTINGS_ENABLE_PUSH:"
+          },
+          {
+            "line": 158,
+            "text": "case spdy::SETTINGS_MAX_CONCURRENT_STREAMS:"
+          },
+          {
+            "line": 161,
+            "text": "case spdy::SETTINGS_INITIAL_WINDOW_SIZE:"
+          },
+          {
+            "line": 163,
+            "text": "case spdy::SETTINGS_MAX_FRAME_SIZE:"
+          },
+          {
+            "line": 165,
+            "text": "case spdy::SETTINGS_MAX_HEADER_LIST_SIZE:"
+          },
+          {
+            "line": 168,
+            "text": "case spdy::SETTINGS_ENABLE_CONNECT_PROTOCOL:"
+          },
+          {
+            "line": 194,
+            "text": "bool has_priority,"
+          },
+          {
+            "line": 205,
+            "text": ".Set(\"has_priority\", has_priority);"
+          },
+          {
+            "line": 206,
+            "text": "if (has_priority) {"
+          },
+          {
+            "line": 246,
+            "text": "base::ListValue settings_list;"
+          },
+          {
+            "line": 250,
+            "text": "settings_list.Append("
+          },
+          {
+            "line": 255,
+            "text": "return base::DictValue().Set(\"settings\", std::move(settings_list));"
+          },
+          {
+            "line": 281,
+            "text": "int32_t window_size) {"
+          },
+          {
+            "line": 282,
+            "text": "return base::DictValue().Set(\"delta\", delta).Set(\"window_size\", window_size);"
+          },
+          {
+            "line": 346,
+            "text": "base::DictValue NetLogSpdyPriorityParams(spdy::SpdyStreamId stream_id,"
+          },
+          {
+            "line": 361,
+            "text": "RequestPriority priority) {"
+          },
+          {
+            "line": 367,
+            "text": ".Set(\"priority\", RequestPriorityToString(priority));"
+          },
+          {
+            "line": 523,
+            "text": "case spdy::ERROR_CODE_SETTINGS_TIMEOUT:"
+          },
+          {
+            "line": 524,
+            "text": "return STATUS_CODE_SETTINGS_TIMEOUT;"
+          },
+          {
+            "line": 579,
+            "text": "RequestPriority priority,"
+          },
+          {
+            "line": 595,
+            "text": "priority_ = priority;"
+          },
+          {
+            "line": 646,
+            "text": "void SpdyStreamRequest::SetPriority(RequestPriority priority) {"
+          },
+          {
+            "line": 647,
+            "text": "if (priority_ == priority)"
+          },
+          {
+            "line": 651,
+            "text": "stream_->SetPriority(priority);"
+          },
+          {
+            "line": 653,
+            "text": "session_->ChangeStreamRequestPriority(weak_ptr_factory_.GetWeakPtr(),"
+          },
+          {
+            "line": 654,
+            "text": "priority);"
+          },
+          {
+            "line": 655,
+            "text": "priority_ = priority;"
+          },
+          {
+            "line": 685,
+            "text": "priority_ = MINIMUM_PRIORITY;"
+          },
+          {
+            "line": 814,
+            "text": "size_t session_max_recv_window_size,"
+          },
+          {
+            "line": 816,
+            "text": "const spdy::SettingsMap& initial_settings,"
+          },
+          {
+            "line": 817,
+            "text": "bool enable_http2_settings_grease,"
+          },
+          {
+            "line": 821,
+            "text": "bool enable_priority_update,"
+          },
+          {
+            "line": 832,
+            "text": "initial_settings_(initial_settings),"
+          },
+          {
+            "line": 833,
+            "text": "enable_http2_settings_grease_(enable_http2_settings_grease),"
+          },
+          {
+            "line": 836,
+            "text": "enable_priority_update_(enable_priority_update),"
+          },
+          {
+            "line": 839,
+            "text": "session_max_recv_window_size_(session_max_recv_window_size),"
+          },
+          {
+            "line": 844,
+            "text": "stream_initial_send_window_size_(kDefaultInitialWindowSize),"
+          },
+          {
+            "line": 846,
+            "text": "initial_settings.at(spdy::SETTINGS_HEADER_TABLE_SIZE)),"
+          },
+          {
+            "line": 847,
+            "text": "stream_max_recv_window_size_("
+          },
+          {
+            "line": 848,
+            "text": "initial_settings.at(spdy::SETTINGS_INITIAL_WINDOW_SIZE)),"
+          },
+          {
+            "line": 870,
+            "text": "DCHECK(initial_settings_.contains(spdy::SETTINGS_HEADER_TABLE_SIZE));"
+          },
+          {
+            "line": 871,
+            "text": "DCHECK(initial_settings_.contains(spdy::SETTINGS_INITIAL_WINDOW_SIZE));"
+          },
+          {
+            "line": 1019,
+            "text": "EnqueueWrite(stream->priority(), frame_type, std::move(producer), stream,"
+          },
+          {
+            "line": 1035,
+            "text": "greased_http2_frame_.value().payload.length(), stream->priority());"
+          },
+          {
+            "line": 1039,
+            "text": "stream->priority(),"
+          },
+          {
+            "line": 1046,
+            "text": "bool SpdySession::ShouldSendHttp2Priority() const {"
+          },
+          {
+            "line": 1047,
+            "text": "return !enable_priority_update_ || !deprecate_http2_priorities_;"
+          },
+          {
+            "line": 1050,
+            "text": "bool SpdySession::ShouldSendPriorityUpdate() const {"
+          },
+          {
+            "line": 1051,
+            "text": "if (!enable_priority_update_) {"
+          },
+          {
+            "line": 1055,
+            "text": "return settings_frame_received_ ? deprecate_http2_priorities_ : true;"
+          },
+          {
+            "line": 1080,
+            "text": "RequestPriority priority,"
+          },
+          {
+            "line": 1091,
+            "text": "spdy::SpdyPriority spdy_priority ="
+          },
+          {
+            "line": 1092,
+            "text": "ConvertRequestPriorityToSpdyPriority(priority);"
+          },
+          {
+            "line": 1094,
+            "text": "bool has_priority = true;"
+          },
+          {
+            "line": 1099,
+            "text": "priority_dependency_state_.OnStreamCreation("
+          },
+          {
+            "line": 1100,
+            "text": "stream_id, spdy_priority, &parent_stream_id, &weight, &exclusive);"
+          },
+          {
+            "line": 1106,
+            "text": "stream_id, has_priority, weight, parent_stream_id,"
+          },
+          {
+            "line": 1111,
+            "text": "headers.set_has_priority(has_priority);"
+          },
+          {
+            "line": 1145,
+            "text": "bool send_stalled_by_stream = (stream->send_window_size() <= 0);"
+          },
+          {
+            "line": 1183,
+            "text": "*effective_len = std::min(*effective_len, stream->send_window_size());"
+          },
+          {
+            "line": 1195,
+            "text": "*effective_len = std::min(*effective_len, session_send_window_size_);"
+          },
+          {
+            "line": 1231,
+            "text": "void SpdySession::UpdateStreamPriority(SpdyStream* stream,"
+          },
+          {
+            "line": 1232,
+            "text": "RequestPriority old_priority,"
+          },
+          {
+            "line": 1233,
+            "text": "RequestPriority new_priority) {"
+          },
+          {
+            "line": 1237,
+            "text": "write_queue_.ChangePriorityOfWritesForStream(stream, old_priority,"
+          },
+          {
+            "line": 1238,
+            "text": "new_priority);"
+          },
+          {
+            "line": 1240,
+            "text": "// PRIORITY frames only need to be sent if |stream| is active."
+          },
+          {
+            "line": 1247,
+            "text": "auto updates = priority_dependency_state_.OnStreamUpdate("
+          },
+          {
+            "line": 1248,
+            "text": "stream_id, ConvertRequestPriorityToSpdyPriority(new_priority));"
+          },
+          {
+            "line": 1251,
+            "text": "EnqueuePriorityFrame(u.id, u.parent_stream_id, u.weight, u.exclusive);"
+          },
+          {
+            "line": 1343,
+            "text": "uint32_t delta_window_size) {"
+          },
+          {
+            "line": 1347,
+            "text": "SendWindowUpdateFrame(stream_id, delta_window_size, it->second->priority());"
+          },
+          {
+            "line": 1452,
+            "text": ".Set(\"send_window_size\", session_send_window_size_)"
+          },
+          {
+            "line": 1453,
+            "text": ".Set(\"recv_window_size\", session_recv_window_size_)"
+          },
+          {
+            "line": 1650,
+            "text": "session_send_window_size_ = kDefaultInitialWindowSize;"
+          },
+          {
+            "line": 1651,
+            "text": "session_recv_window_size_ = kDefaultInitialWindowSize;"
+          },
+          {
+            "line": 1654,
+            "text": "initial_settings_.find(spdy::SETTINGS_MAX_HEADER_LIST_SIZE)->second,"
+          },
+          {
+            "line": 1705,
+            "text": "RequestPriority priority = request->priority();"
+          },
+          {
+            "line": 1706,
+            "text": "CHECK_GE(priority, MINIMUM_PRIORITY);"
+          },
+          {
+            "line": 1707,
+            "text": "CHECK_LE(priority, MAXIMUM_PRIORITY);"
+          },
+          {
+            "line": 1708,
+            "text": "pending_create_stream_queues_[priority].emplace_back("
+          },
+          {
+            "line": 1716,
+            "text": "DCHECK_GE(request.priority(), MINIMUM_PRIORITY);"
+          },
+          {
+            "line": 1717,
+            "text": "DCHECK_LE(request.priority(), MAXIMUM_PRIORITY);"
+          },
+          {
+            "line": 1738,
+            "text": "request.type(), GetWeakPtr(), request.url(), request.priority(),"
+          },
+          {
+            "line": 1739,
+            "text": "stream_initial_send_window_size_, stream_max_recv_window_size_,"
+          },
+          {
+            "line": 1753,
+            "text": "RequestPriority priority = request->priority();"
+          },
+          {
+            "line": 1754,
+            "text": "CHECK_GE(priority, MINIMUM_PRIORITY);"
+          },
+          {
+            "line": 1755,
+            "text": "CHECK_LE(priority, MAXIMUM_PRIORITY);"
+          },
+          {
+            "line": 1758,
+            "text": "// |request| should not be in a queue not matching its priority."
+          },
+          {
+            "line": 1759,
+            "text": "for (int i = MINIMUM_PRIORITY; i <= MAXIMUM_PRIORITY; ++i) {"
+          },
+          {
+            "line": 1760,
+            "text": "if (priority == i)"
+          },
+          {
+            "line": 1770,
+            "text": "PendingStreamRequestQueue* queue = &pending_create_stream_queues_[priority];"
+          },
+          {
+            "line": 1792,
+            "text": "void SpdySession::ChangeStreamRequestPriority("
+          },
+          {
+            "line": 1794,
+            "text": "RequestPriority priority) {"
+          },
+          {
+            "line": 1795,
+            "text": "// |request->priority()| is updated by the caller after this returns."
+          },
+          {
+            "line": 1796,
+            "text": "// |request| needs to still have its old priority in order for"
+          },
+          {
+            "line": 1798,
+            "text": "DCHECK_NE(priority, request->priority());"
+          },
+          {
+            "line": 1800,
+            "text": "pending_create_stream_queues_[priority].emplace_back("
+          },
+          {
+            "line": 1806,
+            "text": "for (int j = MAXIMUM_PRIORITY; j >= MINIMUM_PRIORITY; --j) {"
+          },
+          {
+            "line": 1855,
+            "text": "priority_dependency_state_.OnStreamDestruction(owned_stream->stream_id());"
+          },
+          {
+            "line": 1897,
+            "text": "RequestPriority priority = it->second->priority();"
+          },
+          {
+            "line": 1898,
+            "text": "EnqueueResetStreamFrame(stream_id, priority, error_code, description);"
+          },
+          {
+            "line": 1913,
+            "text": "RequestPriority priority,"
+          },
+          {
+            "line": 1926,
+            "text": "EnqueueSessionWrite(priority, spdy::SpdyFrameType::RST_STREAM,"
+          },
+          {
+            "line": 1931,
+            "text": "void SpdySession::EnqueuePriorityFrame(spdy::SpdyStreamId stream_id,"
+          },
+          {
+            "line": 1935,
+            "text": "net_log_.AddEvent(NetLogEventType::HTTP2_STREAM_SEND_PRIORITY, [&] {"
+          },
+          {
+            "line": 1936,
+            "text": "return NetLogSpdyPriorityParams(stream_id, dependency_id, weight,"
+          },
+          {
+            "line": 1942,
+            "text": "buffered_spdy_framer_->CreatePriority(stream_id, dependency_id, weight,"
+          },
+          {
+            "line": 1945,
+            "text": "// PRIORITY frames describe sequenced updates to the tree, so they must"
+          },
+          {
+            "line": 1946,
+            "text": "// be serialized. We do this by queueing all PRIORITY frames at HIGHEST"
+          },
+          {
+            "line": 1947,
+            "text": "// priority."
+          },
+          {
+            "line": 1948,
+            "text": "EnqueueWrite(HIGHEST, spdy::SpdyFrameType::PRIORITY,"
+          },
+          {
+            "line": 2267,
+            "text": "spdy::SettingsMap settings_map;"
+          },
+          {
+            "line": 2268,
+            "text": "for (auto setting : initial_settings_) {"
+          },
+          {
+            "line": 2270,
+            "text": "settings_map.insert(setting);"
+          },
+          {
+            "line": 2273,
+            "text": "if (enable_http2_settings_grease_) {"
+          },
+          {
+            "line": 2279,
+            "text": "// Let insertion silently fail if `settings_map` already contains"
+          },
+          {
+            "line": 2281,
+            "text": "settings_map.emplace(greased_id, greased_value);"
+          },
+          {
+            "line": 2284,
+            "text": "return NetLogSpdySendSettingsParams(&settings_map);"
+          }
+        ]
+      },
+      "http3": {
+        "source_markers": {
+          "connection_id": {
+            "count": 66,
+            "lines": [
+              270,
+              273,
+              278,
+              279,
+              359,
+              360,
+              371,
+              387,
+              388,
+              581,
+              1211,
+              1212,
+              2502,
+              2520,
+              2533,
+              2711,
+              2782,
+              2837,
+              3086,
+              3115,
+              3136,
+              3149,
+              3269,
+              3272,
+              3444,
+              3453,
+              3486,
+              3498,
+              3510,
+              3523,
+              3539,
+              3540
+            ]
+          },
+          "flow_control": {
+            "count": 1,
+            "lines": [
+              1647
+            ]
+          },
+          "grease": {
+            "count": 1,
+            "lines": [
+              1845
+            ]
+          },
+          "settings": {
+            "count": 1,
+            "lines": [
+              1751
+            ]
+          },
+          "transport": {
+            "count": 8,
+            "lines": [
+              53,
+              216,
+              217,
+              1102,
+              1175,
+              1697,
+              1717,
+              2353
+            ]
+          },
+          "websocket": {
+            "count": 583,
+            "lines": [
+              38,
+              60,
+              71,
+              80,
+              89,
+              90,
+              106,
+              146,
+              188,
+              189,
+              194,
+              196,
+              197,
+              200,
+              209,
+              211,
+              216,
+              218,
+              223,
+              227,
+              229,
+              234,
+              241,
+              245,
+              258,
+              259,
+              270,
+              273,
+              278,
+              279,
+              319,
+              359
+            ]
+          }
+        },
+        "source_values": [
+          {
+            "line": 1121,
+            "text": "const quic::QuicConfig& config,"
+          },
+          {
+            "line": 1647,
+            "text": "DCHECK(flow_controller());"
+          }
+        ]
+      },
+      "namespace": "minicronet/chrome_158",
+      "profile_id": "chrome_158",
+      "quiche_revision": "132bfd90ea370faeacee616c70d10210bb12ba66",
+      "random_strategy": {
+        "extension_permutation": "fisher_yates_rand_bytes",
+        "fixed_seed_allowed": false,
+        "grease": "per_handshake_seed",
+        "quic_insecure": "xoshiro256pp_seeded_from_csprng",
+        "quic_secure": "boringssl_rand_bytes",
+        "tls": "boringssl_rand_bytes"
+      },
+      "tls": {
+        "cipher_suites": [
+          "TLS_GREASE",
+          "TLS_AES_128_GCM_SHA256",
+          "TLS_AES_256_GCM_SHA384",
+          "TLS_CHACHA20_POLY1305_SHA256",
+          "TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256",
+          "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256",
+          "TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384",
+          "TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384",
+          "TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256",
+          "TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256",
+          "TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA",
+          "TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA",
+          "TLS_RSA_WITH_AES_128_GCM_SHA256",
+          "TLS_RSA_WITH_AES_256_GCM_SHA384",
+          "TLS_RSA_WITH_AES_128_CBC_SHA",
+          "TLS_RSA_WITH_AES_256_CBC_SHA"
+        ],
+        "curves": [
+          "X25519MLKEM768",
+          "X25519",
+          "P-256",
+          "P-384"
+        ],
+        "extension_order": "boringssl_random_fisher_yates",
+        "extensions": [
+          "TLS_GREASE",
+          "application_layer_protocol_negotiation",
+          "application_settings",
+          "compress_certificate",
+          "ec_point_formats",
+          "extended_master_secret",
+          "extensionEncryptedClientHello",
+          "extensionRenegotiationInfo",
+          "key_share",
+          "psk_key_exchange_modes",
+          "server_name",
+          "session_ticket",
+          "signature_algorithms",
+          "signed_certificate_timestamp",
+          "status_request",
+          "supported_groups",
+          "supported_versions",
+          "trust_anchors",
+          "TLS_GREASE"
+        ],
+        "grease": {
+          "enabled": true,
+          "fixed_seed": false,
+          "per_connection": true
+        },
+        "grease_signature_algorithms": true,
+        "hex_codes": [],
+        "key_share_count": 2,
+        "signature_algorithms": [
+          "0x0904",
+          "0x0905",
+          "0x0906",
+          "ecdsa_secp256r1_sha256",
+          "rsa_pss_rsae_sha256",
+          "rsa_pkcs1_sha256",
+          "0x0503",
+          "rsa_pss_rsae_sha384",
+          "rsa_pkcs1_sha384",
+          "rsa_pss_rsae_sha512",
+          "0x0601"
+        ],
+        "trust_anchor_ids_encoded": "0582df1302010582df1302060582df13020d0582df13020e0582df13020f0582df1302120582df1302130582df13021408839a648c9b2d010708839a648c9b2d010808839a648c9b2d010908839a648c9b2d010a08839a648c9b2d010b08839a648c9b2d010c08839a648c9b2d010d08839a648c9b2d011208839a648c9b2d011304d679090104d679090404d679090504d679090604d679090704d679090804d679090a04d679090b04d679090c04d679090d04d679090f"
+      },
+      "websocket": {
+        "source_markers": {
+          "connect": {
+            "count": 38,
+            "lines": [
+              64,
+              157,
+              159,
+              160,
+              161,
+              164,
+              166,
+              182,
+              183,
+              189,
+              190,
+              195,
+              201,
+              262,
+              286,
+              290,
+              329,
+              330,
+              333,
+              334,
+              337,
+              338,
+              389,
+              410,
+              414,
+              427,
+              428,
+              431,
+              452,
+              489,
+              497,
+              498
+            ]
+          },
+          "extensions": {
+            "count": 13,
+            "lines": [
+              186,
+              192,
+              259,
+              280,
+              391,
+              415,
+              416,
+              417,
+              419,
+              516,
+              528,
+              529,
+              530
+            ]
+          },
+          "origin": {
+            "count": 1,
+            "lines": [
+              260
+            ]
+          },
+          "sec_headers": {
+            "count": 2,
+            "lines": [
+              151,
+              269
+            ]
+          },
+          "upgrade": {
+            "count": 14,
+            "lines": [
+              118,
+              122,
+              124,
+              132,
+              165,
+              166,
+              261,
+              408,
+              461,
+              499,
+              514,
+              518,
+              519,
+              544
+            ]
+          }
+        },
+        "source_values": [
+          {
+            "line": 118,
+            "text": "bool ValidateUpgrade(const HttpResponseHeaders* headers,"
+          },
+          {
+            "line": 122,
+            "text": "GetSingleHeaderValue(headers, websockets::kUpgrade, &value);"
+          },
+          {
+            "line": 124,
+            "text": "websockets::kUpgrade,"
+          },
+          {
+            "line": 132,
+            "text": "\"'Upgrade' header value is not 'WebSocket': \" + value;"
+          },
+          {
+            "line": 151,
+            "text": "*failure_message = \"Incorrect 'Sec-WebSocket-Accept' header value\";"
+          },
+          {
+            "line": 165,
+            "text": "websockets::kUpgrade)) {"
+          },
+          {
+            "line": 166,
+            "text": "*failure_message = \"'Connection' header value must contain 'Upgrade'\";"
+          },
+          {
+            "line": 186,
+            "text": "std::vector<std::string> requested_extensions,"
+          },
+          {
+            "line": 192,
+            "text": "requested_extensions_(std::move(requested_extensions)),"
+          },
+          {
+            "line": 259,
+            "text": "DCHECK(!headers.HasHeader(websockets::kSecWebSocketExtensions));"
+          },
+          {
+            "line": 260,
+            "text": "DCHECK(headers.HasHeader(HttpRequestHeaders::kOrigin));"
+          },
+          {
+            "line": 261,
+            "text": "DCHECK(headers.HasHeader(websockets::kUpgrade));"
+          },
+          {
+            "line": 269,
+            "text": "// Sec-WebSocket-Key header."
+          },
+          {
+            "line": 280,
+            "text": "AddVectorHeaders(requested_extensions_, requested_sub_protocols_,"
+          },
+          {
+            "line": 391,
+            "text": "std::move(requested_extensions_), stream_request_,"
+          },
+          {
+            "line": 408,
+            "text": "std::unique_ptr<WebSocketStream> WebSocketBasicHandshakeStream::Upgrade() {"
+          },
+          {
+            "line": 415,
+            "text": "state_.read_buf(), sub_protocol_, extensions_, net_log_);"
+          },
+          {
+            "line": 461,
+            "text": "return ValidateUpgradeResponse(headers);"
+          },
+          {
+            "line": 499,
+            "text": "// upgraded, don't pass through the status code unchanged if it is"
+          },
+          {
+            "line": 514,
+            "text": "int WebSocketBasicHandshakeStream::ValidateUpgradeResponse("
+          },
+          {
+            "line": 518,
+            "text": "if (!ValidateUpgrade(headers, &failure_message)) {"
+          },
+          {
+            "line": 519,
+            "text": "result_ = HandshakeResult::FAILED_UPGRADE;"
+          },
+          {
+            "line": 528,
+            "text": "} else if (!ValidateExtensions(headers, &extensions_, &failure_message,"
+          },
+          {
+            "line": 530,
+            "text": "result_ = HandshakeResult::FAILED_EXTENSIONS;"
+          },
+          {
+            "line": 544,
+            "text": "net_log_.AddEvent(net::NetLogEventType::WEBSOCKET_UPGRADE_FAILURE,"
+          }
+        ]
+      }
     }
   ],
   "schema": "minicronet.normalized_profile.v1"

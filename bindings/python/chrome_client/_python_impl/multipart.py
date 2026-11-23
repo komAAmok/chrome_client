@@ -193,8 +193,17 @@ def _normalize_file_entry(field, value):
         data = handle.read()
     else:
         data = handle
-    if filename is not None and content_type is None:
-        content_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
+    # Deliberately no Content-Type guess here. requests -- and therefore
+    # curl_cffi, which this module is compatible with -- never invents a part
+    # type: a 2-tuple renders as bare Content-Disposition, and only a caller
+    # who passes one explicitly gets a Content-Type line. Guessing from the
+    # filename looked harmless and was not: measured against a server that
+    # stores what it receives, files={"f": ("a.html", b"<script>...")} arrived
+    # as `text/html` while requests sends it with no type at all, so an upload
+    # endpoint that echoes the stored type started serving attacker HTML.
+    # The old fallback also labelled every unknown suffix
+    # `application/octet-stream`, which is a second invented claim. A part with
+    # no type is the browser behaviour: RFC 7578 §4.4 makes the type optional.
     return Part(field, data if data is not None else b"", filename, content_type, headers)
 
 

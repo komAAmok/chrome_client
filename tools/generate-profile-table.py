@@ -21,7 +21,7 @@ OUTPUT = ROOT / "core" / "source" / "minicronet" / "profile_table_generated.h"
 # inherited from chrome_99. Widening either end requires a wire-verified capture
 # set and a source-evidence entry for the release being added.
 FIRST_PROFILE_MAJOR = 86
-LAST_PROFILE_MAJOR = 157
+LAST_PROFILE_MAJOR = 158
 
 FEATURE_BITS = {
     "alps_for_http2": 1 << 0,
@@ -70,7 +70,11 @@ def c(s):
 # hold for both protocols at once, and would hide a real ClientHello size bug
 # behind a padding override. tools/audit-padding-rule.py asserts the OUTPUT;
 # this table is asserted to stay 0 by the same gate.
-PADDING_LENGTH_ERAS = ((86, 90, 0), (91, 97, 0), (98, 118, 0), (119, 157, 0))
+# The last era ends at LAST_PROFILE_MAJOR rather than a literal so adding a
+# release does not need a second edit here; the tiling check below is what
+# proves the coverage is complete.
+PADDING_LENGTH_ERAS = ((86, 90, 0), (91, 97, 0), (98, 118, 0),
+                      (119, LAST_PROFILE_MAJOR, 0))
 
 
 def padding_length_for(major):
@@ -267,13 +271,13 @@ def main():
     # kSocketPoolLimitRandomizationForProxy / the hardened socket pool made size
     # randomization unconditional in 147; the proxy variant follows in 151.
     assert_span("randomize_socket_pool_limit",
-                [(FIRST_PROFILE_MAJOR, 146, False), (147, 157, True)])
+                [(FIRST_PROFILE_MAJOR, 146, False), (147, LAST_PROFILE_MAJOR, True)])
     assert_span("randomize_proxy_socket_pool_limit",
-                [(FIRST_PROFILE_MAJOR, 150, False), (151, 157, True)])
+                [(FIRST_PROFILE_MAJOR, 150, False), (151, LAST_PROFILE_MAJOR, True)])
     # The HTTP/2 priority header appears in 124 and stays.
-    assert_span("send_priority_header", [(FIRST_PROFILE_MAJOR, 123, False), (124, 157, True)])
+    assert_span("send_priority_header", [(FIRST_PROFILE_MAJOR, 123, False), (124, LAST_PROFILE_MAJOR, True)])
     # QUIC ORIG (RFC 9287) is sent from 149.
-    assert_span("send_quic_orig", [(FIRST_PROFILE_MAJOR, 148, False), (149, 157, True)])
+    assert_span("send_quic_orig", [(FIRST_PROFILE_MAJOR, 148, False), (149, LAST_PROFILE_MAJOR, True)])
     # kMaintainConnectionsOnIpv6TempAddrChange does not exist before 142; when
     # upstream added it in 142 it defaulted DISABLED, and 148 flipped it to
     # ENABLED where it stays through 156 (the pinned revision). Verified per
@@ -301,7 +305,7 @@ def main():
     # with the same value 93 carries; that is a stated extrapolation for 86-92,
     # not an observation.
     assert_span("advertise_h3_datagram",
-                [(FIRST_PROFILE_MAJOR, 119, False), (120, 157, True)],
+                [(FIRST_PROFILE_MAJOR, 119, False), (120, LAST_PROFILE_MAJOR, True)],
                 default=True)
     # Padding length eras must tile the whole table. A gap here silently
     # produces a release whose padding value belongs to no capture.
@@ -312,7 +316,7 @@ def main():
         raise SystemExit("padding length eras do not tile the profile range")
     # Legacy QUIC version information was briefly on for 144-145 only.
     assert_span("send_quic_legacy_version_information",
-                [(FIRST_PROFILE_MAJOR, 143, False), (144, 145, True), (146, 157, False)],
+                [(FIRST_PROFILE_MAJOR, 143, False), (144, 145, True), (146, LAST_PROFILE_MAJOR, False)],
                 default=False)
 
     # Capability and default-attempt policy are independent. Chromium's

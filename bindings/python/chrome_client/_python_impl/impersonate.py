@@ -26,7 +26,13 @@ from .exceptions import ImpersonateError, UnsupportedFeature
 #: name the exact major, because "whatever is newest" silently re-points at a
 #: different TLS/H2 fingerprint the moment a profile is added, and a fingerprint
 #: that drifts without the caller asking is worse than one that is missing.
-LATEST_CHROME = 157
+#:
+#: This is the range the CORE accepts (core/source/minicronet.cc
+#: kLastProfileMajor), not the range profiles/ holds captures for: the facade
+#: must not offer a name the engine will reject, and must not hide one it can
+#: serve. Raising it needs a rebuilt Core, which is why it moves with the
+#: artifact rather than with the capture set.
+LATEST_CHROME = 158
 OLDEST_CHROME = 86
 
 #: First major whose requests carry an RFC 9218 priority header.  Measured

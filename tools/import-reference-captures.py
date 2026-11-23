@@ -50,7 +50,12 @@ PROTOCOLS = (
 )
 
 FIRST_MAJOR = 86
-LAST_MAJOR = 157
+#: Highest major the shipped reference set is known to cover. The set is a
+#: snapshot; a new release arrives as its own directory of tls-results*.json
+#: files, so the requirement is "every major from FIRST_MAJOR to here must be
+#: present", not "the set stops at this number forever". Raise it with the
+#: import that adds the release, and let --majors narrow the run.
+LAST_MAJOR = 158
 
 # The runtime inputs the table generator reads. They are not captures and this
 # tool never touches them; they are listed so the README it writes can say so.
@@ -80,12 +85,20 @@ def load_reference(reference: pathlib.Path):
     return loaded
 
 
-def check_shape(loaded):
-    """Every major present, and every usable entry holding exactly six samples."""
+def check_shape(loaded, majors=None):
+    """Every expected major present, and every usable entry holding six samples.
+
+    ``majors`` limits which releases are expected: importing ONE new release
+    from its own directory of tls-results files must not demand that folder
+    also contain the ninety-odd releases already on disk. The completeness and
+    six-sample rules still apply to whatever the run selected.
+    """
     problems = []
+    expected = list(majors) if majors is not None else list(
+        range(FIRST_MAJOR, LAST_MAJOR + 1))
     for protocol, entries in loaded.items():
         majors = sorted(entries)
-        missing = [m for m in range(FIRST_MAJOR, LAST_MAJOR + 1) if m not in majors]
+        missing = [m for m in expected if m not in majors]
         if missing:
             problems.append(f"{protocol}: missing majors {missing}")
         for major, entry in entries.items():
@@ -212,11 +225,26 @@ def main(argv):
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--keep-old", action="store_true",
                         help="do not remove the superseded per-version directories")
+    parser.add_argument("--majors", default="",
+                        help="comma-separated majors to import (default: every "
+                             "major the reference set holds). Use this to add "
+                             "ONE new release from its own directory without "
+                             "re-importing the rest.")
     args = parser.parse_args(argv)
 
     reference = args.reference.resolve()
     loaded = load_reference(reference)
-    problems = check_shape(loaded)
+    if args.majors.strip():
+        selected = [int(part) for part in args.majors.split(",") if part.strip()]
+        absent = [m for m in selected
+                  if any(m not in entries for entries in loaded.values())]
+        if absent:
+            print(f"reference capture set has no entry for {absent}",
+                  file=sys.stderr)
+            return 1
+        loaded = {protocol: {m: entries[m] for m in selected if m in entries}
+                  for protocol, entries in loaded.items()}
+    problems = check_shape(loaded, args.majors.strip() and selected or None)
     if problems:
         print("reference capture set is not usable:", file=sys.stderr)
         for problem in problems:

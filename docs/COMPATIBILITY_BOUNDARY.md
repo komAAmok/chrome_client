@@ -428,6 +428,35 @@ POST iterator (with or without a caller TE)   Transfer-Encoding: chunked
 Setting either field to `None` is still refused (`_CORE_OWNED_HEADERS`), because
 the binding cannot delete a header the Core attaches.
 
+### Multipart: a file part carries the type the caller chose, never a guess
+
+`files={"f": ("a.html", b"<script>...")}` used to reach the wire with
+`Content-Type: text/html` on the part, because the facade called
+`mimetypes.guess_type()` on the filename. `requests` -- and curl_cffi, which this
+module is compatible with -- never invents a part type: a 2-tuple renders as a
+bare `Content-Disposition`, and only a caller who passes one explicitly gets a
+`Content-Type` line.
+
+The guess was not cosmetic. Measured against a server that reports what it
+receives:
+
+| `files=` entry | before | `requests` |
+| --- | --- | --- |
+| `("a.txt", b"xy")` | part `text/plain` | no part type |
+| `("a.html", b"<script>x</script>")` | part **`text/html`** | no part type |
+| `("a.bin", b"xy")` | part `application/octet-stream` | no part type |
+
+An upload endpoint that stores the part type and serves it back on retrieval
+therefore started serving caller-supplied HTML as HTML. The second invented claim
+was `application/octet-stream` for every unrecognised suffix, which is equally a
+statement the caller never made.
+
+RFC 7578 §4.4 makes the per-part type optional, so omitting it is the
+interoperable choice as well as the compatible one. `("a.txt", b"xy",
+"image/png")` still sends `Content-Type: image/png`, and `CurlMime.addpart`
+keeps deriving a type from `filename` / `local_path` because that is its
+documented job rather than a guess about the caller's intent.
+
 ### Headers: what a caller can add, override and remove
 
 A caller may add any header, and may override any header the Core itself would
