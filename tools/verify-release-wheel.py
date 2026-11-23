@@ -93,13 +93,17 @@ def main(argv: list[str]) -> int:
             # which carries chrome_client.libs/libminicronet-b302fcc5.so.
             # Matching on the bare filename would pass a wheel that ships no
             # Core at all, so the stem is what gets matched.
-            stem = runtime.rsplit(".", 1)[0]          # libminicronet
-            suffix = "." + runtime.rsplit(".", 1)[1]  # .so
+            # 两个平台的打包器布局不同，实测：
+            #   linux  auditwheel  -> chrome_client.libs/libminicronet-<8 hex>.so
+            #   macos  delocate    -> chrome_client/.dylibs/libminicronet.dylib
+            # 所以匹配的是「文件名以 stem 开头、以正确后缀结尾」，两种都覆盖。
+            stem = runtime.rsplit(".", 1)[0]          # libminicronet / minicronet
+            suffix = "." + runtime.rsplit(".", 1)[1]  # .so / .dylib / .dll
             runtime_members = [
                 m for m in members
                 if m.endswith(suffix)
                 and "/" in m
-                and m.rsplit("/", 1)[1].split("-")[0] == stem
+                and m.rsplit("/", 1)[1].startswith(stem)
             ]
             if not runtime_members:
                 die(f"{name}: no {stem}*{suffix} inside; the wheel would import "
