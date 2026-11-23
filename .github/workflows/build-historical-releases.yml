@@ -211,6 +211,28 @@ jobs:
           LD_LIBRARY_PATH: ${{ github.workspace }}/core/binaries/${{ matrix.core-target }}:/io/core/binaries/${{ matrix.core-target }}:/usr/lib64:/lib64:/usr/lib:/lib
           AUDITWHEEL_LD_LIBRARY_PATH: ${{ github.workspace }}/core/binaries/${{ matrix.core-target }}:/io/core/binaries/${{ matrix.core-target }}:/usr/lib64:/lib64:/usr/lib:/lib
 
+      # macOS 的 wheel 默认不带 Core：maturin 只打包 Rust 扩展，dylib 要靠
+      # delocate 从 DYLD_LIBRARY_PATH 里找出来放进 .libs/。build-wheels.yml
+      # 有这一步，本文件第一版漏了，校验脚本因此在 macos-x86_64 上拦截成功。
+      - name: Bundle the macOS Core dylib
+        if: steps.gate.outputs.present == 'true' && startsWith(matrix.runner, 'macos')
+        shell: bash
+        run: |
+          python3 -m pip install --disable-pip-version-check delocate
+          mkdir -p repaired
+          DYLD_LIBRARY_PATH="$PWD/core/binaries/${{ matrix.core-target }}" \
+            delocate-wheel -w repaired dist/*.whl
+          rm -f dist/*.whl
+          mv repaired/*.whl dist/
+          # Core 是按 mac_deployment_target 13.0 编的，delocate 只改 install name，
+          # 不改 wheel 的 platform tag。历史 tag 里不一定有这个脚本，缺就跳过。
+          if [[ -f tools/macos-wheel-floor.py ]]; then
+            python3 tools/macos-wheel-floor.py dist/*.whl
+          else
+            git show "${{ github.sha }}:tools/macos-wheel-floor.py" > tools/macos-wheel-floor.py
+            python3 tools/macos-wheel-floor.py dist/*.whl
+          fi
+
       # 构建成功 ≠ 能用。wheel 里必须真的有对应版本的 Core，且版本串与 tag 一致。
       - name: Verify the wheel embeds the matching Core
         if: steps.gate.outputs.present == 'true'
