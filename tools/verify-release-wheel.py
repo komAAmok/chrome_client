@@ -115,10 +115,18 @@ def main(argv):
 
         # Core is stripped, but the version string is data, not a symbol.
         # Read it out of the shipped bytes rather than trusting the repository.
+        # subprocess.run(capture_output=...) is 3.7+; the Windows python36
+        # combination runs this script on CPython 3.6, where that keyword does
+        # not exist (measured: TypeError __init__() got an unexpected keyword
+        # argument capture_output). PIPE is the 3.6 spelling of the same thing.
         try:
-            text = subprocess.run(["strings", "-a", "-"], input=blob,
-                                  capture_output=True, check=True).stdout
-        except (OSError, subprocess.CalledProcessError):
+            proc = subprocess.Popen(["strings", "-a", "-"],
+                                    stdin=subprocess.PIPE,
+                                    stdout=subprocess.PIPE,
+                                    stderr=subprocess.DEVNULL)
+            stdout, _ = proc.communicate(blob)
+            text = stdout if proc.returncode == 0 else blob
+        except OSError:
             text = blob
         found = {m.decode() for m in VERSION_RE.findall(text)}
 
