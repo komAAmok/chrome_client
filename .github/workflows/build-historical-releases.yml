@@ -29,8 +29,12 @@ on:
 
 permissions:
   contents: write    # 创建/更新 Release 需要
-  # id-token 只在用 PyPI Trusted Publishing 时需要。用 API token（本项目的默认）
-  # 时它是多余的，但授予它不会改变 token 方式的行为，留着便于将来切换。
+  # 构建溯源（GitHub 页面上那个 Full provenance）。缺这一条时 Release 会显示
+  # No provenance——用户实测 0.2.15 就是这个状态。attestation 绑定的是构建时的
+  # workflow run，事后补不上，所以必须在重新构建之前加上。
+  attestations: write
+  # PyPI Trusted Publishing 必需：action 用它换取 OIDC token 向 PyPI 认证。
+  # 去掉它，publish 会退回到需要 password 的路径并直接失败。
   id-token: write
 
 concurrency:
@@ -280,11 +284,23 @@ jobs:
             --version "${{ matrix.tag }}" \
             --core-target "${{ matrix.core-target }}"
 
+      # 为这一个 wheel 生成 Sigstore 构建溯源，作为 Release 附件一起发布。
+      # subject-path 只指向本作业产出的文件，所以每个平台的证明只覆盖它自己。
+      - name: Attest wheel build provenance
+        if: steps.gate.outputs.present == 'true'
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: dist/*.whl
+
       - uses: actions/upload-artifact@v4
         if: steps.gate.outputs.present == 'true'
         with:
           name: wheel-${{ matrix.tag }}-${{ matrix.core-target }}-${{ matrix.binding }}
-          path: dist/*.whl
+          # attestation 会生成 .sigstore.json 附件，必须一起带走，否则 Release
+          # 上只有 wheel、仍然没有 provenance。
+          path: |
+            dist/*.whl
+            dist/*.json
           if-no-files-found: error
 
   release:
@@ -306,7 +322,9 @@ jobs:
         with:
           tag_name: ${{ matrix.tag }}
           name: ${{ matrix.tag }}
-          files: dist/*.whl
+          files: |
+            dist/*.whl
+            dist/*.json
           fail_on_unmatched_files: true
           # 已存在的 Release 追加附件而不是覆盖说明
           append_body: true
@@ -350,11 +368,14 @@ jobs:
               sys.exit(1)
           print("no clash; safe to upload")
           PY
-      # 认证方式二选一，按仓库里配了哪一个自动选：
-      #   PYPI_API_TOKEN  secret -> API token 方式（本项目采用）
-      #   否则                   -> Trusted Publishing（需在 PyPI 端预配 publisher）
-      # action 在两者都缺时会失败，不会静默跳过，所以这里不需要额外守卫。
+      # 用 Trusted Publishing（OIDC），不用 API token。两者的差别不只是认证：
+      # 只有 OIDC 上传才会让 PyPI 生成 PEP 740 attestation。用 token 上传的文件
+      # 在文件页上永远没有 provenance，这是机制决定的，事后补不了。
+      #
+      # PyPI 侧已注册的 publisher（用户实测确认）：
+      #   Owner dafatyu / Repository chrome_client
+      #   Workflow build-historical-releases.yml / Environment pypi
+      # 三处必须与下面 environment: 和本文件名逐字一致，改名即失效。
       - uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: dist/
-          password: ${{ secrets.PYPI_API_TOKEN }}
