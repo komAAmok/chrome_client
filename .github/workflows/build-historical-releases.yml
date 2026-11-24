@@ -296,11 +296,7 @@ jobs:
         if: steps.gate.outputs.present == 'true'
         with:
           name: wheel-${{ matrix.tag }}-${{ matrix.core-target }}-${{ matrix.binding }}
-          # attestation 会生成 .sigstore.json 附件，必须一起带走，否则 Release
-          # 上只有 wheel、仍然没有 provenance。
-          path: |
-            dist/*.whl
-            dist/*.json
+          path: dist/*.whl
           if-no-files-found: error
 
   release:
@@ -322,9 +318,7 @@ jobs:
         with:
           tag_name: ${{ matrix.tag }}
           name: ${{ matrix.tag }}
-          files: |
-            dist/*.whl
-            dist/*.json
+          files: dist/*.whl
           fail_on_unmatched_files: true
           # 已存在的 Release 追加附件而不是覆盖说明
           append_body: true
