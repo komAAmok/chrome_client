@@ -338,29 +338,39 @@ jobs:
           path: dist
           merge-multiple: true
       # 版本号不可重发：先检查这些版本在 PyPI 上是否已存在，存在就停。
-      - name: Refuse to overwrite an existing release
+      # PyPI 版本号不可重发。上传前先查哪些版本已经在索引里：
+      #   - 有冲突：跳过上传并成功退出。这不是错误——重跑一个只为补 GitHub
+      #     Release 的轮次时必须能过，否则整条链路被一个"版本已存在"卡死。
+      #   - 无冲突：照常上传。
+      # 绝不能改成强行上传：PyPI 会拒，且日志里看不出版本号是历史残留还是本次产物。
+      - name: Skip versions already on PyPI
+        id: pypi_gate
         shell: bash
         run: |
-          python3 - <<"PY"
+          python3 - <<"PY" >> "$GITHUB_OUTPUT"
           import json, urllib.request, sys, pathlib, re
           versions = set()
           for whl in pathlib.Path("dist").glob("*.whl"):
               m = re.match(r"chrome_client-([0-9.]+)-", whl.name)
               if m:
                   versions.add(m.group(1))
-          print("versions in dist:", sorted(versions))
+          print("versions in dist:", sorted(versions), file=sys.stderr)
           try:
               data = json.load(urllib.request.urlopen(
                   "https://pypi.org/pypi/chrome_client/json", timeout=30))
               existing = set(data.get("releases", {}))
           except Exception as exc:
-              print("could not read PyPI index:", exc)
+              # 读不到索引时不能盲目上传，也不能假装成功：让这一步失败。
+              print(f"::error::could not read PyPI index: {exc}", file=sys.stderr)
               sys.exit(1)
           clash = sorted(versions & existing)
           if clash:
-              print(f"::error::versions already on PyPI: {clash}")
-              sys.exit(1)
-          print("no clash; safe to upload")
+              print(f"::warning::already on PyPI, skipping upload: {clash}",
+                    file=sys.stderr)
+              print("upload=false")
+          else:
+              print("no clash; safe to upload", file=sys.stderr)
+              print("upload=true")
           PY
       # 用 Trusted Publishing（OIDC），不用 API token。两者的差别不只是认证：
       # 只有 OIDC 上传才会让 PyPI 生成 PEP 740 attestation。用 token 上传的文件
@@ -371,5 +381,6 @@ jobs:
       #   Workflow build-historical-releases.yml / Environment pypi
       # 三处必须与下面 environment: 和本文件名逐字一致，改名即失效。
       - uses: pypa/gh-action-pypi-publish@release/v1
+        if: steps.pypi_gate.outputs.upload == 'true'
         with:
           packages-dir: dist/
