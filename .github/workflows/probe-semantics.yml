@@ -1,0 +1,34 @@
+name: Probe needs+always semantics
+on:
+  workflow_dispatch:
+    inputs:
+      flag:
+        type: boolean
+        default: true
+jobs:
+  a:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo A ok
+  b_fails:
+    needs: a
+    runs-on: ubuntu-latest
+    steps:
+      - run: exit 1
+  c_plain:
+    needs: [a, b_fails]
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "plain ran"
+  d_always:
+    needs: [a, b_fails]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "always ran"
+  e_always_and_input:
+    needs: [a, b_fails]
+    if: always() && inputs.flag
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "always+input ran"
