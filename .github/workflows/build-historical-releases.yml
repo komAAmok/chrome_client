@@ -366,38 +366,53 @@ jobs:
       #     Release 的轮次时必须能过，否则整条链路被一个"版本已存在"卡死。
       #   - 无冲突：照常上传。
       # 绝不能改成强行上传：PyPI 会拒，且日志里看不出版本号是历史残留还是本次产物。
-      - name: Keep only versions not yet on PyPI
+      # PyPI 的规则是「文件名不可复用」，不是「版本不可复用」：同一个版本可以
+      # 继续追加此前没有的文件名（这正是 0.2.13 缺两个 macos-arm64 时需要的），
+      # 但任何已存在的文件名都不能覆盖。所以筛的是文件名，不是版本号。
+      #
+      # 第一版按版本号筛，结果 0.2.13 只要有一个文件在 PyPI 上，整版都被跳过，
+      # 缺的两个 macos-arm64 永远补不上。
+      - name: Drop files already present on PyPI
         id: pypi_gate
         shell: bash
         run: |
           python3 - <<"PY" >> "$GITHUB_OUTPUT"
-          import json, urllib.request, sys, pathlib, re, shutil
+          import json, urllib.request, sys, pathlib, re
           wheels = sorted(pathlib.Path("dist").glob("*.whl"))
-          present = set()
-          for w in wheels:
-              m = re.match(r"chrome_client-([0-9.]+)-", w.name)
-              if m:
-                  present.add(m.group(1))
-          print("versions in dist:", sorted(present), file=sys.stderr)
-          try:
-              data = json.load(urllib.request.urlopen(
-                  "https://pypi.org/pypi/chrome_client/json", timeout=30))
-              existing = set(data.get("releases", {}))
-          except Exception as exc:
-              print(f"::error::could not read PyPI index: {exc}", file=sys.stderr)
-              sys.exit(1)
+          if not wheels:
+              print("upload=false")
+              raise SystemExit(0)
 
-          # 冲突按版本逐个剔除，不是整批跳过。
-          # 第一版写成「有冲突就 upload=false」，实测 8 个版本里只有 0.2.14 已在
-          # PyPI，结果另外 7 个本该上传的也一起被跳过，PyPI 上只留下 0.2.14。
+          versions = sorted({m.group(1) for w in wheels
+                             for m in [re.match(r"chrome_client-([0-9.]+)-", w.name)]
+                             if m})
+          print("versions in dist:", versions, file=sys.stderr)
+
+          # 拉每个版本的已知文件名。只查一次索引拿不到文件名，必须逐版本查。
+          known = set()
+          for v in versions:
+              try:
+                  d = json.load(urllib.request.urlopen(
+                      f"https://pypi.org/pypi/chrome_client/{v}/json", timeout=30))
+              except urllib.error.HTTPError as exc:
+                  if exc.code == 404:
+                      continue          # 该版本还不存在：全部可传
+                  print(f"::error::index lookup failed for {v}: {exc}",
+                        file=sys.stderr)
+                  raise SystemExit(1)
+              except Exception as exc:
+                  print(f"::error::index lookup failed for {v}: {exc}",
+                        file=sys.stderr)
+                  raise SystemExit(1)
+              known.update(f["filename"] for f in d.get("urls", []))
+
           keep, drop = [], []
           for w in wheels:
-              m = re.match(r"chrome_client-([0-9.]+)-", w.name)
-              (drop if (m and m.group(1) in existing) else keep).append(w)
+              (drop if w.name in known else keep).append(w)
 
           if drop:
-              print(f"::warning::already on PyPI, excluded: "
-                    f"{sorted({w.name for w in drop})}", file=sys.stderr)
+              print(f"::warning::already on PyPI, excluded {len(drop)} file(s): "
+                    f"{[w.name for w in drop]}", file=sys.stderr)
               for w in drop:
                   w.unlink()
           print(f"keeping {len(keep)} wheel(s) for upload", file=sys.stderr)
