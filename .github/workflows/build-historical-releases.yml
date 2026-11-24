@@ -107,6 +107,26 @@ jobs:
               for p in PLATFORMS:
                   if p["core-target"] in have:
                       pytag = p["py"].replace(".", "")
+                      # v0.2.10 与 v0.2.12 发布时漏了更新 bindings/python36/Cargo.lock：
+                      # lock 里 chrome-client-python36 的版本仍是上一个 release 的，
+                      # 于是 `cargo metadata --locked` 直接失败。实测：
+                      #   v0.2.10 Cargo.toml 0.2.10 / lock 0.2.9
+                      #   v0.2.12 Cargo.toml 0.2.12 / lock 0.2.11
+                      # Linux 侧侥幸通过，因为 manylinux 容器里的 cargo 较旧、不校验；
+                      # Windows 与 macOS 的新 cargo 会拒绝，形成 4 平台 × 2 tag = 8 个红。
+                      # --locked 是仓库的可复现性要求，不能为了迁就坏 tag 关掉；
+                      # 做法是把这类组合显式排除并记录，而不是静默改用非 locked 构建。
+                      # 只有宿主 cargo 会拒绝；manylinux 容器里的 cargo 较旧、不校验，
+                      # 所以 Linux 的 python36 实测是通过的，必须保留——排除全部
+                      # python36 会把 3 个本来能过的组合也砍掉。
+                      lock_broken = (p["binding"] == "python36"
+                                     and p["os"] in ("windows", "macos")
+                                     and row["tag"] in ("v0.2.10", "v0.2.12"))
+                      if lock_broken:
+                          print(f"::warning::{row['tag']} {p['binding']} skipped: "
+                                f"Cargo.lock is stale (see workflow comment)",
+                                file=sys.stderr)
+                          continue
                       matrix.append({**p, "tag": row["tag"], "version": row["version"],
                                      "pytag": pytag})
           print(f"::notice::matrix is {len(matrix)} jobs", file=sys.stderr)
