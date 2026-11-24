@@ -308,19 +308,34 @@ jobs:
   release:
     name: Attach wheels to GitHub Releases
     needs: [plan, build]
-    if: inputs.upload_github_release
+    # always() 是必需的：needs 默认要求 build 全部成功，而任何一个平台失败都会
+    # 让整批 Release 一次都不执行——实测 v0.2.10/v0.2.12 有 10 个平台红，于是
+    # 8 个版本的 Release 全被挡住。这里要的是「把已经构建出来的挂上去」，
+    # 缺哪个平台由下面的附件数量与 verify 步骤暴露，而不是整批放弃。
+    if: always() && inputs.upload_github_release && needs.plan.result == 'success'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         tag: ${{ fromJSON(needs.plan.outputs.tags) }}
     steps:
+      # 某个 tag 可能一个 artifact 都没有（它的所有平台都失败）。此时不能让
+      # download-artifact 直接报错终止，也不能去创建一个没有任何附件的 Release。
       - uses: actions/download-artifact@v4
+        continue-on-error: true
         with:
           pattern: wheel-${{ matrix.tag }}-*
           path: dist
           merge-multiple: true
+      - name: Count downloaded wheels
+        id: count
+        shell: bash
+        run: |
+          n=$(find dist -maxdepth 1 -name "*.whl" 2>/dev/null | wc -l)
+          echo "wheels=$n" >> "$GITHUB_OUTPUT"
+          echo "${{ matrix.tag }}: $n wheel(s)"
       - uses: softprops/action-gh-release@v2
+        if: steps.count.outputs.wheels != '0'
         with:
           tag_name: ${{ matrix.tag }}
           name: ${{ matrix.tag }}
@@ -332,7 +347,9 @@ jobs:
   pypi:
     name: Publish to PyPI
     needs: [plan, build]
-    if: inputs.upload_pypi
+    # 同上：any 一个平台失败不该阻止其它版本上传。PyPI 版本号不可重发这件事
+    # 由 pypi_gate 单独负责，不靠 needs 兜。
+    if: always() && inputs.upload_pypi && needs.plan.result == 'success'
     runs-on: ubuntu-latest
     # environment 只是一个闸门：在仓库 Settings -> Environments 里给它加必需审批，
     # 就能让每次上 PyPI 都过一个人工确认。它不提供任何凭据。
