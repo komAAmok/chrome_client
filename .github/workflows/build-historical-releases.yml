@@ -120,11 +120,17 @@ jobs:
                       # Windows 与 macOS 的新 cargo 会拒绝，形成 4 平台 × 2 tag = 8 个红。
                       # --locked 是仓库的可复现性要求，不能为了迁就坏 tag 关掉；
                       # 做法是把这类组合显式排除并记录，而不是静默改用非 locked 构建。
-                      # 只有宿主 cargo 会拒绝；manylinux 容器里的 cargo 较旧、不校验，
-                      # 所以 Linux 的 python36 实测是通过的，必须保留——排除全部
-                      # python36 会把 3 个本来能过的组合也砍掉。
-                      lock_broken = (p["binding"] == "python36"
-                                     and p["os"] in ("windows", "macos")
+                      # 两个 lock 都要查，不是一个：
+                      #   bindings/python   用仓库根的 workspace Cargo.lock
+                      #   bindings/python36 用自己目录下的 Cargo.lock
+                      # v0.2.10 / v0.2.12 两个都没有随版本号更新（实测都是上一个
+                      # release 的号），所以这两个 tag 的两种 binding 在新 cargo 上
+                      # 都会失败。我第一版只挡了 python36，于是 v0.2.10 的 python
+                      # 在 windows/macos 上又红了 5 个。
+                      #
+                      # 只有宿主 cargo 会拒绝：manylinux 容器里的 cargo 较旧、不校验，
+                      # 所以 Linux 的同名组合实测通过，必须保留。
+                      lock_broken = (p["os"] in ("windows", "macos")
                                      and row["tag"] in ("v0.2.10", "v0.2.12"))
                       if lock_broken:
                           print(f"::warning::{row['tag']} {p['binding']} skipped: "
