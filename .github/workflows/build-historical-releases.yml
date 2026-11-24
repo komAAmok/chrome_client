@@ -366,34 +366,42 @@ jobs:
       #     Release 的轮次时必须能过，否则整条链路被一个"版本已存在"卡死。
       #   - 无冲突：照常上传。
       # 绝不能改成强行上传：PyPI 会拒，且日志里看不出版本号是历史残留还是本次产物。
-      - name: Skip versions already on PyPI
+      - name: Keep only versions not yet on PyPI
         id: pypi_gate
         shell: bash
         run: |
           python3 - <<"PY" >> "$GITHUB_OUTPUT"
-          import json, urllib.request, sys, pathlib, re
-          versions = set()
-          for whl in pathlib.Path("dist").glob("*.whl"):
-              m = re.match(r"chrome_client-([0-9.]+)-", whl.name)
+          import json, urllib.request, sys, pathlib, re, shutil
+          wheels = sorted(pathlib.Path("dist").glob("*.whl"))
+          present = set()
+          for w in wheels:
+              m = re.match(r"chrome_client-([0-9.]+)-", w.name)
               if m:
-                  versions.add(m.group(1))
-          print("versions in dist:", sorted(versions), file=sys.stderr)
+                  present.add(m.group(1))
+          print("versions in dist:", sorted(present), file=sys.stderr)
           try:
               data = json.load(urllib.request.urlopen(
                   "https://pypi.org/pypi/chrome_client/json", timeout=30))
               existing = set(data.get("releases", {}))
           except Exception as exc:
-              # 读不到索引时不能盲目上传，也不能假装成功：让这一步失败。
               print(f"::error::could not read PyPI index: {exc}", file=sys.stderr)
               sys.exit(1)
-          clash = sorted(versions & existing)
-          if clash:
-              print(f"::warning::already on PyPI, skipping upload: {clash}",
-                    file=sys.stderr)
-              print("upload=false")
-          else:
-              print("no clash; safe to upload", file=sys.stderr)
-              print("upload=true")
+
+          # 冲突按版本逐个剔除，不是整批跳过。
+          # 第一版写成「有冲突就 upload=false」，实测 8 个版本里只有 0.2.14 已在
+          # PyPI，结果另外 7 个本该上传的也一起被跳过，PyPI 上只留下 0.2.14。
+          keep, drop = [], []
+          for w in wheels:
+              m = re.match(r"chrome_client-([0-9.]+)-", w.name)
+              (drop if (m and m.group(1) in existing) else keep).append(w)
+
+          if drop:
+              print(f"::warning::already on PyPI, excluded: "
+                    f"{sorted({w.name for w in drop})}", file=sys.stderr)
+              for w in drop:
+                  w.unlink()
+          print(f"keeping {len(keep)} wheel(s) for upload", file=sys.stderr)
+          print("upload=" + ("true" if keep else "false"))
           PY
       # 用 Trusted Publishing（OIDC），不用 API token。两者的差别不只是认证：
       # 只有 OIDC 上传才会让 PyPI 生成 PEP 740 attestation。用 token 上传的文件
