@@ -31,7 +31,6 @@ every non-impersonating caller look like Chrome.
 """
 
 
-from ._native import native as _native_module
 from .client_hints import CAPTURED_HEADERS
 from .exceptions import UnsupportedFeature
 
@@ -113,6 +112,13 @@ def _platform_identity(platform="auto"):
             guess: a guess that is right on this host and wrong on the next one
             is the defect this function exists to remove.
     """
+    # Imported here rather than at module scope: the gate that reads the captured
+    # table (tools/audit-session-parity.py) runs on a machine where the extension
+    # has not been built, and a module-level import made the whole facade
+    # unimportable there -- measured as an ImportError from CI before any test ran.
+    # Only a caller that actually asks for a platform identity needs the Core.
+    from ._native import native as _native_module
+
     try:
         return _native_module.PyEngine.platform_identity(platform or "auto")
     except AttributeError as error:

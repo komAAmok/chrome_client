@@ -323,7 +323,13 @@ jobs:
   # on 3.9 -- so this job runs the declared floor for real.
   python39-smoke:
     name: Python 3.9 smoke (modern wheel floor)
-    runs-on: ubuntu-latest
+    # Pinned, not ubuntu-latest. The manifest actions/setup-python reads
+    # (actions/python-versions) publishes prebuilt 3.9 only for 22.04 and 24.04,
+    # while ubuntu-latest moved to 26.04, so the job died in its very first step
+    # with "The version '3.9' with architecture 'x64' was not found for
+    # Ubuntu 26.04". Pinning keeps the floor the job exists to prove, instead of
+    # dropping it to whatever the image happens to ship.
+    runs-on: ubuntu-24.04
     needs: [linux]
     steps:
       - uses: actions/setup-python@v5

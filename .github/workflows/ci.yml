@@ -34,9 +34,25 @@ jobs:
       # they changed a degree of freedom that does not exist. A new knob
       # without a verdict fails this gate.
       - run: python3 tools/audit-extra-fp.py
+      # The three gates below import the facade, and the facade imports the
+      # native extension at module scope (bindings/python/chrome_client/
+      # _python_impl/engine.py:38). This job never built it, so every one of
+      # them died with "native extension ... is not installed" instead of
+      # reporting anything about session parity, headers or discard. The gate
+      # was added after the last green run of this workflow and had therefore
+      # never once executed here.
+      - name: Build the native extension for the facade-importing gates
+        run: cargo build --release -p chrome-client-python
+        env:
+          MINICRONET_CORE_DIR: ${{ github.workspace }}/core/binaries/linux-x86_64
       - run: python3 tools/audit-session-parity.py
+        env: &facade_env
+          PYTHONPATH: ${{ github.workspace }}/bindings/python:${{ github.workspace }}/target/release
+          LD_LIBRARY_PATH: ${{ github.workspace }}/core/binaries/linux-x86_64
       - run: python3 tools/audit-frozen-headers.py
+        env: *facade_env
       - run: python3 tools/audit-discard-fingerprint.py
+        env: *facade_env
       # Pure static audit of the committed Core artifacts: manifest fields,
       # SHA-256, size, the twenty ABI exports per platform, the presence of the
       # ICU ISO-8859-1 converter table that HTTP Basic/Digest realms need, and
