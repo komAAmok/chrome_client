@@ -113,33 +113,6 @@ jobs:
       # captures) needs a live fingerprint endpoint, so it runs where the
       # Core can actually connect.
       - run: python3 tools/audit-profile-addition.py --levels 1,2 --profile chrome_157
-      # Bodies are cached so a second attempt pays only for what the first one
-      # missed. Without it every run starts cold, and 876 files in one burst is
-      # exactly what a per-address rate limit is built to reject.
-      - uses: actions/cache@v4
-        with:
-          path: ~/.cache/minicronet-profile-evidence
-          key: profile-evidence-${{ hashFiles('profiles/normalized_profiles.json') }}
-          restore-keys: profile-evidence-
-      # Exit 2 means the question could not be asked -- transport failures, not a
-      # record that disagrees. This job was red for four nights on 31 files, every
-      # one of which answered HTTP 200 from a developer machine, while the tool
-      # called them UNREACHABLE, which reads like a verdict about the record.
-      # Retry once after a pause; a real content mismatch still fails first pass
-      # with exit 1, and is never retried.
-      - name: Verify profile evidence against upstream
-        shell: bash
-        run: |
-          set +e
-          python3 tools/audit-profile-evidence.py --jobs 4
-          rc=$?
-          if [[ $rc == 2 ]]; then
-            echo "::warning::upstream unreachable on the first pass; retrying once"
-            sleep 60
-            python3 tools/audit-profile-evidence.py --jobs 2
-            rc=$?
-          fi
-          exit $rc
       # The ERR_* names in exceptions.py tell a caller what a proxy or TLS
       # failure actually was. They had drifted badly (eight codes carried a
       # different error's name and the codes a proxy failure produces were

@@ -1,0 +1,54 @@
+name: Profile evidence (upstream)
+
+# The sweep in tools/audit-profile-evidence.py re-downloads 876 Chromium /
+# BoringSSL / QUICHE files from googlesource and compares the digests. It is the
+# only check that can tell whether profiles/ still describes upstream reality,
+# and it is also the one gate that cannot run on a GitHub runner: measured on
+# run 45586893710, 656 of 876 fetches exhausted their retries on the first pass
+# and 564 on the second, against a per-address limit it cannot negotiate with.
+#
+# So it is not part of the per-push check job -- a gate that fails for a reason
+# unrelated to the commit teaches people to ignore gates -- and runs here. A red
+# run here means "upstream could not be asked", which the tool reports as exit 2
+# and never as a pass; a real digest change reports exit 1 with both values.
+
+on:
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+    inputs:
+      jobs:
+        description: Concurrent downloads
+        type: number
+        required: true
+        default: 2
+
+permissions:
+  contents: read
+
+jobs:
+  sweep:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/minicronet-profile-evidence
+          key: profile-evidence-${ hashFiles('profiles/normalized_profiles.json') }}
+          restore-keys: profile-evidence-
+      - name: Verify profile evidence against upstream
+        shell: bash
+        run: |
+          set +e
+          python3 tools/audit-profile-evidence.py --jobs ${ inputs.jobs || 2 }} --give-up 24
+          rc=${?}
+          if [[ ${rc} == 2 ]]; then
+            echo "::warning::upstream unreachable on the first pass; retrying once"
+            sleep 60
+            python3 tools/audit-profile-evidence.py --jobs 1 --give-up 24
+            rc=${?}
+          fi
+          exit ${rc}

@@ -258,7 +258,12 @@ python3 tools/audit-profile-addition.py --levels 1,2 --profile chrome_158
 # so profiles/ must stay tracked. Without it they fail on a clean clone instead
 # of skipping: evidence that is absent must not read as evidence that agreed.
 tools/audit-profile-probes.sh # needs a Chromium checkout + gn/ninja
-python3 tools/audit-profile-evidence.py # needs network (googlesource); --offline for a local-only check
+# tools/audit-profile-evidence.py 不在这里：它要拉 876 个 upstream 文件，而
+# googlesource 对 GitHub runner 的并发是限流的——实测 run 45586893710 第一遍
+# 656/876、第二遍 564/876 在重试耗尽后仍是传输失败。它现在由
+# .github/workflows/profile-evidence.yml 每天跑一次（也可手动触发）；本地要跑就
+# python3 tools/audit-profile-evidence.py，加 --offline 只校验本地检出。退出码
+# 0/1/2 分别表示全匹配 / 记录错 / 网络问不出，后者永远不算通过。
 python3 tools/audit-net-error-names.py   # needs a Chromium checkout (CHROMIUM_SRC)
 cargo fmt --all -- --check
 cargo check --workspace --all-targets
