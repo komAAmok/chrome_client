@@ -177,15 +177,27 @@ PY
   [[ "$actual_size" == "$expected_size" ]] \
     || die "$target: size mismatch for $library"
 
-  description="$(file -b "$path")"
+  # file(1) spells the 32-bit x86 machine two ways depending on its own version and
+# on how libmagic was built: "Intel 80386" (file 5.45 here) and "Intel i386" (the
+# runner image, measured 2026-11-25 as "audit: linux-x86: wrong architecture (ELF
+# 32-bit ... Intel i386 ...)"). Matching one of them made this gate pass on the
+# machine that authored it and fail on every CI run, which is the same shape as
+# the ARMv7 row that once claimed a wheel nobody built. The architecture claim is
+# "32-bit x86", not the spelling, so accept both.
+is_i386() {
+  local d=$1
+  [[ $d == *"Intel 80386"* || $d == *"Intel i386"* ]]
+}
+
+description="$(file -b "$path")"
   case "$target" in
-    linux-x86) [[ "$description" == *"ELF 32-bit"* && "$description" == *"Intel 80386"* ]] || die "$target: wrong architecture ($description)" ;;
+    linux-x86) [[ "$description" == *"ELF 32-bit"* ]] && is_i386 "$description" || die "$target: wrong architecture ($description)" ;;
     linux-x86_64) [[ "$description" == *"ELF 64-bit"* && "$description" == *"x86-64"* ]] || die "$target: wrong architecture ($description)" ;;
     # The class token is part of the claim: an AArch64 artifact also says
     # "ARM", so EABI5 plus ELF 32-bit is what keeps the two apart.
     linux-armv7) [[ "$description" == *"ELF 32-bit"* && "$description" == *"ARM"* && "$description" == *"EABI5"* ]] || die "$target: wrong architecture ($description)" ;;
     linux-arm64) [[ "$description" == *"ELF 64-bit"* && "$description" == *"ARM aarch64"* ]] || die "$target: wrong architecture ($description)" ;;
-    windows-x86) [[ "$description" == *"PE32 executable"* && "$description" == *"Intel 80386"* ]] || die "$target: wrong architecture ($description)" ;;
+    windows-x86) [[ "$description" == *"PE32 executable"* ]] && is_i386 "$description" || die "$target: wrong architecture ($description)" ;;
     windows-x86_64) [[ "$description" == *"PE32+ executable"* && "$description" == *"x86-64"* ]] || die "$target: wrong architecture ($description)" ;;
     windows-arm64) [[ "$description" == *"PE32+ executable"* && "$description" == *"Aarch64"* ]] || die "$target: wrong architecture ($description)" ;;
     macos-x86_64) [[ "$description" == *"Mach-O 64-bit x86_64"* ]] || die "$target: wrong architecture ($description)" ;;
