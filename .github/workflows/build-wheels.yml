@@ -387,3 +387,21 @@ jobs:
           path: dist
           merge-multiple: true
       - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          # Re-running a tag must not fail on files that are already there.
+          # It did: the tag was re-pointed twice while the check job was being
+          # fixed, and the publish step died with
+          #
+          #   400 File already exists
+          #   ('chrome_client-0.2.16-cp36-abi3-macosx_13_0_arm64.whl', ...)
+          #
+          # on the first file, even though the release was complete and correct.
+          # PyPI refuses to overwrite, so without this every re-run of a
+          # finished release reports failure and hides whether anything else
+          # broke.
+          #
+          # This cannot mask a wrong upload: a wheel whose content changed keeps
+          # its filename only within one version, and a version bump produces new
+          # filenames. What it does skip is the byte-identical file that a
+          # re-build of the same commit produces.
+          skip-existing: true
