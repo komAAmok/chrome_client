@@ -14,4 +14,6 @@ from .._python_impl.engine import (
     EngineCache as EngineCache,
     core_version as core_version,
     abi_version as abi_version,
+    capabilities as capabilities,
+    CAPABILITY_QUIC_PROXY as CAPABILITY_QUIC_PROXY,
 )

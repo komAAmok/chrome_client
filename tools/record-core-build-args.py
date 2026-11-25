@@ -51,6 +51,15 @@ BUILDFLAG_HEADERS = (
         "CFI_ICALL_CHECK",
         "CFI_DIAG",
     )),
+    # Two net knobs that are not debugging aids: they decide whether a caller can
+    # use a quic:// proxy and a bracketed proxy chain at all, and the artifacts
+    # this project ships deliberately override the upstream is_debug default
+    # (tools/build-core-*.sh). Recording them makes a rebuild that quietly lost
+    # the override fail here instead of at the first quic:// request.
+    ("net/net_buildflags.h", (
+        "ENABLE_QUIC_PROXY_SUPPORT",
+        "ENABLE_BRACKETED_PROXY_URIS",
+    )),
 )
 
 #: Per-target identity. The rest of args.gn is shared by all nine builds;

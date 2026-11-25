@@ -262,6 +262,14 @@ pub struct EngineConfig {
     pub dns_rotate: u8,
     pub dns_padding: u8,
     pub platform: Platform,
+    /// Whether the Core injects the profile's captured browser header set.
+    ///
+    /// The Core holds the captured set (core/source/request.cc, BrowserHeaderSet)
+    /// and merges it under the caller's headers, so the wire order is the
+    /// capture's order and a caller value only replaces the field it names.
+    /// Without this flag that whole path is compiled but never reached, which is
+    /// why `impersonate=` used to change only the User-Agent string.
+    pub inject_client_hints: bool,
     /// Maximum TCP connections to one origin; 0 keeps Chromium's own limit (6).
     ///
     /// Raising it is an observable deviation from the browser being imitated
@@ -294,11 +302,43 @@ impl Default for EngineConfig {
             dns_rotate: 0,
             dns_padding: 0,
             platform: Platform::Auto,
+            // False by default. The facade injects the captured set itself
+            // (bindings/python .../sessions.py _browser_headers), because it is
+            // the layer that knows whether the caller asked for a browser profile
+            // at all, and because the captured values must be ordered before
+            // Pragma/Cache-Control rather than appended after them. Turning the
+            // Core path on as well would merge the same set twice. The field
+            // exists so a future binding can hand the job down; see the note at
+            // mn_engine_config_t.inject_client_hints.
+            inject_client_hints: false,
             max_sockets_per_group: 0,
         }
     }
 }
 
+/// The capability bits a Core artifact was compiled with.
+///
+/// A newtype rather than a bare `u32`: the bits are a mask whose meaning lives
+/// in the ABI, and a caller comparing raw integers would silently accept a bit a
+/// future revision renumbers. Unknown bits are preserved and simply never match
+/// an accessor here.
+///
+/// Bit 1 is reserved and never set: the ABI has no field that can carry a
+/// bracketed multi-hop chain. See `core/abi/minicronet.h`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CoreCapabilities(u32);
+
+impl CoreCapabilities {
+    /// The artifact can speak to a `quic://` proxy.
+    pub fn quic_proxy(self) -> bool {
+        self.0 & sys::mn_capability_t::MN_CAPABILITY_QUIC_PROXY.0 != 0
+    }
+
+    /// The raw mask, for a binding that wants to forward unknown bits.
+    pub fn bits(self) -> u32 {
+        self.0
+    }
+}
 struct EngineInner {
     raw: NonNull<sys::mn_engine_t>,
 }
@@ -376,7 +416,7 @@ impl Engine {
             dns_rotate: config.dns_rotate,
             dns_padding: config.dns_padding,
             cookie_samesite_override: 0,
-            inject_client_hints: 0,
+            inject_client_hints: u8::from(config.inject_client_hints),
             platform: config.platform.into(),
             max_sockets_per_group: config.max_sockets_per_group,
         };
@@ -397,6 +437,63 @@ impl Engine {
         // The returned string is static by the Core ABI contract.
         let ptr = unsafe { sys::mn_version_string() };
         (!ptr.is_null()).then(|| unsafe { CStr::from_ptr(ptr.cast()) })
+    }
+
+    /// The User-Agent group and sec-ch-ua-platform value this artifact emits
+    /// for *platform*, as the Core computes them.
+    ///
+    /// A binding must not derive these itself. The Core decides them from the
+    /// flags it was compiled with (BUILDFLAG(IS_WIN/IS_MAC), ARCH_CPU_*), while a
+    /// binding can only see the host it runs on, and on one x86_64 host serving a
+    /// 32-bit Core the two answers differ. Reading them here makes the two sides
+    /// agree by construction rather than by coincidence.
+    pub fn platform_identity(platform: Platform) -> Result<(String, String), Error> {
+        let raw = sys::mn_platform_t::from(platform);
+        let mut group_ptr: *const i8 = std::ptr::null();
+        let mut group_len: u32 = 0;
+        let result =
+            unsafe { sys::mn_platform_user_agent_group(raw, &mut group_ptr, &mut group_len) };
+        if result != sys::mn_result_t::MN_OK {
+            return Err(result.into());
+        }
+        let mut hint_ptr: *const i8 = std::ptr::null();
+        let mut hint_len: u32 = 0;
+        let result = unsafe { sys::mn_platform_hint(raw, &mut hint_ptr, &mut hint_len) };
+        if result != sys::mn_result_t::MN_OK {
+            return Err(result.into());
+        }
+        // The pointer is Core-owned static storage, so a copy is the only sound
+        // thing to hand back: keeping the pointer would tie the caller to a
+        // lifetime the ABI never promises.
+        //
+        // A null pointer would be UB for from_raw_parts even with a zero length
+        // (the pointer must be non-null and aligned). MN_OK is documented to imply
+        // a valid pointer, but building a slice from one without checking turns a
+        // hypothetical Core bug into undefined behaviour in the binding.
+        if group_ptr.is_null() || hint_ptr.is_null() {
+            return Err(Error::InitializationFailed);
+        }
+        let group =
+            unsafe { std::slice::from_raw_parts(group_ptr.cast::<u8>(), group_len as usize) };
+        let hint = unsafe { std::slice::from_raw_parts(hint_ptr.cast::<u8>(), hint_len as usize) };
+        Ok((
+            String::from_utf8_lossy(group).into_owned(),
+            String::from_utf8_lossy(hint).into_owned(),
+        ))
+    }
+
+    /// What this Core artifact was compiled with.
+    ///
+    /// Readable before any engine exists: the bits describe the library, not a
+    /// connection. Callers use them to decide whether a feature is worth
+    /// attempting, instead of making a request and interpreting its error.
+    pub fn core_capabilities() -> Result<CoreCapabilities, Error> {
+        let mut flags: u32 = 0;
+        let result = unsafe { sys::mn_engine_capabilities(&mut flags) };
+        if result != sys::mn_result_t::MN_OK {
+            return Err(result.into());
+        }
+        Ok(CoreCapabilities(flags))
     }
 
     pub fn request(&self, config: RequestConfig) -> Result<Request, Error> {

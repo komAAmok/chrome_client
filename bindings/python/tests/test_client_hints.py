@@ -158,11 +158,31 @@ class TableTests(unittest.TestCase):
         self.assertEqual(hints.browser_headers("chrome_1"), [])
         self.assertEqual(hints.browser_headers("not_a_profile"), [])
 
-    def test_the_platform_token_matches_the_cores_derivation(self):
-        """The two strings are the same claim on both sides of the ABI."""
+    def test_the_platform_token_comes_from_the_core(self):
+        """The token is read out of the Core, not derived in Python.
+
+        This used to assert a prefix and the absence of parentheses, which is a
+        shape check: it passed for any string that looked plausible and could not
+        see the Core disagree. What matters is that the value the facade sends is
+        the value the artifact reports, because the Core decides it from
+        BUILDFLAG(IS_WIN/IS_MAC) plus ARCH_CPU_* while Python can only see the
+        host -- on one x86_64 machine serving the 32-bit Core those differ.
+        """
+        from chrome_client._python_impl._native import native
+
+        for platform in ("auto", "windows", "macos", "linux"):
+            group, hint = hints._platform_identity(platform)
+            self.assertEqual(native.PyEngine.platform_identity(platform),
+                             (group, hint), platform)
+            self.assertEqual(hints._platform_token(platform), group)
+            self.assertEqual(hints._sec_ch_ua_platform(platform), hint)
+            self.assertNotIn("(", group)
+            self.assertTrue(hint.startswith(chr(34)) and hint.endswith(chr(34)), hint)
+
+    def test_the_derivation_matches_the_cores_string_table(self):
+        """The three platform strings obey the same rules the Core documents."""
         token = hints._platform_token()
         self.assertTrue(token.startswith(("Windows NT", "Macintosh", "X11")), token)
-        self.assertNotIn("(", token)
         self.assertNotIn(")", token)
 
 

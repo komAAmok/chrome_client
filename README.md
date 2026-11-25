@@ -34,7 +34,7 @@ WebSocket。同步与异步两套 API 共用同一个引擎，行为只在"怎�
 | 操作系统 | Core 目标 | Python 3.9–3.15 | Python 3.6–3.8 | Rust | 备注 |
 | --- | --- | --- | --- | --- | --- |
 | Linux | x86 (`i686`)、x86_64、ARM64 | ✓ | ✓（独立 abi3 扩展） | ✓ | manylinux/glibc 运行时依赖见 manifest |
-| Linux | ARMv7 (hard-float, NEON) | 未发布 | 未发布 | ✓ | Core 已构建并审计；不发布 wheel，需自行构建扩展 |
+| Linux | ARMv7 (hard-float, NEON) | 未发布 | 未发布 | ✓ | Core 已构建并审计；**未加载、未发请求**（qemu 试过，见 `docs/NEXT_STEPS.md`），不发布 wheel，需自行构建扩展 |
 | Windows | x86、x86_64、ARM64 | ✓ | x86/x86_64 ✓ | ✓ | DLL 随 wheel；ICU 数据已编入库中 |
 | macOS | x86_64、ARM64 | ✓ | ✓（独立 abi3 扩展） | ✓ | dylib 按架构匹配 |
 
@@ -80,7 +80,7 @@ Profile 影响 TLS ClientHello、ALPN、HTTP/2 设置、QUIC/H3 和相关 Chromi
 | mTLS 客户端证书 | ✓ | ✓ | `cert=("c.pem","k.pem")` 或单个合并 PEM；服务端要求时自动出示，不改变 ClientHello |
 | 域名映射到指定 IP | ✓ | ✓ | `host_mapping="MAP cdn.test 93.184.216.34"`；**只改写解析结果**，SNI、Host 头、证书校验仍用域名 |
 | DNS 服务器 / DoH（DoT 不支持，抛错） | ✓ | ✓ | `dns_nameservers="1.1.1.1"`、`doh_template=...` 需配 `dns_secure_mode=1/2`、`dns_rotate`（`dns_padding` 不支持，抛错）。实测：指向死服务器的 `dns_nameservers` 仍返回 200（Chromium 的 SYSTEM 兜底）；`dns_secure_mode=2` 的 DoH 不回退 |
-| ECH（Encrypted ClientHello） | ✓ GREASE | ✓ | `Response.ech_status` 报告 `success` / `rejected` / `not_attempted`。**版本边界：`chrome_118` 及以前不发 ECH 扩展，`chrome_119` 起发 GREASE**（payload 长度在 372/436/500/564 间随机，正是 GREASE 的特征）。桌面 Chromium 只从 DNS HTTPS 记录取 ECHConfigList，本引擎不取，所以真实配置永远不出现，`ech_status` 恒为 `not_attempted`。逐版本证据见 `docs/ABI.md` 末节 |
+| ECH（Encrypted ClientHello） | ✓ GREASE | ✓ 默认真加密 | `Response.ech_status` 报告 `success` / `rejected` / `not_attempted`。**版本边界：`chrome_118` 及以前不发 ECH 扩展，`chrome_119` 起才发**（GREASE 时 payload 长度在 372/436/500/564 间随机）。**默认就会真加密 SNI**：引擎总是自建内置解析器（`core/source/engine.cc`），会查 DNS HTTPS 记录（type 65），拿到 `ech=` 参数就加密 ClientHello——与桌面 Chrome 的默认配置一致（`stub_resolver_config_reader.cc:190` → `kAsyncDns`）。`dns_nameservers` / `doh_template` / `dns_secure_mode` 只覆盖字段，不是开启开关。域名没有 HTTPS 记录（如 `tls.peet.ws`）、**或上游解析器不回答 type 65**（如 systemd-resolved 的 stub）时仍然只发 GREASE，`ech_status` 为 `not_attempted`——真 Chrome 在同一台机器上结果相同，决定权在 DNS 应答。逐版本证据见 `docs/ABI.md` 末节 |
 | 平台身份 | ✓ | ✓ | `platform="windows"/"macos"/"linux"`；UA 组、`sec-ch-ua-platform`、`sec-ch-ua-mobile` 同源，Linux 主机可发 Windows UA |
 | 每 origin 连接上限 | ✓ | ✓ | `max_sockets_per_group=32`；默认 0 保留 Chromium 自身的 6，提高是对被模仿浏览器的可观测偏离 |
 | HSTS 例外与多跳代理 | ✓ | ✓ | `hsts_bypass="example"`（只接受单标签）、`proxy_chain="socks5://a:1080,http://b:8080"` |
@@ -265,7 +265,7 @@ with chrome_client.Session(impersonate="chrome_151", proxy="http://p:8080") as s
 | `http://` `https://` `socks://` `socks4://` `socks5://` | 原样使用 | Chromium 原生白名单 |
 | `socks5h://` | 改写为 `socks5://` | 同名同事，Chromium 只是少了这个拼写 |
 | `socks4a://` | `UnsupportedFeature` | 要求远端解析，Core 没有 |
-| `quic://` | `UnsupportedFeature` | 本构建未开 `ENABLE_QUIC_PROXY_SUPPORT` |
+| `quic://` | 原样使用 | 本项目显式开了 `ENABLE_QUIC_PROXY_SUPPORT`；能力位见 `capabilities()` |
 | `host:port`（无 scheme） | `http://host:port` | Chromium 把裸规则默认成 HTTP |
 | 尾部 `/`、路径、`#片段`、换行、空白 | 剥掉 | 规则只有 host:port |
 | `host:`（空端口） | `InvalidProxyURL` | Chromium 同样拒绝 |
@@ -519,7 +519,7 @@ Cookie 会按 URL 匹配后附加到握手上。
 | `proxies`、`proxy`、`proxy_auth`、`trust_env`、`NO_PROXY` | ✓ |
 | `verify=True/False/"/path/ca.pem"` | ✓ |
 | `host_mapping="MAP <域名> <IP>[:端口]"`、`EXCLUDE <域名>`、以及它们的列表 | ✓ 只改写解析结果，SNI/Host/证书校验仍是域名；写错关键字抛 `UnsupportedFeature` |
-| `dns_nameservers`、`doh_template`、`dns_secure_mode`、`dns_rotate` | ✓ 任一非空即改由 Chromium 自带解析器处理；`doh_template` 缺 `dns_secure_mode` 抛错而不是被忽略。**实测**：`dns_nameservers` 指向本地 53 端口时服务端真的收到 A(1) 与 HTTPS(65) 两类查询；`doh_template` 指向 `127.0.0.1:1` 在 `dns_secure_mode=2` 下失败、在 `=1` 下回退到系统解析成功——这正是 secure 与 opportunistic 的区别 |
+| `dns_nameservers`、`doh_template`、`dns_secure_mode`、`dns_rotate` | ✓ 只覆盖字段，不负责开启解析器——引擎**总是**用 Chromium 自带解析器（默认即查 DNS HTTPS 记录）；`doh_template` 缺 `dns_secure_mode` 抛错而不是被忽略。**实测**：`dns_nameservers` 指向本地 53 端口时服务端真的收到 A(1) 与 HTTPS(65) 两类查询；`doh_template` 指向 `127.0.0.1:1` 在 `dns_secure_mode=2` 下失败、在 `=1` 下回退到系统解析成功——这正是 secure 与 opportunistic 的区别 |
 | `platform`、`max_sockets_per_group`、`hsts_bypass`、`proxy_chain` | ✓ 都是引擎级、进 engine 缓存键；`platform` 同时决定 UA 组与 client hints |
 | `cert=("c.pem","k.pem")`、`cert="combined.pem"`、`set_client_certificate()` | ✓ 服务端发 CertificateRequest 时才出示，不影响 ClientHello 指纹 |
 | `allow_redirects`、`max_redirects`、`history`、最终 URL | ✓ |
@@ -578,7 +578,7 @@ Core 体积在 6.1–9.4 MB 之间（Linux ARMv7 最小，Windows x86_64 最大�
 
 | 路径 | 内容 |
 | --- | --- |
-| `core/abi/` | 稳定 C ABI v12 |
+| `core/abi/` | 稳定 C ABI v14 |
 | `core/binaries/` | 9 个已审计平台 Core |
 | `crates/minicronet/` | Rust 安全层、流和生命周期 |
 | `bindings/python/` | Python 3.9–3.15 绑定与共享 facade |

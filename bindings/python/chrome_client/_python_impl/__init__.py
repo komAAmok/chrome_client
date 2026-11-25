@@ -54,6 +54,14 @@ def abi_version():
     return engine.abi_version()
 
 
+def capabilities():
+    """Capability bits this Core artifact was compiled with, as an int."""
+    return engine.capabilities()
+
+
+CAPABILITY_QUIC_PROXY = engine.CAPABILITY_QUIC_PROXY
+
+
 __all__ = [
     # sessions and clients
     "Session", "AsyncSession", "Client", "AsyncClient", "RetryStrategy",
@@ -84,7 +92,8 @@ __all__ = [
     # module-level api
     "request", "get", "options", "head", "post", "put", "patch", "delete", "trace",
     "query", "session", "async_session", "shared_session", "close_shared_session",
-    "codes", "available_profiles", "core_version", "abi_version",
+    "codes", "available_profiles", "core_version", "abi_version", "capabilities",
+    "CAPABILITY_QUIC_PROXY",
     "normalize_impersonate", "normalize_http_version",
     # submodules
     "exceptions", "structures", "cookies", "models", "sessions", "adapters", "auth",

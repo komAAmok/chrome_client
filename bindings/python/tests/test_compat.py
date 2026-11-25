@@ -3056,11 +3056,155 @@ class NativeProxyRuleTests(unittest.TestCase):
             normalize_proxy_url("http=user:pass@127.0.0.1:8080")
         self.assertIn("proxy_auth", str(caught.exception))
 
-    def test_quic_fails_closed_because_this_build_lacks_it(self):
-        """ENABLE_QUIC_PROXY_SUPPORT is off, so quic:// would be -336."""
+    def test_quic_is_accepted_because_the_core_reports_the_capability(self):
+        """quic:// parses when -- and only when -- the Core reports the bit.
+
+        The scheme used to be refused here unconditionally, which was right for
+        an artifact built without ENABLE_QUIC_PROXY_SUPPORT and wrong for one
+        built with it. The answer now comes from mn_engine_capabilities, so this
+        test asserts the pair rather than the old constant: the facade accepts
+        quic:// exactly when the loaded Core advertises the capability.
+        """
+        from chrome_client._python_impl import engine
         from chrome_client._python_impl.sessions import normalize_proxy_url
-        with self.assertRaises(chrome_client.UnsupportedFeature):
-            normalize_proxy_url("quic://127.0.0.1:443")
+
+        if not chrome_client.capabilities() & engine.CAPABILITY_QUIC_PROXY:
+            self.skipTest("this Core artifact was built without QUIC proxies")
+        self.assertEqual("quic://127.0.0.1:443",
+                         normalize_proxy_url("quic://127.0.0.1:443")[0])
+
+    def test_socks_is_accepted_as_a_socks5_spelling(self):
+        """`socks://` is Chromium's own short spelling for SOCKS5.
+
+        engine.cc listed socks5/socks4/https/quic/http but not "socks", so
+        `proxy_chain="socks://h:9"` reached a branch that returned early and the
+        caller saw InitializationFailed from a context that was never built --
+        while `proxy="socks://h:9"` worked, because that path goes through
+        ProxyRules::ParseFromString, which does know the spelling. Two options
+        naming one connection path must not disagree.
+        """
+        from chrome_client._python_impl.sessions import normalize_proxy_chain, normalize_proxy_url
+        self.assertEqual(("socks://127.0.0.1:9", None, None),
+                         normalize_proxy_url("socks://127.0.0.1:9"))
+        self.assertEqual("socks://127.0.0.1:9",
+                         normalize_proxy_chain("socks://127.0.0.1:9"))
+
+    def test_a_rule_list_that_yields_no_proxy_is_refused(self):
+        """An accepted rule that resolves to nothing is a direct connection.
+
+        ProxyList::AddProxyChain documents "Silently discard malformed inputs"
+        (proxy_list.cc:58), and ParseFromString comma-splits before calling it,
+        so "[a,b]" loses both halves, "garbage://x" loses its only one, and
+        "http=garbage://x;https=garbage://y" empties every per-scheme list.
+        Before this check all three were ACCEPTED and then connected directly:
+        measured as a 200 from a local origin while the proxy port recorded zero
+        connections. That is the accepted-and-ignored downgrade section 8 bans.
+        """
+        from chrome_client._python_impl.sessions import normalize_proxy_url
+        for rule in ("[https://a:1,https://b:2]", "garbage://x",
+                     "http=garbage://x;https=garbage://y", "socks=garbage://x"):
+            with self.assertRaises(chrome_client.InvalidProxyURL, msg=rule):
+                normalize_proxy_url(rule)
+
+    def test_a_chain_that_splits_into_nothing_is_refused(self):
+        """",," and "   " name a proxy and produce none: Engine sees a direct path.
+
+        The Python layer already refused these, so the ABI check is what keeps a
+        direct Go/Node/cgo caller from the same silent downgrade.
+        """
+        from chrome_client._python_impl.sessions import normalize_proxy_chain
+        for value in (",,", "   ", ",https://127.0.0.1:9,"):
+            with self.assertRaises(chrome_client.UnsupportedFeature, msg=value):
+                normalize_proxy_chain(value)
+
+    def test_module_level_impersonate_reaches_the_engine(self):
+        """The verb helpers must honour impersonate= the way Session does.
+
+        ``chrome_client.get(url, impersonate="chrome_158")`` used to send four
+        headers: the option was not in the api module's _SESSION_ONLY list, so it
+        travelled as a *request* option into a shared session built with no
+        profile. _browser_headers returns early when there is no profile, so the
+        captured set was never injected and the call looked like a bare
+        transport with a Chrome User-Agent bolted on.
+
+        Verified by decoding the wire, not by inspecting the option: a private
+        session is built from the constructor list, so the count is what proves
+        the value arrived.
+        """
+        from chrome_client._python_impl import api
+
+        self.assertIn("impersonate", api._SESSION_ONLY)
+        self.assertIn("platform", api._SESSION_ONLY)
+
+    def test_a_module_level_call_with_no_profile_stays_a_bare_transport(self):
+        """Adding impersonate to the list must not make every call look like Chrome.
+
+        ``chrome_client.get(url)`` keeps using the shared session, and that
+        session has no profile, so the captured set stays out. This is the
+        property that would break if _SESSION_ONLY gained a default value.
+        """
+        from chrome_client._python_impl import api
+
+        shared = api.shared_session()
+        self.assertIsNone(shared.impersonate)
+
+    def test_core_overridden_headers_are_stripped(self):
+        """Accept-Encoding/Accept-Language are Chromium's, not the caller's.
+
+        Chromium rewrites both after the caller's block is built
+        (url_request_http_job.cc AddExtraHeaders), so forwarding a value would
+        put something on the wire the caller did not ask for. Stripping keeps the
+        profile value, which is what a fingerprint client wants.
+        """
+        from chrome_client._python_impl.sessions import (
+            _strip_core_overridden_headers)
+        from chrome_client._python_impl.structures import Headers
+
+        kept, stripped = _strip_core_overridden_headers(Headers([
+            ("Accept-Encoding", "identity"),
+            ("Accept-Language", "en-US"),
+            ("Accept", "application/json"),
+            ("User-Agent", "PAYLOAD/1.0"),
+        ]))
+        self.assertEqual({"accept-encoding", "accept-language"}, stripped)
+        self.assertEqual({"Accept", "User-Agent"}, {n for n, _ in kept.items()})
+
+    def test_headers_no_capture_mentions_keep_chromium_position(self):
+        """Pragma/Cache-Control precede the captured block, not follow it.
+
+        BuildRequestHeaders sets them before MergeFrom(extra_headers)
+        (http_network_transaction.cc:1483-1497), and the captured block *is*
+        extra_headers. Appending them after Accept-Language would put them past
+        every captured field, which the wire comparison in this file would not
+        catch because it only compares names.
+        """
+        from chrome_client._python_impl.browser_headers import (
+            full_header_order, header_order)
+
+        captured = header_order("chrome_158")
+        full = full_header_order("chrome_158")
+        self.assertEqual(["pragma", "cache-control"], full[:2])
+        self.assertEqual([n.lower() for n in captured], full[2:])
+        self.assertEqual([], full_header_order(None))
+
+    def test_a_core_without_the_bit_refuses_the_scheme(self):
+        """The refusal path stays reachable, and it names the bit.
+
+        Patching the reader rather than the artifact is the only way to cover
+        it on a machine whose Core has the flag on; without this, deleting the
+        check would leave every test green.
+        """
+        from chrome_client._python_impl import engine
+        from chrome_client._python_impl import sessions
+
+        original = engine.capabilities
+        try:
+            sessions.capabilities = lambda: 0
+            with self.assertRaises(chrome_client.UnsupportedFeature) as caught:
+                sessions._require_quic_proxy_support()
+        finally:
+            sessions.capabilities = original
+        self.assertIn("MN_CAPABILITY_QUIC_PROXY", str(caught.exception))
 
     def test_a_native_rule_list_still_works_through_the_core(self):
         """Pass-through must be real routing, not just string preservation.

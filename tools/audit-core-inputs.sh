@@ -85,7 +85,13 @@ while IFS= read -r name; do
 done <<<"$names"
 
 installed=0
-for glob in 'core/source/*.c' 'core/source/*.cc' 'core/source/minicronet/*.h'; do
+# core/source/*.h is a real carrier: platform_identity.h lives there and is
+# included as "platform_identity.h" from the .cc files beside it. It was missing
+# from this list and from the install loop in sync-core.sh at the same time, so a
+# header could exist, be untracked, and never reach the checkout -- the gate here
+# would still print "all tracked" because it never looked.
+for glob in 'core/source/*.c' 'core/source/*.cc' 'core/source/*.h' \
+            'core/source/minicronet/*.h'; do
   matched=0
   for file in "$ROOT"/$glob; do
     [[ -e $file ]] || continue

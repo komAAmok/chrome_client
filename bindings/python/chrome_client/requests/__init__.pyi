@@ -138,6 +138,8 @@ from .._python_impl import (
     WsCloseCode as WsCloseCode,
     core_version as core_version,
     abi_version as abi_version,
+    capabilities as capabilities,
+    CAPABILITY_QUIC_PROXY as CAPABILITY_QUIC_PROXY,
 )
 
 #: Same names the implementation package exports.

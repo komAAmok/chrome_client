@@ -39,7 +39,7 @@ the caller believing it is imitating a fingerprint when it is not. See the
 | OS | Core targets | Python 3.9–3.15 | Python 3.6–3.8 | Rust | Notes |
 | --- | --- | --- | --- | --- | --- |
 | Linux | x86 (`i686`), x86_64, ARM64 | ✓ | ✓ (separate abi3 extension) | ✓ | Runtime dependencies are listed in each manifest |
-| Linux | ARMv7 (hard-float, NEON) | not published | not published | ✓ | Core is built and audited; build the extension yourself |
+| Linux | ARMv7 (hard-float, NEON) | not published | not published | ✓ | Core is built and audited, but **never loaded and never sent a request** (qemu attempted, see `docs/NEXT_STEPS.md`); build the extension yourself |
 | Windows | x86, x86_64, ARM64 | ✓ | x86/x86_64 ✓ | ✓ | Wheels bundle the DLL; ICU data is linked in |
 | macOS | x86_64, ARM64 | ✓ | ✓ (separate abi3 extension) | ✓ | dylib is architecture-specific |
 
@@ -88,7 +88,7 @@ Service Workers and persistent browser profiles are not included.
 | mTLS client certificates | ✓ | ✓ | `cert=("c.pem", "k.pem")` or one combined PEM; presented only when the server asks, so the ClientHello is unchanged |
 | Domain mapped to a fixed IP | ✓ | ✓ | `host_mapping="MAP cdn.test 93.184.216.34"`; rewrites **only the resolution result**, so SNI, the Host header and certificate verification keep the domain |
 | DNS servers / DoH (DoT unsupported, raises) | ✓ | ✓ | `dns_nameservers="1.1.1.1"`, `doh_template=...` (needs `dns_secure_mode=1/2`), `dns_rotate` (`dns_padding` is refused). Measured: `dns_nameservers` pointed at a dead server still returns 200 (Chromium falls back to the SYSTEM task), and a `dns_secure_mode=2` DoH never falls back |
-| ECH (Encrypted ClientHello) | ✓ GREASE | ✓ | `Response.ech_status` reports `success` / `rejected` / `not_attempted`. **Version boundary: `chrome_118` and earlier send no ECH extension; `chrome_119` and later send GREASE** (payload length varies randomly among 372/436/500/564, which is the GREASE signature). Desktop Chromium only obtains an ECHConfigList from a DNS HTTPS record and this engine does not fetch one, so a real config never appears and `ech_status` is always `not_attempted`. Per-release evidence is in the last section of `docs/ABI.md` |
+| ECH (Encrypted ClientHello) | ✓ GREASE | ✓ encrypted by default | `Response.ech_status` reports `success` / `rejected` / `not_attempted`. **Version boundary: `chrome_118` and earlier send no ECH extension; only `chrome_119` and later send it** (with GREASE, the payload length varies among 372/436/500/564). **SNI is encrypted by default**: the engine always builds its own built-in resolver (`core/source/engine.cc`), which queries the DNS HTTPS record (type 65) and turns a non-empty `ech=` parameter into a real encrypted ClientHello — the same configuration desktop Chrome ships (`stub_resolver_config_reader.cc:190` -> `kAsyncDns`). `dns_nameservers` / `doh_template` / `dns_secure_mode` override fields; they are not the switch that enables ECH. A host with no HTTPS record (such as `tls.peet.ws`), **or an upstream resolver that does not answer type 65** (such as the systemd-resolved stub), still gets GREASE only and `ech_status` stays `not_attempted` -- real Chrome on the same machine behaves identically, because the DNS answer decides, not the client. Per-release evidence is in the last section of `docs/ABI.md` |
 | Platform identity | ✓ | ✓ | `platform="windows"/"macos"/"linux"`; the UA group, `sec-ch-ua-platform` and `sec-ch-ua-mobile` share one source, so a Linux host can send a Windows UA |
 | Per-origin connection ceiling | ✓ | ✓ | `max_sockets_per_group=32`; the default 0 keeps Chromium's own 6. Raising it is an observable deviation from the browser being imitated |
 | HSTS bypass and multi-hop proxy | ✓ | ✓ | `hsts_bypass="example"` (single labels only), `proxy_chain="socks5://a:1080,http://b:8080"` |
@@ -265,7 +265,7 @@ exists because Chromium rejects the input outright:
 | `http://` `https://` `socks://` `socks4://` `socks5://` | used as written | native `GetSchemeFromUriScheme` set |
 | `socks5h://` | rewritten to `socks5://` | same behaviour, a spelling Chromium lacks |
 | `socks4a://` | `UnsupportedFeature` | asks for remote resolution the Core cannot do |
-| `quic://` | `UnsupportedFeature` | `ENABLE_QUIC_PROXY_SUPPORT` is off in this build |
+| `quic://` | used as given | this project turns `ENABLE_QUIC_PROXY_SUPPORT` on; see `capabilities()` |
 | `host:port` (no scheme) | `http://host:port` | Chromium defaults a bare rule to HTTP |
 | trailing `/`, path, `#fragment`, newline, spaces | dropped | a rule is host:port only |
 | `host:` (empty port) | `InvalidProxyURL` | Chromium rejects it too |
@@ -508,7 +508,7 @@ no further edits.
 | `proxies`, `proxy`, `proxy_auth`, `trust_env`, `NO_PROXY` | ✓ |
 | `verify=True/False/"/path/ca.pem"` | ✓ |
 | `host_mapping="MAP <domain> <ip>[:port]"`, `EXCLUDE <domain>`, or a list of either | ✓ rewrites only the resolution result; SNI, Host and certificate verification keep the domain. A misspelled keyword raises `UnsupportedFeature` |
-| `dns_nameservers`, `doh_template`, `dns_secure_mode`, `dns_rotate` | ✓ setting any of them switches to Chromium's own resolver; a `doh_template` without `dns_secure_mode` raises rather than being ignored. **Measured**: with `dns_nameservers` pointing at a local port 53, the server really receives both A (1) and HTTPS (65) queries; a `doh_template` pointing at `127.0.0.1:1` fails under `dns_secure_mode=2` and falls back to system resolution under `=1` -- which is exactly the difference between secure and opportunistic |
+| `dns_nameservers`, `doh_template`, `dns_secure_mode`, `dns_rotate` | ✓ these only override fields; the engine **always** uses Chromium's own resolver (which queries the DNS HTTPS record by default); a `doh_template` without `dns_secure_mode` raises rather than being ignored. **Measured**: with `dns_nameservers` pointing at a local port 53, the server really receives both A (1) and HTTPS (65) queries; a `doh_template` pointing at `127.0.0.1:1` fails under `dns_secure_mode=2` and falls back to system resolution under `=1` -- which is exactly the difference between secure and opportunistic |
 | `platform`, `max_sockets_per_group`, `hsts_bypass`, `proxy_chain` | ✓ all engine-level and part of the engine cache key; `platform` also decides the UA group and the client hints |
 | `cert=("c.pem", "k.pem")`, `cert="combined.pem"`, `set_client_certificate()` | ✓ sent only when the server issues a CertificateRequest, so the ClientHello fingerprint is unchanged |
 | `allow_redirects`, `max_redirects`, `history`, final URL | ✓ |
@@ -570,7 +570,7 @@ size ceiling, so a regression fails the build.
 
 | Path | Contents |
 | --- | --- |
-| `core/abi/` | Stable C ABI v12 |
+| `core/abi/` | Stable C ABI v14 |
 | `core/binaries/` | Nine audited Core targets |
 | `crates/minicronet/` | Rust safety layer, streams and lifetimes |
 | `bindings/python/` | Python 3.9–3.15 binding and the shared facade |

@@ -17,10 +17,10 @@ CHROMIUM_SRC=$(resolve_chromium_src)
 # again after BoringSSL stopped being the one target still built at -O2 while
 # the rest of the dylib was at -Oz, and again for ABI v9 including the captured
 # request header set for all 72 profiles. The two committed artifacts are now
-# 8,131,568 (x86_64) and 7,476,544 (arm64), so 8,131,568 * 1.02 = 8,294,199
-# rounds up to the 8,300,000 below. The rule is unchanged: the larger
+# 8,139,888 (x86_64) and 7,476,672 (arm64), so 8,139,888 * 1.02 = 8,302,686
+# rounds up to the 8,310,000 below. The rule is unchanged: the larger
 # architecture plus 2%, rounded up to 10,000.
-MAX_BYTES=${MAX_BYTES:-8300000}
+MAX_BYTES=${MAX_BYTES:-8310000}
 ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 # require_rg also installs the rg() wrapper, which turns a ripgrep *error*
 # (status 2: unreadable path, bad pattern) into a failure instead of the "no

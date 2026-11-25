@@ -200,4 +200,12 @@ def abi_version() -> int:
     ...
 
 
+def capabilities() -> int:
+    """Capability bits this Core artifact was compiled with, as an int."""
+    ...
+
+
+CAPABILITY_QUIC_PROXY: int
+
+
 __all__: List[str]

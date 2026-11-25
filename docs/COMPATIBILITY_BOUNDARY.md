@@ -585,7 +585,154 @@ which only exists because Chromium rejects the input outright:
 | `http://`, `https://`, `socks://`, `socks4://`, `socks5://` | used as written | native `GetSchemeFromUriScheme` set |
 | `socks5h://` | rewritten to `socks5://` | same behaviour under a name Chromium lacks |
 | `socks4a://` | `UnsupportedFeature` | asks for remote resolution the Core cannot do |
-| `quic://` | `UnsupportedFeature` | `ENABLE_QUIC_PROXY_SUPPORT` is off in this build |
+| `quic://` | used as given | this project turns `ENABLE_QUIC_PROXY_SUPPORT` on, reported as `MN_CAPABILITY_QUIC_PROXY` |
+
+## Where each default request header comes from, in Chromium's own source
+
+The facade injects a captured header set (`bindings/python/.../browser_headers.py`),
+and the order it injects them in is not a design choice: every field is produced by
+a named place in Chromium, and those places run in a fixed order. This section
+records the chain so a future reader can check it instead of trusting it.
+
+### The block is built in four layers, in this order
+
+| # | Where | Adds | Source |
+| --- | --- | --- | --- |
+| 1 | `HttpNetworkTransaction::BuildRequestHeaders` | `Host`, `Connection` | `net/http/http_network_transaction.cc:1451-1459` |
+| 2 | same function, still before the merge | `Content-Length` / `Transfer-Encoding` | `net/http/http_network_transaction.cc:1462-1479` |
+| 3 | same function, gated on `LOAD_BYPASS_CACHE` / `LOAD_VALIDATE_CACHE` | `Pragma`, `Cache-Control` | `net/http/http_network_transaction.cc:1482-1487` |
+| 4 | `request_headers_.MergeFrom(request_->extra_headers)` | everything else | `net/http/http_network_transaction.cc:1497` |
+
+Everything the callback client supplies -- the captured browser set and the
+caller's own headers alike -- arrives through layer 4, because
+`core/source/request.cc` calls `SetExtraRequestHeaders`. That is why `Pragma` and
+`Cache-Control` belong *before* the captured block rather than after it: layers 1-3
+run first, and `MergeFrom` appends.
+
+### `extra_headers` itself is filled in a fixed order
+
+`URLRequestHttpJob::MaybeStartTransactionInternal` (`net/url_request/url_request_http_job.cc:466-493`):
+
+```
+466  RemoveHeader(Referer)                       // plugins must not see it
+479  SetHeader(Referer, ...)                     // only if the referrer is valid
+483  SetHeaderIfMissing(User-Agent, ...)
+488  AddExtraHeaders()                           // Accept-Encoding, then Accept-Language
+490  AddCookieHeaderAndStart() / StartTransaction()
+```
+
+`AddExtraHeaders` (`:743-760`) uses `SetAcceptEncodingIfMissing` then
+`SetHeaderIfMissing(Accept-Language)`. Both are append-only, which is why
+`Accept-Encoding` and `Accept-Language` are the last two fields in every capture.
+
+### Client hints are a different layer, and they appear at a different version
+
+`sec-ch-ua*` is **not** written by `//net`. It is written by
+`//content/browser/client_hints/client_hints.cc`, which the network service is not
+linked against. The counts therefore change with the browser release, not with the
+network stack:
+
+| Version | `sec-ch-ua` | `sec-ch-ua-mobile` | `sec-ch-ua-platform` | Headers in capture |
+| --- | --- | --- | --- | --- |
+| 86-89 | absent | absent | absent | 9 |
+| 90-92 | present | present | absent | 11 |
+| 93-158 | present | present | present | 12 |
+
+Each row has a source fact behind it, checked against the release's own tag:
+
+- **86-89 has no client hints at all**: `content/browser/client_hints/client_hints.cc`
+  does not exist at `89.0.4389.128` (HTTP 404 from googlesource).
+- **90-92 sends UA and mobile but not platform**:
+  `third_party/blink/common/client_hints/client_hints.cc` at `90.0.4430.212` returns
+  true only for `kUA` and `kUAMobile`:
+  ```c
+  bool IsClientHintSentByDefault(WebClientHintsType type) {
+    return (type == kUA || type == kUAMobile);
+  }
+  ```
+- **93+ adds platform**: the same function at `93.0.4577.82` gains a case:
+  ```c
+  case WebClientHintsType::kUAPlatform:
+    return base::FeatureList::IsEnabled(features::kUACHPlatformEnabledByDefault);
+  ```
+  and the local 156 checkout still has `case kUAPlatform: return true;`
+  (`third_party/blink/common/client_hints/client_hints.cc:23-33`), so the boundary
+  stays open for every later profile this repository carries.
+
+`sec-ch-ua` and `sec-ch-ua-mobile` are emitted because `ShouldAddClientHint`
+(`content/browser/client_hints/client_hints.cc:434-439`) short-circuits on
+`IsClientHintSentByDefault`, and the hints are added in the enum order declared at
+`services/network/public/cpp/client_hints.cc:46-50` (UA, arch, platform, model,
+mobile, ...) -- not in the order they appear on the wire, since the writer loops its
+own list.
+
+### `Sec-Fetch-*` and `Upgrade-Insecure-Requests`
+
+- `Sec-Fetch-Site`, `-Mode`, `-User`, `-Dest` come from
+  `services/network/sec_header_helpers.cc:295-300`, called in exactly that order.
+  Each is `SetExtraRequestHeaderByName`, i.e. into `extra_headers` -- layer 4.
+- `Upgrade-Insecure-Requests` is added by
+  `content/browser/renderer_host/navigation_request.cc:416`, also into
+  `extra_headers` via `SetHeaderIfMissing`.
+
+Both are navigation-scoped: a subresource fetch gets `Sec-Fetch-Dest: empty`, no
+`Sec-Fetch-User`, and `Sec-Fetch-Site` describing the initiator relation. The
+captured set describes a top-level navigation because that is what a capture is,
+which is why a caller overriding `Sec-Fetch-*` for a subresource request keeps the
+other ten fields.
+
+### What this means for the facade
+
+`browser_headers.full_header_order()` places the seeded `Pragma`/`Cache-Control`
+slots first and then the captured fields, in the capture's own order. That
+reproduces layers 1-4 for a request that has no body and no credentials, which is
+the only case the ABI can construct today: `Content-Length` and `Transfer-Encoding`
+are body framing the caller does not name, and `Cookie` is added by
+`CookieMonster` (`AddCookieHeaderAndStart`) rather than by the header block.
+
+---
+### `quic://` proxies: what was verified, and what was not
+
+`quic://host:port` reaches Chromium as `ProxyServer::SCHEME_QUIC`. Three gates had
+to be opened, all of them compile-time:
+
+| Site | Upstream value | This project |
+| --- | --- | --- |
+| `net/features.gni:74` `enable_quic_proxy_support` | `is_debug` | `true` in every `tools/build-core-*.sh` |
+| `net/features.gni:69` `enable_bracketed_proxy_uris` | `is_debug` | `true`, because `ProxyRules::ParseFromString` CHECKs the pair (`proxy_config.cc:105-110`) |
+| `net/proxy_resolution/proxy_config.cc:110` `CHECK(!is_quic_allowed)` | rejects `is_quic_allowed=true` | unreachable, the flag is on |
+
+The transport was already there and already compiled: `quic/quic_proxy_client_socket.cc`,
+`quic/quic_proxy_datagram_client_socket.cc` and `quic/quic_session_pool_proxy_job.cc`
+are unconditional sources of `//net`, and `obj/net/net/quic_session_pool_proxy_job.o`
+carries 201 symbols in the build this repository ships.
+
+**Level 1, parsing.** `normalize_proxy_url("quic://127.0.0.1:443")` returns
+`("quic://127.0.0.1:443", None, None)`; `QUIC://` upper case and a trailing `/`
+normalise the same way; `ftp://` and `gopher://` are still `InvalidProxyURL`.
+`proxy=` and `proxy_chain=` now agree: both reach the reworked parser in
+`core/source/minicronet.cc`, which previously left `proxy=` on the default
+`ParseFromString(rules)` and produced `ERR_NO_SUPPORTED_PROXIES`.
+
+**Level 2, handshake capture.** With a UDP socket bound on `127.0.0.1:44330` and
+`Session(proxy="quic://127.0.0.1:44330")`, six datagrams arrive at that port:
+
+```
+len=1350 first_byte=0xc6 version=00000001 dcil=8 scil=0
+len=1350 first_byte=0xcb version=00000001 ...
+... (6 total)
+```
+
+Every one has the long-header bit (`0x80`) set and QUIC version 1; none contains
+`b"example.com"`, because an Initial packet carries an encrypted ClientHello.
+That is the observable difference between "a QUIC proxy connection was attempted"
+and "the proxy scheme was rejected": the former sends bytes to the proxy port, the
+latter fails before any I/O with `ERR_NO_SUPPORTED_PROXIES`, which is what the
+pre-change artifacts do and what `mn_engine_capabilities` now reports in advance.
+
+**Not verified.** No QUIC proxy server was available on this host, so the tunnel
+itself (CONNECT over QUIC, a proxied response body) is unproven. Recorded as T-8 in
+`docs/TBD_VERIFICATION.md` rather than claimed here.
 | `host:port` (no scheme) | `http://host:port` | Chromium defaults a bare rule to HTTP |
 | trailing `/`, `/path`, `#fragment`, newline, spaces | dropped | a rule is host:port only |
 | `host:` (colon, empty port) | `InvalidProxyURL` | Chromium rejects it too |
@@ -782,8 +929,14 @@ this build does not enforce, and the lie would surface later as an unexplained
   所以 `MN_HTTP_VERSION_UNKNOWN` 被单独定义并原样透出。
 
 - `ech_status` 的 `FAILED` 不可达：`net/ssl/ssl_info.h` 只记录一个
-  `encrypted_client_hello` 布尔值，「尝试后被拒」与「没尝试」都是 false。桌面端实际
-  返回 `not_attempted`，含义是「没有 ECHConfigList」，不是「平台关闭了 ECH」。
+  `encrypted_client_hello` 布尔值，「尝试后被拒」与「没尝试」都是 false。
+  `not_attempted` 的含义是「本次没有 ECHConfigList」，不是「平台关闭了 ECH」。
+
+  引擎默认会自己去查 ECHConfigList：`core/source/engine.cc` 无条件建内置解析器，
+  `insecure_dns_mode = kEnabledBuiltIn` 与
+  `additional_types_via_insecure_dns_enabled = true` 让 DNS HTTPS 记录（type 65）
+  随 A/AAAA 一起被查询；拿到的 `ech=` 参数变成 `ech_status=success`，
+  服务端看到 `sni=encrypted`。域名没有该记录时仍是 GREASE。矩阵见 `docs/ABI.md` 末节。
 - `Response.raw` is a small file-like view over the Core body stream, not a
   urllib3 `HTTPResponse`.
 

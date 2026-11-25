@@ -14,6 +14,8 @@ symbols=(
   mn_request_follow_redirect mn_request_resume_read
   mn_request_release_buffer
   mn_request_negotiated_protocol mn_request_ech_status
+  mn_engine_capabilities
+  mn_platform_user_agent_group mn_platform_hint
   mn_engine_cookies_get mn_engine_cookies_set mn_engine_cookies_delete
   mn_engine_cookies_clear mn_engine_set_client_certificate
   mn_engine_clear_client_certificate

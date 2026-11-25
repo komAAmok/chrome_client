@@ -29,6 +29,12 @@ The gate has TWO halves, because the captures alone cannot see the table:
 
     python3 tools/audit-padding-rule.py
     python3 tools/audit-padding-rule.py --header P   # an alternative table
+
+A third half pins prose that the captures cannot contradict: a document saying
+ECH can never encrypt SNI is consistent with every capture this repository holds
+(a client with no ECHConfigList sends GREASE only), yet it was false -- measured,
+chrome_158 reports success against crypto.cloudflare.com once the engine builds
+its own resolver. Five carriers said it; the mirror README made six.
 """
 
 from __future__ import annotations
@@ -195,6 +201,64 @@ def check_ech_boundary_documented():
                                                        ECH_FIRST_MAJOR))
     return errors
 
+#: Absolute claims that ECH can never fire. Each one was true only of the
+#: default DNS configuration -- the engine builds its own resolver only when a
+#: dns_* option is passed (core/source/engine.cc:801) -- but five carriers
+#: stated it as a property of the implementation and of Chromium itself.
+#: Measured counter-example: chrome_158 against crypto.cloudflare.com reports
+#: success with dns_nameservers="1.1.1.1" and not_attempted without it.
+FORBIDDEN_ECH_CLAIMS = (
+    "本引擎不取",
+    "真实配置永远不出现",
+    "永远不加密 SNI",
+    "does not fetch one, so a real config never appears",
+    "this engine does not fetch one",
+)
+
+#: Every carrier the claim above was found in. A new carrier is a new row, and
+#: a missing one is silent: the claim was in the mirror README as well.
+ECH_CLAIM_CARRIERS = (
+    "README.md",
+    "README.en.md",
+    "bindings/python36/README.md",
+    "docs/ABI.md",
+    "docs/COMPATIBILITY_BOUNDARY.md",
+    "bindings/python/chrome_client/_python_impl/models.pyi",
+)
+
+
+def check_ech_claims_qualified():
+    """Fails when a carrier states that ECH never encrypts, unqualified.
+
+    The gate above pins *where* the ECH extension starts (chrome_119); this one
+    pins *whether the document is allowed to claim it can never do anything*.
+    The distinction matters because both claims are consistent with the same
+    captures: a GREASE-only ClientHello is what a client without an
+    ECHConfigList sends, so the wire evidence cannot tell "the engine never
+    fetches one" from "the engine fetched none this time".
+
+    Returns:
+        A list of error strings, empty when no carrier states the absolute.
+    """
+    errors = []
+    root = pathlib.Path(__file__).resolve().parents[1]
+    for relative in ECH_CLAIM_CARRIERS:
+        path = root / relative
+        if not path.is_file():
+            errors.append("%s: carrier is missing; the scan would skip it"
+                          % relative)
+            continue
+        for number, line in enumerate(
+                path.read_text(encoding="utf-8").splitlines(), 1):
+            for claim in FORBIDDEN_ECH_CLAIMS:
+                if claim in line:
+                    errors.append(
+                        "%s:%d states %r; ECH succeeds whenever the engine"
+                        " queries the DNS HTTPS record (engine.cc:801), so the"
+                        " absolute is wrong -- qualify it instead"
+                        % (relative, number, claim))
+    return errors
+
 def main(argv):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--header", default=str(DEFAULT_HEADER),
@@ -205,6 +269,7 @@ def main(argv):
     capture_failures, checked = audit_captures()
     failures += capture_failures
     failures += check_ech_boundary_documented()
+    failures += check_ech_claims_qualified()
 
     if failures:
         print("padding rule audit FAILED:", file=sys.stderr)

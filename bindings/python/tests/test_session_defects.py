@@ -17,6 +17,8 @@ import os
 import pathlib
 import tempfile
 import socket
+import socketserver
+import struct
 import threading
 import time
 import unittest
@@ -1713,6 +1715,119 @@ class EchStatusReportingTests(unittest.TestCase):
 
         async_value = asyncio.run(one())
         self.assertEqual(sync_value, async_value)
+
+class DefaultResolverQueriesHttpsRecordTests(unittest.TestCase):
+    """Which resolver the engine builds, and what that resolver asks for.
+
+    ECH needs an ECHConfigList, and an ECHConfigList only ever comes from a
+    DNS HTTPS record (net/dns/dns_response_result_extractor.cc:581). Reaching
+    one requires the built-in client to run at all: with
+    ManagerOptions::insecure_dns_mode left at its kDisabled default,
+    HostResolverManager pushes no DNS task
+    (net/dns/host_resolver_manager.cc:1354-1355), only TaskType::SYSTEM runs,
+    and HostResolverSystemTask is getaddrinfo() with no HTTPS-record path.
+
+    What these tests can see is worth stating, because claiming more than a
+    test observes is how a defect gets frozen into an assertion. The default
+    path resolves through the system configuration; this suite runs
+    unprivileged and cannot own the nameserver that path talks to. What is
+    observable without privileges is the engine resolver once a nameserver
+    is supplied -- the same code path the default configuration takes, only
+    with the list coming from the caller instead of from the system.
+    """
+
+    def _listen(self):
+        """Returns (port, seen); seen collects (qname, qtype) as they arrive."""
+        seen = []
+
+        class Handler(socketserver.BaseRequestHandler):
+            def handle(self):
+                data, reply = self.request
+                try:
+                    index = 12
+                    labels = []
+                    while data[index] != 0:
+                        length = data[index]
+                        labels.append(data[index + 1:index + 1 + length].decode())
+                        index += length + 1
+                    qtype = struct.unpack("!H", data[index + 1:index + 3])[0]
+                    seen.append((".".join(labels), qtype))
+                except Exception:
+                    return
+                header = data[0:2] + b"\x81\x80" + struct.pack("!HHHH", 1, 0, 0, 0)
+                reply.sendto(header + data[12:index + 5], self.client_address)
+
+        server = socketserver.UDPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(thread.join, 2.0)
+        self.addCleanup(server.shutdown)
+        return server.server_address[1], seen
+
+    def _drain(self, seen, wanted, seconds=3.0):
+        """Waits until |wanted| shows up in |seen| or the deadline passes."""
+        deadline = time.time() + seconds
+        while time.time() < deadline and wanted not in [q for _, q in seen]:
+            time.sleep(0.05)
+        return [q for _, q in seen]
+
+    def test_the_https_record_question_is_sent(self):
+        """A caller-supplied nameserver receives a type-65 question.
+
+        This pins the query set, not the default nameserver list: both go
+        through the same resolver branch, and a caller-supplied list is the
+        only form this unprivileged suite can observe. It catches the HTTPS
+        question disappearing again; the default path needs port 53 and is
+        recorded in docs/TBD_VERIFICATION.md instead of being asserted here.
+        """
+        port, seen = self._listen()
+        with chrome_client.Session(dns_nameservers="127.0.0.1:%d" % port) as s:
+            try:
+                s.get("https://example.invalid/", timeout=3)
+            except Exception:
+                pass
+        qtypes = self._drain(seen, 65)
+        self.assertIn(65, qtypes,
+                      "no type-65 (HTTPS) question was sent: %r" % (seen,))
+
+    def test_the_address_question_still_follows(self):
+        """Asking for the HTTPS record must not replace the address lookup."""
+        port, seen = self._listen()
+        with chrome_client.Session(dns_nameservers="127.0.0.1:%d" % port) as s:
+            try:
+                s.get("https://example.invalid/", timeout=3)
+            except Exception:
+                pass
+        qtypes = self._drain(seen, 1)
+        self.assertIn(1, qtypes,
+                      "no type-1 (A) question was sent: %r" % (seen,))
+
+    def test_an_http_url_needs_no_dns_option(self):
+        """An engine created with no dns_* option still builds and resolves."""
+        class Handler(BaseHTTPRequestHandler):
+            protocol_version = "HTTP/1.1"
+
+            def do_GET(self):
+                body = b"ok"
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *_args):
+                pass
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        server.daemon_threads = True
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        url = "http://127.0.0.1:%d/" % server.server_address[1]
+        with chrome_client.Session() as session:
+            response = session.get(url, timeout=5)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.ech_status, "not_attempted")
 
 class DnsOverTlsRefusalTests(unittest.TestCase):
     "    dns_over_tls must fail closed, not silently disable the resolver."

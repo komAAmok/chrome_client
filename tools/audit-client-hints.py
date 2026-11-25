@@ -193,6 +193,89 @@ def check_runtime_agrees(verbose):
         print("  runtime: browser_headers reads the generated table")
 
 
+#: Release boundaries where the client-hint set changed, each with the source fact
+#: that explains it. The captures record *what* Chrome sent; this table records
+#: *why*, so a future reader changing a boundary has to confront the evidence.
+#:
+#: `content/browser/client_hints/client_hints.cc` does not exist at 89 (measured:
+#: HTTP 404 from googlesource for tag 89.0.4389.128), which is why 86-89 send no
+#: client hints at all. From 90 the file exists but
+#: `IsClientHintSentByDefault` returns true only for kUA and kUAMobile
+#: (third_party/blink/common/client_hints/client_hints.cc at 90.0.4430.212), so
+#: sec-ch-ua-platform is absent until 93 adds the kUAPlatform case (same file at
+#: 93.0.4577.82), which the local 156 checkout still carries.
+HINT_SET_BOUNDARIES = (
+    (86, 89, None),                      # no client hints at all
+    (90, 92, ("sec-ch-ua", "sec-ch-ua-mobile")),
+    (93, 999, ("sec-ch-ua", "sec-ch-ua-mobile", "sec-ch-ua-platform")),
+)
+
+
+def read_captured_headers():
+    """Returns ``{major: [(name, value), ...]}`` parsed from the committed table.
+
+    Args:
+        None.
+
+    Returns:
+        The mapping, or ``None`` when the module cannot be parsed (a broken table
+        is check_table's finding, not this function's).
+    """
+    import ast
+
+    try:
+        tree = ast.parse(GENERATED.read_text(encoding="utf-8"))
+    except SyntaxError:
+        return None
+    for node in tree.body:
+        if not isinstance(node, ast.Assign):
+            continue
+        for target in node.targets:
+            if isinstance(target, ast.Name) and target.id == "CAPTURED_HEADERS":
+                try:
+                    return ast.literal_eval(node.value)
+                except ValueError:
+                    return None
+    return None
+
+
+def check_hint_set_boundaries(verbose=False):
+    """Fails when the captured hint set disagrees with a documented boundary.
+
+    check_table re-derives the values from the captures, so it would happily
+    follow a re-captured profile that lost a header. This compares the *shape*
+    (which client hints appear) against the release boundaries above, so a
+    capture set that contradicts Chromium's source is caught here instead of
+    being frozen as the new baseline.
+
+    The table is read out of the committed module as text rather than imported:
+    every other check in this script works without the package on sys.path or the
+    Core on LD_LIBRARY_PATH, and a check that needs both is a check that fails in
+    a clean checkout for a reason unrelated to what it verifies.
+
+    Args:
+        verbose: Print one line per boundary.
+    """
+    captured = read_captured_headers()
+    if captured is None:
+        return
+
+    for first, last, expected_names in HINT_SET_BOUNDARIES:
+        for major in range(first, min(last, max(captured)) + 1):
+            if major not in captured:
+                continue
+            actual = tuple(name for name, _value in captured[major]
+                           if name.lower().startswith("sec-ch-ua"))
+            want = expected_names or ()
+            if actual != want:
+                errors.append(
+                    "%d: client hint set is %s but the source boundary says %s"
+                    % (major, list(actual), list(want)))
+            elif verbose:
+                print("  boundary %d..%d: %d major(s) agree"
+                      % (first, last, major))
+
+
 def main():
     """Runs every check.
 
@@ -207,6 +290,7 @@ def main():
     check_table(args.verbose)
     check_user_agent_versions(args.verbose)
     check_platform_hint(args.verbose)
+    check_hint_set_boundaries(args.verbose)
     check_runtime_agrees(args.verbose)
     for message in errors:
         print("error: %s" % message)

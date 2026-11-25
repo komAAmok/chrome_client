@@ -170,6 +170,14 @@ done
 for header in "$ROOT_DIR"/core/source/minicronet/*.h; do
   install -m 644 "$header" "$DEST/$(basename "$header")"
 done
+# Top-level headers under core/source/ are included as "name.h" by the .cc files
+# beside them, so they land at the same level in the checkout. platform_identity.h
+# is the first one: it holds the single platform-identity table. A header that
+# travels with its sources must not be forgotten here -- the failure mode is a
+# build error on every target, which is at least loud, but only if someone looks.
+for header in "$ROOT_DIR"/core/source/*.h; do
+  install -m 644 "$header" "$DEST/$(basename "$header")"
+done
 install -m 644 "$ROOT_DIR/core/source/BUILD.gn" "$DEST/BUILD.gn"
 
 # The Core's version string is generated, never hand-written. The previous
@@ -208,7 +216,108 @@ while IFS= read -r name; do
 done < <(grep -oE '"[A-Za-z0-9_./-]+\.[A-Za-z0-9]+"' \
            "$ROOT_DIR/core/source/BUILD.gn" | tr -d '"' | sort -u)
 
-printf 'Synced %d Core sources to %s\n' \
-  "$(ls "$ROOT_DIR"/core/source/*.cc "$ROOT_DIR"/core/source/*.c \
-       "$ROOT_DIR"/core/source/minicronet/*.h | wc -l)" \
-  "$DEST"
+# Prints the relative globs this script installs, one per line.
+#
+# Read out of the installs themselves rather than restated: a hardcoded list here
+# would be a second copy of the same knowledge, and deleting an install loop would
+# leave it reporting success for a file nothing carries any more.
+install_patterns() {
+  # Globs from the for-loops: `for x in "$ROOT_DIR"/a "$ROOT_DIR"/b; do`
+  awk '/^ *for [A-Za-z_]* in /{
+    line=$0
+    sub(/^ *for [A-Za-z_]* in /, "", line)
+    sub(/; *do.*$/, "", line)
+    n=split(line, parts, " ")
+    for (i=1;i<=n;i++) {
+      p=parts[i]
+      gsub(/"/, "", p)
+      sub(/^\$ROOT_DIR\//, "", p)
+      if (p !~ /[{}]/ && p ~ /^core\//) print p
+    }
+  }' "$ROOT_DIR/tools/sync-core.sh"
+  # Single-file installs: `install -m 644 "$ROOT_DIR"/<rel> "$DEST/..."`
+  awk '/^ *install -m 644 "\$ROOT_DIR\//{
+    p=$0
+    sub(/^ *install -m 644 "\$ROOT_DIR\//, "", p)
+    sub(/".*$/, "", p)
+    if (p ~ /^core\// && p != "core/icu/icudtl.dat") print p
+  }' "$ROOT_DIR/tools/sync-core.sh"
+  # The export tables arrive through one brace-expanded loop; ask bash what it
+  # expands to rather than re-parsing the braces.
+  eval "for table in \"\$ROOT_DIR\"/core/exports/minicronet.{def,exports,lds}; do
+    printf '%s\n' \"\${table#\"\$ROOT_DIR\"/}\"
+  done"
+}
+
+# ---- the other direction: source tree -> install rules ----
+#
+# The loops above install by glob. A new file whose extension no glob covers is
+# silently left behind, and the failure surfaces much later:
+#
+#   * core/source/platform_identity.h was added while only *.cc/*.c and
+#     minicronet/*.h were carried, so all nine targets failed at compile time
+#     with "file not found".
+#   * core/exports/minicronet.lds was edited after a build had read the old copy.
+#     The linker dropped the new symbols and the build still reported success --
+#     an installed file that is stale looks exactly like one that is correct.
+#
+# Checking the destination *after* the install cannot catch either, because the
+# install has already repaired it by then. So this compares the source tree
+# against the set of patterns the installs above actually cover, and fails on any
+# file that none of them would carry.
+covered=0
+uncovered=()
+while IFS= read -r source; do
+  name=$(basename "$source")
+  relative=${source#"$ROOT_DIR"/}
+  # The patterns come from the install loops above, read out of this script, so
+  # the check cannot drift from what the script actually does. A hardcoded list
+  # here would be a third copy of the same knowledge and would keep reporting
+  # success after the loop it describes was deleted.
+  matched=0
+  while IFS= read -r pattern; do
+    # shellcheck disable=SC2053 - a glob is the point: these are the patterns
+    case $relative in
+      $pattern) matched=1; break ;;
+    esac
+  done < <(install_patterns)
+  if ((matched)); then
+    covered=$((covered + 1))
+  else
+    uncovered+=("$relative")
+  fi
+done < <(find "$ROOT_DIR/core/source" "$ROOT_DIR/core/abi" "$ROOT_DIR/core/exports" \
+              -maxdepth 2 -type f \( -name "*.cc" -o -name "*.c" -o -name "*.h" \
+              -o -name "*.gn" -o -name "*.def" -o -name "*.exports" -o -name "*.lds" \
+              -o -name "*.inc" -o -name "*.hpp" -o -name "*.cpp" \) | sort)
+
+if ((${#uncovered[@]})); then
+  printf 'sync-core: these files exist but no install rule carries them:\n' >&2
+  printf '  %s\n' "${uncovered[@]}" >&2
+  die "add an install rule above, one per extension, so the next file of that kind travels too"
+fi
+
+# Now that every file has a rule, prove the destination agrees. This catches a
+# rule that exists but points somewhere else: byte comparison is the only check
+# that cannot be satisfied by copying the wrong thing to the right name.
+while IFS= read -r source; do
+  name=$(basename "$source")
+  [[ $name == minicronet_version_generated.h ]] && continue
+  cmp -s "$source" "$DEST/$name" \
+    || die "$DEST/$name differs from its source $source after install"
+done < <(ls "$ROOT_DIR"/core/source/*.cc "$ROOT_DIR"/core/source/*.c \
+              "$ROOT_DIR"/core/source/*.h "$ROOT_DIR"/core/source/minicronet/*.h \
+              "$ROOT_DIR"/core/abi/minicronet.h \
+              "$ROOT_DIR"/core/exports/minicronet.def \
+              "$ROOT_DIR"/core/exports/minicronet.exports \
+              "$ROOT_DIR"/core/exports/minicronet.lds \
+              "$ROOT_DIR"/core/source/BUILD.gn)
+
+test -f "$DEST/minicronet_version_generated.h" \
+  || die "$DEST/minicronet_version_generated.h was not generated"
+grep -q "MINICRONET_VERSION \"$MINICRONET_VERSION\"" \
+  "$DEST/minicronet_version_generated.h" \
+  || die "$DEST/minicronet_version_generated.h does not carry version $MINICRONET_VERSION"
+
+printf 'Synced %d Core sources to %s (every source covered by a rule)\n' \
+  "$covered" "$DEST"

@@ -1008,6 +1008,11 @@ impl PyEngine {
             dns_rotate: u8::from(dns_rotate),
             dns_padding: u8::from(dns_padding),
             platform: platform_mode(platform)?,
+            // The facade injects the captured browser header set itself, so the
+            // Core path stays off here. See the note on EngineConfig in
+            // crates/minicronet/src/lib.rs: turning both on merges the same set
+            // twice and pushes Pragma/Cache-Control behind the captured block.
+            inject_client_hints: false,
             max_sockets_per_group,
         };
         // Building an engine constructs a URLRequestContext on the Core's
@@ -1141,6 +1146,27 @@ impl PyEngine {
     #[staticmethod]
     fn core_version() -> Option<String> {
         Engine::core_version().map(|value| value.to_string_lossy().into_owned())
+    }
+
+    /// The User-Agent group and sec-ch-ua-platform this build emits.
+    ///
+    /// Returned as a pair so a caller cannot ask for one and invent the other:
+    /// the two strings are one fact about a browser build, and the Core owns it.
+    #[staticmethod]
+    fn platform_identity(platform: &str) -> PyResult<(String, String)> {
+        Engine::platform_identity(platform_mode(platform)?).map_err(native_error)
+    }
+
+    /// What this Core artifact was compiled with, as a bitmask.
+    ///
+    /// Readable before any session exists. A binding asks this instead of
+    /// attempting a request and interpreting its error, which cannot tell
+    /// "this build refuses the scheme" from "the peer refused the connection".
+    #[staticmethod]
+    fn capabilities() -> PyResult<u32> {
+        Engine::core_capabilities()
+            .map(|flags| flags.bits())
+            .map_err(native_error)
     }
 
     #[pyo3(signature = (

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cstring>
 #include <new>
 #include <string>
 #include <utility>
@@ -13,9 +14,11 @@
 #include "build/build_config.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
+#include "net/net_buildflags.h"
 #include "net/base/host_mapping_rules.h"
 #include "net/dns/public/dns_over_https_config.h"
 #include "minicronet/engine.h"
+#include "platform_identity.h"
 #include "minicronet/minicronet_version_generated.h"
 #include "minicronet/profile_context.h"
 #include "minicronet/request.h"
@@ -101,50 +104,15 @@ constexpr size_t kMaxWebSocketProtocolCount = 64u;
 // inputs to a browser identity.
 constexpr int kCurrentChromiumMajor = 157;
 
-// The User-Agent group, sec-ch-ua-platform and sec-ch-ua-mobile are three
-// statements of one fact, so all three derive from mn_platform_t here and in
-// the facade (bindings/python/chrome_client/_python_impl/browser_headers.py).
-// Deriving them separately lets a caller send a Windows User-Agent next to a
-// Linux platform hint, which is a louder contradiction than either alone.
-const char *PlatformToken(mn_platform_t platform) {
-  switch (platform) {
-  case MN_PLATFORM_WINDOWS:
-    return "Windows NT 10.0; Win64; x64";
-  case MN_PLATFORM_MACOS:
-    return "Macintosh; Intel Mac OS X 10_15_7";
-  case MN_PLATFORM_LINUX:
-    // Which Linux token is decided by the architecture the Core was built
-    // for, exactly as a real Chrome build decides it. The override selects
-    // the family, not a fabricated machine type.
-#if defined(ARCH_CPU_ARM64)
-    return "X11; Linux aarch64";
-#elif defined(ARCH_CPU_X86)
-    return "X11; Linux i686";
-#else
-    return "X11; Linux x86_64";
-#endif
-  case MN_PLATFORM_AUTO:
-    break;
-  }
-#if BUILDFLAG(IS_WIN)
-  return "Windows NT 10.0; Win64; x64";
-#elif BUILDFLAG(IS_MAC)
-  return "Macintosh; Intel Mac OS X 10_15_7";
-#elif defined(ARCH_CPU_ARM64)
-  return "X11; Linux aarch64";
-#elif defined(ARCH_CPU_X86)
-  return "X11; Linux i686";
-#else
-  return "X11; Linux x86_64";
-#endif
-}
-
+// The identity table lives in platform_identity.h so the ABI getters, the
+// default User-Agent and Engine::platform_hint all read one copy. AGENTS 1.1:
+// a second implementation of one fact is the defect, even in the same language.
 // The User-Agent an engine sends when no historical profile supplies one. It
 // names a browser because that is what this library is: a build that reports
 // "minicronet/<version>" identifies itself to every origin, which is a worse
 // default than announcing the Chromium it actually is.
 std::string DefaultUserAgent(mn_platform_t platform) {
-  return std::string("Mozilla/5.0 (") + PlatformToken(platform) +
+  return std::string("Mozilla/5.0 (") + minicronet::PlatformToken(platform) +
          ") AppleWebKit/537.36 (KHTML, like Gecko) Chrome/" +
          std::to_string(kCurrentChromiumMajor) + ".0.0.0 Safari/537.36";
 }
@@ -251,7 +219,7 @@ std::string HistoricalUserAgent(const minicronet::ProfileContext& profile,
   // socket is not on: the token follows the host this Core is running on, the
   // way a real Chrome build does. The version number is the part the profile
   // actually owns.
-  return std::string("Mozilla/5.0 (") + PlatformToken(platform) +
+  return std::string("Mozilla/5.0 (") + minicronet::PlatformToken(platform) +
          ") AppleWebKit/537.36 (KHTML, like Gecko) Chrome/" + version +
          " Safari/537.36";
 }
@@ -302,6 +270,52 @@ template <typename T> void Retain(T *object) {
 } // namespace
 
 uint32_t MN_CALL mn_abi_version(void) { return MN_ABI_VERSION; }
+
+
+mn_result_t MN_CALL mn_platform_user_agent_group(mn_platform_t platform,
+                                               const char **out_group,
+                                               uint32_t *out_length) {
+  if (!out_group || !out_length) {
+    return MN_ERROR_INVALID_ARGUMENT;
+  }
+  if (platform < MN_PLATFORM_AUTO || platform > MN_PLATFORM_LINUX) {
+    return MN_ERROR_UNSUPPORTED_ABI;
+  }
+  const char *group = minicronet::PlatformToken(platform);
+  *out_group = group;
+  *out_length = static_cast<uint32_t>(std::strlen(group));
+  return MN_OK;
+}
+
+mn_result_t MN_CALL mn_platform_hint(mn_platform_t platform,
+                                    const char **out_hint,
+                                    uint32_t *out_length) {
+  if (!out_hint || !out_length) {
+    return MN_ERROR_INVALID_ARGUMENT;
+  }
+  if (platform < MN_PLATFORM_AUTO || platform > MN_PLATFORM_LINUX) {
+    return MN_ERROR_UNSUPPORTED_ABI;
+  }
+  const char *hint = minicronet::PlatformHint(platform);
+  *out_hint = hint;
+  *out_length = static_cast<uint32_t>(std::strlen(hint));
+  return MN_OK;
+}
+
+mn_result_t MN_CALL mn_engine_capabilities(uint32_t *out_flags) {
+  if (!out_flags) {
+    return MN_ERROR_INVALID_ARGUMENT;
+  }
+  uint32_t flags = 0;
+#if BUILDFLAG(ENABLE_QUIC_PROXY_SUPPORT)
+  flags |= MN_CAPABILITY_QUIC_PROXY;
+#endif
+  // Bit 1 is deliberately never set: see the reserved note in minicronet.h.
+  // ENABLE_BRACKETED_PROXY_URIS is on, but the ABI has no field that can carry
+  // a bracketed chain, so advertising it would be a claim this ABI cannot keep.
+  *out_flags = flags;
+  return MN_OK;
+}
 
 const char *MN_CALL mn_version_string(void) {
   // The suffix inside the marker, addressed with the escape hatch this codebase
@@ -356,8 +370,60 @@ mn_result_t MN_CALL mn_engine_create(const mn_engine_config_t *config,
     if (proxy_rules.find('\0') != std::string::npos) {
       return MN_ERROR_INVALID_ARGUMENT;
     }
-    proxy_config.proxy_rules().ParseFromString(proxy_rules);
-    if (!proxy_rules.empty() && proxy_config.proxy_rules().empty()) {
+    // The third argument is what lets ParseFromString turn "quic://h:443" into
+    // a SCHEME_QUIC server at all; its default is false, so the proxy_chain
+    // field and this one would disagree about the same scheme without it.
+    //
+    // Both arguments are the buildflags, never literal `true`: proxy_config.cc:105
+    // CHECKs that a caller does not ask for bracketed chains when the flag is
+    // off, and proxy_config.cc:110 does the same for is_quic_allowed. Passing the
+    // flags makes the call agree with the artifact it was compiled into; passing
+    // true would turn a build without them into a CHECK crash at create time.
+    // The scheme whitelist below covers proxy_chain only, so it cannot stand in
+    // for either argument here.
+    proxy_config.proxy_rules().ParseFromString(proxy_rules,
+                                             /*allow_bracketed_proxy_chains=*/
+                                             BUILDFLAG(ENABLE_BRACKETED_PROXY_URIS),
+                                             /*is_quic_allowed=*/
+                                             BUILDFLAG(ENABLE_QUIC_PROXY_SUPPORT));
+    // ParseFromString is not a validator: ProxyList::AddProxyChain documents
+    // "Silently discard malformed inputs" (proxy_list.cc:58), and the entries
+    // are comma-split before that call, so "[https://a:1,https://b:2]" loses
+    // both halves and "garbage://x" loses its only one. A rules value that
+    // names a proxy and yields none is a DIRECT connection, which is the
+    // accepted-and-ignored input section 8 forbids.
+    //
+    // ProxyRules::empty() cannot see it: it returns "type == Type::EMPTY", and
+    // ParseFromString sets type = Type::PROXY_LIST before adding any entry
+    // (proxy_config.cc:135), so the type stays PROXY_LIST while the list is
+    // emptied underneath it. The list itself has to be asked, and single_proxies
+    // is the list that case writes to.
+    // Both shapes have to be asked, because ParseFromString can empty a list
+    // under either of them:
+    //   PROXY_LIST             -- one list for every URL, single_proxies.
+    //   PROXY_LIST_PER_SCHEME  -- "http=...;https=...", one list per scheme.
+    // The per-scheme shape is the one that was still slipping through: with
+    // "http=garbage://x;https=garbage://y" every list ends up empty, the type
+    // stays PROXY_LIST_PER_SCHEME, and Apply() then finds no proxy at all and
+    // connects directly -- measured as a 200 from a local origin while the
+    // proxy port recorded zero connections.
+    const net::ProxyConfig::ProxyRules &parsed = proxy_config.proxy_rules();
+    bool parsed_no_proxy;
+    switch (parsed.type) {
+      case net::ProxyConfig::ProxyRules::Type::PROXY_LIST:
+        parsed_no_proxy = parsed.single_proxies.IsEmpty();
+        break;
+      case net::ProxyConfig::ProxyRules::Type::PROXY_LIST_PER_SCHEME:
+        parsed_no_proxy = parsed.proxies_for_http.IsEmpty() &&
+                          parsed.proxies_for_https.IsEmpty() &&
+                          parsed.proxies_for_ftp.IsEmpty() &&
+                          parsed.fallback_proxies.IsEmpty();
+        break;
+      case net::ProxyConfig::ProxyRules::Type::EMPTY:
+        parsed_no_proxy = true;
+        break;
+    }
+    if (!proxy_rules.empty() && parsed_no_proxy) {
       return MN_ERROR_INVALID_ARGUMENT;
     }
   }
@@ -581,6 +647,52 @@ mn_result_t MN_CALL mn_engine_create(const mn_engine_config_t *config,
   if (config->proxy_chain) {
     options.proxy_chain.assign(config->proxy_chain, config->proxy_chain_length);
     if (options.proxy_chain.find('\0') != std::string::npos) {
+      return MN_ERROR_INVALID_ARGUMENT;
+    }
+    // A value that is non-empty but splits into no entry (",", "   ") would
+    // leave Engine with an empty chain, which is a DIRECT connection: the same
+    // accepted-and-ignored downgrade as an all-invalid proxy_rules value.
+    // Counting the split entries rather than trimming by hand keeps this in
+    // step with the loop below, which uses the same splitter.
+    if (!options.proxy_chain.empty() &&
+        base::SplitStringPiece(options.proxy_chain, ",", base::TRIM_WHITESPACE,
+                               base::SPLIT_WANT_NONEMPTY)
+            .empty()) {
+      return MN_ERROR_INVALID_ARGUMENT;
+    }
+    // Every entry must be a scheme this artifact can actually dial. Engine
+    // silently drops an entry it does not recognise, which turns a typo or an
+    // unsupported scheme into a direct connection -- the accepted-and-ignored
+    // input section 8 forbids. Checking here is also the only way to report
+    // "this build has no QUIC proxy support" as a result code instead of as
+    // a request that fails later with ERR_NO_SUPPORTED_PROXIES.
+    for (const auto &entry : base::SplitStringPiece(
+             options.proxy_chain, ",", base::TRIM_WHITESPACE,
+             base::SPLIT_WANT_NONEMPTY)) {
+      const size_t scheme_end = entry.find("://");
+      if (scheme_end == std::string_view::npos) {
+        return MN_ERROR_INVALID_ARGUMENT;
+      }
+      const std::string_view scheme = entry.substr(0, scheme_end);
+      if (base::EqualsCaseInsensitiveASCII(scheme, "quic")) {
+#if !BUILDFLAG(ENABLE_QUIC_PROXY_SUPPORT)
+        return MN_ERROR_UNSUPPORTED_ABI;
+#else
+        continue;
+#endif
+      }
+      // Must be exactly the set Engine accepts (core/source/engine.cc:
+      // "socks"/"socks5" -> SCHEME_SOCKS5, "socks4", "https", "quic", "http").
+      // A wider list is worse than no list: it turns a clear
+      // INVALID_ARGUMENT into an INITIALIZATION_FAILED from a context Engine
+      // never built, which is what "socks" did before engine.cc handled it.
+      if (base::EqualsCaseInsensitiveASCII(scheme, "http") ||
+          base::EqualsCaseInsensitiveASCII(scheme, "https") ||
+          base::EqualsCaseInsensitiveASCII(scheme, "socks") ||
+          base::EqualsCaseInsensitiveASCII(scheme, "socks4") ||
+          base::EqualsCaseInsensitiveASCII(scheme, "socks5")) {
+        continue;
+      }
       return MN_ERROR_INVALID_ARGUMENT;
     }
     // proxy_rules and proxy_chain describe the same connection path twice;

@@ -30,11 +30,13 @@ except ImportError:  # Python 3.6
     from collections import Mapping
 
 from . import multipart as _multipart
-from .browser_headers import browser_headers, header_order as browser_header_order
+from .browser_headers import (browser_headers,
+                              full_header_order as browser_header_order)
 from .auth import build_auth
 from .cookies import RequestsCookieJar, cookiejar_from_dict, merge_cookies
-from .engine import (BINDING_FIELDS, DEFAULT_MAX_ENGINES, EngineCache,
-                     EngineConfig, EngineSlot, SessionBinding)
+from .engine import (BINDING_FIELDS, CAPABILITY_QUIC_PROXY, DEFAULT_MAX_ENGINES,
+                     EngineCache, EngineConfig, EngineSlot, SessionBinding,
+                     capabilities)
 from .exceptions import (InvalidProxyURL, InvalidURL, ProxyError,
                          RequestException, ResponseTooLarge, SessionClosed,
                          SSLError, Timeout, TooManyRedirects,
@@ -236,6 +238,29 @@ _CORE_OWNED_HEADERS = frozenset((
     "cookie",
 ))
 
+#: Fields Chromium produces itself and whose value it has already decided by the
+#: time the request is built. A caller value here is silently outranked or
+#: overwritten, so accepting it would make the wire disagree with what the caller
+#: asked for -- the fail-closed rule section 8 states. Dropping them is the
+#: behaviour the caller wants anyway: the profile already carries a correct value.
+#:
+#: ``User-Agent`` is deliberately absent: the Core derives it from the profile and
+#: the platform, but overriding it is a legitimate impersonation knob and the
+#: frozen header baseline shows the value reaching the wire (`request_head.txt`).
+#: ``Referer`` is absent for the same kind of reason: the Core routes it through
+#: SetReferrer (core/source/request.cc:244), so a value there does take effect.
+_CORE_OVERRIDDEN_HEADERS = frozenset((
+    "host",
+    "accept-encoding",
+    "accept-language",
+))
+
+#: ``Connection`` is not here even though Chromium owns it too: it is a
+#: hop-by-hop field, and ``_reject_hop_by_hop_headers`` already refuses it with a
+#: reason a caller can act on. Silently dropping it would turn "I asked to close
+#: the connection and got a shared socket" into "I asked and heard nothing", which
+#: is the shape of defect that refusal exists to prevent.
+
 
 #: RFC 9110 §7.6.1 hop-by-hop fields, minus the ones this facade does honour.
 #: Chromium owns connection lifetime, and ``SetExtraRequestHeaders`` never reaches
@@ -317,6 +342,58 @@ def _reject_core_owned_removals(headers):
         "list already omits it."
         % (", ".join(removed), "it" if len(removed) == 1 else "them"))
 
+def _strip_core_overridden_headers(headers):
+    """Drops fields Chromium decides for itself, rather than forwarding them.
+
+    Section 8 asks for a refusal when an option cannot be honoured, but here the
+    caller is not asking for anything that has no implementation -- it is asking
+    for a field whose value Chromium has already fixed by the time the request
+    block is built. Two measured outcomes, both wrong to expose:
+
+    * ``Accept-Encoding`` -- Chromium sets it from the engine's compression and
+      stream settings (url_request_http_job.cc AddExtraHeaders), so a caller
+      value is overwritten and the wire shows something the caller did not ask
+      for.
+    * ``Accept-Language`` -- the same function fills it from
+      ``http_user_agent_settings`` when the request has none.
+
+    Dropping them keeps the caller's intent (the profile already carries a
+    correct value) and makes the wire match the profile, which is what a
+    fingerprint client is for. A caller that wants a different language sets
+    ``accept_language=`` on the session, which reaches the ABI field.
+
+    Args:
+        headers: A header mapping, or ``None``.
+
+    Returns:
+        ``(kept, stripped)`` where *kept* is the same mapping minus the dropped
+        names and *stripped* is the lower-cased set that was removed.
+    """
+    if headers is None:
+        return headers, set()
+    stripped = {name.lower() for name, _value in headers.multi_items()} \
+        & _CORE_OVERRIDDEN_HEADERS
+    if not stripped:
+        return headers, set()
+    # Copy the deletion record explicitly. ``Headers(iterable)`` takes the
+    # generator branch of ``_ingest``, which copies items only -- the branch that
+    # carries ``deleted_names`` is the one for a Headers *source*. Building the
+    # result from a generator therefore dropped every removal the caller had
+    # recorded, so ``headers={"Sec-Fetch-User": None}`` came back on the wire.
+    # It happens to stay suppressed today because the captured-set filter reads
+    # the record computed from the original mapping, but a helper that silently
+    # discards half its input is a defect regardless of who currently notices.
+    kept = Headers()
+    for name, value in headers.multi_items():
+        if name.lower() not in stripped:
+            kept.add(name, value)
+    for name in headers.deleted_names:
+        # _remove is the same entry point __delitem__ and a None value use, so a
+        # name recorded here is indistinguishable from one removed directly.
+        kept._remove(name)
+    return kept, stripped
+
+
 def _validate_max_redirects(value):
     """Rejects every caller-supplied cap; Chromium owns the redirect limit.
 
@@ -348,7 +425,10 @@ def _validate_max_redirects(value):
 #: ``GetSchemeFromUriScheme`` in net/base/proxy_string_util.cc.  These are
 #: passed through untouched -- the Core parses them itself, and rewriting a form
 #: Chromium already understands is how the facade would break it.
-_PROXY_SCHEMES = ("http", "https", "socks", "socks4", "socks5")
+#: Schemes this facade passes to the Core. ``quic`` is listed because the Core
+#: accepts it; whether *this artifact* can dial it is a capability bit, checked
+#: in ``_require_quic_proxy_support`` rather than by removing it from the tuple.
+_PROXY_SCHEMES = ("http", "https", "socks", "socks4", "socks5", "quic")
 
 #: Per-scheme rule keys accepted by ``MapUrlSchemeToProxyListNoFallback`` plus the
 #: special ``socks`` key.  ``http=h:p;https=h:p`` is Chromium's own spelling for
@@ -378,10 +458,43 @@ _PROXY_SCHEME_UNSUPPORTED = {
     "socks4a": "Chromium resolves SOCKS4 hostnames locally and the Core exposes "
                "no SOCKS4a (remote-resolve) mode; use socks5 or socks5h, which "
                "send the hostname to the proxy",
-    "quic": "this build has no QUIC proxy support "
-            "(ENABLE_QUIC_PROXY_SUPPORT is off), so Chromium rejects quic:// "
-            "with ERR_NO_SUPPORTED_PROXIES",
 }
+
+#: ``quic://`` is decided by the artifact, not by this facade. Chromium gates it
+#: behind ENABLE_QUIC_PROXY_SUPPORT, which upstream sets to is_debug; this
+#: project turns it on for every artifact it ships (see the args.gn block in
+#: tools/build-core-*.sh), but a third-party build of the same ABI may not have
+#: it. Hardcoding either answer here would be wrong for the other case, so the
+#: question goes to the Core: mn_engine_capabilities reports the bit, and
+#: mn_engine_create rejects the scheme when it is clear -- two places, one answer.
+_QUIC_PROXY_SCHEME = "quic"
+
+
+def _require_quic_proxy_support():
+    """Raises unless the loaded Core reports it can dial a quic:// proxy.
+
+    The bit comes from ``mn_engine_capabilities``, not from a constant here:
+    the same ABI is built nine times, and a third-party artifact of this ABI may
+    have been built without ENABLE_QUIC_PROXY_SUPPORT. A facade constant would
+    be right for the artifacts this repository ships and wrong for that one.
+
+    A Core that cannot answer raises rather than being read as "no support":
+    swallowing the error would report a broken binding as a clean capability
+    answer, and the two need different fixes. Both outcomes do stop a quic://
+    proxy from being attempted, which is the fail-closed direction section 8
+    asks for.
+    """
+    try:
+        flags = capabilities()
+    except Exception as error:  # noqa: BLE001 - re-raised with context below
+        raise UnsupportedFeature(
+            "cannot read the Core capability mask, so quic:// cannot be "
+            "verified as supported: %s" % (error,)) from error
+    if not flags & CAPABILITY_QUIC_PROXY:
+        raise UnsupportedFeature(
+            "the loaded Core reports no QUIC proxy support "
+            "(mn_engine_capabilities bit MN_CAPABILITY_QUIC_PROXY is clear), "
+            "so a quic:// proxy cannot be dialled by this artifact")
 
 
 def _native_uri_scheme(uri):
@@ -467,6 +580,8 @@ def _validate_native_rule_list(text):
                 raise InvalidProxyURL(
                     "proxy rule %r uses scheme %r; Chromium accepts %s"
                     % (text, scheme, ", ".join(_PROXY_SCHEMES)))
+            if scheme == _QUIC_PROXY_SCHEME:
+                _require_quic_proxy_support()
 
 
 def _split_authority(authority):
@@ -548,6 +663,8 @@ def normalize_proxy_url(proxy):
             raise InvalidProxyURL(
                 "unsupported proxy scheme %r; Chromium accepts %s"
                 % (scheme, ", ".join(_PROXY_SCHEMES)))
+        if scheme == _QUIC_PROXY_SCHEME:
+            _require_quic_proxy_support()
 
     # Drop everything that is not authority.  A pool entry such as
     # "http://host:port/path#frag" would otherwise parse to no proxy at all.
@@ -907,6 +1024,8 @@ def normalize_proxy_chain(value):
             raise UnsupportedFeature(
                 "proxy_chain entry %r uses scheme %r; Chromium accepts %s"
                 % (entry, scheme, ", ".join(_PROXY_SCHEMES)))
+        if scheme.lower() == _QUIC_PROXY_SCHEME:
+            _require_quic_proxy_support()
     return value.strip()
 
 
@@ -2190,6 +2309,10 @@ class BaseSession(object):
         # nothing: the captured value came back on the next line.
         dropped = self._deleted_headers(request.headers)
         caller = merge_setting(request.headers, self.headers, dict_class=Headers)
+        # Strip before merging so a caller's Accept-Encoding never becomes the
+        # captured value's replacement -- and so the strip applies even when the
+        # profile path below is skipped.
+        caller, _stripped = _strip_core_overridden_headers(caller)
         if not self.default_headers or not profile:
             return caller
         accept_language = self.accept_language

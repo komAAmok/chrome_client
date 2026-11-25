@@ -1131,3 +1131,31 @@ def abi_version():
         True
     """
     return native.PyEngine.abi_version()
+
+
+def capabilities():
+    """Returns the capability bits this Core artifact was compiled with.
+
+    The same ABI is built nine times with different ``args.gn``, and some of
+    those knobs change what a caller can observe. Asking the Core is the only
+    way to tell "this build refuses the scheme" apart from "the scheme is
+    supported and the peer refused", which a request-level error cannot do.
+
+    The bits come from ``mn_engine_capabilities``; a caller decides what to do
+    with one, this function only reports it. Unknown bits are preserved, so a
+    new Core behind an old facade is not read as "nothing is supported".
+
+    Compare against ``CAPABILITY_QUIC_PROXY``.
+
+    Returns:
+        An ``int`` bitmask.
+
+    Example:
+        >>> isinstance(capabilities(), int)
+        True
+    """
+    return native.PyEngine.capabilities()
+
+
+#: Bit reported when the Core can speak to a ``quic://`` proxy.
+CAPABILITY_QUIC_PROXY = 1

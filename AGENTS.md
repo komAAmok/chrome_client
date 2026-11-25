@@ -100,8 +100,12 @@ requests/curl_cffi 的 API 形状（`session.cookies` 是可变的 jar、`stream
 
 ## 2. ABI 规则
 
-- `core/abi/minicronet.h` 是**唯一** ABI 来源。当前 ABI v11，**28** 个导出符号
-  （v11 只追加了 `mn_engine_config_t.max_sockets_per_group`，没有增删符号）。
+- `core/abi/minicronet.h` 是**唯一** ABI 来源。当前 ABI v14，**32** 个导出符号
+  （v11 只追加了 `mn_engine_config_t.max_sockets_per_group`，没有增删符号；
+  v12 追加了 `mn_request_negotiated_protocol` 与 `mn_request_ech_status` 两个 getter，28 → 29；
+  v13 追加了 `mn_engine_capabilities` 与 `mn_capability_t`，29 → 30；
+  v14 追加了 `mn_platform_user_agent_group` 与 `mn_platform_hint`，30 → 32）。
+  能力位只报告 ABI **能兑现**的能力：位 1 是保留的，因为 `proxy_chain` 存不出多跳链。
 - 结构体变更必须同时更新：头文件、`crates/minicronet-sys/src/lib.rs` 的 `#[repr(C)]`
   声明与布局测试、`core/exports/minicronet.{def,exports,lds}`。
 - 每个 config 结构体以 `size` + `version` 开头，两者都要校验。
@@ -333,39 +337,40 @@ python3 -m unittest discover -s bindings/python/tests -p "test_*.py"
 强制 H3 会真的发出 QUIC 并拿到 HTTP 200，等于报告了一个那些版本从未有过的指纹。
 只做第 2 级（抓包）发现不了这件事，因为缺的那一级正是源码。
 
-## 10. 两个远端必须同步（强制）
+## 10. 只推 `origin`
 
-本仓库有两个远端，**每次提交都必须同时推到两边，并校验进度一致**：
+本仓库**只向一个远端提交**：
 
 | 远端 | 账号 | 角色 |
 | --- | --- | --- |
-| `origin` | komAAmok | 主仓库 |
-| `backup` | dafatyu | 镜像（小号） |
-
-推送用一条命令完成，不要手工推两次：
+| `origin` | komAAmok | 唯一的发布远端 |
 
 ```bash
-tools/sync-remotes.sh          # 推送 origin + backup，然后校验
-tools/sync-remotes.sh --check  # 只校验，不推送
+git push origin main
+git push origin v<version>
 ```
 
-它推送完成后逐项比对，任何一项不一致就非零退出：两个远端的 `refs/heads/<branch>`
-与本地 `HEAD` 逐字相同；两个远端的 tag 集合与本地 `git tag` 逐行相同。统计 tag 时
-必须去掉 annotated tag 的 `^{}` 解引用行，否则 30 个 tag 会数成 41 个——这正是
-第一次核对时踩到的误判。
+`backup`（`dafatyu`）这个 remote 仍然存在于 `.git/config` 里，但**不再推送**。此前
+这一节要求每次提交同时推两边并逐项校验（`tools/sync-remotes.sh`），那条规则现在与
+实际操作不符，留着会让下一个人以为有个门禁在跑而它没有。
 
-**凭据**：`backup` 的 token 只在仓库外的 `$HOME/.config/chrome_client/backup.token`
-（`chmod 600`），不写进 URL、`.git/config` 或任何被提交的文件。可用
-`BACKUP_TOKEN_FILE` 指向别处。
+`tools/sync-remotes.sh` 保留可用，但不再属于提交流程；用它与否是操作者的选择，不是
+本文件的要求。
 
-**凭据陷阱**：push 到 `backup` 时必须先清空 helper 链（`-c credential.helper=`）
-再挂自定义 helper。全局的 `credential.helper=store` 会先命中
-`~/.git-credentials` 里的 `komAAmok`，于是一个推 `dafatyu` 仓库的命令会报
-`denied to komAAmok`——看起来像权限问题，实际是身份用错了。脚本已处理这一点。
+## 10.1 GitHub 与 PyPI 的关系
 
-这条规则由 `tools/sync-remotes.sh --check` 把守，四类变异实测都会让它非零退出：
-本地多一个未推送的 tag、工作区脏、token 文件缺失、远端被删掉一个 tag。
+PyPI 上的 wheel **由 GitHub Actions 发布**，不在本机 `twine upload`。链路是：
 
+1. 本机提交并推 `origin main`；
+2. 打 tag 并推 tag（`git push origin v<version>`）；
+3. `.github/workflows/build-wheels.yml` 在 tag 上构建各平台 wheel；
+4. 手动触发该 workflow 时把 `publish_to_pypi` 置为 true，它用
+   `pypa/gh-action-pypi-publish` 上传；`build-historical-releases.yml` 另有一条
+   带 `pypi_gate` 的发布路径。
+
+两个都必须先确认 PyPI 上**没有**同版本同名文件：PyPI 不允许覆盖已发布文件，重复上传
+会让整个 job 失败而不是跳过。`tools/audit-pypi-metadata.sh` 检查的是本仓库元数据与
+README，不检查远端已有文件。
 
 ## 11. 产物与仓库体积
 

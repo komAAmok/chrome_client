@@ -434,6 +434,12 @@ class PreparedRequest(object):
         ``header_order`` only reorders what the caller already supplied; it never
         invents a header, because the Chromium profile owns the default set and
         their ordering.
+
+        A name the order does not mention keeps a stable tail position rather than
+        being dropped: ``sorted`` is stable, so headers outside the captured set
+        stay in the caller's relative order after the ones inside it. Chromium
+        reaches the same arrangement by appending them through
+        ``MergeFrom(extra_headers)``.
         """
         pairs = self.headers.multi_items()
         if not self.header_order:

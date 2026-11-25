@@ -159,7 +159,7 @@ engine: UnsupportedAbi
 | 字段 | 6 次的结果 |
 | --- | --- |
 | `akamai_fingerprint_hash` | `52d84b11737d980aef856699f885ca86` **×6** |
-| SETTINGS | `HEADER_TABLE_SIZE=65536, ENABLE_PUSH=0, INITIAL_WINDOW_SIZE=6291456, MAX_HEADER_LIST_SIZE=262144` **×6** |
+| SETTINGS | `HEADER_TABLE_SIE=65536, ENABLE_PUSH=0, INITIAL_WINDOW_SIZE=6291456, MAX_HEADER_LIST_SIZE=262144` **×6** |
 | 前三个帧类型 | `SETTINGS, WINDOW_UPDATE, HEADERS` **×6** |
 | `ja4` | `t13d1516h2_…02713d6af862` ×3，`t13d1517h2_…b1ff8ab2d16f` ×3 |
 
@@ -266,5 +266,148 @@ limit=1024  qps=  70.3  lag_p99= 1.6ms   lag_max= 236.3ms
 | T-4 | 「待验证」 | H2 指纹 6/6 稳定；JA4 分散是 Chrome 自己随机化 | **是**：不需新增并发回归 |
 | T-5 | 「给了一条命令」 | **命令不存在**；ASan 与 `is_official_build` 冲突 | **是**：ASan 不能进 CI |
 | T-6 | 「待验证」 | 文档表格**测的形状与表头不符**，1178 ms 不可复现 | **是**：§2.2 要重测 |
+| T-7 | 无（本次新增） | type-65 查询已用 strace 证明发出；`ech_status=success` 与 `sni=encrypted` 已用 Cloudflare DoH 端到端验证。未自动化的只剩「默认 resolver 这一格」 | **是**：CI 需要能绑 53 的容器 |
 
 三条改写结论（T-1、T-4、T-5），一条要求改文档（T-6），一条指出我自己的命令是错的（T-5）。这五条里有四条只看「有没有配好」是发现不了的——必须真的跑，或者真的读 tag 源码。
+
+---
+
+## T-7 ｜ 默认路径是否真的发出了 DNS HTTPS 查询 —— **查询已证发出，`success` 已端到端验证；仅「默认路径」这一格未自动化**
+
+### 为什么它在测试套件里坐不了
+
+默认配置走系统解析器，要证明它发了 type 65，只能控制它说话的那台 nameserver。
+本机实测：
+
+```bash
+cat /proc/sys/net/ipv4/ip_unprivileged_port_start
+# 1024
+python3 -c "import socket;s=socket.socket(socket.AF_INET,socket.SOCK_DGRAM);s.bind(('127.0.0.1',53))"
+# PermissionError: [Errno 13] Permission denied
+unshare -rmn true
+# unshare: write failed /proc/self/uid_map: Operation not permitted
+```
+
+所以 `bindings/python/tests/test_session_defects.py` 里的
+`DefaultResolverQueriesHttpsRecordTests` 只断言**能观测到的那一半**：传 `dns_nameservers` 之后
+类型 65 与类型 1 都会出现。这两条在改动前后的二进制上都通过，因此它们**不能**用来证明本次改动；
+这一点已写在测试的 docstring 里，而不是靠读者猜。
+
+### 已经拿到的证据（本次实测，可重放）
+
+用 `strace -f -xx -e trace=sendto` 对比改动前后的默认路径，直接看 DNS 问题类型：
+
+```bash
+# 旧二进制（git show HEAD:core/binaries/linux-x86_64/libminicronet.so）
+LD_LIBRARY_PATH=/tmp/oldcore PYTHONPATH=bindings/python \
+  strace -f -xx -e trace=sendto -o /tmp/old.txt /usr/bin/python3.12 /tmp/probe.py
+# 新二进制
+LD_LIBRARY_PATH=core/binaries/linux-x86_64 PYTHONPATH=bindings/python \
+  strace -f -xx -e trace=sendto -o /tmp/new.txt /usr/bin/python3.12 /tmp/probe.py
+```
+
+| 二进制 | 默认路径发出的 DNS 问题 |
+| --- | --- |
+| 改动前 | `example.com type=1` |
+| 改动后 | `example.com type=65` 与 `example.com type=1` |
+
+端到端那一段也用本地应答器验过，不需要外网 DNS：
+
+```bash
+# 应答器对 type 65 回一条带 ech= 的 HTTPS 记录（SVCB 参数 key 5）
+dig +short HTTPS crypto.cloudflare.com @127.0.0.1 -p 15353
+# 1 . alpn="h2" ech=AEX+DQBBewAgACAo4AWByYxcZhs8/EeGpTXNqde2kR1Vx+9sx2fVKDzXIQAEAAEAAQASY2xvdWRmbGFyZS1lY2guY29tAAA=
+
+LD_LIBRARY_PATH=core/binaries/linux-x86_64 PYTHONPATH=bindings/python python3 -c \
+  "from chrome_client import Session;
+   s = Session(impersonate='chrome_158', dns_nameservers='127.0.0.1:15353');
+   r = s.get('https://crypto.cloudflare.com/cdn-cgi/trace');
+   print(r.ech_status); print([l for l in r.text.splitlines() if l.startswith('sni=')])"
+# success
+# ["sni=encrypted"]
+```
+
+### 补充：本机明文 DNS 一律拿不到 type 65（2026-11 实测）
+
+上面写「systemd-resolved stub 对 HTTPS 查询回空应答」，这句话当时只查了 stub，把范围
+说窄了。逐个问过本机能触达的解析器之后，结论是所有**明文** DNS 都不回答 type 65：
+
+| 解析器 | `A crypto.cloudflare.com` | `HTTPS crypto.cloudflare.com` |
+| --- | --- | --- |
+| `127.0.0.53` | `198.18.1.38` | NOERROR, ANSWER: 0 |
+| `1.1.1.1` | `198.18.1.39` | NOERROR, ANSWER: 0 |
+| `8.8.8.8` | — | NOERROR, ANSWER: 0 |
+| `223.5.5.5` | — | NOERROR, ANSWER: 0 |
+| `192.168.179.2` | — | NOERROR, ANSWER: 0 |
+| `cloudflare-dns.com`（DoH） | 真实地址 | 带 `ech=` |
+
+`198.18.1.x` 属于 RFC 2544 保留测试段，即这条链路的 DNS 被中间设备改写。这解释了为
+什么默认路径在这台机器上永远 `not_attempted`：不是引擎没发查询（strace 已证明发了
+`type=65`），而是应答在到达客户端之前就空了。
+
+### 端到端：换成能答 type 65 的 DoH 就加密
+
+这不依赖本地应答器，也不需要 root，是本次可以直接重放的端到端证据：
+
+```bash
+LD_LIBRARY_PATH=core/binaries/linux-x86_64 PYTHONPATH=bindings/python python3 -c "
+import chrome_client as c
+s = c.Session(doh_template='https://cloudflare-dns.com/dns-query',
+              dns_secure_mode=2, timeout=20)
+r = s.get('https://crypto.cloudflare.com/cdn-cgi/trace', timeout=20)
+print(r.ech_status); print(r.text)"
+# success
+# ... sni=encrypted
+```
+
+三次对照，同一产物、同一 URL：
+
+| 解析器 | `ech_status` | 服务端看到的 SNI |
+| --- | --- | --- |
+| 默认（`127.0.0.53`） | `not_attempted` | `sni=plaintext` |
+| `cloudflare-dns.com` DoH | `success` | `sni=encrypted` |
+| `dns.google` DoH | `not_attempted` | `sni=plaintext` |
+
+Cloudflare DoH 连跑 5 次全部 `success` / `sni=encrypted`。`dns.google` 那行同样是
+`not_attempted`，原因不是 DoH 不通（它的 DoH 端点返回 200），而是它对 `crypto.cloudflare.com`
+给出的 HTTPS 记录里没有可用的 `ech=`；没有 ECHConfigList 时 ECH 只能发 GREASE。
+所以 `not_attempted` 在此时的含义是「没拿到配置」，不是「功能被关掉」——这一点必须
+写清楚，否则读者会把它当成引擎的缺陷。
+
+这条证据补上了 strace 对比缺的另一半：strace 只能证明查询发出去了，这里能证明「查询
+成功 → 拿到 ech= → SNI 真的加密 → 服务端确认 `sni=encrypted`」整条因果链成立。
+### 还差什么才能自动化
+
+需要一样东西：能绑 53 端口、并被 `/etc/resolv.conf` 指向的 responder。三种可行形态：
+
+1. CI 上用 `sysctl net.ipv4.ip_unprivileged_port_start=53` 的容器（或直接以 root 跑该测试）；
+2. 给容器加 `CAP_NET_BIND_SERVICE`；
+3. `unshare -rmn` + `--map-root-user`（本机被拒，多数发行版默认关闭）。
+
+拿到任一条之后，在 `DefaultResolverQueriesHttpsRecordTests` 里补一条默认路径用例：
+不传任何 `dns_*`，断言 53 端口上的应答器收到 type 65。
+本机现在能做的等价证据就是上面那段 strace 对比，它已经证明了
+`engine.cc` 的改动生效（旧产物 `type=1`，新产物 `type=65 + type=1`）。
+
+---
+
+## T-8: a real QUIC proxy tunnel was never established
+
+**Status:** open. The `quic://` proxy scheme parses, reaches Chromium as
+NaN`SCHEME_QUIC``, and produces a genuine QUIC v1 Initial packet at the proxy
+port (six datagrams, long-header bit set, version ``00000001``, no plaintext SNI).
+What is unproven is everything after the ClientHello.
+
+**Why it is open.** No QUIC proxy server was reachable from this host. Chromium
+needs a peer that speaks CONNECT over QUIC (``quic_proxy_client_socket.cc`` drives
+it); a bare UDP socket can only witness that packets were sent, which is what the
+capture above records. A handshake against a socket that never replies ends in
+NaN`ERR_QUIC_HANDSHAKE_FAILED (-358)`` or ``ERR_TIMED_OUT (-7)``, both of which are
+consistent with a real attempt and with a wrong port, so neither proves the tunnel.
+
+**How to close it.** Point ``Session(proxy="quic://HOST:PORT")`` at a QUIC
+proxy (Chromium's own ``net/quic/quic_proxy_client_socket_unittest.cc`` fixtures, or
+any MASQUE / CONNECT-over-QUIC implementation), request an ``https://`` origin, and
+assert both that the response body arrives and that the proxy logs the CONNECT.
+Until then ``MN_CAPABILITY_QUIC_PROXY`` reports that the build can *dial* a QUIC proxy,
+not that a tunnel has been demonstrated.

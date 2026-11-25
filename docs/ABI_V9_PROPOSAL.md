@@ -263,7 +263,13 @@ mn_request_ech_status(mn_request_t *request, mn_ech_status_t *out_status);
 3. 与协商协议同一形态、同一批落地，风险合并，也不新增结构体所以布局断言不动。
 
 绑定层：`Response.ech_status` 返回 `"not_attempted"` / `"success"` / `"failed"`。
-文档必须写清桌面端恒为 `not_attempted`，否则这个字段看起来像"ECH 能用"的承诺。
+
+> **修正（实测）**：本提案原文要求文档写清「桌面端恒为 `not_attempted`」，这条是错的。
+> 决定 ECH 能否成功的不是平台，而是引擎有没有自己去查 DNS HTTPS 记录：
+> `core/source/engine.cc:801` 只在传了任一 dns_* 参数时才建 standalone resolver。
+> 实测 chrome_158 对 `crypto.cloudflare.com`：默认 resolver `not_attempted`（sni 明文）；
+> `dns_nameservers="1.1.1.1"` 5/5 `success`（sni 加密）。矩阵见 `docs/ABI.md` 末节。
+> 第 2 条理由里「真实原因是平台关掉了 ECH」因此也不成立——`GetEchMode` 对 119+ 一律返回 `kOpportunistic`。
 
 
 ---

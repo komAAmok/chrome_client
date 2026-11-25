@@ -1,5 +1,6 @@
 #include "minicronet/engine.h"
 #include "minicronet/profile_ssl_config_service.h"
+#include "platform_identity.h"
 
 #include "build/build_config.h"
 
@@ -40,6 +41,7 @@
 #include "net/cert/x509_util.h"
 #include "net/http/http_network_session.h"
 #include "net/http/http_transaction_factory.h"
+#include "net/net_buildflags.h"
 #include "net/proxy_resolution/proxy_config_service_fixed.h"
 #include "net/proxy_resolution/proxy_config_with_annotation.h"
 #include "net/quic/quic_context.h"
@@ -730,18 +732,11 @@ void Engine::InitializeOnNetworkThread() {
   // the URL host (net/dns/mapped_host_resolver.cc:70-78 against
   // net/socket/ssl_client_socket_impl.cc:720). That is what makes a CDN
   // address reachable without turning its certificate into an IP-SAN one.
-  const bool custom_resolver = !options_.dns_nameservers.empty() ||
-                              !options_.doh_template.empty() ||
-                              options_.dns_secure_mode != 0 ||
-                              options_.dns_over_tls != 0 ||
-                              options_.dns_rotate != 0;
-  // The builder DCHECKs that a client-supplied resolver and
-  // set_host_mapping_rules() are not combined
-  // (url_request_context_builder.cc:359-362), so mapping rules travel through
-  // the resolver when one is created.
-  if (!options_.host_mapping_rules.empty() && !custom_resolver) {
-    builder.set_host_mapping_rules(options_.host_mapping_rules);
-  }
+  // Mapping rules always travel through the resolver created below, never
+  // through set_host_mapping_rules(): the builder DCHECKs that the two are not
+  // combined (url_request_context_builder.cc:359-362), and the resolver is now
+  // always client-supplied. CreateStandaloneResolver wraps it in a
+  // MappedHostResolver itself (net/dns/host_resolver.cc:456-462).
   if (!options_.hsts_bypass_list.empty()) {
     builder.set_hsts_policy_bypass_list(options_.hsts_bypass_list);
   }
@@ -771,12 +766,25 @@ void Engine::InitializeOnNetworkThread() {
         return;
       }
       net::ProxyServer::Scheme parsed_scheme = net::ProxyServer::SCHEME_HTTP;
-      if (base::EqualsCaseInsensitiveASCII(scheme, "socks5")) {
+      if (base::EqualsCaseInsensitiveASCII(scheme, "socks5") ||
+          // "socks" is Chromium's own spelling for SOCKS5
+          // (proxy_string_util.cc:253). proxy= already accepts it through
+          // ProxyRules::ParseFromString, so refusing it here made the same
+          // proxy fail or work depending on which option named it.
+          base::EqualsCaseInsensitiveASCII(scheme, "socks")) {
         parsed_scheme = net::ProxyServer::SCHEME_SOCKS5;
       } else if (base::EqualsCaseInsensitiveASCII(scheme, "socks4")) {
         parsed_scheme = net::ProxyServer::SCHEME_SOCKS4;
       } else if (base::EqualsCaseInsensitiveASCII(scheme, "https")) {
         parsed_scheme = net::ProxyServer::SCHEME_HTTPS;
+      } else if (base::EqualsCaseInsensitiveASCII(scheme, "quic")) {
+        // The flag is on for every artifact this repository ships (see the
+        // args.gn block in tools/build-core-*.sh), and mn_engine_create already
+        // rejects quic:// when it is not, so this branch only ever runs on a
+        // build that can dial it. ProxyChain::IsValidInternal is the second gate:
+        // without ShouldAllowQuicForAllChains() the chain would be rejected and
+        // the request would fail with ERR_NO_SUPPORTED_PROXIES.
+        parsed_scheme = net::ProxyServer::SCHEME_QUIC;
       } else if (!base::EqualsCaseInsensitiveASCII(scheme, "http")) {
         return;
       }
@@ -795,12 +803,25 @@ void Engine::InitializeOnNetworkThread() {
           net::ProxyConfigWithAnnotation(proxy_config_,
                                          kProxyTrafficAnnotation)));
 
-  // DNS overrides reach the resolver the builder creates, because
-  // DnsConfigOverrides is a HostResolverManager parameter and the context has
-  // no other injection point (net/dns/host_resolver.h:361-362).
-  if (!options_.dns_nameservers.empty() || !options_.doh_template.empty() ||
-      options_.dns_secure_mode != 0 || options_.dns_over_tls != 0 ||
-      options_.dns_rotate != 0) {
+  // The engine always supplies a resolver. That is not an optimisation: the
+  // builder default is HostResolver::CreateStandaloneResolver(net_log,
+  // ManagerOptions(), ...) (url_request_context_builder.cc:381), and
+  // ManagerOptions::insecure_dns_mode defaults to kDisabled
+  // (net/dns/host_resolver.h:354), which makes HostResolverManager push no
+  // DNS task at all (net/dns/host_resolver_manager.cc:1354-1355). Only the
+  // SYSTEM task survives, and HostResolverSystemTask is getaddrinfo(): it has
+  // no HTTPS-record path whatsoever, so no ECHConfigList could ever appear.
+  //
+  // Chrome enables the built-in client by default
+  // (chrome/browser/net/stub_resolver_config_reader.cc:190 -> kAsyncDns,
+  // enabled for desktop at net/base/features.cc:40-43) and picks
+  // kEnabledBuiltIn on every non-Android platform because
+  // features::IsDnsPlatformSupported() is false there (features.cc:997-1006,
+  // stub_resolver_config_reader.cc:449-457). additional_types_via_insecure_
+  // dns_enabled defaults to true (host_resolver.h:358), which is what makes
+  // the resolver ask for the HTTPS record that carries ech=. This mirrors
+  // that configuration; the dns_* options below only override fields of it.
+  {
     net::DnsConfigOverrides overrides;
     if (!options_.dns_nameservers.empty()) {
       std::vector<net::IPEndPoint> endpoints;
@@ -842,10 +863,17 @@ void Engine::InitializeOnNetworkThread() {
       }
       overrides.nameservers = std::move(endpoints);
     }
-    overrides.secure_dns_mode =
-        static_cast<net::SecureDnsMode>(options_.dns_secure_mode);
-    overrides.dns_over_tls_active = options_.dns_over_tls != 0;
-    overrides.rotate = options_.dns_rotate != 0;
+    // Each field is overridden only when the caller supplied it. Setting
+    // secure_dns_mode unconditionally would pin kOff over whatever the system
+    // configuration says, and setting nameservers unconditionally would
+    // replace the system list with an empty one.
+    if (options_.dns_secure_mode != 0) {
+      overrides.secure_dns_mode =
+          static_cast<net::SecureDnsMode>(options_.dns_secure_mode);
+    }
+    if (options_.dns_rotate != 0) {
+      overrides.rotate = true;
+    }
     if (!options_.doh_template.empty()) {
       std::optional<net::DnsOverHttpsConfig> doh =
           net::DnsOverHttpsConfig::FromString(options_.doh_template);
@@ -855,16 +883,24 @@ void Engine::InitializeOnNetworkThread() {
       overrides.dns_over_https_config = std::move(*doh);
     }
     net::HostResolver::ManagerOptions resolver_options;
-    // InsecureDnsMode::kDisabled makes HostResolverManager push no TaskType::DNS
-    // at all (net/dns/host_resolver_manager.cc:1355), so only the SYSTEM task
-    // runs and dns_nameservers was accepted and ignored: measured, a request
-    // with dns_nameservers="127.0.0.1:1" still resolved example.com in 0.5 s and
-    // sent zero packets to that address. DoH was unaffected because it gates on
-    // SecureDnsMode instead, which is why only the plain-DNS knob was dead.
-    // kEnabledBuiltIn uses the overrides' nameservers and is refused when the
-    // config carries unhandled options or DoT is on.
+    // kEnabledBuiltIn, not the kDisabled default, for two reasons. It is what
+    // makes the DNS task run at all: kDisabled pushes no TaskType::DNS
+    // (net/dns/host_resolver_manager.cc:1355), which is also why the old code
+    // could accept dns_nameservers and ignore it -- measured then, a request
+    // with dns_nameservers="127.0.0.1:1" still resolved example.com in 0.5 s
+    // and sent zero packets to that address. And it is what desktop Chrome
+    // itself selects (stub_resolver_config_reader.cc:456). The mode still
+    // declines every job when the effective config carries unhandled options
+    // (net/dns/dns_client.cc:167), which is why a resolv.conf with a
+    // bare-resolv option falls back to the system resolver rather than
+    // guessing.
     resolver_options.insecure_dns_mode =
         net::InsecureDnsMode::kEnabledBuiltIn;
+    // Named rather than inherited: the field defaults to true, but this is the
+    // one that decides whether the DNS HTTPS record is fetched, and a future
+    // Chromium default flip must fail a test here instead of silently taking
+    // ECH away.
+    resolver_options.additional_types_via_insecure_dns_enabled = true;
     resolver_options.dns_config_overrides = std::move(overrides);
     builder.set_host_resolver(net::HostResolver::CreateStandaloneResolver(
         net::NetLog::Get(), std::move(resolver_options),
@@ -1360,23 +1396,10 @@ mn_result_t Engine::ClearClientCertificateOnNetworkThread(
 }
 
 const char *Engine::platform_hint() const {
-  switch (options_.platform) {
-  case MN_PLATFORM_WINDOWS:
-    return "\"Windows\"";
-  case MN_PLATFORM_MACOS:
-    return "\"macOS\"";
-  case MN_PLATFORM_LINUX:
-    return "\"Linux\"";
-  case MN_PLATFORM_AUTO:
-    break;
-  }
-#if BUILDFLAG(IS_WIN)
-  return "\"Windows\"";
-#elif BUILDFLAG(IS_MAC)
-  return "\"macOS\"";
-#else
-  return "\"Linux\"";
-#endif
+  // One table, shared with mn_platform_hint and DefaultUserAgent; see
+  // platform_identity.h. A second switch here would be a second answer to the
+  // same question, and the two would eventually disagree.
+  return PlatformHint(options_.platform);
 }
 
 void Engine::ShutdownOnNetworkThread() { context_.reset(); }

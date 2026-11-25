@@ -162,6 +162,15 @@ hex40 = re.compile(r"\b[0-9a-f]{40}\b")
 # fact from the revision this repository builds against and is legitimately not
 # CHROMIUM_REVISION. Scoping the exclusion to that directory keeps the check
 # honest for every other document.
+#
+# docs/CHROME_*_SUPPORT.md had the same fact outside that directory and was
+# therefore red: its boringssl_revision and quiche_revision come from the
+# release tag's own DEPS, and no BoringSSL commit is ever CHROMIUM_REVISION.
+# Excluding the directory would excuse the whole acceptance record, so the
+# exclusion is a TABLE ROW instead: a line that names the field it is quoting
+# (`boringssl_revision`, `quiche_revision`, `chromium_commit`) AND the DEPS it
+# came from may carry a foreign hash. A bare hash still fails, and so does a
+# hash on a line that names neither.
 tracked_markdown = subprocess.run(
     ["git", "-C", str(root), "ls-files", "--", "*.md"],
     capture_output=True, text=True, check=True).stdout.split()
@@ -177,18 +186,42 @@ if tracked.returncode != 0:
     raise SystemExit(
         "a Markdown document is not tracked by Git, so a fresh clone cannot "
         "check it: " + "; ".join(missing[:5]))
+#: A row may quote a hash that is not CHROMIUM_REVISION only when it says where
+#: the hash came from. Both halves are required: the field name says which fact
+#: the hash is, and the DEPS mention says the tree it belongs to. Measured
+#: failure this replaces: docs/CHROME_158_SUPPORT.md quoted the BoringSSL and
+#: QUICHE revisions from tag 158.0.8127.99 and the gate rejected both, because
+#: it could only tell "a hash" from "this hash".
+#: Field name and provenance must both appear on the same line. The alternation
+#: is written out rather than as one character class because the two carriers in
+#: docs/CHROME_158_SUPPORT.md spell it differently: the table cell says
+#: "（来自该 tag 的 DEPS）" while a prose line says "from this tag's DEPS".
+QUOTED_FROM_DEPS = re.compile(
+    r"(boringssl_revision|quiche_revision|chromium_commit)"
+    r".*?"            # anything between the field name and the provenance
+    r"DEPS",
+    re.IGNORECASE)
 scanned = 0
+allowed_foreign = 0
 for path in candidates:
     name = str(path.relative_to(root))
     scanned += 1
     for line_number, line in enumerate(path.read_text().splitlines(), 1):
         for found in hex40.findall(line):
-            if found != revision:
-                raise SystemExit(
-                    f"{name}:{line_number}: commit {found} is not the pinned "
-                    f"CHROMIUM_REVISION ({revision}) -- a document that quotes a "
-                    "superseded tree describes a build this repository cannot make")
-print(f"ok docs: every quoted commit is the pinned CHROMIUM_REVISION ({scanned} documents)")
+            if found == revision:
+                continue
+            if QUOTED_FROM_DEPS.search(line):
+                allowed_foreign += 1
+                continue
+            raise SystemExit(
+                f"{name}:{line_number}: commit {found} is not the pinned "
+                f"CHROMIUM_REVISION ({revision}) -- a document that quotes a "
+                "superseded tree describes a build this repository cannot make. "
+                "A row that quotes some other tree's hash must name the field "
+                "(boringssl_revision / quiche_revision / chromium_commit) and say "
+                "the hash comes from that tree's DEPS.")
+print(f"ok docs: every quoted commit is the pinned CHROMIUM_REVISION "
+      f"({scanned} documents, {allowed_foreign} row(s) citing another tree's DEPS)")
 
 # The badge row at the top of each README is the at-a-glance version and
 # Python-support statement. Its slug has to be the published name and its

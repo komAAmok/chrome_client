@@ -71,7 +71,14 @@ FACADE_SUMMARY = {
 }
 
 #: Names the package root defines itself, so it must not re-export them.
-ROOT_LOCAL_NAMES = {"core_version", "abi_version", "__all__"}
+#: The three capability names are constants the root defines itself, like the
+#: two version accessors: omitting them made the audit report them as "missing"
+#: from every module that re-exports the root, because the generator assumed the
+#: only root-local names were the ones it knew about.
+ROOT_LOCAL_NAMES = {
+    "core_version", "abi_version", "capabilities",
+    "CAPABILITY_QUIC_PROXY", "__all__",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -279,6 +286,23 @@ def abi_version() -> int:
         True
     """
     ...
+
+
+def capabilities() -> int:
+    """Capability bits this Core artifact was compiled with, as an int.
+
+    Compare against ``CAPABILITY_QUIC_PROXY`` (this build can dial a
+    ``quic://`` proxy). Unknown bits are preserved.
+
+    Example:
+        >>> isinstance(chrome_client.capabilities(), int)
+        True
+    """
+    ...
+
+
+#: Bit set when the Core can speak to a ``quic://`` proxy.
+CAPABILITY_QUIC_PROXY: int
 
 
 #: Every public name, plus ``"requests"`` and ``"__version__"``.

@@ -25,7 +25,7 @@ from .sessions import AsyncSession, Session
 #: raised TypeError instead of being accepted for curl_cffi parity.
 _SESSION_ONLY = ("base_url", "default_headers", "trust_env", "max_engines",
                  "user_agent", "accept_language", "cache", "response_class",
-                 "proxy_auth")
+                 "proxy_auth", "impersonate", "platform")
 
 #: Options curl_cffi accepts that the synchronous path has no equivalent for.
 #: Dropped rather than forwarded: ``Session`` would reject the keyword.

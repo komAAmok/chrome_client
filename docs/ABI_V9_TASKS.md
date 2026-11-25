@@ -96,9 +96,15 @@ Core 走两条路：`chromium_current` 用 `SSLConfigServiceDefaults`（空 gett
 两者都不是「恒 kDisabled」。
 
 ECH 仍然**不会发出**，但原因不是平台关掉了它，而是 `ssl_config.ech_config_list` 为空：
-它只来自 DNS 的 HTTPS 记录（`net/socket/ssl_connect_job.cc:404-412`），而 Core 的解析
-不取 HTTPS RR。所以 `mn_request_ech_status` 的 `NOT_ATTEMPTED` 应当被文档解释为
+它只来自 DNS 的 HTTPS 记录（`net/socket/ssl_connect_job.cc:404-412`）。所以
+`mn_request_ech_status` 的 `NOT_ATTEMPTED` 应当被文档解释为
 **「没有 ECHConfigList」**，而不是「平台关闭」。
+
+> **修正（实测）**：原文接着说「Core 的解析不取 HTTPS RR」，这句只在**默认配置**下成立。
+> `core/source/engine.cc:801` 的 DNS 覆盖分支一旦生效（传任一 dns_* 参数），
+> `CreateStandaloneResolver` 就会查 HTTPS 记录，`ech_config_list` 非空，
+> `SSL_set1_ech_config_list` 被调用，握手真加密。实测 chrome_158：默认 `not_attempted`，
+> `dns_nameservers="1.1.1.1"` 5/5 `success`。矩阵见 `docs/ABI.md` 末节。
 
 ### 1.3 `MN_ECH_FAILED` 在 ABI 里不可观测
 

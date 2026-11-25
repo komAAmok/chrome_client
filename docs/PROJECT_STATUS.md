@@ -8,7 +8,7 @@
 用真实 Chromium 网络栈实现的 HTTP/WebSocket 客户端，提供 requests / curl-cffi 风格
 的 Python API，同时让 TLS 指纹、HTTP/2 SETTINGS、QUIC 参数与真实 Chrome 一致。
 
-分层：`libminicronet`（Chromium C++，唯一协议实现）→ C ABI v12（29 个导出符号）→
+分层：`libminicronet`（Chromium C++，唯一协议实现）→ C ABI v14（32 个导出符号）→
 `minicronet-sys`（手写 FFI 声明）→ `minicronet`（Rust 安全层）→ 各语言薄绑定。
 
 - Chromium revision：`58bcc148f76b8975bbe59f1a6012d4ae409d62a9`（Chrome 156.0.8078.31 stable）
@@ -758,6 +758,44 @@ manifest（`--abi-version 8`）：
 重建是增量的（各 `out/` 已有 obj，只重编 Core 相关目标并重链接），
 `sync-core.sh` 先从根 `Cargo.toml` 注入版本头（版本号只在那里），`install-core-binaries.py` 再刷新 manifest。
 三者现已一致：`core_version()` = `__version__` = 根 `Cargo.toml` 的 `workspace.package.version`。
+
+### 验收（2026-11，ABI v14）
+
+这一轮把能力查询与平台身份下沉到 Core，ABI 从 12 升到 14（新增
+`mn_engine_capabilities`、`mn_platform_user_agent_group`、`mn_platform_hint` 三个
+符号，29 → 32）。
+
+**静态门禁 27/27 全绿**：`audit-abi`（v14，32 符号）、`audit-abi-layout`（8 结构体
+104 字段）、`audit-layer-ownership`、`audit-readme`、`audit-pypi-metadata`、
+`audit-python-stubs`、`audit-doctests`、`audit-extra-fp`、`audit-session-parity`、
+`audit-frozen-headers`、`audit-discard-fingerprint`、`mutation-fingerprint-gates`、
+`audit-client-hints`、`audit-python-typing`、`audit-core-binaries`（**9/9**）、
+`audit-core-inputs`、`audit-core-source-fingerprint`、`audit-core-size-ceilings`、
+`audit-core-payloads`、`record-core-build-args --check`、`audit-padding-rule`、
+`audit-tls-version-range`、`audit-h1-alps-absence`、`audit-h3-profile-support`、
+`audit-h2-framing`、`audit-v9-profile-fields`、`audit-python36-artifact`；
+Rust 四项（`fmt` / `check` / `clippy -D warnings` / `test`）全过。
+
+**九平台产物全部为 ABI 14**，每个 32 个导出符号；`python36` wheel 同步重建。
+
+**这一轮修掉的问题**（细节见 `docs/LESSONS.md` §86-88）：
+
+1. `quic://` 代理从「硬编码不支持」改为由 Core 报告能力位决定。同时发现
+   `mn_engine_capabilities` 的位 1（bracketed 链）**无法兑现**——ABI 存不出多跳链，
+   已改为保留位而不是谎报。
+2. `proxy=` 与 `proxy_chain=` 走两条不同解析路径，同一个代理换个选项名就一个能用一个
+   报 `InitializationFailed`；`socks://` 在 `engine.cc` 里根本没有分支。
+3. 全无效的 `proxy_rules`（如 `http=garbage://x;https=garbage://y`）被 `ACCEPTED`
+   之后**静默直连**，代理端口零连接而请求返回 200。已按 `type` 分两种形态检查。
+4. 模块级 `chrome_client.get(url, impersonate=...)` 只发 4 个头——`impersonate` 与
+   `platform` 不在 `api._SESSION_ONLY` 里，抓包头一个都没注入。
+5. 平台身份有两份独立派生（Python 的 `sys.platform` 与 Core 的 `ARCH_CPU_*`），
+   在同一台机器上加载 32 位构建时会分叉。已下沉到 ABI v14。
+
+**`linux-armv7` 仍未加载、未发请求**，本轮尝试用 `qemu-arm` 补上但段错误，原因未查明
+（详见 `docs/NEXT_STEPS.md`）。因此不发布 ARMv7 wheel。
+
+---
 
 ### 验收（2026-11，ABI v12）
 

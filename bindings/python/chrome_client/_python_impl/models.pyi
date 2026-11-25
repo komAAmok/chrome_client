@@ -603,10 +603,10 @@ class Response:
             guessed -- the same rule ``reason`` follows.
         ech_status: ``"success"``, ``"rejected"``, ``"not_attempted"``, or
             ``None`` before a response starts. Read from the Core, never
-            inferred. ``"not_attempted"`` is what a desktop build reports:
-            Chromium only obtains an ECHConfigList from a DNS HTTPS record, and
-            this engine does not fetch one, so no ECH extension is ever
-            offered with a real config (only GREASE).
+            inferred. The engine queries the DNS HTTPS record by default, so a
+            host that publishes one gets ``"success"`` and an encrypted SNI;
+            a host without one gets GREASE only and ``"not_attempted"``. The
+            ``dns_*`` options override resolver fields rather than enabling ECH.
         redirect_count: Number of hops followed.
         redirect_url: The final URL when redirects were followed, else ``None``.
         next: The next-hop :class:`PreparedRequest` for an unfollowed redirect.

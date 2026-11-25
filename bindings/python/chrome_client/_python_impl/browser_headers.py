@@ -30,10 +30,10 @@ not claiming to be a browser, and injecting browser headers into it would make
 every non-impersonating caller look like Chrome.
 """
 
-import platform as _platform
-import sys as _sys
 
+from ._native import native as _native_module
 from .client_hints import CAPTURED_HEADERS
+from .exceptions import UnsupportedFeature
 
 #: Headers the facade fills in from the host rather than from the capture.
 PLATFORM_HEADERS = ("User-Agent", "sec-ch-ua-platform")
@@ -45,75 +45,92 @@ PLATFORM_HEADERS = ("User-Agent", "sec-ch-ua-platform")
 ZSTD_FIRST_MAJOR = 123
 
 
-def _platform_token(platform="auto"):
-    """Returns the platform token the User-Agent group carries.
+#: Header names no capture can contain, with the position they must occupy.
+#:
+#: A capture is a navigation with a cold cache: Chrome never sends
+#: ``Cache-Control`` or ``Pragma`` there, so the evidence cannot say where they
+#: go. Chromium source can, and does -- URLRequestHttpJob adds them before
+#: merging the caller's extra headers
+#: (net/http/http_network_transaction.cc:1483-1487):
+#:
+#:     if (load_flags & LOAD_BYPASS_CACHE) {
+#:       SetHeader(kPragma, "no-cache");
+#:       SetHeader(kCacheControl, "no-cache");
+#:     } else if (load_flags & LOAD_VALIDATE_CACHE) {
+#:       SetHeader(kCacheControl, "max-age=0");
+#:     }
+#:     ...
+#:     request_headers_.MergeFrom(request_->extra_headers);
+#:
+#: Order, from the same source and not from taste:
+#:
+#:   Host, Connection            (BuildRequestHeaders, 1451-1459)
+#:   Pragma, Cache-Control       (BuildRequestHeaders, 1483-1487)
+#:   MergeFrom(request_->extra_headers)   (1497)
+#:
+#: The whole captured block is extra_headers (core/source/request.cc:290 calls
+#: SetExtraRequestHeaders), so Pragma and Cache-Control belong BEFORE the first
+#: captured field -- not before Accept-Language, which is itself a captured
+#: field. The frozen baseline confirms the frame: request_head.txt carries Host,
+#: Connection, then sec-ch-ua ... with nothing in between.
+#:
+#: SetHeaderInternal rewrites an existing key in place, so seeding the slot here
+#: is what makes a caller's Cache-Control land in Chromium's position instead of
+#: being appended after the last captured field.
+#:
+#: ``Referer`` is deliberately absent. Chromium routes it out of the header
+#: block entirely (core/source/request.cc:244-248 calls SetReferrer), so it has
+#: no position among these; the referrer machinery emits it.
+SEEDED_HEADERS = (
+    ("Pragma", "no-cache"),
+    ("Cache-Control", "no-cache"),
+)
 
-    Must match ``core/source/minicronet.cc`` exactly: the two strings are the
-    same claim, one on each side of the ABI, and a mismatch is exactly the
-    contradiction this module exists to avoid.
 
-    ``platform`` is the engine's own choice, not this host's: a session that asks
-    for ``platform="windows"`` must send a Windows User-Agent group from a Linux
-    build, which is the whole point of the option. ``"auto"`` follows the host,
-    matching what the Core does for ``MN_PLATFORM_AUTO``.
+
+def _platform_identity(platform="auto"):
+    """Returns ``(user_agent_group, sec_ch_ua_platform)`` from the Core.
+
+    Both strings are read out of the loaded Core, never derived here. The reason
+    is not tidiness: the Core decides them from the flags it was compiled with
+    (``BUILDFLAG(IS_WIN/IS_MAC)`` plus ``ARCH_CPU_*``), while Python can only
+    observe the host it runs on (``sys.platform``, ``platform.machine()``). On a
+    single x86_64 machine serving the 32-bit Core the two answers differ --
+    ``"X11; Linux i686"`` against ``"X11; Linux x86_64"`` -- and each side looks
+    correct on its own. Reading them means the two agree by construction.
 
     Args:
         platform: ``"auto"``, ``"windows"``, ``"macos"`` or ``"linux"``.
 
     Returns:
-        The parenthesised-group text without the parentheses, e.g.
-        ``"X11; Linux x86_64"``.
+        A ``(group, hint)`` pair. *group* is the parenthesised User-Agent group
+        without parentheses; *hint* is the ``sec-ch-ua-platform`` value with the
+        quotes Chrome writes.
+
+    Raises:
+        UnsupportedFeature: The Core cannot answer, which means the loaded
+            artifact predates ABI v14. Raising beats falling back to a local
+            guess: a guess that is right on this host and wrong on the next one
+            is the defect this function exists to remove.
     """
-    name = (platform or "auto").lower()
-    if name == "auto":
-        name = _host_platform()
-    if name == "windows":
-        return "Windows NT 10.0; Win64; x64"
-    if name == "macos":
-        return "Macintosh; Intel Mac OS X 10_15_7"
-    machine = _platform.machine().lower()
-    if machine in ("aarch64", "arm64"):
-        return "X11; Linux aarch64"
-    if machine in ("i386", "i486", "i586", "i686", "x86"):
-        return "X11; Linux i686"
-    return "X11; Linux x86_64"
+    try:
+        return _native_module.PyEngine.platform_identity(platform or "auto")
+    except AttributeError as error:
+        raise UnsupportedFeature(
+            "the loaded Core does not implement mn_platform_user_agent_group "
+            "(ABI v14); the User-Agent group and sec-ch-ua-platform cannot be "
+            "read from it, and deriving them in Python is what this function "
+            "replaced") from error
 
 
-def _host_platform():
-    """Returns which platform identity this host maps to.
-
-    Returns:
-        ``"windows"``, ``"macos"`` or ``"linux"``.
-    """
-    if _sys.platform.startswith("win"):
-        return "windows"
-    if _sys.platform == "darwin":
-        return "macos"
-    return "linux"
+def _platform_token(platform="auto"):
+    """The User-Agent group, without parentheses, as the Core reports it."""
+    return _platform_identity(platform)[0]
 
 
 def _sec_ch_ua_platform(platform="auto"):
-    """Returns the ``sec-ch-ua-platform`` value for an engine's platform.
-
-    Chrome sends a quoted, case-sensitive platform name from a fixed set. The
-    value must be the engine's choice rather than this host's, because the Core
-    derives the same field from ``mn_platform_t``; a mismatch would send one
-    field claiming Windows and another claiming Linux.
-
-    Args:
-        platform: ``"auto"``, ``"windows"``, ``"macos"`` or ``"linux"``.
-
-    Returns:
-        e.g. ``"Linux"`` with the quotes Chrome writes, as a string.
-    """
-    name = (platform or "auto").lower()
-    if name == "auto":
-        name = _host_platform()
-    if name == "windows":
-        return chr(34) + "Windows" + chr(34)
-    if name == "macos":
-        return chr(34) + "macOS" + chr(34)
-    return chr(34) + "Linux" + chr(34)
+    """The ``sec-ch-ua-platform`` value, quotes included, as the Core reports it."""
+    return _platform_identity(platform)[1]
 
 
 def profile_major(profile):
@@ -170,6 +187,44 @@ def browser_headers(profile, accept_language=None, platform="auto"):
             value = accept_language
         pairs.append((name, value))
     return pairs
+
+
+def full_header_order(profile):
+    """Returns the emission order a request to *profile* should use.
+
+    ``header_order`` is the capture, and the capture is a cold-cache
+    navigation: it has no ``Pragma``/``Cache-Control`` and no trailing
+    credentials. This function is that order with the slots Chromium reserves
+    for them seeded in, so a caller header the capture cannot contain still
+    lands where the browser would put it rather than after the last captured
+    field.
+
+    Slot placement, all from Chromium rather than from taste:
+
+    * ``Pragma`` before ``Cache-Control``, both before the caller block
+      (http_network_transaction.cc:1483-1487).
+    * Everything else after the capture, because that is where
+      ``MergeFrom(extra_headers)`` appends and nothing in the source orders it
+      relative to the captured fields.
+
+    Args:
+        profile: A ``chrome_<major>`` name, or ``None``.
+
+    Returns:
+        A list of lower-case header names. The capture's own order, with the
+        seeded slots inserted; empty for an unknown profile, matching
+        :func:`header_order`.
+    """
+    order = header_order(profile)
+    if not order:
+        return order
+    lowered = [name.lower() for name in order]
+    # Prepended, because BuildRequestHeaders sets these before MergeFrom and the
+    # captured block is that MergeFrom's argument. Host and Connection precede
+    # even these, but Chromium emits those from BuildRequestHeaders directly and
+    # they never appear in extra_headers, so this list cannot express them.
+    seeded = [name for name, _value in SEEDED_HEADERS if name.lower() not in lowered]
+    return [name.lower() for name in seeded] + lowered
 
 
 def header_order(profile):

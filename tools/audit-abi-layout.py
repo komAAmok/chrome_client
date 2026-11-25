@@ -183,10 +183,46 @@ def compile_probe(fields_by_struct, out_path, compiler):
     binary = out_path.with_suffix(".bin")
     result = subprocess.run(
         [compiler, "-I", str(HEADER.parent), str(source), "-o", str(binary)],
-        capture_output=True, text=True)
+        capture_output=True, text=True, env=compiler_env(compiler))
     if result.returncode != 0:
-        raise SystemExit("audit-abi-layout: header did not compile:\n" + result.stderr)
+        raise SystemExit(
+            "audit-abi-layout: header did not compile with %s:\n%s"
+            % (compiler, result.stderr))
     return binary
+
+
+def compiler_env(compiler):
+    """The environment the compiler runs in, with its own directory on PATH.
+
+    A compiler that is invoked by absolute path still spawns helpers by bare
+    name: gcc forks cc1 and collect2, and collect2 execvp()s "ld". That lookup
+    uses the CHILD environment, so a host whose environment carries no PATH at
+    all -- measured here, env(1) showed only PWD, SHLVL and _ -- fails with
+    "collect2: fatal error: cannot find 'ld'" even though ld is installed at
+    /usr/bin/ld and the compiler itself resolved fine through shutil.which.
+    shutil.which only proves the file exists somewhere on this process's PATH;
+    it does not hand that PATH to the child.
+
+    Args:
+        compiler: Absolute path to the resolved compiler.
+
+    Returns:
+        A copy of os.environ whose PATH also contains the compiler directory.
+    """
+    env = dict(os.environ)
+    compiler_dir = str(Path(compiler).resolve().parent)
+    path = env.get("PATH", "")
+    parts = [part for part in path.split(os.pathsep) if part]
+    if compiler_dir not in parts:
+        parts.insert(0, compiler_dir)
+    # Always emit a non-empty value whatever was inherited. Measured: with the
+    # variable absent this gate failed inside collect2, with it set the same
+    # command linked, so the value is what makes the difference on this host.
+    for fallback in ("/usr/local/bin", "/usr/bin", "/bin"):
+        if fallback not in parts:
+            parts.append(fallback)
+    env["PATH"] = os.pathsep.join(parts)
+    return env
 
 
 def resolve_compiler():

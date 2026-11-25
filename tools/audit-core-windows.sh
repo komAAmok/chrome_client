@@ -23,12 +23,12 @@ CHROMIUM_SRC=$(resolve_chromium_src)
 # all 72 profiles, and once more after the captured request header set was
 # compiled in (+~34 KB on x86_64; 3 distinct header sets, 39 KB of text). The
 # three committed artifacts are now 9,622,016 (x86_64) / 8,319,488 (arm64) /
-# 7,660,032 (x86), so 9,622,016 * 1.02 = 9,814,456 rounds up to the 9,820,000
+# 7,665,152 (x86), so 9,628,672 * 1.02 = 9,821,246 rounds up to the 9,830,000
 # below. The rule is unchanged: the largest artifact plus 2%, rounded up to
 # 10,000. Note that 9,600,000 was too low for this rule once the
 # chrome_86..chrome_98 profiles were compiled in -- headroom had fallen to
 # 1.91% -- which is what the re-quote caught.
-MAX_BYTES=${MAX_BYTES:-9820000}
+MAX_BYTES=${MAX_BYTES:-9830000}
 ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 # require_rg also installs the rg() wrapper, which turns a ripgrep *error*
 # (status 2: unreadable path, bad pattern) into a failure instead of the "no

@@ -16,12 +16,35 @@ PLATFORM_HEADERS: Tuple[str, ...]
 ZSTD_FIRST_MAJOR: int
 
 
-def _platform_token() -> str:
+def _platform_identity(
+    platform: str = ...,
+) -> Tuple[str, str]:
+    """The User-Agent group and sec-ch-ua-platform, read out of the Core.
+
+    Both strings come from ``mn_platform_user_agent_group`` and
+    ``mn_platform_hint`` rather than from a local derivation: the Core decides
+    them from the flags it was compiled with, so reading them is what keeps the
+    two sides from disagreeing on a host whose architecture differs from the
+    loaded artifact.
+
+    Args:
+        platform: ``"auto"``, ``"windows"``, ``"macos"`` or ``"linux"``.
+
+    Returns:
+        A ``(group, hint)`` pair; *hint* includes the quotes Chrome writes.
+
+    Raises:
+        UnsupportedFeature: The loaded Core predates ABI v14.
+    """
+    ...
+
+
+def _platform_token(platform: str = ...) -> str:
     """The parenthesised platform group a host-native UA carries."""
     ...
 
 
-def _sec_ch_ua_platform() -> str:
+def _sec_ch_ua_platform(platform: str = ...) -> str:
     """The quoted ``sec-ch-ua-platform`` value for this host."""
     ...
 
@@ -51,6 +74,26 @@ def browser_headers(profile: Optional[str],
     Returns:
         A list of ``(name, value)`` pairs in capture order, or an empty list when
         *profile* is not a pinned profile.
+    """
+    ...
+
+
+SEEDED_HEADERS: Tuple[Tuple[str, str], ...]
+
+
+def full_header_order(profile: Optional[str]) -> Sequence[str]:
+    """Emission order with slots for headers no capture can contain.
+
+    Pragma and Cache-Control precede the captured block, because Chromium sets
+    them before merging extra headers (the captured block is those extra
+    headers).
+
+    Args:
+        profile: A ``chrome_<major>`` name, or ``None``.
+
+    Returns:
+        The captured order with the seeded slots prepended, or an empty
+        sequence for an unknown profile (matching :func:`header_order`).
     """
     ...
 

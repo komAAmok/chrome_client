@@ -165,7 +165,7 @@ hash 变了——这是预期结果：拒绝发生在一个已有的 `if` 链里
 | windows-x86 | 7,664,128 | 12 |
 | windows-arm64 | 8,323,584 | 12 |
 
-`tools/audit-core-binaries.sh` 逐个核对版本串为 `minicronet/0.2.13` 与 29 个导出符号；
+`tools/audit-core-binaries.sh` 逐个核对版本串为 `minicronet/0.2.13` 与 32 个导出符号；
 `audit-core-size-ceilings.py` 三个平台族的余量分别 2.05% / 1.97% / 1.98%；
 `audit-core-payloads.py` 27 组 payload 逐字节一致；`record-core-build-args.py --check`
 九个快照全部匹配；`audit-core-source-fingerprint.py` 报告 9 个产物均由当前 22 个
@@ -665,6 +665,25 @@ python3 tools/audit-profile-addition.py --all --levels 1
 
 ## 待办：linux-armv7 没有一次真实运行
 
+> **2026-11 进展（仍未完成）**：`qemu-user-static` 已在不使用 `sudo` 的前提下取得
+> （`apt-get download` + `dpkg-deb -x` 到 `/tmp/qemu`），`qemu-arm --version` 输出
+> `8.2.2`，armhf sysroot 里 `libc.so.6`、`ld-linux-armhf.so.3`、`libnss3.so` 都在。
+> 但运行现成的 ARM 二进制直接段错误：
+>
+> ```
+> qemu-arm-static -L <armhf sysroot> ./minicronet_abi_cpp_smoke
+> # qemu: uncaught target signal 11 (Segmentation fault) - core dumped
+> ```
+>
+> 用 sysroot 里的 `ld-linux-armhf.so.3` 显式启动结果相同，而
+> `qemu-arm-static /usr/bin/true` 报 `Invalid ELF image for this architecture`，
+> 说明 qemu 本身工作正常、问题在 ARM 侧。**尚未区分**是 qemu 对这份 Chromium 产物的
+> 兼容问题，还是产物本身有问题：armhf sysroot 里没有链接器（`ld`），无法编一个最小
+> ARM 程序把两种情况分开。
+>
+> 因此状态**没有变化**，仍是「已构建、静态审计通过、未加载、未发请求」。在这一点上
+> 发布 ARMv7 wheel 仍然不符合 AGENTS §13。
+
 `core/binaries/linux-armv7/` 已构建、已审计、已提交，但本机没有 `qemu-user`
 （`apt-cache policy qemu-user-static` 有候选包，`sudo` 需要密码），也没有 ARMv7
 硬件，所以这个平台和另外 7 个一样停在「已构建、静态审计通过、未加载、未发请求」。
@@ -1117,6 +1136,11 @@ v10 调用方 `MN_OK`。
 **顺带接通 ECH**：`mn_request_ech_status` 从 v9 起就在 Core 里，一直没接到绑定层。现在
 四层贯通，`Response.ech_status` 报告 `success` / `rejected` / `not_attempted` / `None`。
 
+**修正（本轮实测）**：当时把 `not_attempted` 当成桌面端的唯一可能值，这个说法不成立。
+ECHConfigList 只来自 DNS HTTPS 记录，引擎在传了任一 dns_* 参数时会自己建 resolver 去查
+（`core/source/engine.cc:801`），拿到就真加密。实测 chrome_158 对 `crypto.cloudflare.com`：
+系统解析 `not_attempted`/sni 明文，`dns_nameservers="1.1.1.1"` 5/5 `success`/sni 加密。
+
 ### 平台状态：九个全部重建（ABI 11）
 
 | 平台 | ABI | 说明 |
@@ -1208,6 +1232,27 @@ facade 注入的代价是这些头不经过 `net` 层的 URLLoader 工厂，因�
 **验收（已由 facade 层实现）**：新增一个本地 echo 服务器用例，断言 `impersonate="chrome_155"` 时请求头
 集合与真实 Chrome 155 抓包一致（含顺序），且 `impersonate=None` 时**不**注入任何
 client hint——默认路径不能因为补 profile 而被污染。
+
+## 待办：`not_attempted` 需要拆成「没查」与「查了但没有配置」
+
+**现状**：`mn_ech_status_t` 只有三个值（`core/abi/minicronet.h` 的 `mn_ech_status` 枚举），
+而 `MN_ECH_NOT_ATTEMPTED` 现在同时代表四种情形：
+
+1. 没传 dns_* 参数，默认 resolver 根本不查 HTTPS 记录（`core/source/engine.cc:801` 分支未进入）；
+2. 查了，域名没有 HTTPS 记录（`tls.peet.ws` 这类）；
+3. DoH 拒绝后回退，解析结果里没有 HTTPS 记录（实测出现过一次）；
+4. 有记录但 Chromium 侧 `ssl_info.encrypted_client_hello` 为 false。
+
+调用方拿不到「我配了 DNS 但 ECH 没生效」的诊断——这与 `MN_HTTP_VERSION_UNKNOWN` 当初的问题同型。
+
+**改法**：Core 在 `core/source/request.cc` 记录 `ssl_config_.ech_config_list` 是否为空，
+追加 `MN_ECH_NO_CONFIG`（查过但没拿到配置）与 `MN_ECH_GREASE_ONLY`（发了 GREASE，未加密），
+保留 `MN_ECH_NOT_ATTEMPTED` 表示「本轮没有查 DNS HTTPS 记录」。
+这是**追加**枚举值，不动已有取值，所以 ABI 版本号只 +1，28 个导出符号不变；
+需要同步 `crates/minicronet-sys` 的布局测试、`bindings/*` 的字符串映射与 `models.pyi`。
+
+**完成判据**：四个平台各一条真实请求，分别落在四种取值上，并由 `bindings/python/tests` 断言；
+同时 `README.md` 的 ECH 一行改写为按取值区分的表格，而不是现在一句「取决于是否自己查 DNS」。
 
 ## 待办：逐请求 / 会话级 DNS 配置（ABI v9）
 

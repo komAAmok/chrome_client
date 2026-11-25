@@ -3,7 +3,7 @@
 
 use core::ffi::c_void;
 
-pub const MN_ABI_VERSION: u32 = 12;
+pub const MN_ABI_VERSION: u32 = 14;
 
 #[repr(C)]
 pub struct mn_engine_t {
@@ -256,6 +256,30 @@ impl mn_read_disposition_t {
     pub const MN_READ_TAKE_BUFFER: Self = Self(2);
 }
 
+/// Bits reported by [`mn_engine_capabilities`].
+///
+/// A capability bit exists because the same ABI is built nine times with
+/// different `args.gn`, and two of those knobs change something a caller can
+/// observe. Without a bit a binding can only discover the difference by making
+/// a request and reading the error, which cannot separate "this build refuses
+/// the scheme" from "the scheme is supported and the peer refused".
+///
+/// Bits this revision does not define must be ignored: a later revision only
+/// ever appends.
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct mn_capability_t(pub u32);
+
+impl mn_capability_t {
+    /// The artifact can speak to a `quic://` proxy. Chromium gates it behind
+    /// `ENABLE_QUIC_PROXY_SUPPORT`, which upstream sets to `is_debug`; this
+    /// project turns it on explicitly.
+    pub const MN_CAPABILITY_QUIC_PROXY: Self = Self(1 << 0);
+    // Bit 1 is reserved and never reported: proxy_chain splits on "," and each
+    // entry becomes one ProxyList::AddProxyServer hop, so the ABI cannot express
+    // a bracketed chain. See the reserved note in core/abi/minicronet.h.
+}
+
 /// The response callback.
 ///
 /// Both header forms arrive: the raw block and the parsed fields, plus the
@@ -382,6 +406,23 @@ pub struct mn_websocket_config_t {
 extern "C" {
     pub fn mn_abi_version() -> u32;
     pub fn mn_version_string() -> *const i8;
+    /// What this artifact was compiled with. Readable before any engine
+    /// exists; bits not defined by this revision must be ignored.
+    pub fn mn_engine_capabilities(out_flags: *mut u32) -> mn_result_t;
+    /// The User-Agent group this artifact emits for a platform, without
+    /// parentheses. The returned pointer is owned by the Core and lives for the
+    /// process; it must not be freed.
+    pub fn mn_platform_user_agent_group(
+        platform: mn_platform_t,
+        out_group: *mut *const i8,
+        out_length: *mut u32,
+    ) -> mn_result_t;
+    /// The sec-ch-ua-platform value for a platform, quotes included.
+    pub fn mn_platform_hint(
+        platform: mn_platform_t,
+        out_hint: *mut *const i8,
+        out_length: *mut u32,
+    ) -> mn_result_t;
     pub fn mn_engine_create(
         config: *const mn_engine_config_t,
         out_engine: *mut *mut mn_engine_t,
@@ -990,7 +1031,7 @@ mod abi_layout_tests {
         // Compared against the header, not against a literal: this line
         // was the second place ABI 11 appeared, and a bump that changed
         // only the constant left the test asserting the old number.
-        assert_eq!(MN_ABI_VERSION, 12);
+        assert_eq!(MN_ABI_VERSION, 14);
         assert_eq!(mn_request_priority_t::MN_REQUEST_PRIORITY_IDLE.0, 5);
         assert_eq!(
             mn_websocket_message_type_t::MN_WEBSOCKET_MESSAGE_BINARY.0,
@@ -999,6 +1040,10 @@ mod abi_layout_tests {
         assert_eq!(mn_platform_t::MN_PLATFORM_LINUX.0, 3);
         assert_eq!(mn_cookie_same_site_t::MN_COOKIE_SAME_SITE_STRICT.0, 3);
         assert_eq!(mn_http_version_t::MN_HTTP_VERSION_3.0, 5);
+        // Capability bits are a mask, not an enum value: what matters is that
+        // each is exactly one bit and that no two collide. Asserting the
+        // literal here is what would catch a future append reusing bit 0.
+        assert_eq!(mn_capability_t::MN_CAPABILITY_QUIC_PROXY.0, 1);
         assert_eq!(mn_ech_status_t::MN_ECH_FAILED.0, 2);
     }
 

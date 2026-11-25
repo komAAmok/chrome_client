@@ -682,3 +682,27 @@ def abi_version() -> int:
         True
     """
     ...
+
+
+def capabilities() -> int:
+    """Returns the capability bits this Core artifact was compiled with.
+
+    The same ABI is built nine times with different ``args.gn``, and some of
+    those knobs change what a caller can observe. Asking the Core is the only
+    way to tell "this build refuses the scheme" apart from "the scheme is
+    supported and the peer refused", which a request-level error cannot do.
+
+    Compare against ``CAPABILITY_QUIC_PROXY``. Unknown bits are preserved, so a
+    new Core behind an old facade is not read as "nothing is supported".
+
+    Returns:
+        An ``int`` bitmask.
+
+    Example:
+        >>> isinstance(capabilities(), int)
+        True
+    """
+    ...
+
+
+CAPABILITY_QUIC_PROXY: int

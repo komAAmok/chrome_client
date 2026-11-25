@@ -5,7 +5,69 @@ headers are exposed. Opaque `mn_engine_t`, `mn_request_t`, and
 `mn_websocket_t` handles are reference counted by the Core; Rust is the only
 high-level owner exposed to language adapters.
 
-## v12（当前 ABI）
+## v14（当前 ABI）
+
+`MN_ABI_VERSION` 是 14，导出符号 **32** 个：v13 追加了 `mn_engine_capabilities`，
+v14 追加了 `mn_platform_user_agent_group` 与 `mn_platform_hint`。
+
+### 为什么需要能力位
+
+同一个 ABI 被构建九次，每次的 `args.gn` 不同。有两个编译期开关会改变调用方
+**观察得到**的行为，而它们的值来自 `is_debug`（`net/features.gni:69,74`）：
+
+| 开关 | 作用 | 关掉时的表现 |
+| --- | --- | --- |
+| `ENABLE_QUIC_PROXY_SUPPORT` | `quic://` 能否变成 `SCHEME_QUIC` | 解析器拒绝该 scheme |
+| `ENABLE_BRACKETED_PROXY_URIS` | `[a,b]` 多跳链是否合法 | 链校验失败；两者互斥时 `CHECK` |
+
+没有能力位时，绑定层只能「发个请求看错误码」，而 `ERR_NO_SUPPORTED_PROXIES`
+无法区分「本构建不支持这个 scheme」与「支持但代理拒绝了连接」——两件完全不同的事，
+同一个错误码。
+
+```c
+uint32_t flags = 0;
+mn_engine_capabilities(&flags);   /* 不需要 engine，描述的是这个库 */
+```
+
+| 位 | 值 | 含义 |
+| --- | --- | --- |
+| `MN_CAPABILITY_QUIC_PROXY` | `1 << 0` | 可以拨 `quic://` 代理 |
+
+本仓库发布的九个产物该位为 1：`tools/build-core-*.sh` 在 `is_debug = false` 的官方
+构建上显式覆盖了 `enable_quic_proxy_support`，理由写在脚本里——`quic://` 代理不是
+调试特性。这是本项目对 Chromium 默认值的**有意偏离**，位为 1 就是它可见的凭据。
+
+### 位 1 为什么是保留的
+
+`enable_bracketed_proxy_uris` 也被打开了（`proxy_config.cc:105-110` 用 `CHECK` 把它和
+`enable_quic_proxy_support` 绑在一起，只开一个会让带括号的链崩溃而非失败），但它
+**没有**对应的能力位，因为 ABI 表达不了这个能力：
+
+- `proxy_chain` 按 `,` 切分，每个 entry 交给 `ProxyServer::FromSchemeHostAndPort`，
+  再 `ProxyList::AddProxyServer`——一个 entry 就是一跳，存不出多跳链。
+- 真正能构造多跳的是 `ProxyList::AddProxyChain(ProxyChain)`，只有
+  `MultiProxyUrisToProxyChain` 会调它，而那个函数用**空格**分隔各跳
+  （`proxy_string_util.cc:283`），且只从 `ProxyRules::ParseFromString` 进入。
+
+实测：`mn_engine_create` 对 `"[https://a:443 https://b:443]"` 与
+`"[https://a:443,https://b:443]"` 都返回 `MN_ERROR_INVALID_ARGUMENT`。报告一个 ABI
+无法兑现的位，会让这个位失去「探针」的作用——所以它不出现，而不是永远返回 0。
+
+### 未定义位
+
+本修订之外的位必须被忽略。fd 后续只追加，不重编号。
+
+---
+
+## v13（历史）
+
+`MN_ABI_VERSION` 是 13，导出符号 **30** 个：v13 只追加了 `mn_engine_capabilities`
+与 `mn_capability_t`。这一版引入的两个能力位（QUIC 代理、bracketed 链）在 v14 中
+继续有效，其中位 1 已在 v14 改为保留位，理由见上面「位 1 为什么是保留的」。
+
+---
+
+## v12（历史）
 
 `MN_ABI_VERSION` 是 12，导出符号 **29** 个：v12 新增了 `mn_request_release_buffer`。
 
@@ -372,11 +434,82 @@ chrome_122 – chrome_156: 该 feature 整条被删除，改由 SSLClientContext
 
 119 的翻转与抓包边界逐版本吻合，这是三条独立证据（抓包、源码、产物）指向同一结论。
 
-**开启之后仍然不加密 SNI**：`ConfigureEch()` 在 `kOpportunistic` 下无条件调用
-`SSL_set_enable_ech_grease(ssl, 1)`，而 ECHConfigList 为空时只走 GREASE 分支
-（`net/socket/ssl_client_socket_impl.cc:1899`）。ECHConfigList 的唯一来源是 DNS HTTPS 记录，
-桌面构建不会为本引擎取到它，所以 `mn_ech_status_t` 恒为 `MN_ECH_NOT_ATTEMPTED`。
+**开了 GREASE 不等于做了 ECH**：`ConfigureEch()` 在 `kOpportunistic` 下无条件调用
+`SSL_set_enable_ech_grease(ssl, 1)`（`net/socket/ssl_client_socket_impl.cc:1899`），
+随后才判断 `ssl_config_.ech_config_list` 是否为空：为空走 GREASE，非空则
+`SSL_set1_ech_config_list()` 并真的加密 ClientHello（同文件 1900-1910；inner hello 的构造在
+`third_party/boringssl/src/ssl/encrypted_client_hello.cc:789`）。
 
+ECHConfigList 的唯一来源是 DNS HTTPS 记录（`net/dns/dns_response_result_extractor.cc:581`）。
+**本引擎默认就会去查它**：`core/source/engine.cc` 无条件调用
+`builder.set_host_resolver(CreateStandaloneResolver(...))`，并把
+`ManagerOptions::insecure_dns_mode` 设为 `kEnabledBuiltIn`、
+`additional_types_via_insecure_dns_enabled` 设为 true。这个组合与桌面 Chrome 默认值一致：
+`stub_resolver_config_reader.cc:190` 把 `kBuiltInDnsClientEnabled` 默认为
+`ShouldEnableAsyncDns()`，而 `kAsyncDns` 在 Linux/Mac/Windows/Android 上
+`FEATURE_ENABLED_BY_DEFAULT`（`net/base/features.cc:40-43`）；
+`IsDnsPlatformSupported()` 在非 Android 平台返回 false（同文件 997-1006），
+所以 embedder 选的是 `kEnabledBuiltIn`（`stub_resolver_config_reader.cc:449-457`）。
+
+改动前的那一版只在传了 dns_* 参数时才建 resolver，默认路径落到
+`url_request_context_builder.cc:381` 的 `ManagerOptions()`——
+而 `insecure_dns_mode` 默认 `kDisabled`（`net/dns/host_resolver.h:354`），
+HostResolverManager 因此不 push 任何 DNS task（`host_resolver_manager.cc:1354-1355`），
+只剩 `TaskType::SYSTEM`，也就是 `getaddrinfo()`——它没有任何 HTTPS 记录通道，
+ECHConfigList 不可能出现。这不是 Chromium 的边界，是默认配置的差别。
+
+| 场景 | 结果 |
+| --- | --- |
+| 目标域名有 HTTPS 记录且带 `ech=`（如 `crypto.cloudflare.com`） | `ech_status=success`，服务端看到 `sni=encrypted` |
+| 目标域名没有 HTTPS 记录（如 `tls.peet.ws`、`quic.tools.scrapfly.io`） | 只有 GREASE，`ech_status=not_attempted`，SNI 明文 |
+| `chrome_118` 及以前 | 不发 ECH 扩展，`ech_status=not_attempted` |
+| 系统解析器返回不了 A/AAAA（离线、容器无 nameserver） | 退回 `TaskType::SYSTEM`，请求照常，`ech_status=not_attempted` |
+
+**前提**：默认路径要拿到 ECHConfigList，上游解析器必须真的回答 type 65。本机实测不是
+「stub 不转发」这一种情况，而是**所有明文 DNS 都拿不到 type 65**：
+
+| 解析器 | `A crypto.cloudflare.com` | `HTTPS crypto.cloudflare.com` |
+| --- | --- | --- |
+| `127.0.0.53`（systemd-resolved stub） | `198.18.1.38` | 空应答（NOERROR, ANSWER: 0） |
+| `1.1.1.1`（UDP） | `198.18.1.39` | 空应答 |
+| `8.8.8.8`（UDP） | — | 空应答 |
+| `223.5.5.5`（UDP） | — | 空应答 |
+| `192.168.179.2`（本机网关） | — | 空应答 |
+| **`cloudflare-dns.com`（DoH）** | 真实地址 | **`ech=AEX+DQBBkAAg...`** |
+
+`198.18.1.x` 是 RFC 2544 保留测试段，说明这条链路上的明文 DNS 被改写，且 type 65 的查询
+被整体丢弃。所以在这台机器上，默认路径 `not_attempted` / SNI 明文的原因是**拿不到
+ECHConfigList**，与引擎无关：决定权在 DNS 应答而不在客户端，真实 Chrome 在同一台机器上
+结论相同。文档不得把「默认即加密」写成无条件承诺。
+
+**端到端已实测**：同一个产物，只把解析器换成能应答 type 65 的 DoH，就得到加密 SNI：
+
+```bash
+LD_LIBRARY_PATH=core/binaries/linux-x86_64 PYTHONPATH=bindings/python python3 -c "
+import chrome_client as c
+s = c.Session(doh_template='https://cloudflare-dns.com/dns-query',
+              dns_secure_mode=2, timeout=20)
+r = s.get('https://crypto.cloudflare.com/cdn-cgi/trace', timeout=20)
+print(r.ech_status); print(r.text)"
+# success
+# ... sni=encrypted
+```
+
+三次对照（同一构建、同一 URL）：
+
+| 解析器 | `ech_status` | 服务端看到的 SNI |
+| --- | --- | --- |
+| 默认（`127.0.0.53`） | `not_attempted` | `sni=plaintext` |
+| `cloudflare-dns.com` DoH | `success` | `sni=encrypted` |
+| `dns.google` DoH | `not_attempted` | `sni=plaintext` |
+
+第三行不是坏事：DoH 加密的是**查询**，但 ECH 要的是那条应答里带 `ech=`；`dns.google` 对
+这个域名给出的 HTTPS 记录里没有可用的 `ech=`，所以没有 ECHConfigList 可用。也就是说
+`not_attempted` 在此时的含义是「没拿到配置」，不是「功能被关掉」。Cloudflare DoH 连跑
+5 次均为 `success` / `sni=encrypted`，不是偶然命中。
+回归用的确定性验证不依赖外网 DNS：用本机签名的应答器回一条带 `ech=` 的 HTTPS 记录，
+`dns_nameservers="127.0.0.1:PORT"` 指向它即可复现 `success` 与 `sni=encrypted`；
+同理，把系统解析器的 HTTPS 应答关掉就能复现 `not_attempted`。
 ### DoH：86 起全部支持，差异只在声明位置
 
 DoH 不出现在抓包里（DNS 发生在 TLS 之前），所以这一行只能靠源码与实测：
@@ -400,5 +533,7 @@ DoH 不出现在抓包里（DNS 发生在 TLS 之前），所以这一行只能�
 ### 一句话结论
 
 - **DoH**：`chrome_86` 起每个 profile 都能用，`doh_template` + `dns_secure_mode` 是唯一开关。
-- **ECH**：`chrome_118` 及以前不发 ECH 扩展；`chrome_119` 起发 GREASE，但**永远不加密 SNI**——
-  这是 Chromium 桌面构建的边界，不是本项目的缺口。
+- **ECH**：`chrome_118` 及以前不发 ECH 扩展；`chrome_119` 起发 GREASE。真加密 SNI 需要
+  ECHConfigList，而它只来自 DNS HTTPS 记录：引擎自己建 resolver（传任一 dns_* 参数）时会查，
+  默认 resolver 不查。所以「只发 GREASE」是**本引擎默认 DNS 路径**的结果，不是 Chromium 的边界——
+  同一份 Chrome 158 二进制，配上会给出 HTTPS 记录的解析器，就会真的加密 ClientHello。

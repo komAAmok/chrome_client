@@ -199,5 +199,22 @@ def abi_version() -> int:
     ...
 
 
+def capabilities() -> int:
+    """Capability bits this Core artifact was compiled with, as an int.
+
+    Compare against ``CAPABILITY_QUIC_PROXY`` (this build can dial a
+    ``quic://`` proxy). Unknown bits are preserved.
+
+    Example:
+        >>> isinstance(chrome_client.capabilities(), int)
+        True
+    """
+    ...
+
+
+#: Bit set when the Core can speak to a ``quic://`` proxy.
+CAPABILITY_QUIC_PROXY: int
+
+
 #: Every public name, plus ``"requests"`` and ``"__version__"``.
 __all__: List[str]

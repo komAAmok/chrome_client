@@ -532,6 +532,75 @@ Mach-O trie 的子节点偏移按当前节点而非 trie 起点计算（直接�
 early return」与「删掉」在**所有 pinned profile** 上等价，且不会把开关静默吃掉。判定依据
 必须落到具体行号（`features.cc:37`），不能只说「删了应该没关系」。
 
+## 82. 「默认路径不成立」被写成了「产品边界」
+
+**后续（同一条缺陷的另一半）**：上一段修的是文档。真正让「默认路径不成立」变成产品行为的是
+`core/source/engine.cc`：建 resolver 的整个分支被 dns_* 参数包裹，不传参数就落到 builder 的
+默认 `ManagerOptions()`，其中 `insecure_dns_mode` 是 `kDisabled`，
+于是只跑 `TaskType::SYSTEM`（getaddrinfo），DNS HTTPS 记录永远不被查询。
+修法是把 resolver 建成无条件的，并把 `insecure_dns_mode` 设为 `kEnabledBuiltIn`、
+`additional_types_via_insecure_dns_enabled` 显式设为 true——这正是桌面 Chrome 的默认配置
+（`stub_resolver_config_reader.cc:190` 与 `net/base/features.cc:40-43`）。
+dns_* 从「开启开关」降级为「逐字段覆盖」，语义没变，默认行为变了。
+
+**验证方式值得单独记**：外网 DNS 会自己变（同一台机器上换时刻跑，type 65 有时有应答有时没有），
+所以「默认路径会不会发 type 65」不能靠连 public 域名断言。可重放的做法是起一个本地应答器，
+让它对 type 65 回一条带 `ech=` 的 HTTPS 记录，再用 `dns_nameservers="127.0.0.1:PORT"` 指向它：
+这样 `success` 与 `sni=encrypted` 都由本机决定，与外网无关。
+用 `strace -f -xx -e trace=sendto` 比对改动前后的 query type 也能直接看到差别：
+改动前默认路径只有 `type=1`，改动后是 `type=65` + `type=1`。
+
+
+**现象**：README、`docs/ABI.md`、`docs/COMPATIBILITY_BOUNDARY.md`、`core/abi/minicronet.h` 与 Python
+stub 五处都在断言「本引擎不取 ECHConfigList，所以 `ech_status` 恒为 `not_attempted`」，
+并把原因归给「桌面 Chromium 的边界」。实测：`chrome_158` 对 `https://crypto.cloudflare.com/cdn-cgi/trace`
+只要传 `dns_nameservers="1.1.1.1"`，`ech_status=success`、响应体 `sni=encrypted`；不传任何
+dns_* 参数才 `not_attempted` / `sni=plaintext`。
+
+**根因**：`core/source/engine.cc:801` 的 DNS 覆盖分支是有条件的——只有传了 dns_* 参数才
+`set_host_resolver(CreateStandaloneResolver(...))`。不传时 builder 用 Chromium 默认 resolver，
+走 `TaskType::SYSTEM`，根本不发 DNS HTTPS 记录查询，`ech_config_list` 恒空，于是 GREASE。
+把「默认配置下的观察」写成了「实现上的不可能」，顺手把责任推给了上游。
+
+**为什么五处都错而门禁没红**：没有任何门禁拿「ECH 能不能成功」当断言。`audit-padding-rule.py`
+只钉「ECH 起始大版本是 119」，`verify-wire-capture.py` 只钉「119 起每条连接都有扩展且 payload
+互不相同」——两条都在**没有 ECHConfigList** 的前提下成立，所以错误断言与它对得上。
+
+**规则**：把结论写成「不可能 / 永远 / 恒为」之前，先问这一句——**是代码里没有这条路径，还是
+我这次调用没走进这条路径？** 前者要给出「没有」的证据（哪几行使其不成立，§12 同样要求否定性
+结论有证据），后者只是默认值。本次的证据是 `engine.cc:801` 的条件分支 + 一次对照实验
+（同一 profile、同一 URL，只改 DNS 参数），而旧断言连一个「哪行阻止了它」都指不出来。
+
+**复核命令（可重放）**：
+
+```bash
+LD_LIBRARY_PATH=core/binaries/linux-x86_64 PYTHONPATH=bindings/python python3 - <<'PY'
+from chrome_client import Session
+URL = "https://crypto.cloudflare.com/cdn-cgi/trace"
+for label, kw in (("system", {}),
+                  ("dns_nameservers", dict(dns_nameservers="1.1.1.1")),
+                  ("doh", dict(doh_template="https://cloudflare-dns.com/dns-query",
+                                dns_secure_mode=2))):
+    with Session(impersonate="chrome_158", **kw) as s:
+        r = s.get(URL, timeout=30)
+        sni = [l for l in r.text.splitlines() if l.startswith("sni=")]
+        print(label, r.ech_status, sni)
+PY
+# 本机实测：
+#   system          not_attempted  ['sni=plaintext']
+#   dns_nameservers success        ['sni=encrypted']
+#   doh             success        ['sni=encrypted']
+```
+
+源码侧的那一行是 `core/source/engine.cc:801` 的条件分支；上游侧是
+`net/socket/ssl_client_socket_impl.cc:1897-1910`（先无条件开 GREASE，再看
+`ech_config_list` 是否为空）。**没有 `ech_config_list` 就没有真 ECH，而这个 list 只在引擎
+自己建 resolver 时才可能有内容**——两句合起来才是完整结论，旧文档只写了后半句，然后把它
+读成了「永不发生」。
+**顺带修掉的**：`not_attempted` 现在同时表示「默认 resolver 没查」与「查了但域名没有
+HTTPS 记录」两种情形，调用方无法区分。要分开需要新 ABI 值（例如 `MN_ECH_NO_CONFIG`），
+那是新增面，不在本轮文档修正范围内——已记入 `docs/NEXT_STEPS.md`。
+
 ## 27. 门禁的「方向」也是覆盖面：只查超集的门禁看不见多余的成员
 
 **现象**：同一类盲区在这次审计里出现三次，都是「只验证一个方向」：
@@ -2738,3 +2807,134 @@ a.html，内容这些字节」。facade 却调用 `mimetypes.guess_type()` 给 p
 它不是类型声明；`RFC 7578 §4.4` 让 part 类型可省略，所以省略才是既兼容又互操作的选择。
 「猜得更准」在协议层面不是优点——多出的每一个字节都是对方能观测到的指纹，也是
 调用方没授权过的语义。
+
+## 84. 两个「环境性失败」的根因都是我们自己的判断方式
+
+**现象**：`python3 tools/audit-abi-layout.py` 长期报 `collect2: fatal error: cannot find
+`'ld'``，`tools/audit-pypi-metadata.sh` 长期报 `docs/CHROME_158_SUPPORT.md:47:
+commit ea9f3a3… is not the pinned CHROMIUM_REVISION`。两次都被归因成「本机环境问题」
+并在交付摘要里当成既有状态放过。
+
+**第一个根因（gate 自己）**：`resolve_compiler()` 用 `shutil.which` 找到编译器就认为能编译，
+但 `subprocess.run` 没有传 `env`，子进程继承的环境**可能根本没有 `PATH`**。实测本会话
+`env` 只有 `PWD`、`SHLVL`、`_` 三个变量；`gcc` 派生的 `collect2` 用 `execvp("ld")` 查 PATH，
+于是明明 `/usr/bin/ld` 存在也找不到。`shutil.which` 只证明「这个进程的 PATH 上有它」，
+**没有把那条 PATH 交给子进程**。修法是 `compiler_env()`：把编译器目录与三个标准目录补进
+子进程 PATH。注意空字符串 PATH 与未设置 PATH 在 `execvp` 下语义不同，所以必须发非空值。
+
+**第二个根因（gate 的排除粒度）**：`audit-pypi-metadata.sh` 只按**目录**排除 `profiles/`，
+理由写得很清楚——那里的 `chromium_commit` 是「抓包所用 tag 的 tree」，与
+`CHROMIUM_REVISION` 是不同的事实。但同一个事实类型也存在于 `docs/CHROME_*_SUPPORT.md`：
+`boringssl_revision` / `quiche_revision` 来自该 release tag 自己的 DEPS，**任何 BoringSSL
+commit 都不可能等于 CHROMIUM_REVISION**。按目录排除会把整份验收记录一起豁免，所以改按
+**表格行**排除：一行同时指出字段名（`boringssl_revision`/`quiche_revision`/`chromium_commit`）
+并说明「来自该 tag 的 DEPS」才允许出现外来 hash；裸 hash 仍然红。
+
+**规则**：把失败归因为「环境」之前，要先能说出**是哪一行代码**让它依赖了那个环境。
+说不出来就不是环境问题。这两次都能指出：`subprocess.run` 少传 `env`；
+`name.startswith("profiles/")` 只覆盖了载体的一种摆放方式。
+
+**变异测试**（两项都做了）：
+
+| 变异 | 期望 | 实测 |
+| --- | --- | --- |
+| `env=dict(os.environ)` 退回原样 + `env -u PATH` | 非零 | `exit 1`，`compilation terminated` |
+| 把 DEPS 行改成裸 `\| 某个 commit \| <hash> \|` | 非零 | `exit 1` |
+| 字段名保留、删掉「来自 DEPS」说明 | 非零 | `exit 1` |
+| 恢复原样 | 0 | `exit 0` |
+
+## 85. 一个 scheme 的支持与否，不是绑定层能回答的问题
+
+`quic://` 在 Python facade 里被硬编码成 `UnsupportedFeature`，注释写着
+`ENABLE_QUIC_PROXY_SUPPORT is off`。这句话在写下的那天是对的，在一个月后就成了
+**绑定层替 Core 决定能力**——而它根本不知道产物是用哪份 `args.gn` 编的。
+
+三件事同时错了：
+
+1. **答案被写在了错误的一层。** 换一个 Go 绑定，同一句判断要再写一遍，而且很可能
+   写成相反的结论。按 §1.1 的主判据问一句「换语言要重写吗」，答案是「要」，就应该
+   下沉——但正确的下沉不是「搬到 Rust」，而是**让 Core 自己报告**：
+   `mn_engine_capabilities` 返回 `MN_CAPABILITY_QUIC_PROXY`，绑定层只读位。
+2. **失败方式不可区分。** 没有能力位时，唯一的探针是「发个请求看错误码」，而
+   `ERR_NO_SUPPORTED_PROXIES (-336)` 同时意味着「本构建不支持这个 scheme」和
+   「支持但你指定的代理拒绝了」。两件完全不同的事共用一个错误码，调用方无法据此
+   决策。这不是错误码不够用，是**信息根本没被送出来**（§1.1 判据 1）。
+3. **`proxy=` 与 `proxy_chain=` 走了两条不同的解析路径，并且只有一条被改。**
+   `proxy_chain` 经 `ProxyServer::FromSchemeHostAndPort`，`proxy=` 经
+   `ProxyRules::ParseFromString(rules)` —— 后者的 `is_quic_allowed` 默认 `false`。
+   改完第一条路径后 `proxy=quic://` 仍然返回 `-336`，而 `proxy_chain=quic://` 已经
+   发出 QUIC 包。两个选项描述同一条连接路径，表现不一致本身就是一个必须修的缺陷，
+   而不是「两个选项语义不同」。
+
+**变异测试暴露的另一件事**：把 `tools/build-core-*.sh` 里新加的两个 gn 变量写进
+`record-core-build-args.py` 之前，快照里没有任何东西记录它们——也就是说有人把
+`enable_quic_proxy_support` 改回 false 重建，所有静态门禁都还是绿的，只有到第一个
+`quic://` 请求才会发现。配置快照的价值在于记录**能改变能力**的开关，不是记录所有开关。
+
+**验收的两个级别要分开说。** 解析层（`quic://` 能归一化、未知 scheme 仍被拒）和握手层
+（UDP 上真的出现 6 个 QUIC v1 Initial 包）都在本机做到了；**隧道本身没有验证**，因为
+没有可用的 QUIC 代理对端。把这件事写成 T-8 而不是写进「已支持」，是因为
+`MN_CAPABILITY_QUIC_PROXY` 断言的是「这个产物能拨」，不是「拨通过」。
+
+## 86. 校验写完之后，必须先证明它会红
+
+这一轮补「同步链缺一个校验」，我写了三版，前两版都是**永远为真**的检查，而且两次
+都是变异测试把它们照出来的：
+
+1. **在 `install` 之后比对目标树**。变异「删掉目标文件」→ exit 0。因为 `install`
+   先跑，会把目标修好，校验再去比，比的已经是修好的那个。这个检查唯一能抓的是
+   「install 指向了错误路径」，而那种情况 install 本身就会失败。
+2. **用 `case` 列出扩展名，判断每个源文件是否被覆盖**。变异「删掉 `*.h` 的 install
+   循环」→ exit 0。因为 `case` 里那份清单是**我自己写死的**，它不知道规则被删了；
+   它重述的是我脑中的假设，不是脚本的实际行为。
+3. 第三版从脚本自身的 `for` 行与 `install -m 644` 行里抽出 glob，再拿它匹配源树。
+   两个变异都红了。
+
+教训不是「要写变异测试」——那条规则早就在 §6 里。教训是：**一个检查的判据必须来自
+被测对象本身，而不是来自写检查时的记忆。** 第二版看起来完全合理，`case` 分支写得
+清清楚楚，注释也解释了为什么这些扩展名要覆盖——它错在把「我知道 sync 装什么」当成
+了「sync 装什么」。
+
+同一轮里，`tools/audit-core-inputs.sh` 的第 2 条不变式也犯了这个错：它的 glob 清单
+（`*.c` / `*.cc` / `minicronet/*.h`）漏了 `core/source/*.h`，于是新加的
+`platform_identity.h` 既不被检查是否被跟踪，也不影响它打印「all tracked」。补上 glob
+后它立刻报出那个文件未被 Git 跟踪——一个真实存在、此前无人发现的问题。
+
+**判据**：新增或修改任何门禁，先问一句「把被检查的东西破坏掉，它会红吗」，并且真的
+去破坏。变异测试跑出绿色不是麻烦，是这套方法唯一的价值。
+
+## 87. 同一个事实的两份实现，即使同语言也算缺陷
+
+把平台身份下沉到 Core 时，我在 `minicronet.cc` 写了 `PlatformHintLiteral`，而
+`engine.cc` 里早就有一个功能完全相同的 `Engine::platform_hint`。两者都是 `switch`、
+都返回 `"Windows"` / `"macOS"` / `"Linux"`，都带同样的 `BUILDFLAG` 兜底。
+
+AGENTS §1.1 的主判据问「换一个语言重写，这段代码要不要再写一遍」，用在这里会漏判：
+两份实现都在 C++ 里，看起来不像「跨语言重复」。但那条判据追问的第二句是
+「两个实现出现分歧时，谁是错的」——答案需要回去看一遍源码才知道，这就说明它不该有
+第二份。
+
+结果是抽成 `core/source/platform_identity.h`，`PlatformToken` 与 `PlatformHint` 各
+一份，三个调用方（`DefaultUserAgent`、`Engine::platform_hint`、两个 ABI getter）全部
+引用它。验证方式是端到端比对：ABI 报告的值与线上字节逐字相同。
+
+## 88. 平台身份的派生点不止一个，而在同一次运行里可以同时活着
+
+`browser_headers.py` 用自己的 `sys.platform` + `platform.machine()` 派生 User-Agent
+组与 `sec-ch-ua-platform`；`core/source/minicronet.cc` 用 `BUILDFLAG(IS_WIN/IS_MAC)`
++ `ARCH_CPU_*` 派生同样的两个字符串。而 `browser_headers.py` 的模块注释里写着
+「Must match `core/source/minicronet.cc` exactly」——也就是说这个风险是已知的、写在
+代码里的，只是从没有人核对过。
+
+它在本机「碰巧对上」，因为两台机器都是 Linux x86_64。反例是现成的：同一台 x86_64
+主机加载 `core/binaries/linux-x86/`（32 位构建）时，`ARCH_CPU_X86` 让 Core 说
+`X11; Linux i686`，而 `platform.machine()` 仍返回 `x86_64`，Python 说
+`X11; Linux x86_64`。两条路径当场分叉，而两边看上去都是对的。
+
+修法不是「把注释写得更醒目」，是把派生下沉到 Core：ABI v14 新增
+`mn_platform_user_agent_group` 与 `mn_platform_hint`，Python 只读不推。读不到时抛
+`UnsupportedFeature`，不回退到本地猜测——猜测对了这台、错了下一台，正是要消除的东西。
+
+顺带发现一条「看起来在验证」的测试：`test_the_platform_token_matches_the_cores_derivation`
+名字声称与 Core 一致，实际只断言了前缀和没有括号。已改成逐平台比对 ABI 返回值，
+并用变异测试证明伪造平台值会让它红。这是 §7「不得写看起来在验证的注释」的又一例。

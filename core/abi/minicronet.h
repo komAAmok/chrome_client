@@ -20,7 +20,7 @@
 extern "C" {
 #endif
 
-#define MN_ABI_VERSION 12u
+#define MN_ABI_VERSION 14u
 
 /* tools/sync-core.sh installs core/exports/minicronet.lds, whose node name is
  * part of the link-time contract: every extension already built against this
@@ -177,7 +177,10 @@ typedef struct mn_engine_config {
   const char *host_mapping_rules;
   size_t host_mapping_rules_length;
   /* Comma-separated nameservers ("8.8.8.8:53,1.1.1.1"). Empty keeps the system
-   * configuration. */
+   * configuration list but still resolves through the engine's own built-in
+   * client, not through the platform resolver: that client is what queries the
+   * DNS HTTPS record (type 65) whose ech= parameter makes Encrypted Client
+   * Hello possible at all. Non-empty replaces the list. */
   const char *dns_nameservers;
   size_t dns_nameservers_length;
   /* DNS-over-HTTPS template ("https://dns.example/dns-query"). Empty disables
@@ -280,6 +283,72 @@ typedef struct mn_engine_config {
 
 /* Returns MN_ABI_VERSION compiled into the library. */
 MN_EXPORT uint32_t MN_CALL mn_abi_version(void);
+
+/* What this artifact was compiled with, as a bitmask. Readable before any
+ * engine exists: it describes the library, not a connection.
+ *
+ * A capability bit exists because the same ABI is built nine times with
+ * different args.gn, and two of those knobs change behaviour a caller can
+ * observe. Without a bit, a binding can only discover the difference by
+ * attempting a request and interpreting the error, which cannot tell "this
+ * scheme is refused" from "this scheme is supported but the peer refused".
+ *
+ * Bits not defined in this revision must be ignored; a future revision only
+ * ever appends. */
+typedef enum mn_capability {
+  /* This artifact can speak to a quic:// proxy. Chromium gates it behind
+   * ENABLE_QUIC_PROXY_SUPPORT, which upstream sets to is_debug; this project
+   * turns it on explicitly (see the args.gn block in tools/build-core-*.sh).
+   * With the bit clear, mn_engine_create rejects a quic:// proxy_chain rather
+   * than building one that fails at request time. */
+  MN_CAPABILITY_QUIC_PROXY = 1u << 0,
+  /* Reserved. Nothing here yet: a bracketed multi-hop chain cannot be
+   * expressed through proxy_chain, which splits on "," and hands each entry to
+   * ProxyServer::FromSchemeHostAndPort -- ProxyList::AddProxyServer stores one
+   * hop, while a bracketed chain needs AddProxyChain(ProxyChain). Upstream's
+   * ENABLE_BRACKETED_PROXY_URIS is therefore turned on (the pair is CHECKed
+   * against ENABLE_QUIC_PROXY_SUPPORT in proxy_config.cc:105-110) but is NOT
+   * advertised here: reporting a capability the ABI cannot exercise would make
+   * the bit useless as a probe. Bit 1 stays unused so a future ABI that grows a
+   * real multi-hop field can claim it without renumbering bit 0. */
+} mn_capability_t;
+
+MN_EXPORT mn_result_t MN_CALL mn_engine_capabilities(uint32_t *out_flags);
+
+/* The User-Agent group this artifact emits for a platform, without parentheses,
+ * e.g. "X11; Linux x86_64" or "Windows NT 10.0; Win64; x64".
+ *
+ * Three fields state one fact: the User-Agent group, sec-ch-ua-platform and
+ * sec-ch-ua-mobile. Deriving them anywhere but here means two implementations
+ * of one fact, and the two diverge as soon as they disagree about *when* the
+ * answer is decided: this function is a compile-time constant of the artifact
+ * (BUILDFLAG(IS_WIN/IS_MAC) plus ARCH_CPU_*), while a binding can only observe
+ * the host it happens to run on (sys.platform, platform.machine()). On one
+ * x86_64 host serving a 32-bit Core the two answer differently --
+ * "X11; Linux i686" versus "X11; Linux x86_64" -- and both look right.
+ *
+ * Readable before any engine exists: the answer describes the library.
+ *
+ * out_group receives a pointer to storage owned by the Core and valid for the
+ * life of the process; it is never freed by the caller. out_length receives the
+ * byte length. Returns MN_ERROR_INVALID_ARGUMENT when either out pointer is
+ * null, or MN_ERROR_UNSUPPORTED_ABI when platform is outside mn_platform_t.
+ *
+ * MN_PLATFORM_AUTO resolves the way an engine with that value would: to this
+ * build own platform. */
+MN_EXPORT mn_result_t MN_CALL mn_platform_user_agent_group(
+    mn_platform_t platform, const char **out_group, uint32_t *out_length);
+
+/* The sec-ch-ua-platform value for a platform, quotes included, e.g. "Linux".
+ *
+ * Same storage and error contract as mn_platform_user_agent_group. Separate
+ * rather than derived from it because the two strings are not a function of one
+ * another: the group carries an architecture, the hint carries a product name,
+ * and a binding that tried to derive one from the other would be re-implementing
+ * the table this ABI exists to publish. */
+MN_EXPORT mn_result_t MN_CALL mn_platform_hint(mn_platform_t platform,
+                                               const char **out_hint,
+                                               uint32_t *out_length);
 /* Returns the library version string, injected at build time from the
  * workspace version (tools/version.py + tools/sync-core.sh). */
 MN_EXPORT const char *MN_CALL mn_version_string(void);
@@ -628,10 +697,10 @@ mn_request_negotiated_protocol(mn_request_t *request,
  * (encrypted_client_hello), which is false both for "tried and rejected" and
  * for "never tried".
  *
- * MN_ECH_NOT_ATTEMPTED is what a desktop build returns in practice. Chromium
- * only obtains an ECHConfigList from a DNS HTTPS record, and this engine does
- * not fetch one, so no ECH extension is ever offered -- the value means "no
- * ECHConfigList was available", not "the platform disabled ECH". */
+ * MN_ECH_NOT_ATTEMPTED means no ECHConfigList was available, so only GREASE
+ * (or nothing before chrome_119) went out -- not that the platform disabled
+ * ECH. A list is fetched only when the engine builds its own resolver from
+ * the dns_* options; the default resolver never queries the HTTPS record. */
 typedef enum mn_ech_status {
   MN_ECH_NOT_ATTEMPTED = 0,
   MN_ECH_SUCCESS = 1,

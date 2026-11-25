@@ -881,6 +881,9 @@ impl PyEngine {
             dns_rotate: u8::from(dns_rotate),
             dns_padding: u8::from(dns_padding),
             platform: platform_mode(platform.as_deref())?,
+            // The facade injects the captured header set; see the note on
+            // EngineConfig in crates/minicronet/src/lib.rs.
+            inject_client_hints: false,
             max_sockets_per_group,
         };
         Ok(PyEngine {

@@ -73,6 +73,18 @@ icu_use_stub_data = false
 # Upstream only turns is_cfi on for official linux-x64, so this line changes
 # nothing here; it is kept so all nine targets carry identical arguments.
 is_cfi = false
+# ---- Deliberate deviation from Chromium's default: quic:// proxies. ----
+# net/features.gni:74 sets enable_quic_proxy_support = is_debug, so an official
+# (is_debug = false) build cannot speak to a QUIC proxy at all: ProxyChain
+# rejects the scheme, ProxyUriToProxyServer refuses to parse it, and
+# ProxyRules::ParseFromString CHECKs that nobody asked (proxy_config.cc:110).
+# A QUIC proxy is not a debugging feature, so the capability is turned on here
+# instead of by flipping is_debug, which would also bring DCHECKs, the debug
+# CRT and an unoptimised library. enable_bracketed_proxy_uris gates the same
+# CHECK from the other side (proxy_config.cc:105), so the two move together:
+# turning QUIC on without it would make "[quic://a:443]" crash rather than fail.
+enable_quic_proxy_support = true
+enable_bracketed_proxy_uris = true
 EOF
 
 cd "$CHROMIUM_SRC"

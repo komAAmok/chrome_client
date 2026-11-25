@@ -75,6 +75,18 @@ icu_use_stub_data = false
 # This is the only target where upstream turns is_cfi on, so it is the only
 # one that shrinks: -147,456 bytes, 123,737 of them .text jump tables.
 is_cfi = false
+# ---- Deliberate deviation from Chromium's default: quic:// proxies. ----
+# net/features.gni:74 sets enable_quic_proxy_support = is_debug, so an official
+# (is_debug = false) build cannot speak to a QUIC proxy at all: ProxyChain
+# rejects the scheme, ProxyUriToProxyServer refuses to parse it, and
+# ProxyRules::ParseFromString CHECKs that nobody asked (proxy_config.cc:110).
+# A QUIC proxy is not a debugging feature, so the capability is turned on here
+# instead of by flipping is_debug, which would also bring DCHECKs, the debug
+# CRT and an unoptimised library. enable_bracketed_proxy_uris gates the same
+# CHECK from the other side (proxy_config.cc:105), so the two move together:
+# turning QUIC on without it would make "[quic://a:443]" crash rather than fail.
+enable_quic_proxy_support = true
+enable_bracketed_proxy_uris = true
 EOF
 if [[ ${DISABLE_OPTIONAL_TRACE_EVENTS:-0} == 1 ]]; then
   printf '%s\n' 'optional_trace_events_enabled = false' >>"$OUT_DIR/args.gn"
