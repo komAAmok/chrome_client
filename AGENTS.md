@@ -274,7 +274,11 @@ python3 tools/audit-python36-artifact.py
 # measured, rustfmt --check on the file at HEAD already reports diffs. Formatting
 # is therefore not a gate there, but the lints are: clippy passes clean today and
 # a warning that appears only in the 3.6 crate is one nothing else would catch.
-cargo clippy --manifest-path bindings/python36/Cargo.toml --offline -- -D warnings
+# --locked is not decoration: this crate keeps its own Cargo.lock, and a version
+# bump that skips it (0.2.16 -> 0.2.17 -> back) left the lock at 0.2.17 while the
+# manifest said 0.2.16, which fails every --locked wheel build on the matrix.
+# Measured: four python36 jobs red on Windows and macOS for exactly that.
+cargo clippy --manifest-path bindings/python36/Cargo.toml --offline --locked -- -D warnings
 python3 -m unittest discover -s bindings/python/tests -p "test_*.py"
 ```
 
