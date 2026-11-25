@@ -375,6 +375,44 @@ where `request()`, `prepare_request()` + `send()`, and `AsyncSession` converge.
 `transfer-encoding` and `content-length` stay settable: they are body framing,
 which the caller does control, and removing them was already fail-closed.
 
+#### `header_policy="drop"`: the same refusal, applied instead of raised
+
+Old scraping code carries `Connection: keep-alive` in a dict copied from
+somewhere, and asking every caller to edit it before the first request is a
+migration cost, not a correctness requirement -- the field cannot be honoured
+either way. `Session(header_policy="drop")` (`AsyncSession` takes the same
+option) removes the field instead of raising and records it in
+`session.dropped_headers`:
+
+```python
+session = Session(header_policy="drop")
+session.get(url, headers={"Connection": "keep-alive", "Cookie": "a=1"})
+session.dropped_headers          # {'connection': 1, 'cookie': 1}
+```
+
+The counter is the point: a silent drop that leaves no trace is the "asked and
+heard nothing" shape this section refuses, so the session reports what it
+discarded and a caller can assert it is empty in a test.
+
+`drop` removes five names beyond the six hop-by-hop fields, all for the same
+reason -- Chromium cannot honour them:
+
+| field | why dropping it changes nothing |
+| --- | --- |
+| `Host` | overwritten by `SetHeader(kHost, ...)`, `net/http/http_network_transaction.cc:1451` |
+| `Cookie` | attached by CookieMonster, which outranks a caller value |
+| `Content-Length`, `Transfer-Encoding` | body framing the Core computes from the body; a disagreeing value is the request-smuggling shape |
+| `Accept-Encoding` | would replace the profile's captured value in place, making the fingerprint depend on what the script passed |
+
+`Accept-Language` is **not** dropped: Chromium's `SetHeaderIfMissing` keeps a
+caller value (`net/url_request/url_request_http_job.cc:750-758`), so dropping it
+would discard something that works. It is still replaced by the profile's
+captured value when a profile is in play, and by `accept_language=` when the
+session sets one -- otherwise the caller's value reaches the wire.
+
+The default remains `"strict"`: a drop is only acceptable when the caller asked
+for it.
+
 ### Body framing: a caller-supplied `Transfer-Encoding` is passed through
 
 When a caller sets `Transfer-Encoding: chunked` on a request whose body is

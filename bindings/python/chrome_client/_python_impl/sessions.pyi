@@ -744,6 +744,8 @@ class BaseSession:
     proxy_chain: Optional[str]
     platform: str
     max_sockets_per_group: int
+    header_policy: str
+    dropped_headers: Dict[str, int]
     extra_fp: Optional[Union[ExtraFingerprints, Mapping[str, Any]]]
     header_order: Optional[List[str]]
     form_boundary: Optional[str]
@@ -800,6 +802,7 @@ class BaseSession:
         proxy_chain: Optional[str] = None,
         platform: str = "auto",
         max_sockets_per_group: int = 0,
+        header_policy: str = "strict",
     ) -> None:
         """Configures the defaults shared by every request this session sends.
 
@@ -855,7 +858,11 @@ class BaseSession:
             user_agent: Engine-level User-Agent for HTTP *and* WebSocket. The
                 Core rejects a per-request UA because its placement is part of
                 the fingerprint.
-            accept_language: Engine-level ``Accept-Language``.
+            accept_language: Engine-level ``Accept-Language``. With a
+                profile the captured value is sent unless this is set.
+            header_policy: "strict" (default) raises UnsupportedFeature for a
+                hop-by-hop field; "drop" removes it instead and counts it in
+                dropped_headers.
             interface: Rejected; ABI v8 has no network-interface binding.
             doh_url: Rejected; DNS-over-HTTPS config is not exposed.
             max_recv_speed: Rejected; Chromium owns transfer pacing.
@@ -2564,6 +2571,7 @@ class AsyncSession(BaseSession):
         proxy_chain: Optional[str] = None,
         platform: str = "auto",
         max_sockets_per_group: int = 0,
+        header_policy: str = "strict",
     ) -> None:
         """Configures the asyncio session.
 
@@ -2601,7 +2609,11 @@ class AsyncSession(BaseSession):
             retry: Attempt count or :class:`RetryStrategy`.
             cache: Enable the Chromium HTTP cache.
             user_agent: Engine-level User-Agent for HTTP and WebSocket.
-            accept_language: Engine-level ``Accept-Language``.
+            accept_language: Engine-level ``Accept-Language``. With a
+                profile the captured value is sent unless this is set.
+            header_policy: "strict" (default) raises UnsupportedFeature for a
+                hop-by-hop field; "drop" removes it instead and counts it in
+                dropped_headers.
             interface: Rejected.
             doh_url: Rejected.
             max_recv_speed: Rejected.

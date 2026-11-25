@@ -281,28 +281,74 @@ _HOP_BY_HOP_HEADERS = frozenset((
     "upgrade",
 ))
 
+#: What header_policy="drop" removes. The hop-by-hop set above, plus the fields
+#: Chromium overwrites or owns outright: Host
+#: (net/http/http_network_transaction.cc:1451), Cookie (CookieMonster outranks a
+#: caller value), Content-Length/Transfer-Encoding (framing computed from the
+#: body), and Accept-Encoding, whose caller value would replace the profile's
+#: captured one in place and make the fingerprint depend on what the script
+#: happened to pass.
+#:
+#: Accept-Language is excluded on purpose: Chromium's SetHeaderIfMissing keeps a
+#: caller value (net/url_request/url_request_http_job.cc:750-758), and dropping
+#: it was how a request lost its language entirely.
+_DROPPED_IN_DROP_POLICY = _HOP_BY_HOP_HEADERS | frozenset((
+    "host",
+    "cookie",
+    "content-length",
+    "transfer-encoding",
+    "accept-encoding",
+))
 
-def _reject_hop_by_hop_headers(headers):
+#: Fields Chromium inserts before it merges the caller's headers, in its order:
+#: Host, Connection (Proxy-Connection through a plain proxy), Content-Length or
+#: Transfer-Encoding, Pragma/Cache-Control (load flags), Authorization (proxy
+#: then server) -- net/http/http_network_transaction.cc:1449-1497,
+#: BuildRequestHeaders. Everything else comes from MergeFrom(extra_headers) and
+#: therefore keeps the order the caller (or the captured table) gave it.
+#:
+#: What is observable, measured on 0.2.17's Linux Core: Pragma and Cache-Control
+#: move (Chromium only inserts them itself under a cache load flag), while
+#: Host/Connection/Content-Length are Chromium's own insertions -- the caller's
+#: position is irrelevant because the field is written either way -- and
+#: Authorization is appended by MergeFrom when Chromium has no credentials of its
+#: own, so it stays last. The table is the source's order throughout, not a list
+#: of fields that happen to be movable.
+_WIRE_PREFIX = (
+    "host",
+    "connection",
+    "content-length",
+    "transfer-encoding",
+    "pragma",
+    "cache-control",
+    "authorization",
+)
+
+
+def _check_header_policy(headers, policy):
     """Fails closed for fields only the connection layer can honour.
 
-    Called from ``send()`` rather than only from ``_prepare_call``, because
-    ``request()`` is not the only way a header reaches the wire: a session-level
-    ``session.headers["Connection"]`` lands in the prepared set during
-    ``prepare_request``, and the requests contract also lets a caller build a
-    ``PreparedRequest`` by hand and pass it straight to ``send()``. Both bypassed
-    the guard when it lived on the ``request()`` path only -- measured before
-    this moved: ``connection: close``, ``keep-alive``, ``upgrade``, ``trailer``
-    and ``te`` were all sent on HTTP/1.1, which is exactly the degradation the
-    refusal exists to prevent.
+    Called from request() (through _prepare_call) and again from both send()
+    entry points, because request() is not the only way a header reaches the
+    wire: a session-level session.headers["Connection"] lands in the prepared
+    set during prepare_request, and the requests contract also lets a caller
+    build a PreparedRequest by hand and pass it straight to send(). Both
+    bypassed the guard when it lived on the request() path only -- measured
+    before this moved: connection: close, keep-alive, upgrade, trailer and te
+    were all sent on HTTP/1.1, which is exactly the degradation the refusal
+    exists to prevent.
 
     Args:
-        headers: The prepared request headers, or ``None``.
+        headers: The prepared request headers, or None.
+        policy: "strict" raises; "drop" is handled by _apply_header_policy and
+            does nothing here.
 
     Raises:
-        UnsupportedFeature: A hop-by-hop field was set or removed. The message
-            names every offending field and says why it cannot work.
+        UnsupportedFeature: A hop-by-hop field was set or removed and the
+            session header_policy is "strict". The message names every
+            offending field and says why it cannot work.
     """
-    if headers is None:
+    if headers is None or policy != "strict":
         return
     present = {name.lower() for name, _ in headers.multi_items()}
     offending = sorted(present.union(headers.deleted_names) & _HOP_BY_HOP_HEADERS)
@@ -313,7 +359,102 @@ def _reject_hop_by_hop_headers(headers):
         "do not reach the connection pool. On HTTP/2 and HTTP/3 these fields are "
         "discarded outright (RFC 9113 section 8.2.2, RFC 9114 section 4.2), so "
         "accepting a value would make behaviour depend on the negotiated "
-        "protocol." % (", ".join(offending),))
+        "protocol. Session(header_policy='drop') removes them instead of "
+        "raising." % (", ".join(offending),))
+
+
+def _apply_header_policy(headers, policy, sink):
+    """Removes what cannot reach the wire when the policy is "drop".
+
+    Nothing here is honoured by Chromium, so dropping it is not a silent
+    downgrade of a working option: Connection et al. never reach the pool (see
+    _check_header_policy), Host is overwritten by SetHeader(kHost, ...)
+    (net/http/http_network_transaction.cc:1451), Cookie is attached by
+    CookieMonster and outranks a caller value, and Content-Length /
+    Transfer-Encoding are body framing the Core computes from the body it is
+    given. A caller-supplied framing value that disagrees with the body is the
+    request-smuggling shape, so it is dropped rather than forwarded.
+
+    Accept-Language is deliberately not in the drop set: Chromium's
+    SetHeaderIfMissing keeps a caller value
+    (net/url_request/url_request_http_job.cc:750-758), so dropping it would
+    discard something that works.
+
+    Args:
+        headers: The prepared request headers, or None.
+        policy: "strict" or "drop".
+        sink: A mutable mapping counting what was dropped, by lower-cased name.
+
+    Returns:
+        The headers to send: the same object when nothing is dropped, otherwise
+        a new Headers without the dropped names or their removals.
+    """
+    if headers is None or policy != "drop":
+        return headers
+    removals = set(headers.deleted_names) & _DROPPED_IN_DROP_POLICY
+    dropped = [name for name, _value in headers.multi_items()
+               if name.lower() in _DROPPED_IN_DROP_POLICY]
+    if not dropped and not removals:
+        return headers
+    kept = Headers()
+    for name, value in headers.multi_items():
+        if name.lower() not in _DROPPED_IN_DROP_POLICY:
+            kept.add(name, value)
+    for name in headers.deleted_names:
+        if name not in _DROPPED_IN_DROP_POLICY:
+            kept._remove(name)
+    for name in dropped:
+        lowered = name.lower()
+        sink[lowered] = sink.get(lowered, 0) + 1
+    return kept
+
+
+def _reorder_wire_prefix(headers):
+    """Puts the fields Chromium inserts first at the front, in its own order.
+
+    HttpRequestHeaders is an ordered vector, SetHeader replaces a value in place
+    and an unknown name appends (net/http/http_request_headers.cc,
+    SetHeaderInternal), and the wire order is that vector order (the request is
+    built as request_line + headers in net/http/http_stream_parser.cc:236).
+    HttpNetworkTransaction::BuildRequestHeaders inserts Host, Connection,
+    Content-Length/Transfer-Encoding, Pragma/Cache-Control and Authorization
+    before it merges the request's extra headers
+    (net/http/http_network_transaction.cc:1449-1497), so those names belong in
+    front of everything a caller adds -- anywhere else and the block disagrees
+    with what the same Chromium build emits for its own request.
+
+    A name this table does not know keeps its original position: the rest of the
+    order is the browser's own insertion order, which the captured profile table
+    already carries, and the source pins nothing further for unknown fields.
+
+    Args:
+        headers: The merged Headers, or None.
+
+    Returns:
+        A Headers with the prefix fields first, or the input unchanged when none
+        of them is present.
+    """
+    if headers is None:
+        return None
+    items = list(headers.multi_items())
+    if not items:
+        return headers
+    lowered = {name.lower() for name, _value in items}
+    if not lowered & set(_WIRE_PREFIX):
+        return headers
+    ordered = []
+    for prefix_name in _WIRE_PREFIX:
+        ordered.extend((name, value) for name, value in items
+                       if name.lower() == prefix_name)
+    ordered.extend((name, value) for name, value in items
+                   if name.lower() not in _WIRE_PREFIX)
+    rebuilt = Headers()
+    for name, value in ordered:
+        rebuilt.add(name, value)
+    for name in headers.deleted_names:
+        rebuilt._remove(name)
+    return rebuilt
+
 
 def _reject_core_owned_removals(headers):
     """Fails closed when a caller asks to remove a header the Core owns.
@@ -342,7 +483,7 @@ def _reject_core_owned_removals(headers):
         "list already omits it."
         % (", ".join(removed), "it" if len(removed) == 1 else "them"))
 
-def _strip_core_overridden_headers(headers):
+def _strip_core_overridden_headers(headers, keep_accept_language=False):
     """Drops fields Chromium decides for itself, rather than forwarding them.
 
     Section 8 asks for a refusal when an option cannot be honoured, but here the
@@ -371,8 +512,15 @@ def _strip_core_overridden_headers(headers):
     """
     if headers is None:
         return headers, set()
+    candidates = _CORE_OVERRIDDEN_HEADERS
+    if keep_accept_language:
+        # Chromium fills this one with SetHeaderIfMissing
+        # (net/url_request/url_request_http_job.cc:750-758), so a caller value
+        # survives -- but only when nothing else produces the field. The caller
+        # of this function decides that; see _browser_headers.
+        candidates = candidates - {"accept-language"}
     stripped = {name.lower() for name, _value in headers.multi_items()} \
-        & _CORE_OVERRIDDEN_HEADERS
+        & candidates
     if not stripped:
         return headers, set()
     # Copy the deletion record explicitly. ``Headers(iterable)`` takes the
@@ -1950,7 +2098,8 @@ class BaseSession(object):
                  response_class=None, host_mapping=None, dns_nameservers=None,
                  doh_template=None, dns_secure_mode=None, dns_over_tls=False,
                  dns_rotate=False, dns_padding=False, hsts_bypass=None,
-                 proxy_chain=None, platform="auto", max_sockets_per_group=0):
+                 proxy_chain=None, platform="auto", max_sockets_per_group=0,
+                 header_policy="strict"):
         """Configures defaults shared by requests made through this session.
 
         ``impersonate`` selects a pinned Chromium profile, ``http_version`` can
@@ -2110,6 +2259,15 @@ class BaseSession(object):
         #: saying so for its whole life.
         self.default_headers = True if default_headers is None else bool(default_headers)
         self.headers = Headers(_default_headers() if self.default_headers else None)
+        #: "strict" refuses a hop-by-hop field; "drop" removes it and counts it
+        #: in dropped_headers. See _apply_header_policy for what each removed
+        #: field would have done (nothing) and what forwarding it would cost.
+        if header_policy not in ("strict", "drop"):
+            raise ValueError(
+                "header_policy must be 'strict' or 'drop', not %r"
+                % (header_policy,))
+        self.header_policy = header_policy
+        self._dropped_headers = {}
         if headers:
             self.headers.update(headers)
         self.cookies = cookiejar_from_dict(cookies) \
@@ -2165,6 +2323,46 @@ class BaseSession(object):
     def headers(self):
         """The session-level header mapping, as a :class:`Headers`."""
         return self._headers
+
+    @property
+    def dropped_headers(self):
+        """What this session removed because Chromium cannot honour it.
+
+        Only populated under header_policy="drop", where a session keeps working
+        instead of raising at the first hop-by-hop field. The keys are
+        lower-cased field names and the values are how many times each was
+        removed, so a caller migrating old code can see exactly which lines were
+        dropped instead of assuming none were.
+
+        Returns:
+            A new dict (a copy: mutating it does not change the session).
+        """
+        return dict(self._dropped_headers)
+
+    def _check_header_policy(self, headers):
+        """Raises for a field the session's header_policy refuses.
+
+        Args:
+            headers: The prepared request headers, or None.
+
+        Raises:
+            UnsupportedFeature: A hop-by-hop field was set or removed and
+                header_policy is "strict".
+        """
+        _check_header_policy(headers, self.header_policy)
+
+    def _apply_header_policy(self, headers):
+        """Returns the headers to send after the session's policy is applied.
+
+        Args:
+            headers: The prepared request headers, or None.
+
+        Returns:
+            The same headers under "strict"; under "drop", a copy without the
+            fields Chromium cannot honour, counted in dropped_headers.
+        """
+        return _apply_header_policy(headers, self.header_policy,
+                                    self._dropped_headers)
 
     @headers.setter
     def headers(self, value):
@@ -2336,9 +2534,19 @@ class BaseSession(object):
         # Strip before merging so a caller's Accept-Encoding never becomes the
         # captured value's replacement -- and so the strip applies even when the
         # profile path below is skipped.
-        caller, _stripped = _strip_core_overridden_headers(caller)
+        #
+        # Accept-Language is stripped only when something else will produce it:
+        # the session's accept_language= (the Core emits that from
+        # http_user_agent_settings) or the profile's captured value below.
+        # Stripping it with neither in play sent no Accept-Language at all --
+        # measured on 0.2.17: headers={"Accept-Language": "zh-CN,zh;q=0.9"} left
+        # the field off the wire entirely, while Chromium's SetHeaderIfMissing
+        # would have kept it.
+        replaced = bool(self.accept_language) or bool(profile and self.default_headers)
+        caller, _stripped = _strip_core_overridden_headers(
+            caller, keep_accept_language=not replaced)
         if not self.default_headers or not profile:
-            return caller
+            return _reorder_wire_prefix(caller)
         accept_language = self.accept_language
         if not accept_language and caller is not None:
             # The Core owns Accept-Language when the session set one; only inject
@@ -2355,7 +2563,7 @@ class BaseSession(object):
             merged.update(caller)
         if not prepared.header_order:
             prepared.header_order = browser_header_order(profile)
-        return merged
+        return _reorder_wire_prefix(merged)
 
     @staticmethod
     def _deleted_headers(headers):
@@ -3672,7 +3880,7 @@ class BaseSession(object):
         request.quote = values.get("quote")
         request.header_order = header_order
         _reject_core_owned_removals(request.headers)
-        _reject_hop_by_hop_headers(request.headers)
+        self._check_header_policy(request.headers)
         allow_redirects = self.allow_redirects \
             if values.get("allow_redirects") is None \
             else bool(values.get("allow_redirects"))
@@ -3896,7 +4104,8 @@ class Session(BaseSession):
                 request, stream=bool(options.get("stream")),
                 timeout=options.get("timeout"), verify=options.get("verify", True),
                 cert=options.get("cert"), proxies=options.get("proxies"))
-        _reject_hop_by_hop_headers(request.headers)
+        self._check_header_policy(request.headers)
+        request.headers = self._apply_header_policy(request.headers)
         retry = options.get("retry") or self.retry
         attempt = 0
         proxy_attempt = 0
@@ -4316,7 +4525,8 @@ class AsyncSession(BaseSession):
                  host_mapping=None, dns_nameservers=None,
                  doh_template=None, dns_secure_mode=None, dns_over_tls=False,
                  dns_rotate=False, dns_padding=False, hsts_bypass=None,
-                 proxy_chain=None, platform="auto", max_sockets_per_group=0):
+                 proxy_chain=None, platform="auto", max_sockets_per_group=0,
+                 header_policy="strict"):
         BaseSession.__init__(
             self, impersonate=impersonate, proxy=proxy, proxies=proxies,
             proxy_auth=proxy_auth, verify=verify, timeout=timeout, headers=headers,
@@ -4336,7 +4546,9 @@ class AsyncSession(BaseSession):
             dns_over_tls=dns_over_tls, dns_rotate=dns_rotate,
             dns_padding=dns_padding, hsts_bypass=hsts_bypass,
             proxy_chain=proxy_chain, platform=platform,
-            max_sockets_per_group=max_sockets_per_group)
+            max_sockets_per_group=max_sockets_per_group,
+            header_policy=header_policy,
+        )
         self.max_clients = max_clients
         self._gate = None
         self._gate_loop = None
@@ -4378,7 +4590,8 @@ class AsyncSession(BaseSession):
         if not isinstance(request, PreparedRequest):
             raise ValueError("You can only send PreparedRequests")
         options = self._with_session_defaults(options)
-        _reject_hop_by_hop_headers(request.headers)
+        self._check_header_policy(request.headers)
+        request.headers = self._apply_header_policy(request.headers)
         retry = options.get("retry") or self.retry
         attempt = 0
         proxy_attempt = 0

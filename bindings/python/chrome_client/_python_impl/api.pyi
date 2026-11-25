@@ -126,6 +126,7 @@ def session(
     proxy_chain: Optional[str] = None,
     platform: str = 'auto',
     max_sockets_per_group: int = 0,
+    header_policy: str = 'strict',
 ) -> Session:
     """Creates a synchronous :class:`~chrome_client.Session`.
 
@@ -180,7 +181,8 @@ def session(
         cache: Enable the Chromium HTTP cache for this session's engines.
         user_agent: Engine-level User-Agent for HTTP *and* WebSocket. The Core rejects a
             per-request UA because its placement is part of the fingerprint.
-        accept_language: Engine-level ``Accept-Language``.
+        accept_language: Engine-level ``Accept-Language``. With a profile the captured
+            value is sent unless this is set.
         interface: Rejected; ABI v8 has no network-interface binding.
         doh_url: Rejected; DNS-over-HTTPS config is not exposed.
         max_recv_speed: Rejected; Chromium owns transfer pacing.
@@ -200,6 +202,9 @@ def session(
         proxy_chain:
         platform:
         max_sockets_per_group:
+        header_policy: "strict" (default) raises UnsupportedFeature for a hop-by-hop
+            field; "drop" removes it instead and counts it in
+            dropped_headers.
 
     Returns:
         The new session. Close it, or use it as a context manager.
@@ -266,6 +271,7 @@ def async_session(
     proxy_chain: Optional[str] = None,
     platform: str = 'auto',
     max_sockets_per_group: int = 0,
+    header_policy: str = 'strict',
     max_clients: Optional[int] = None,
 ) -> AsyncSession:
     """Creates an :class:`~chrome_client.AsyncSession`.
@@ -321,7 +327,8 @@ def async_session(
         cache: Enable the Chromium HTTP cache for this session's engines.
         user_agent: Engine-level User-Agent for HTTP *and* WebSocket. The Core rejects a
             per-request UA because its placement is part of the fingerprint.
-        accept_language: Engine-level ``Accept-Language``.
+        accept_language: Engine-level ``Accept-Language``. With a profile the captured
+            value is sent unless this is set.
         interface: Rejected; ABI v8 has no network-interface binding.
         doh_url: Rejected; DNS-over-HTTPS config is not exposed.
         max_recv_speed: Rejected; Chromium owns transfer pacing.
@@ -341,6 +348,9 @@ def async_session(
         proxy_chain:
         platform:
         max_sockets_per_group:
+        header_policy: "strict" (default) raises UnsupportedFeature for a hop-by-hop
+            field; "drop" removes it instead and counts it in
+            dropped_headers.
         max_clients: Maximum concurrently in-flight requests, or None for unbounded.
             Only AsyncSession accepts it; Session has no such limit.
 

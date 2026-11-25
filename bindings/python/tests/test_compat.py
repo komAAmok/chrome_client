@@ -3938,6 +3938,83 @@ class NetErrorTableShapeTests(unittest.TestCase):
         self.assertIs(category["Protocol"], exc.ConnectionError)
         self.assertIsNot(category["Protocol"], exc.SSLError)
 
+class HeaderPolicyTests(unittest.TestCase):
+    """header_policy="drop" keeps old callers working; "strict" is the default.
+
+    The two behaviours exist because the same field can mean different things to
+    different callers: a browser-derived field the profile already owns
+    (Accept-Encoding) or a field Chromium overwrites anyway (Host) is noise from
+    an old requests script, while the guarantee that nothing is silently ignored
+    is what a security-sensitive caller relies on.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.server = ThreadingHTTPServer(("127.0.0.1", 0), _EchoHeaderHandler)
+        threading.Thread(target=cls.server.serve_forever, daemon=True).start()
+        cls.base = "http://127.0.0.1:%d/" % cls.server.server_address[1]
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.server.shutdown()
+        cls.server.server_close()
+
+    def setUp(self):
+        del _ECHOED[:]
+
+    @staticmethod
+    def _last():
+        return _ECHOED[-1]
+
+    def test_strict_is_the_default(self):
+        with chrome_client.Session() as session:
+            self.assertEqual(session.header_policy, "strict")
+            with self.assertRaises(chrome_client.UnsupportedFeature):
+                session.get(self.base, headers={"Connection": "keep-alive"})
+
+    def test_drop_keeps_the_request_working_and_counts_what_it_removed(self):
+        with chrome_client.Session(header_policy="drop") as session:
+            response = session.get(self.base, headers={
+                "Connection": "keep-alive",
+                "Host": "spoofed.example",
+                "Cookie": "a=1",
+                "Content-Length": "5",
+                "Accept-Language": "zh-CN,zh;q=0.9",
+            })
+            self.assertEqual(response.status_code, 200)
+            seen = self._last()
+            # Host is Chromium's own (net/http/http_network_transaction.cc:1451)
+            self.assertNotEqual(seen.get("Host"), "spoofed.example")
+            self.assertNotIn("Cookie", seen)
+            self.assertEqual(sorted(session.dropped_headers),
+                             ["connection", "content-length", "cookie"])
+            # Accept-Language is not in the drop set: Chromium keeps it.
+            self.assertEqual(seen.get("Accept-Language"), "zh-CN,zh;q=0.9")
+
+    def test_accept_language_survives_without_a_profile(self):
+        with chrome_client.Session() as session:
+            session.get(self.base, headers={"Accept-Language": "zh-CN,zh;q=0.9"})
+        self.assertEqual(self._last().get("Accept-Language"), "zh-CN,zh;q=0.9")
+
+    def test_the_captured_accept_language_wins_with_a_profile(self):
+        with chrome_client.Session(impersonate="chrome_158") as session:
+            session.get(self.base, headers={"Accept-Language": "fr-FR,fr;q=0.9"})
+        self.assertEqual(self._last().get("Accept-Language"), "zh-CN,zh;q=0.9")
+
+    def test_cache_control_lands_in_chromiums_prefix_slot(self):
+        with chrome_client.Session(impersonate="chrome_158") as session:
+            session.get(self.base, headers={"Cache-Control": "no-cache"})
+        order = list(self._last())
+        # BuildRequestHeaders inserts it before MergeFrom(extra_headers)
+        # (net/http/http_network_transaction.cc:1479-1497), so it belongs in
+        # front of every captured field.
+        self.assertLess(order.index("Cache-Control"), order.index("sec-ch-ua"))
+
+    def test_an_unknown_policy_is_refused(self):
+        with self.assertRaises(ValueError):
+            chrome_client.Session(header_policy="clean")
+
+
 if __name__ == "__main__":
     unittest.main()
 
