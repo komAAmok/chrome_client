@@ -185,23 +185,54 @@ PY
 # the ARMv7 row that once claimed a wheel nobody built. The architecture claim is
 # "32-bit x86", not the spelling, so accept both.
 is_i386() {
-  local d=$1
-  [[ $d == *"Intel 80386"* || $d == *"Intel i386"* ]]
+  local d=$1   # already lower-cased by the caller
+  [[ $d == *"intel 80386"* || $d == *"intel i386"* ]]
 }
 
 description="$(file -b "$path")"
+  # Every branch below is case-insensitive and accepts each spelling file(1) has
+  # been observed to use for the same architecture. The wording is not part of
+  # the claim; the claim is the width, the instruction set and the container.
+  #
+  # Measured divergence between this host (file 5.45) and the CI runner
+  # (2026-11-25):
+  #   32-bit x86   "Intel 80386"   vs "Intel i386"
+  #   Windows ARM  "Aarch64"       vs "ARM64"
+  # Both made the gate pass locally and fail on every CI run. Fixing one and
+  # leaving the other is what turned two runs into three.
+  lower=$(printf '%s' "$description" | tr '[:upper:]' '[:lower:]')
   case "$target" in
-    linux-x86) [[ "$description" == *"ELF 32-bit"* ]] && is_i386 "$description" || die "$target: wrong architecture ($description)" ;;
-    linux-x86_64) [[ "$description" == *"ELF 64-bit"* && "$description" == *"x86-64"* ]] || die "$target: wrong architecture ($description)" ;;
+    linux-x86)
+      [[ $lower == *"elf 32-bit"* ]] && is_i386 "$lower" \
+        || die "$target: wrong architecture ($description)" ;;
+    linux-x86_64)
+      [[ $lower == *"elf 64-bit"* && $lower == *"x86-64"* ]] \
+        || die "$target: wrong architecture ($description)" ;;
     # The class token is part of the claim: an AArch64 artifact also says
     # "ARM", so EABI5 plus ELF 32-bit is what keeps the two apart.
-    linux-armv7) [[ "$description" == *"ELF 32-bit"* && "$description" == *"ARM"* && "$description" == *"EABI5"* ]] || die "$target: wrong architecture ($description)" ;;
-    linux-arm64) [[ "$description" == *"ELF 64-bit"* && "$description" == *"ARM aarch64"* ]] || die "$target: wrong architecture ($description)" ;;
-    windows-x86) [[ "$description" == *"PE32 executable"* ]] && is_i386 "$description" || die "$target: wrong architecture ($description)" ;;
-    windows-x86_64) [[ "$description" == *"PE32+ executable"* && "$description" == *"x86-64"* ]] || die "$target: wrong architecture ($description)" ;;
-    windows-arm64) [[ "$description" == *"PE32+ executable"* && "$description" == *"Aarch64"* ]] || die "$target: wrong architecture ($description)" ;;
-    macos-x86_64) [[ "$description" == *"Mach-O 64-bit x86_64"* ]] || die "$target: wrong architecture ($description)" ;;
-    macos-arm64) [[ "$description" == *"Mach-O 64-bit arm64"* ]] || die "$target: wrong architecture ($description)" ;;
+    linux-armv7)
+      [[ $lower == *"elf 32-bit"* && $lower == *"arm"* && $lower == *"eabi5"* ]] \
+        || die "$target: wrong architecture ($description)" ;;
+    linux-arm64)
+      [[ $lower == *"elf 64-bit"* && $lower == *"aarch64"* ]] \
+        || die "$target: wrong architecture ($description)" ;;
+    windows-x86)
+      [[ $lower == *"pe32 executable"* ]] && is_i386 "$lower" \
+        || die "$target: wrong architecture ($description)" ;;
+    windows-x86_64)
+      [[ $lower == *"pe32+ executable"* && $lower == *"x86-64"* ]] \
+        || die "$target: wrong architecture ($description)" ;;
+    # "Aarch64" here, "ARM64" on the runner.
+    windows-arm64)
+      [[ $lower == *"pe32+ executable"* ]] \
+        && { [[ $lower == *"aarch64"* ]] || [[ $lower == *"arm64"* ]]; } \
+        || die "$target: wrong architecture ($description)" ;;
+    macos-x86_64)
+      [[ $lower == *"mach-o 64-bit x86_64"* ]] \
+        || die "$target: wrong architecture ($description)" ;;
+    macos-arm64)
+      [[ $lower == *"mach-o 64-bit arm64"* ]] \
+        || die "$target: wrong architecture ($description)" ;;
   esac
 
   # readelf is required, not merely used when present: `&& command -v readelf`
