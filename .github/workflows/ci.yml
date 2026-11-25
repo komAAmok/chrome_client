@@ -152,7 +152,7 @@ jobs:
       # in fact never run.
       - run: cargo test --workspace --all-targets
         env:
-          LD_LIBRARY_PATH: ${github.workspace}}/core/binaries/linux-x86_64
+          LD_LIBRARY_PATH: ${{ github.workspace }}/core/binaries/linux-x86_64
       - run: cargo test --manifest-path bindings/python36/Cargo.toml --locked
       # bindings/python36 is its own workspace, so the clippy above never sees it.
       - run: cargo clippy --manifest-path bindings/python36/Cargo.toml --locked -- -D warnings
