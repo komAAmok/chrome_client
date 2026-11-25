@@ -268,7 +268,11 @@ python3 tools/audit-net-error-names.py   # needs a Chromium checkout (CHROMIUM_S
 cargo fmt --all -- --check
 cargo check --workspace --all-targets
 cargo clippy --workspace --all-targets -- -D warnings
-cargo test --workspace --all-targets
+# The variable above is not optional: the test binaries link the Core, and
+# without it on the loader path cargo reports exit 127 from the minicronet test
+# binary before any test runs. Measured on run 45588270947 -- the step had never
+# been reached before, so a gate that could not pass looked like a gate that did.
+LD_LIBRARY_PATH=core/binaries/linux-x86_64 cargo test --workspace --all-targets
 # bindings/python36 contains no #[test] function, so a cargo test on it compiles
 # and passes unconditionally. The artifact is what needs checking: it must still
 # load, still report the ABI version the header declares, still be a real abi3
