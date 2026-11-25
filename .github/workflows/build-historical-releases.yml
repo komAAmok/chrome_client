@@ -1,9 +1,14 @@
 name: Build historical releases (v0.2.7 – v0.2.15)
 
-# 为已经存在的 tag 补建 wheel，并（可选地）发布到 GitHub Release / PyPI。
+# 为已经存在的 tag 补建 wheel，并挂到对应 tag 的 GitHub Release。
 #
 # 为什么需要单独一个 workflow：build-wheels.yml 只在 push tag 时触发，而这 9 个
 # tag 早已推上去，不会重跑。这里按 tag 逐个 checkout，复用同一套构建方式。
+#
+# 这里不再发布到 PyPI。原来那条 pypi job 跑在 dafatyu/chrome_client 上，而 PyPI 把
+# 「仓库 + workflow 文件路径」当作发布身份：同一个项目换一个身份上传，下一个 release
+# 就会多一条 Change of provenance 告警（见 AGENTS.md §10.1）。发布只有一条路径：
+# komAAmok/chrome_client 的 .github/workflows/build-wheels.yml。
 #
 # Core 不在这里编译：每个 tag 已经把 core/binaries/<target>/ 的产物提交进仓库，
 # 构建只把 Rust 扩展链上去。这正是 build-wheels.yml 里 “Verify Core artifact”
@@ -21,11 +26,6 @@ on:
         type: boolean
         required: true
         default: true
-      upload_pypi:
-        description: 同时发布到 PyPI（版本号不可重发，确认后再开）
-        type: boolean
-        required: true
-        default: false
 
 permissions:
   contents: write    # 创建/更新 Release 需要
@@ -33,9 +33,6 @@ permissions:
   # No provenance——用户实测 0.2.15 就是这个状态。attestation 绑定的是构建时的
   # workflow run，事后补不上，所以必须在重新构建之前加上。
   attestations: write
-  # PyPI Trusted Publishing 必需：action 用它换取 OIDC token 向 PyPI 认证。
-  # 去掉它，publish 会退回到需要 password 的路径并直接失败。
-  id-token: write
 
 concurrency:
   group: historical-releases
@@ -343,90 +340,3 @@ jobs:
           fail_on_unmatched_files: true
           # 已存在的 Release 追加附件而不是覆盖说明
           append_body: true
-
-  pypi:
-    name: Publish to PyPI
-    needs: [plan, build]
-    # 同上：any 一个平台失败不该阻止其它版本上传。PyPI 版本号不可重发这件事
-    # 由 pypi_gate 单独负责，不靠 needs 兜。
-    if: always() && needs.plan.result == 'success' && (inputs.upload_pypi == true || inputs.upload_pypi == 'true')
-    runs-on: ubuntu-latest
-    # environment 只是一个闸门：在仓库 Settings -> Environments 里给它加必需审批，
-    # 就能让每次上 PyPI 都过一个人工确认。它不提供任何凭据。
-    environment: pypi
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          pattern: wheel-*
-          path: dist
-          merge-multiple: true
-      # 版本号不可重发：先检查这些版本在 PyPI 上是否已存在，存在就停。
-      # PyPI 版本号不可重发。上传前先查哪些版本已经在索引里：
-      #   - 有冲突：跳过上传并成功退出。这不是错误——重跑一个只为补 GitHub
-      #     Release 的轮次时必须能过，否则整条链路被一个"版本已存在"卡死。
-      #   - 无冲突：照常上传。
-      # 绝不能改成强行上传：PyPI 会拒，且日志里看不出版本号是历史残留还是本次产物。
-      # PyPI 的规则是「文件名不可复用」，不是「版本不可复用」：同一个版本可以
-      # 继续追加此前没有的文件名（这正是 0.2.13 缺两个 macos-arm64 时需要的），
-      # 但任何已存在的文件名都不能覆盖。所以筛的是文件名，不是版本号。
-      #
-      # 第一版按版本号筛，结果 0.2.13 只要有一个文件在 PyPI 上，整版都被跳过，
-      # 缺的两个 macos-arm64 永远补不上。
-      - name: Drop files already present on PyPI
-        id: pypi_gate
-        shell: bash
-        run: |
-          python3 - <<"PY" >> "$GITHUB_OUTPUT"
-          import json, urllib.request, sys, pathlib, re
-          wheels = sorted(pathlib.Path("dist").glob("*.whl"))
-          if not wheels:
-              print("upload=false")
-              raise SystemExit(0)
-
-          versions = sorted({m.group(1) for w in wheels
-                             for m in [re.match(r"chrome_client-([0-9.]+)-", w.name)]
-                             if m})
-          print("versions in dist:", versions, file=sys.stderr)
-
-          # 拉每个版本的已知文件名。只查一次索引拿不到文件名，必须逐版本查。
-          known = set()
-          for v in versions:
-              try:
-                  d = json.load(urllib.request.urlopen(
-                      f"https://pypi.org/pypi/chrome_client/{v}/json", timeout=30))
-              except urllib.error.HTTPError as exc:
-                  if exc.code == 404:
-                      continue          # 该版本还不存在：全部可传
-                  print(f"::error::index lookup failed for {v}: {exc}",
-                        file=sys.stderr)
-                  raise SystemExit(1)
-              except Exception as exc:
-                  print(f"::error::index lookup failed for {v}: {exc}",
-                        file=sys.stderr)
-                  raise SystemExit(1)
-              known.update(f["filename"] for f in d.get("urls", []))
-
-          keep, drop = [], []
-          for w in wheels:
-              (drop if w.name in known else keep).append(w)
-
-          if drop:
-              print(f"::warning::already on PyPI, excluded {len(drop)} file(s): "
-                    f"{[w.name for w in drop]}", file=sys.stderr)
-              for w in drop:
-                  w.unlink()
-          print(f"keeping {len(keep)} wheel(s) for upload", file=sys.stderr)
-          print("upload=" + ("true" if keep else "false"))
-          PY
-      # 用 Trusted Publishing（OIDC），不用 API token。两者的差别不只是认证：
-      # 只有 OIDC 上传才会让 PyPI 生成 PEP 740 attestation。用 token 上传的文件
-      # 在文件页上永远没有 provenance，这是机制决定的，事后补不了。
-      #
-      # PyPI 侧已注册的 publisher（用户实测确认）：
-      #   Owner dafatyu / Repository chrome_client
-      #   Workflow build-historical-releases.yml / Environment pypi
-      # 三处必须与下面 environment: 和本文件名逐字一致，改名即失效。
-      - uses: pypa/gh-action-pypi-publish@release/v1
-        if: steps.pypi_gate.outputs.upload == 'true'
-        with:
-          packages-dir: dist/

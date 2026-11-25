@@ -2938,3 +2938,122 @@ AGENTS §1.1 的主判据问「换一个语言重写，这段代码要不要再�
 顺带发现一条「看起来在验证」的测试：`test_the_platform_token_matches_the_cores_derivation`
 名字声称与 Core 一致，实际只断言了前缀和没有括号。已改成逐平台比对 ABI 返回值，
 并用变异测试证明伪造平台值会让它红。这是 §7「不得写看起来在验证的注释」的又一例。
+
+## 89. 发布身份是一次集合差，「不再推那个远端」并没有撤销一个发布者
+
+0.2.9 由 `dafatyu/chrome_client` 的 `build-historical-releases.yml` 发布，
+0.2.16 由 `komAAmok/chrome_client` 的 `build-wheels.yml` 发布，两者相隔
+**23 小时**。PyPI 因此在 0.2.16 上挂出了 Change of provenance。
+
+一开始的直觉是「把旧仓库的推送停掉就好了」。这个直觉错在以为发布者是一个**配置**：改掉
+就生效。实际情况是 PyPI 只比较两个**集合**，集合里没有「上一次是谁」这种东西：
+
+| 事实 | 复核位置 |
+| --- | --- |
+| 比较的两份集合是 `PublisherSource(kind, repository)` 与 `PublisherWorkflow(kind, repository, workflow)`，`url` 被显式排除（它每个 release 都带 commit sha） | `warehouse/attestations/models.py` 的 `PublisherSource` / `PublisherWorkflow` |
+| 任一侧多一个或少一个就是 `CHANGED_PROVENANCE` | 同文件 `ProvenanceStatus.states()` |
+| 比较对象是**前 14 天内最近的、有 provenance 的**那个 release | `warehouse/packaging/models.py` 的 `PROVENANCE_COMPARISON_WINDOW_DAYS = 14`、`Release.comparison_provenance_release()` |
+| 窗口锚在**被比较 release 自己的** `created` 上 | `Project.provenance_statuses()` 传的是 `created - window` |
+
+第四条是这里最反直觉的一处：告警不是「现在状态」，是**那个 release 的历史判定**。0.2.16
+的窗口固定是它上传前的 14 天，所以这条告警不会随日历翻页消失；删掉 0.2.9 也不够——
+0.2.7–0.2.15 全部落在这个窗口里，而且全是同一个旧身份，下一个候选会立刻顶上来。
+
+真正让人停下来的是第二条路：把 0.2.16 删了重传、不带 attestation。那不是消除告警，是把
+`CHANGED_PROVENANCE` 换成 `LOST_PROVENANCE`（`files_with_provenance == 0`
+而 `comparison.counts.files_with_provenance > 0`），后者读起来更接近「被接管」。
+而且 attestation 记在 append-only 的透明日志里，本来就没有事后修改这一说。
+
+所以修法只能是往前看：
+
+1. 仓库侧删掉第二条发布路径（`build-historical-releases.yml` 的 `pypi` job），
+   并给 `build-wheels.yml` 的 publish job 加 `github.repository` 守卫——一个
+   fork 发同一个项目不是「同一个发布者」，是第二个发布者。
+2. `tools/sync-remotes.sh` 删除：规则说只推 `origin`，脚本还在推 `backup`，
+   这条路径存在的唯一效果是让「只有一个远端」变成一句注释。
+3. PyPI 侧删掉 `dafatyu/chrome_client` 的 trusted publisher。仓库里删干净不等于它
+   失效：只要那条 publisher 还注册着，它就是这个项目的合法发布身份。
+4. 0.2.16 页面上那条告警留着。它记录的事实是真的——发布者确实换了，而且换成了正确的那个
+   （`komAAmok`）。项目页顶部的横幅跟随最新 release，下一次同身份发布就消失；
+   release 页那条是历史，不是待修缺陷。
+
+**判据**：任何「换 CI、换仓库、换 workflow 文件名」的动作，先问一句——14 天内有没有另一个
+release，它是谁发的？两句话能回答，就不会再产生一次不可撤销的告警。
+
+## 90. 一个 Python 包、两个扩展：改一边就是改一个还不存在的地方
+
+0.2.16 的 cp36-abi3 轮子装到任何解释器上，只要 session 带了 `impersonate=`，第一个请求
+就失败：
+
+    AttributeError: type object 'builtins.PyEngine' has no attribute 'platform_identity'
+
+被 `browser_headers._platform_identity` 捕获后包成 UnsupportedFeature，消息说「Core 不支持
+mn_platform_user_agent_group (ABI v14)」。那句话是错的：Core 的 manifest 写着
+`abi_version: 14`，符号也在。真正缺的是 `bindings/python36/src/lib.rs` 里的一个方法——
+ABI v14 下沉平台身份时，`platform_identity` 只加进了 `bindings/python` 那个 crate。
+
+两个轮子发的是**同一个 Python 包**，共享**同一份 facade**，所以「一个方法只加在一边」不是
+半成品，是一个会在另一个轮子上 100% 复现的缺陷。而当时没有任何东西检查这件事。
+
+更值得记的是门禁为什么没抓到：`tools/audit-python36-artifact.py` 的检查 4 确实装了扩展、
+真的发了一次请求——但那次请求**没有 profile**，`_browser_headers` 在
+`if not self.default_headers or not profile: return caller` 处提前返回，
+`browser_headers()` 根本没被调用。门禁覆盖了「能发请求」，没覆盖「能发带 profile 的请求」，
+而后者才是唯一调用新方法的路径。
+
+同一个 0.2.16 上还有第二个缺陷，同一个原因（类型在边界处没有归一）：
+`session.headers = {...}` 把 dict 原样存下，五行之后
+`_strip_core_overridden_headers` 调 `Headers.multi_items()` 抛
+`'dict' object has no attribute 'multi_items'`。requests 允许这么赋值，所以这不是用户的错。
+
+修法三条，各自堵一类：
+
+1. `Session.headers` 变成 property，setter 一律 `Headers(value)`——一个类型进管道。
+2. `platform_identity` 与 `capabilities` 补进 legacy crate（同一个 `minicronet` 依赖，
+   几行），并真的跑起来验过：ABI 14、`('X11; Linux x86_64', '"Linux"')`。
+3. 新门禁 `tools/audit-binding-surface.py`：读 facade 里每一处 `PyEngine.<name>`，
+   读两个 crate 的 `impl PyEngine`，少一个就红。变异测试：删掉 legacy 的那个方法 →
+   `legacy (chrome_client_native36) does not declare platform_identity`，退出 1。
+
+顺带把 artifact 门禁的请求改成带 profile，并在扩展缺方法时给出**真实**原因（是扩展没有这个
+方法，不是 Core 缺 ABI），因为下一次读日志的人需要的是这个区分。
+
+**判据**：共享同一个 Python 包的两份原生实现，任何一面新增 API，另一面就是要一起改的地方；
+只跑一遍「能发一次请求」的门禁证明不了这一点，得去读两处源码。
+
+### 90.1 同一条判据，后来又在同一个版本里抓出两处
+
+写完全量 suite 之后，我把两个扩展**运行时**的属性面打出来对了一遍（不读源码，直接
+dir() 类），差集当场给出了第二个缺陷：
+
+    PyResponse  modern-only: ['header_fields', 'http_version', 'reason_phrase']
+
+legacy 的 `PyResponse` 只是个 status/headers/content/ech_status 的壳：那三个字段它
+根本没有，`http_version`/`reason_phrase`/`header_fields` 的三段实现被放在了
+`impl PyRequest` 里。facade 用 getattr(head, ..., None) 读，于是每一条响应在 cp36
+轮子上都是 Response.http_version = None、reason 从状态行反推、header_fields 重新解析——
+**静默降级**，不是崩溃，所以没人报过。
+
+同一轮还发现异常类型不一致：`set_cookie(same_site="sideways")` 在 legacy 抛
+RuntimeError、在现代扩展抛 ValueError。原因是 legacy 只有一个 `error()`（映射
+PyRuntimeError），而现代扩展对**参数**用 PyValueError。用户写 `except ValueError`
+在一个轮子上有效、另一个无效。
+
+以及那条被判错的测试：`test_both_names_resolve_to_a_loaded_module` 断言
+`MODULE_NAME in sys.modules`。`MODULE_NAME` 是"这个解释器**优先**要的名字"，
+不是它一定拿到的名字——cp36 轮子装在 3.9+ 上时 `load()` 会**故意**回退到 legacy，
+于是这个测试在一个受支持的配置下失败。它断言的是实现细节，不是契约。
+
+修完之后我把判据从"读源码"升级成"读两处源码"：`tools/audit-binding-surface.py` 现在
+同时比对 facade 用到的 `PyEngine` 方法、以及每个 `#[pyclass]` 在两边暴露的属性集合
+（`#[pyo3(get)]` 字段 + `#[getter]` 方法）。变异测试：删掉 legacy 的 `#[getter]`，
+它报 `PyResponse.attributes differs` 并列出两边集合。
+
+还有一处**门禁覆盖漏洞**：`bindings/python36` 是独立 workspace，根目录的
+`cargo fmt --all` 看不见它——实测它的 `rustfmt --check` 在 HEAD 上就是红的，
+而没有任何步骤检查过。格式不追（那是全文件重排），但把 `cargo clippy` 加进 CI 和
+AGENTS §5：它今天干净，以后只在这个 crate 出现的警告至少有人看得见。
+
+**判据（补一句）**：共享 facade 的两份原生实现，"能跑一个请求"不足以证明一致；要证明的
+是**两边的名字集合相同**，而且要按类比，不是按名字比。
+

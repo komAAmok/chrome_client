@@ -122,11 +122,21 @@ def _platform_identity(platform="auto"):
     try:
         return _native_module.PyEngine.platform_identity(platform or "auto")
     except AttributeError as error:
+        # One message used to cover two different failures, and it named the
+        # Core -- wrong for the case that actually happened: a wheel whose
+        # extension predates this method. The Core refusing (an artifact older
+        # than ABI v14) is a NativeError raised by platform_identity itself and
+        # never reaches this branch.
+        loaded = getattr(_native_module, "__file__", None) or getattr(
+            _native_module, "__name__", "the native module")
         raise UnsupportedFeature(
-            "the loaded Core does not implement mn_platform_user_agent_group "
-            "(ABI v14); the User-Agent group and sec-ch-ua-platform cannot be "
-            "read from it, and deriving them in Python is what this function "
-            "replaced") from error
+            "the loaded extension (%s) has no PyEngine.platform_identity, so the "
+            "User-Agent group and sec-ch-ua-platform cannot be read from it. The "
+            "python36 extension (chrome_client_native36) shipped without this "
+            "method while the Python facade that calls it is shared by both "
+            "wheels; the cp39-abi3 wheel for this interpreter, or any release "
+            "that declares the method in both extensions, does not have this "
+            "problem." % (loaded,)) from error
 
 
 def _platform_token(platform="auto"):

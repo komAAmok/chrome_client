@@ -2160,6 +2160,30 @@ class BaseSession(object):
         self._closed = False
 
     # -- requests Session surface ------------------------------------------
+
+    @property
+    def headers(self):
+        """The session-level header mapping, as a :class:`Headers`."""
+        return self._headers
+
+    @headers.setter
+    def headers(self, value):
+        """Replaces the session headers, coercing whatever a caller assigns.
+
+        `requests` lets a session be handed a plain dict, and a dict assigned
+        here used to stay a dict: the first method that touched it,
+        `Headers.multi_items()` in :func:`_strip_core_overridden_headers`,
+        raised `"dict" object has no attribute "multi_items"` from inside
+        `prepare_request` -- five frames away from the line that caused it.
+        Coercing at the boundary keeps one type in the pipeline, which is the
+        only version of this that cannot be re-broken from outside.
+
+        Args:
+            value: A mapping, an iterable of `(name, value)` pairs, an existing
+                :class:`Headers`, or `None` for an empty mapping.
+        """
+        self._headers = Headers(value)
+
     def mount(self, prefix, adapter):
         self.adapters[prefix] = adapter
         for key in sorted((key for key in self.adapters if len(key) < len(prefix)),

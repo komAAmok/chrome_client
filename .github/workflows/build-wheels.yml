@@ -372,7 +372,16 @@ jobs:
 
   publish:
     name: Publish wheels
-    if: startsWith(github.ref, 'refs/tags/v') || inputs.publish_to_pypi
+    # PyPI identifies a publisher as a set — the repository plus the workflow
+    # path — and warns "Change of provenance" whenever that set differs from a
+    # release made in the preceding 14 days. Both halves are in the attestation,
+    # so a fork publishing the same project is not the same publisher: it is a
+    # second one, and the next release inherits the warning. The guard makes the
+    # repository that may publish here explicit instead of implied by whoever
+    # happens to own a copy of the tree.
+    if: >-
+      (startsWith(github.ref, 'refs/tags/v') || inputs.publish_to_pypi)
+      && github.repository == 'komAAmok/chrome_client'
     # python39-smoke belongs in needs: a wheel that cannot be imported on 3.9
     # must not reach PyPI, and that job is the only one that proves it can.
     needs: [linux, windows, macos, metadata, python39-smoke]

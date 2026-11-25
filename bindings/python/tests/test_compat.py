@@ -1921,12 +1921,20 @@ class NativeModuleSelectionTests(unittest.TestCase):
         self.assertEqual(_native.MODULE_NAME, expected)
 
     def test_both_names_resolve_to_a_loaded_module(self):
-        """Neither name may be a guess: the one this interpreter wants is loaded."""
+        """Neither name may be a guess: the extension that loaded is registered."""
         _native = _import_native_loader()
 
-        self.assertIn(_native.MODULE_NAME, sys.modules)
-        self.assertEqual(sys.modules[_native.MODULE_NAME].abi_version,
-                         chrome_client.abi_version())
+        # MODULE_NAME is the name this interpreter asks for *first*, not the one
+        # it necessarily gets: both wheels ship the same package and declare the
+        # same requires-python, so pip may install the cp36-abi3 wheel on 3.9+,
+        # and _native.load() then falls back to it on purpose. Asserting only
+        # MODULE_NAME made this test fail in that supported configuration --
+        # measured with the modern extension absent: nothing was wrong, the
+        # fallback had done exactly what its docstring says.
+        loaded = _native.native
+        self.assertIn(loaded.__name__, (_native.MODULE_NAME, _native.FALLBACK_MODULE_NAME))
+        self.assertIs(sys.modules.get(loaded.__name__), loaded)
+        self.assertEqual(loaded.abi_version, chrome_client.abi_version())
 
 class HopByHopHeaderTests(unittest.TestCase):
     """Fields only the connection layer can honour must fail, not be ignored."""

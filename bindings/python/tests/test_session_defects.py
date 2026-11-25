@@ -78,6 +78,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(b"other", extra=[("Set-Cookie", "sid=BBB; Path=/")])
         if self.path.startswith("/echo-cookie"):
             return self._send(repr(self.headers.get_all("Cookie") or []).encode())
+        if self.path.startswith("/echo-header/"):
+            return self._send(str(self.headers.get(self.path.rsplit("/", 1)[-1]) or "").encode())
         if self.path.startswith("/redirect/"):
             depth = int(self.path.rsplit("/", 1)[-1])
             if depth > 0:
@@ -1878,6 +1880,46 @@ class DnsOverTlsRefusalTests(unittest.TestCase):
     def test_false_still_works(self):
         with chrome_client.Session(dns_over_tls=False) as session:
             self.assertFalse(session.dns_over_tls)
+
+
+class SessionHeadersAssignmentTests(Base):
+    """A plain dict handed to Session.headers must not survive as a dict.
+
+    requests lets a session be given a dict there, and it used to be stored
+    as-is: the first method to touch it, Headers.multi_items(), raised
+    AttributeError from inside prepare_request -- five frames away from
+    the assignment that caused it. Both spellings are pinned here, and both
+    go through impersonate=, so the captured-header path (the only caller
+    of PyEngine.platform_identity) actually runs.
+    """
+
+    HEADERS = {
+        "Accept": "application/json, text/plain, */*",
+        "Accept-Language": "zh-CN,zh;q=0.9",
+        "Cache-Control": "no-cache",
+        "Content-Type": "application/x-www-form-urlencoded",
+        "Origin": "https://www.ttbz.org.cn",
+        "Pragma": "no-cache",
+        "Referer": "https://www.ttbz.org.cn/Home/Standard/",
+        "Sec-Fetch-Dest": "empty",
+        "Sec-Fetch-Mode": "cors",
+        "Sec-Fetch-Site": "same-origin",
+    }
+
+    def test_assigning_a_plain_dict_is_coerced(self):
+        with chrome_client.Session(impersonate="chrome_136") as session:
+            session.headers = dict(self.HEADERS)
+            self.assertIsInstance(session.headers, sessions_module.Headers)
+            response = session.get(self.base + "echo-header/origin")
+            self.assertEqual(response.content, b"https://www.ttbz.org.cn")
+
+    def test_update_on_the_assigned_mapping_still_merges(self):
+        with chrome_client.Session(impersonate="chrome_120") as session:
+            session.headers.update(dict(self.HEADERS))
+            self.assertIsInstance(session.headers, sessions_module.Headers)
+            response = session.get(self.base + "echo-header/referer")
+            self.assertEqual(
+                response.content, b"https://www.ttbz.org.cn/Home/Standard/")
 
 
 if __name__ == "__main__":

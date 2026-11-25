@@ -29,13 +29,23 @@ may sit at a different revision than the profile recorded.
     python3 tools/audit-profile-evidence.py --profile chrome_157
     python3 tools/audit-profile-evidence.py --max-age 86400  # reuse cache < 1 day old
 
-Exit 0 when every recorded digest matches upstream, 1 otherwise. A fetch that
-never succeeds is reported as an error, not as a pass: an unreachable file must
-not read the same as a correct one.
+Exit 0 when every recorded digest matches upstream. Exit 1 when the record is
+wrong: a digest differs, a file is missing from the local checkout, or upstream
+no longer has the path at the recorded revision. Exit 2 when the question could
+not be asked at all -- the fetch budget ran out on transport errors, so nothing
+was compared.
 
-Network note: googlesource rate-limits bursts. The tool retries with backoff and
-caches bodies under ~/.cache/minicronet-profile-evidence, so a second run is
-fast and does not hammer the server.
+Three outcomes instead of two because "the record is wrong" and "the network was
+wrong" have opposite fixes and used to be the same line in the log: 31 of 876
+files were reported UNREACHABLE on every CI run for four nights while all 31
+answered HTTP 200 from a developer machine.
+
+Network note: googlesource rate-limits bursts, and 876 files from a shared CI
+address is exactly a burst. A 429 there is a statement about the client, not
+about the record, so the retry honours Retry-After and a single 429 pauses every
+thread -- the limit is per address, not per request. Bodies are cached under
+~/.cache/minicronet-profile-evidence, so a second run fetches only what the first
+one missed.
 """
 
 from __future__ import annotations
@@ -46,7 +56,9 @@ import hashlib
 import json
 import os
 import pathlib
+import random
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -88,22 +100,95 @@ def cache_path(cache_tag, path):
     return CACHE / (cache_tag + "__" + safe)
 
 
-def fetch(url, cache_tag, path, max_age, retries=5):
-    """Download and cache one file. Returns bytes, or None when unreachable."""
+class FetchError(Exception):
+    """A download that failed, carrying why and whether retrying can help."""
+
+    def __init__(self, reason, permanent):
+        super().__init__(reason)
+        self.reason = reason
+        self.permanent = permanent
+
+
+# Upstream does not have this path at this revision: the record is wrong and no
+# amount of retrying will change that. Everything else (429, 403, 5xx, socket
+# errors, timeouts) describes the client, and a shared runner is the likeliest
+# cause of it.
+PERMANENT_CODES = {400, 404, 410, 451}
+
+_pace_lock = threading.Lock()
+_pace_until = 0.0
+_streak = 0
+_give_up = threading.Event()
+
+
+def _wait_turn():
+    with _pace_lock:
+        delay = _pace_until - time.time()
+    if delay > 0:
+        time.sleep(delay)
+
+
+def _pace(seconds):
+    """Hold every thread back: one 429 is a signal to the whole process."""
+    global _pace_until
+    with _pace_lock:
+        _pace_until = max(_pace_until, time.time() + min(30.0, seconds))
+
+
+def _transport_failed(limit):
+    """Count a transport failure; stop the sweep once they come in a row.
+
+    876 files at a per-address rate limit will not finish, and grinding through
+    them at one backoff per file turns a five-minute gate into an hour that
+    still ends in the same place. The run is already unverifiable at that
+    point, so it has to say so now -- exit 2 -- instead of later.
+    """
+    global _streak
+    with _pace_lock:
+        _streak += 1
+        if _streak >= limit:
+            _give_up.set()
+
+
+def _transport_ok():
+    global _streak
+    with _pace_lock:
+        _streak = 0
+
+
+def fetch(url, cache_tag, path, max_age, give_up=8, attempts=5):
+    """Download and cache one file. Returns bytes, or raises FetchError."""
     cfile = cache_path(cache_tag, path)
     if max_age >= 0 and cfile.is_file() and time.time() - cfile.stat().st_mtime < max_age:
         return cfile.read_bytes()
-    for attempt in range(retries):
+    reason = "no attempt made"
+    for attempt in range(attempts):
+        if _give_up.is_set():
+            raise FetchError(f"{reason}; sweep gave up after repeated transport errors", False)
+        _wait_turn()
         try:
             request = urllib.request.Request(url, headers={"User-Agent": "chrome_client-audit/1"})
             with urllib.request.urlopen(request, timeout=30) as response:
                 body = base64.b64decode(response.read())
             CACHE.mkdir(parents=True, exist_ok=True)
             cfile.write_bytes(body)
+            _transport_ok()
             return body
-        except (urllib.error.URLError, TimeoutError, OSError, ValueError):
-            time.sleep(1.5 * (attempt + 1))
-    return None
+        except urllib.error.HTTPError as exc:
+            reason = f"HTTP {exc.code}"
+            if exc.code in PERMANENT_CODES:
+                raise FetchError(reason, True) from exc
+            retry_after = (exc.headers or {}).get("Retry-After") if exc.headers else None
+            hold = float(retry_after) if (retry_after or "").strip().isdigit() else 2.0 ** attempt
+            _pace(hold)
+            _transport_failed(give_up)
+        except (urllib.error.URLError, TimeoutError, OSError, ValueError) as exc:
+            detail = getattr(exc, "reason", None) or type(exc).__name__
+            reason = f"{type(exc).__name__}: {detail}"
+            _pace(2.0 ** attempt)
+            _transport_failed(give_up)
+        time.sleep(random.uniform(0.0, 0.5))  # jitter: the threads must not re-synchronise
+    raise FetchError(reason, False)
 
 
 def collect(profiles, only, offline):
@@ -125,8 +210,9 @@ def collect(profiles, only, offline):
     return jobs, skipped_submodules
 
 
-def verify(job, max_age, offline):
+def verify(job, max_age, offline, give_up):
     profile, key, path, digest, size = job
+    pid = profile["profile_id"]
     if offline:
         # The local checkout is exactly one commit, and a profile is pinned to a
         # different one in general (the tree here is 58bcc148, while chrome_156
@@ -136,19 +222,21 @@ def verify(job, max_age, offline):
         # the caller has to be told the result is not a verdict.
         candidate = chromium_src() / path
         if not candidate.is_file():
-            return (profile["profile_id"], key, path, digest, None, None, "LOCAL_MISSING")
+            return (pid, key, path, digest, None, None, "LOCAL_MISSING", None)
         body = candidate.read_bytes()
         actual = hashlib.sha256(body).hexdigest()
         if actual == digest:
-            return (profile["profile_id"], key, path, digest, actual, len(body), "MATCH")
-        return (profile["profile_id"], key, path, digest, actual, len(body), "LOCAL_OTHER_REVISION")
+            return (pid, key, path, digest, actual, len(body), "MATCH", None)
+        return (pid, key, path, digest, actual, len(body), "LOCAL_OTHER_REVISION", None)
     url, cache_tag = source_for(key, profile, path)
-    body = fetch(url, cache_tag, path, max_age)
-    if body is None:
-        return (profile["profile_id"], key, path, digest, None, None, "UNREACHABLE")
+    try:
+        body = fetch(url, cache_tag, path, max_age, give_up)
+    except FetchError as exc:
+        return (pid, key, path, digest, None, None,
+                "UNREACHABLE" if exc.permanent else "NETWORK", exc.reason)
     actual = hashlib.sha256(body).hexdigest()
-    return (profile["profile_id"], key, path, digest, actual, len(body),
-            "MATCH" if actual == digest else "MISMATCH")
+    return (pid, key, path, digest, actual, len(body),
+            "MATCH" if actual == digest else "MISMATCH", None)
 
 
 def main():
@@ -159,6 +247,9 @@ def main():
     parser.add_argument("--max-age", type=int, default=7 * 24 * 3600,
                         help="reuse a cached body younger than this many seconds (default 7 days, -1 = never)")
     parser.add_argument("--jobs", type=int, default=6, help="concurrent downloads (default 6)")
+    parser.add_argument("--give-up", type=int, default=8,
+                        help="stop the sweep after this many consecutive transport errors "
+                             "(default 8; they are reported, never counted as matches)")
     parser.add_argument("--verbose", action="store_true", help="print every match, not just failures")
     args = parser.parse_args()
 
@@ -181,7 +272,8 @@ def main():
 
     results = []
     with ThreadPoolExecutor(max_workers=max(1, args.jobs)) as pool:
-        futures = [pool.submit(verify, job, args.max_age, args.offline) for job in jobs]
+        futures = [pool.submit(verify, job, args.max_age, args.offline, args.give_up)
+                   for job in jobs]
         for index, future in enumerate(futures, 1):
             results.append(future.result())
             if index % 25 == 0:
@@ -190,6 +282,7 @@ def main():
     matches = [r for r in results if r[6] == "MATCH"]
     mismatches = [r for r in results if r[6] == "MISMATCH"]
     unreachable = [r for r in results if r[6] == "UNREACHABLE"]
+    network = [r for r in results if r[6] == "NETWORK"]
     missing = [r for r in results if r[6] == "LOCAL_MISSING"]
     other_rev = [r for r in results if r[6] == "LOCAL_OTHER_REVISION"]
 
@@ -213,15 +306,20 @@ def main():
         failed = True
         print(f"  MISSING  {row[0]:<12} {row[1]:<26} {row[2]} (not in local checkout)", file=sys.stderr)
     for row in unreachable:
-        # An unreachable file is a failed audit, not a pass: the claim stays
-        # unverified, and silently treating that as success is how a stale
-        # record survives.
+        # Upstream answered, and said the file is not there. The record is
+        # wrong: this is a failed audit, not a pass, and not a network problem.
         failed = True
-        print(f"  UNREACHABLE {row[0]:<12} {row[1]:<26} {row[2]}", file=sys.stderr)
+        print(f"  UNREACHABLE {row[0]:<12} {row[1]:<26} {row[2]} ({row[7]})", file=sys.stderr)
+    for row in network:
+        # Nothing was compared. Saying "mismatch" would be a lie and saying
+        # "pass" would be a worse one, so this is its own outcome and its own
+        # exit code -- CI retries that, and never retries the one above.
+        print(f"  NETWORK    {row[0]:<12} {row[1]:<26} {row[2]} ({row[7]})", file=sys.stderr)
 
     print()
     print(f"{len(matches)} matched, {len(mismatches)} mismatched, "
-          f"{len(missing)} missing locally, {len(unreachable)} unreachable, "
+          f"{len(missing)} missing locally, {len(unreachable)} gone upstream, "
+          f"{len(network)} unreachable over the network, "
           f"{len(other_rev)} on a different local revision "
           f"({len(jobs)} checked)")
     if args.offline:
@@ -231,6 +329,12 @@ def main():
     if failed:
         print("Profile evidence does not match upstream", file=sys.stderr)
         return 1
+    if network:
+        print(f"Profile evidence could not be verified: {len(network)} file(s) "
+              "exhausted the retry budget on transport errors, so nothing was "
+              "compared for them. Re-run (the cache keeps what did arrive) or "
+              "raise --jobs/--max-age; do not read this as a pass.", file=sys.stderr)
+        return 2
     print("Profile evidence audit passed: every recorded digest matches upstream.")
     return 0
 

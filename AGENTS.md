@@ -199,6 +199,16 @@ python3 tools/audit-client-hints.py
 # simulates Firefox and Safari too, so some knobs have no counterpart in a
 # Chrome-only, Chromium-backed client. A new knob without a verdict fails.
 python3 tools/audit-python-typing.py
+# The two wheels ship one Python package, so every name the facade reads has to
+# exist in both extensions. Two shipped defects came from this: ABI v14 added
+# PyEngine.platform_identity to the modern crate only (a session with
+# impersonate= then died on the cp36 extension with an AttributeError the facade
+# reported as a Core failure), and PyResponse carried reason_phrase /
+# header_fields / http_version as pyo3(get) fields on the modern side only
+# (Response.http_version was None for every response on the cp36 wheel). This
+# compares both: the PyEngine methods the facade calls, and the attribute set of
+# every pyclass present in both crates.
+python3 tools/audit-binding-surface.py
 tools/audit-core-binaries.sh
 tools/audit-core-inputs.sh
 # Whether each artifact was built from the sources this tree holds now. The
@@ -257,8 +267,14 @@ cargo test --workspace --all-targets
 # bindings/python36 contains no #[test] function, so a cargo test on it compiles
 # and passes unconditionally. The artifact is what needs checking: it must still
 # load, still report the ABI version the header declares, still be a real abi3
-# build, and still drive the shared facade for one live request.
+# build, and still drive the shared facade for one live request -- including one
+# that names a profile, which is the only caller of PyEngine.platform_identity.
 python3 tools/audit-python36-artifact.py
+# That crate is its own workspace, so the cargo fmt --all above never sees it:
+# measured, rustfmt --check on the file at HEAD already reports diffs. Formatting
+# is therefore not a gate there, but the lints are: clippy passes clean today and
+# a warning that appears only in the 3.6 crate is one nothing else would catch.
+cargo clippy --manifest-path bindings/python36/Cargo.toml --offline -- -D warnings
 python3 -m unittest discover -s bindings/python/tests -p "test_*.py"
 ```
 
@@ -339,7 +355,7 @@ python3 -m unittest discover -s bindings/python/tests -p "test_*.py"
 
 ## 10. 只推 `origin`
 
-本仓库**只向一个远端提交**：
+本仓库**只向一个远端提交**，也只允许一个发布身份：
 
 | 远端 | 账号 | 角色 |
 | --- | --- | --- |
@@ -350,12 +366,11 @@ git push origin main
 git push origin v<version>
 ```
 
-`backup`（`dafatyu`）这个 remote 仍然存在于 `.git/config` 里，但**不再推送**。此前
-这一节要求每次提交同时推两边并逐项校验（`tools/sync-remotes.sh`），那条规则现在与
-实际操作不符，留着会让下一个人以为有个门禁在跑而它没有。
-
-`tools/sync-remotes.sh` 保留可用，但不再属于提交流程；用它与否是操作者的选择，不是
-本文件的要求。
+`backup`（`dafatyu`）这个 remote 已从 `.git/config` 移除，`tools/sync-remotes.sh`
+一并删除——它是唯一会往 `dafatyu` 推送的执行路径（凭据在仓库外的
+`$HOME/.config/chrome_client/backup.token`，不在任何被提交的文件里）。留着一条
+「规则说不推、脚本还在推」的路径，等于把「只有一个发布者」变成一句注释。需要那段脚本时
+从历史里取回，但不要把远端加回来：多一个能推的远端，就是多一处能绕过 §10.1 的地方。
 
 ## 10.1 GitHub 与 PyPI 的关系
 
@@ -365,12 +380,53 @@ PyPI 上的 wheel **由 GitHub Actions 发布**，不在本机 `twine upload`。
 2. 打 tag 并推 tag（`git push origin v<version>`）；
 3. `.github/workflows/build-wheels.yml` 在 tag 上构建各平台 wheel；
 4. 手动触发该 workflow 时把 `publish_to_pypi` 置为 true，它用
-   `pypa/gh-action-pypi-publish` 上传；`build-historical-releases.yml` 另有一条
-   带 `pypi_gate` 的发布路径。
+   `pypa/gh-action-pypi-publish` 上传。
 
-两个都必须先确认 PyPI 上**没有**同版本同名文件：PyPI 不允许覆盖已发布文件，重复上传
-会让整个 job 失败而不是跳过。`tools/audit-pypi-metadata.sh` 检查的是本仓库元数据与
-README，不检查远端已有文件。
+**这是唯一的发布路径。** `build-historical-releases.yml` 里那条带 `pypi_gate` 的
+上传路径已删除：它跑在 `dafatyu/chrome_client` 上，是两个发布身份，而不是一个身份
+的两次发布（见下）。
+
+必须先确认 PyPI 上**没有**同版本同名文件：PyPI 不允许覆盖已发布文件，重复上传会让整个
+job 失败而不是跳过。`tools/audit-pypi-metadata.sh` 检查的是本仓库元数据与 README，
+不检查远端已有文件。
+
+### 发布身份是一个集合，不是一次配置
+
+PyPI 的「Change of provenance」判定是一次**集合差**，不是「配置有没有改过」：
+
+| 事实 | 复核位置 |
+| --- | --- |
+| 参与比较的只有两份集合：`PublisherSource(kind, repository)` 与 `PublisherWorkflow(kind, repository, workflow path)`。`url` 被排除在比较与哈希之外（它每个 release 都变，含 commit sha） | `warehouse/attestations/models.py`：`PublisherSource` / `PublisherWorkflow` 的 dataclass 字段；`ProvenanceStatus.states()` 中 `added_sources / removed_sources / added_workflows / removed_workflows` 任一非空即 `CHANGED_PROVENANCE` |
+| 比较对象是**前 14 天内**最近的、有 provenance 的那个 release；窗口内没有可比对象就不告警 | `warehouse/packaging/models.py`：`PROVENANCE_COMPARISON_WINDOW_DAYS = 14`、`_provenance_comparison()`、`Release.comparison_provenance_release()` |
+| 窗口锚在**被比较 release 自己的创建时间**上（`cutoff = created - window`），所以一条已经产生的告警不会随时间消失 | 同上，`Project.provenance_statuses()` 传的是 `created - window` |
+| 一个 release 内部出现两套 workflow 是另一种告警（`INCONSISTENT_PROVENANCE`），与「和上一个 release 不同」不是一回事 | 同 `states()`：`len(workflow_counts) > 1` |
+
+由此三条硬约束：
+
+1. 发布身份只有 `komAAmok/chrome_client` + `.github/workflows/build-wheels.yml`。
+   换仓库、换 workflow 文件、换 CI 平台，都是**新增一个发布者**，不是「同一个发布者换了个
+   地方」。
+2. 同一个版本的全部文件必须来自同一个 workflow：一次 release 里混两个 workflow 会单独
+   触发 inconsistent 告警。
+3. 14 天窗口内混用第二条发布路径，那条 release 会直接带上 change 告警。历史补发也走同一
+   条路径，或者不走。
+
+### tag 一旦推送就不再移动
+
+0.2.16 的 tag 被移动过两次（发布时的 `a21ea0ad`，最后停在 `6cb7ebb`）。后果不是
+"多跑了一次 CI"：PyPI 上 0.2.16 的 provenance permalink 指向
+`blob/a21ea0ad/.../build-wheels.yml`，而 `v0.2.16` 现在解引用到 `6cb7ebb`——用户
+拿 tag 去核对时看到的是另一个 commit，正是那条告警想让人发现的不一致。而且最后那次重跑
+死在 `400 File already exists`：`6cb7ebb` 的 workflow 还没有 `skip-existing`
+（`5bd3fe2` 才加）。
+
+所以：**tag 推上去之后就是历史。** 版本发布错了就加一个版本号，不要重指 tag、不要删了
+重建同名 tag——attestation 记的是构建时的那个 commit，改了 tag 只会让两者对不上。
+
+PyPI 侧的 trusted publisher 同理：项目上只保留 `komAAmok/chrome_client` +
+`build-wheels.yml` 这一条。`dafatyu/chrome_client` 那条（workflow
+`build-historical-releases.yml`、environment `pypi`）必须删掉——只要它还
+注册着，它就是这个项目的合法发布身份，仓库里删几条命令并不能让它失效。
 
 ## 11. 产物与仓库体积
 

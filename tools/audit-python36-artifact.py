@@ -223,6 +223,20 @@ def check_drives_the_facade(module) -> None:
                 fail("the redirect hop carried no headers; the fields the facade "
                      "reads from it are missing")
 
+        # A request that names a profile is a different code path: the captured
+        # header set is built first, and building it is the only caller of
+        # PyEngine.platform_identity. Driving a bare request -- as this check used
+        # to -- cannot see an extension that does not declare that method, which
+        # is how the cp36 wheel shipped failing on every impersonated session.
+        with chrome_client.Session(impersonate="chrome_136") as profiled:
+            response = profiled.get(base + "/")
+            if response.status_code != 200:
+                fail("a session with impersonate= returned %r through the legacy "
+                     "extension" % (response.status_code,))
+            if "sec-fetch-site" not in {name.lower() for name in response.request.headers}:
+                fail("the profile's captured header set never reached the request; "
+                     "the extension may be missing PyEngine.platform_identity")
+
         async def one_async_get():
             async with chrome_client.AsyncSession() as session:
                 return await session.get(base + "/")

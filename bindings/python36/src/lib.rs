@@ -20,10 +20,24 @@ use minicronet::{
     Redirect, RedirectMode, RequestConfig, RequestPriority, ResponseFuture, ResponseStream,
     TlsVerifyMode, Upload, WebSocketConfig, WebSocketEvent, WebSocketEvents,
 };
-use pyo3::{exceptions::PyRuntimeError, prelude::*, types::PyBytes};
+use pyo3::{
+    exceptions::{PyRuntimeError, PyValueError},
+    prelude::*,
+    types::PyBytes,
+};
 
 fn error(value: impl std::fmt::Display) -> PyErr {
     PyRuntimeError::new_err(value.to_string())
+}
+
+/// A rejected argument, as opposed to a failed call.
+///
+/// The modern extension raises ValueError for the same inputs and the facade is
+/// shared, so a caller's except ValueError worked on one wheel and not the
+/// other. Measured: set_cookie(same_site="sideways") raised RuntimeError here
+/// and ValueError there.
+fn value_error(value: impl std::fmt::Display) -> PyErr {
+    PyValueError::new_err(value.to_string())
 }
 
 // The facade is shared with the modern package and unpacks both tuples
@@ -69,7 +83,6 @@ fn redirect_tuple(py: Python, redirect: Redirect) -> PyRedirect {
     )
 }
 
-
 /// Maps the negotiated protocol onto the string the facade reports.
 fn http_version_name(value: HttpVersion) -> Option<&'static str> {
     match value {
@@ -110,7 +123,11 @@ fn cookie_same_site(name: &str) -> PyResult<CookieSameSite> {
         "none" | "no_restriction" => CookieSameSite::NoRestriction,
         "lax" => CookieSameSite::Lax,
         "strict" => CookieSameSite::Strict,
-        other => return Err(error(format!("unknown same_site {other:?}"))),
+        other => {
+            return Err(value_error(format!(
+                "unknown SameSite value {other:?}; expected none, lax, strict or empty"
+            )))
+        }
     })
 }
 
@@ -203,7 +220,11 @@ fn platform_mode(name: Option<&str>) -> PyResult<Platform> {
         Some("windows") => Platform::Windows,
         Some("macos") => Platform::Macos,
         Some("linux") => Platform::Linux,
-        Some(other) => return Err(error(format!("unknown platform {other:?}"))),
+        Some(_) => {
+            return Err(value_error(
+                "unknown platform; expected one of auto, windows, macos, linux",
+            ))
+        }
     })
 }
 
@@ -222,6 +243,13 @@ struct PyResponse {
     status_code: i32,
     headers: Vec<u8>,
     content: Vec<u8>,
+    /// The reason phrase the Core extracted, empty when the peer sent none.
+    reason_phrase: String,
+    /// Parsed header fields, duplicates and arrival order preserved.
+    header_fields: Vec<(String, String)>,
+    /// The protocol the connection actually used; None when the Core does not
+    /// know (a response served from the HTTP cache).
+    http_version: Option<&'static str>,
     /// Whether Encrypted ClientHello was used. The facade reads this off the
     /// head object, so the 3.6 extension needs it for the same reason the
     /// modern one does -- without it Response.ech_status is always None.
@@ -245,6 +273,30 @@ impl PyResponse {
     #[getter]
     fn ech_status(&self) -> Option<&'static str> {
         self.ech_status
+    }
+
+    /// The reason phrase the Core extracted. The facade reads it off the head
+    /// object, so without this getter Response.reason was derived from the
+    /// status line instead of reported.
+    #[getter]
+    fn reason_phrase(&self) -> String {
+        self.reason_phrase.clone()
+    }
+
+    /// The parsed header fields of the response head, duplicates preserved.
+    #[getter]
+    fn header_fields(&self) -> Vec<(String, String)> {
+        self.header_fields.clone()
+    }
+
+    /// The protocol the connection used, or None when the Core does not know.
+    ///
+    /// Without it Response.http_version was None on every response served over
+    /// this extension: the facade asks the head object first and falls back to
+    /// the status line, which cannot tell HTTP/1.1 from a normalised HTTP/2.
+    #[getter]
+    fn http_version(&self) -> Option<&'static str> {
+        self.http_version
     }
 }
 
@@ -677,6 +729,13 @@ impl PyRequest {
                 status_code: response.status_code,
                 headers: response.headers,
                 content: Vec::new(),
+                reason_phrase: response.reason_phrase,
+                header_fields: response
+                    .header_fields
+                    .into_iter()
+                    .map(|field| (field.name, field.value))
+                    .collect(),
+                http_version: http_version_name(response.http_version),
                 ech_status: ech_status_name(response.ech_status),
             })
         })
@@ -702,6 +761,13 @@ impl PyRequest {
                 status_code: response.status_code,
                 headers: response.headers,
                 content: Vec::new(),
+                reason_phrase: response.reason_phrase,
+                header_fields: response
+                    .header_fields
+                    .into_iter()
+                    .map(|field| (field.name, field.value))
+                    .collect(),
+                http_version: http_version_name(response.http_version),
                 ech_status: ech_status_name(response.ech_status),
             })
         })
@@ -979,6 +1045,29 @@ impl PyEngine {
     #[staticmethod]
     fn core_version() -> Option<String> {
         CoreEngine::core_version().map(|value| value.to_string_lossy().into_owned())
+    }
+
+    /// The User-Agent group and sec-ch-ua-platform this build emits.
+    ///
+    /// The shared facade calls this on every request that names a profile, and
+    /// this extension is the one a cp36-abi3 wheel loads -- so leaving it out
+    /// made a session with `impersonate=` fail on its first request, with an
+    /// UnsupportedFeature message that blamed the Core. The Core was fine; the
+    /// method was missing here. Returned as one pair because the two strings are
+    /// one fact about a browser build, and a caller that could ask for one alone
+    /// would invent the other.
+    #[staticmethod]
+    fn platform_identity(platform: &str) -> PyResult<(String, String)> {
+        CoreEngine::platform_identity(platform_mode(Some(platform))?).map_err(error)
+    }
+
+    /// What this Core artifact was compiled with, as a bitmask.
+    ///
+    /// Same reason as above: `chrome_client.capabilities()` is public API and
+    /// had no implementation on this extension.
+    #[staticmethod]
+    fn capabilities() -> PyResult<u32> {
+        CoreEngine::core_capabilities().map(|flags| flags.bits()).map_err(error)
     }
 
     // The facade passes the first eleven positionally, exactly as it does for the
