@@ -1988,6 +1988,42 @@ class HopByHopHeaderTests(unittest.TestCase):
             with self.assertRaises(chrome_client.UnsupportedFeature):
                 session.get(self.base, headers={"Connection": None})
 
+    def test_an_allowed_signature_field_reaches_the_wire_beside_the_capture(self):
+        """A signed API sends fields no capture carries; the allow list is the
+        escape hatch, and it is the only way one of those can survive."""
+        with chrome_client.Session(impersonate="chrome_155",
+                                   header_policy="profile",
+                                   header_allow=["X-Signature", "X-Timestamp"]) as s:
+            s.get(self.base, headers={"X-Signature": "deadbeef",
+                                      "X-Timestamp": "1700000000",
+                                      "X-Other": "x"})
+            dropped = dict(s.dropped_headers)
+        self.assertEqual(_ECHOED[-1].get("X-Signature"), "deadbeef")
+        self.assertEqual(_ECHOED[-1].get("X-Timestamp"), "1700000000")
+        self.assertIsNone(_ECHOED[-1].get("X-Other"),
+                          "a field outside both the capture and the allow "
+                          "list must not reach the wire")
+        self.assertEqual(dropped.get("x-other"), 1)
+
+    def test_header_allow_refuses_a_field_chromium_cannot_write(self):
+        """Allowing Connection would promise a header the Core then removes."""
+        with self.assertRaises(ValueError):
+            chrome_client.Session(impersonate="chrome_155",
+                                  header_policy="profile",
+                                  header_allow=["Connection"])
+
+    def test_the_allow_list_does_not_widen_any_other_policy(self):
+        """compat still sends caller fields; the allow list is profile-only."""
+        with chrome_client.Session(impersonate="chrome_155",
+                                   header_policy="compat",
+                                   header_allow=["X-Signature"]) as s:
+            s.get(self.base, headers={"X-Signature": "deadbeef",
+                                      "X-Unlisted": "y"})
+            dropped = dict(s.dropped_headers)
+        self.assertEqual(_ECHOED[-1].get("X-Signature"), "deadbeef")
+        self.assertEqual(_ECHOED[-1].get("X-Unlisted"), "y")
+        self.assertEqual(dropped, {})
+
     def test_profile_policy_reproduces_the_capture_exactly(self):
         """The only policy that answers "does this look like Chrome N?"."""
         import json

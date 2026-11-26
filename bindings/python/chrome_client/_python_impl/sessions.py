@@ -302,6 +302,42 @@ _WIRE_PREFIX = (
 _DEFAULT_HEADER_POLICY = {}
 
 
+def _normalize_header_allow(value):
+    """Validates the extra names ``header_policy="profile"`` keeps.
+
+    Each entry must be a header name the Core can write, because a name it cannot
+    write would be promised here and then removed by the Core anyway. A name
+    outside the profile's capture that is listed here is added to the allowed
+    set; nothing else changes, so the policy still reproduces the capture plus
+    exactly these fields.
+
+    Args:
+        value: ``None``, a string, or an iterable of strings.
+
+    Returns:
+        A tuple of the names, in the caller's order.
+
+    Raises:
+        ValueError: An entry is not a string, or is a header the Core refuses.
+    """
+    if value is None:
+        return ()
+    if isinstance(value, str):
+        value = (value,)
+    names = []
+    for entry in value:
+        if not isinstance(entry, str) or not entry:
+            raise ValueError(
+                "header_allow entries must be non-empty strings, not %r" % (entry,))
+        if not _header_flags(entry) & _HEADER_SETTABLE:
+            raise ValueError(
+                "header_allow cannot name %r: Chromium never writes that field, "
+                "so allowing it would promise a header the Core removes anyway"
+                % (entry,))
+        names.append(entry)
+    return tuple(names)
+
+
 def _normalize_header_policy(value):
     if value not in ("compat", "strict", "drop", "profile"):
         raise ValueError(
@@ -407,7 +443,7 @@ def _profile_header_names(profile):
     return tuple(name.lower() for name in order)
 
 
-def _apply_profile_policy(headers, profile, sink):
+def _apply_profile_policy(headers, profile, sink, allow=()):
     """Keeps only the headers that profile's capture carries and can be written.
 
     Two conditions, both required, so the surviving block is exactly what that
@@ -446,12 +482,13 @@ def _apply_profile_policy(headers, profile, sink):
             "'compat'." % (profile,))
     if headers is None:
         return headers
-    allowed_set = set(allowed)
+    allowed_set = set(allowed) | {name.lower() for name in allow}
     kept = Headers()
     removed = 0
     for name, value in headers.multi_items():
         lowered = name.lower()
-        ## Both conditions: in the capture, and writable by the Core.
+        # Both conditions: named by the capture or by the caller's allow list,
+        # and writable by the Core.
         if lowered in allowed_set and _header_flags(name) & _HEADER_SETTABLE:
             kept.add(name, value)
             continue
@@ -2236,7 +2273,7 @@ class BaseSession(object):
                  doh_template=None, dns_secure_mode=None,
                  dns_rotate=False, hsts_bypass=None,
                  proxy_chain=None, platform="auto", max_sockets_per_group=0,
-                 header_policy=None):
+                 header_policy=None, header_allow=None):
         """Configures defaults shared by requests made through this session.
 
         ``impersonate`` selects a pinned Chromium profile, ``http_version`` can
@@ -2358,6 +2395,12 @@ class BaseSession(object):
         if header_policy is None:
             header_policy = _default_header_policy()
         self.header_policy = _normalize_header_policy(header_policy)
+        #: Names header_policy="profile" must keep even though the profile's
+        #: capture does not carry them. A signed API needs its signature fields
+        #: on the wire, and a capture is a plain navigation: no request in it
+        #: ever carried ``X-Signature``. Every name here is one field the wire
+        #: gains over the capture, so it is opt-in and reported by header_allow.
+        self._header_allow = _normalize_header_allow(header_allow)
         self._dropped_headers = {}
         if headers:
             self.headers.update(headers)
@@ -2472,7 +2515,26 @@ class BaseSession(object):
         Returns:
             The headers to send.
         """
-        return _apply_profile_policy(headers, profile, self._dropped_headers)
+        return _apply_profile_policy(headers, profile, self._dropped_headers,
+                                    self.header_allow)
+
+    @property
+    def header_allow(self):
+        """Names ``header_policy="profile"`` keeps beyond the capture.
+
+        Returns:
+            A tuple of header names.
+        """
+        return self._header_allow
+
+    @header_allow.setter
+    def header_allow(self, value):
+        """Replaces the allow list, validating on every assignment.
+
+        Args:
+            value: ``None``, a string, or an iterable of strings.
+        """
+        self._header_allow = _normalize_header_allow(value)
 
     def _apply_header_policy(self, headers):
         """Returns the headers to send after the session's policy is applied.
@@ -4634,7 +4696,7 @@ class AsyncSession(BaseSession):
                  doh_template=None, dns_secure_mode=None,
                  dns_rotate=False, hsts_bypass=None,
                  proxy_chain=None, platform="auto", max_sockets_per_group=0,
-                 header_policy=None):
+                 header_policy=None, header_allow=None):
         BaseSession.__init__(
             self, impersonate=impersonate, proxy=proxy, proxies=proxies,
             proxy_auth=proxy_auth, verify=verify, timeout=timeout, headers=headers,
@@ -4653,6 +4715,7 @@ class AsyncSession(BaseSession):
             proxy_chain=proxy_chain, platform=platform,
             max_sockets_per_group=max_sockets_per_group,
             header_policy=header_policy,
+            header_allow=header_allow,
         )
         self.max_clients = max_clients
         self._gate = None

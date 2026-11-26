@@ -674,6 +674,7 @@ class BaseSession:
     platform: str
     max_sockets_per_group: int
     header_policy: str
+    header_allow: Tuple[str, ...]
     dropped_headers: Dict[str, int]
     extra_fp: Optional[Union[ExtraFingerprints, Mapping[str, Any]]]
     header_order: Optional[List[str]]
@@ -722,6 +723,7 @@ class BaseSession:
         platform: str = "auto",
         max_sockets_per_group: int = 0,
         header_policy: Optional[str] = None,
+        header_allow: Optional[Sequence[str]] = None,
     ) -> None:
         """Configures the defaults shared by every request this session sends.
 
@@ -2156,6 +2158,7 @@ class AsyncSession(BaseSession):
         platform: str = "auto",
         max_sockets_per_group: int = 0,
         header_policy: Optional[str] = None,
+        header_allow: Optional[Sequence[str]] = None,
     ) -> None:
         """Configures the asyncio session.
 

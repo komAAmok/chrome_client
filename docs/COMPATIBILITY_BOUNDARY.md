@@ -1116,3 +1116,39 @@ merging the extra headers, which is the order the capture itself shows.
 
 A session with `impersonate=None` has no capture, so this policy raises
 `UnsupportedFeature` rather than inventing a set.
+
+### 签名头（`X-Signature` 一类）：`header_allow` 是唯一的放行方式
+
+签名接口要求每请求带 `X-Signature` / `X-Timestamp`，而抓包是一次普通导航——六条抓包里
+没有任何一条带过这些字段。`header_policy="profile"` 会按抓包把它们移除，服务端于是返回
+「缺签名」。实测：
+
+```
+profile 策略 + X-Signature/X-Timestamp   -> 线上 14 个字段，两者都被移除，dropped 计数为 1
+compat 策略                              -> 线上 16 个字段，两者照常发出
+```
+
+放行方式是构造参数 `header_allow`，它只影响 `profile` 策略：
+
+```python
+session = Session(impersonate="chrome_155",
+                  header_policy="profile",
+                  header_allow=["X-Signature", "X-Timestamp"])
+session.get(url, headers={"X-Signature": "deadbeef", "X-Timestamp": "1700000000",
+                          "X-Other": "x"})
+session.dropped_headers      # {'x-other': 1}
+```
+
+实测行为：
+
+| 传入 | 线上 | dropped |
+| --- | --- | --- |
+| `header_allow=["X-Signature","X-Timestamp"]` | 16 个字段（抓包 14 + 这 2 个），值原样 | `{'x-other': 1}` |
+| `header_allow=["x-signature"]`（大小写无关） | 15 个字段 | 其余照常移除 |
+| `header_allow=["Connection"]` | 构造期 `ValueError` | —（Chromium 永远不写该字段，放行等于承诺一个会被 Core 移除的头） |
+| `header_policy="compat"` + `header_allow=[...]` | 与不传一致：compat 本来就不移除 | `{}` |
+
+放行名单每个名字都是相对抓包「多出来的一个字段」，所以它是显式 opt-in、按会话固定、并在
+`header_allow` 属性上可读。它不能放宽 `compat` 之外任何策略的移除规则，也不影响顺序——顺序
+仍由抓包决定，放行的字段落在抓包字段之后，因为 Chromium 的 `MergeFrom(extra_headers)` 就是
+在那里追加的。

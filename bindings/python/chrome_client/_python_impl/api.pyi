@@ -19,7 +19,7 @@ that one call instead of reconfiguring the shared one.
     response = requests.get("https://example.com", impersonate="chrome_155")
 """
 
-from typing import Any, Callable, Mapping, Optional, Union
+from typing import Any, Callable, Mapping, Optional, Sequence, Union
 
 from ._types import (
     AuthLike,
@@ -116,6 +116,7 @@ def session(
     platform: str = 'auto',
     max_sockets_per_group: int = 0,
     header_policy: Optional[str] = None,
+    header_allow: Optional[Sequence[str]] = None,
 ) -> Session:
     """Creates a synchronous :class:`~chrome_client.Session`.
 
@@ -188,6 +189,7 @@ def session(
             Transfer-Encoding and Accept-Encoding. None means the process
             default, which set_default_header_policy() or
             CHROME_CLIENT_HEADER_POLICY moves for the whole process.
+        header_allow:
 
     Returns:
         The new session. Close it, or use it as a context manager.
@@ -245,6 +247,7 @@ def async_session(
     platform: str = 'auto',
     max_sockets_per_group: int = 0,
     header_policy: Optional[str] = None,
+    header_allow: Optional[Sequence[str]] = None,
     max_clients: Optional[int] = None,
 ) -> AsyncSession:
     """Creates an :class:`~chrome_client.AsyncSession`.
@@ -318,6 +321,7 @@ def async_session(
             Transfer-Encoding and Accept-Encoding. None means the process
             default, which set_default_header_policy() or
             CHROME_CLIENT_HEADER_POLICY moves for the whole process.
+        header_allow:
         max_clients: Maximum concurrently in-flight requests, or None for unbounded.
             Only AsyncSession accepts it; Session has no such limit.
 

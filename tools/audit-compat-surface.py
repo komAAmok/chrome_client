@@ -104,6 +104,9 @@ SURFACE = {
     "retry": "REQUEST",
     "discard_cookies": "REQUEST",
     "header_policy": "REQUEST",
+    # Facade-only: it widens which caller names header_policy="profile" keeps.
+    # No ABI field carries it, and the Core never sees the list.
+    "header_allow": "FACADE",
     "extra_fp": "REQUEST",
     "strip_authorization": "REQUEST",
     "take_body_buffers": "REQUEST",
