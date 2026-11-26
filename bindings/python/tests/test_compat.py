@@ -4152,6 +4152,15 @@ class HeaderPolicyTests(unittest.TestCase):
                                         headers={'Connection': 'keep-alive'})
                 self.assertEqual(response.status_code, 200)
 
+    def test_quote_false_is_refused_instead_of_ignored(self):
+        """curl_cffi parity must not mean accepted-and-dropped."""
+        with chrome_client.Session() as session:
+            with self.assertRaises(chrome_client.UnsupportedFeature) as caught:
+                session.request('GET', self.base, quote=False)
+            self.assertIn('quote=False', str(caught.exception))
+            # The two values that describe what already happens still work.
+            response = session.request('GET', self.base, quote=True)
+            self.assertEqual(response.status_code, 200)
     def test_an_unknown_policy_is_refused(self):
         with self.assertRaises(ValueError):
             chrome_client.Session(header_policy="clean")

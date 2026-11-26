@@ -475,7 +475,9 @@ class _StreamFlag(int):
             content_callback: Called with the fully buffered body on non-streaming
                 requests.
             raise_for_status: Check the response before returning it.
-            quote: ``False`` skips the percent-encoding pass over the URL.
+            quote: Rejected when it is `False`: Chromium canonicalises and
+                percent-encodes the URL itself, so the value used to be accepted and
+                ignored. `None` and `True` describe what already happens.
             curl_options: Rejected; there is no libcurl surface here.
             interface: Rejected; no interface binding in ABI v8.
             doh_url: Rejected; DoH is not exposed.
@@ -595,7 +597,9 @@ class _AsyncStreamFlag(int):
             content_callback: Called with the fully buffered body on non-streaming
                 requests.
             raise_for_status: Check the response before returning it.
-            quote: ``False`` skips the percent-encoding pass over the URL.
+            quote: Rejected when it is `False`: Chromium canonicalises and
+                percent-encodes the URL itself, so the value used to be accepted and
+                ignored. `None` and `True` describe what already happens.
             curl_options: Rejected; there is no libcurl surface here.
             interface: Rejected; no interface binding in ABI v8.
             doh_url: Rejected; DoH is not exposed.
@@ -1215,7 +1219,9 @@ class Session(BaseSession):
             content_callback: Called with the fully buffered body on
                 non-streaming requests.
             raise_for_status: Check the response before returning it.
-            quote: ``False`` skips the percent-encoding pass over the URL.
+            quote: Rejected when it is `False`: Chromium canonicalises and
+                percent-encodes the URL itself, so the value used to be accepted and
+                ignored. `None` and `True` describe what already happens.
             curl_options: Rejected; there is no libcurl surface here.
             interface: Rejected; no interface binding in ABI v8.
             doh_url: Rejected; DoH is not exposed.
@@ -1419,7 +1425,9 @@ class Session(BaseSession):
             content_callback: Called with the fully buffered body on non-streaming
                 requests.
             raise_for_status: Check the response before returning it.
-            quote: ``False`` skips the percent-encoding pass over the URL.
+            quote: Rejected when it is `False`: Chromium canonicalises and
+                percent-encodes the URL itself, so the value used to be accepted and
+                ignored. `None` and `True` describe what already happens.
             curl_options: Rejected; there is no libcurl surface here.
             interface: Rejected; no interface binding in ABI v8.
             doh_url: Rejected; DoH is not exposed.
@@ -1534,7 +1542,9 @@ class Session(BaseSession):
             content_callback: Called with the fully buffered body on non-streaming
                 requests.
             raise_for_status: Check the response before returning it.
-            quote: ``False`` skips the percent-encoding pass over the URL.
+            quote: Rejected when it is `False`: Chromium canonicalises and
+                percent-encodes the URL itself, so the value used to be accepted and
+                ignored. `None` and `True` describe what already happens.
             curl_options: Rejected; there is no libcurl surface here.
             interface: Rejected; no interface binding in ABI v8.
             doh_url: Rejected; DoH is not exposed.
@@ -1648,7 +1658,9 @@ class Session(BaseSession):
             content_callback: Called with the fully buffered body on non-streaming
                 requests.
             raise_for_status: Check the response before returning it.
-            quote: ``False`` skips the percent-encoding pass over the URL.
+            quote: Rejected when it is `False`: Chromium canonicalises and
+                percent-encodes the URL itself, so the value used to be accepted and
+                ignored. `None` and `True` describe what already happens.
             curl_options: Rejected; there is no libcurl surface here.
             interface: Rejected; no interface binding in ABI v8.
             doh_url: Rejected; DoH is not exposed.
@@ -1760,7 +1772,9 @@ class Session(BaseSession):
             content_callback: Called with the fully buffered body on non-streaming
                 requests.
             raise_for_status: Check the response before returning it.
-            quote: ``False`` skips the percent-encoding pass over the URL.
+            quote: Rejected when it is `False`: Chromium canonicalises and
+                percent-encodes the URL itself, so the value used to be accepted and
+                ignored. `None` and `True` describe what already happens.
             curl_options: Rejected; there is no libcurl surface here.
             interface: Rejected; no interface binding in ABI v8.
             doh_url: Rejected; DoH is not exposed.
@@ -1876,7 +1890,9 @@ class Session(BaseSession):
             content_callback: Called with the fully buffered body on non-streaming
                 requests.
             raise_for_status: Check the response before returning it.
-            quote: ``False`` skips the percent-encoding pass over the URL.
+            quote: Rejected when it is `False`: Chromium canonicalises and
+                percent-encodes the URL itself, so the value used to be accepted and
+                ignored. `None` and `True` describe what already happens.
             curl_options: Rejected; there is no libcurl surface here.
             interface: Rejected; no interface binding in ABI v8.
             doh_url: Rejected; DoH is not exposed.
@@ -1987,7 +2003,9 @@ class Session(BaseSession):
             content_callback: Called with the fully buffered body on non-streaming
                 requests.
             raise_for_status: Check the response before returning it.
-            quote: ``False`` skips the percent-encoding pass over the URL.
+            quote: Rejected when it is `False`: Chromium canonicalises and
+                percent-encodes the URL itself, so the value used to be accepted and
+                ignored. `None` and `True` describe what already happens.
             curl_options: Rejected; there is no libcurl surface here.
             interface: Rejected; no interface binding in ABI v8.
             doh_url: Rejected; DoH is not exposed.
@@ -2098,7 +2116,9 @@ class Session(BaseSession):
             content_callback: Called with the fully buffered body on non-streaming
                 requests.
             raise_for_status: Check the response before returning it.
-            quote: ``False`` skips the percent-encoding pass over the URL.
+            quote: Rejected when it is `False`: Chromium canonicalises and
+                percent-encodes the URL itself, so the value used to be accepted and
+                ignored. `None` and `True` describe what already happens.
             curl_options: Rejected; there is no libcurl surface here.
             interface: Rejected; no interface binding in ABI v8.
             doh_url: Rejected; DoH is not exposed.
@@ -2209,7 +2229,9 @@ class Session(BaseSession):
             content_callback: Called with the fully buffered body on non-streaming
                 requests.
             raise_for_status: Check the response before returning it.
-            quote: ``False`` skips the percent-encoding pass over the URL.
+            quote: Rejected when it is `False`: Chromium canonicalises and
+                percent-encodes the URL itself, so the value used to be accepted and
+                ignored. `None` and `True` describe what already happens.
             curl_options: Rejected; there is no libcurl surface here.
             interface: Rejected; no interface binding in ABI v8.
             doh_url: Rejected; DoH is not exposed.
@@ -2320,7 +2342,9 @@ class Session(BaseSession):
             content_callback: Called with the fully buffered body on non-streaming
                 requests.
             raise_for_status: Check the response before returning it.
-            quote: ``False`` skips the percent-encoding pass over the URL.
+            quote: Rejected when it is `False`: Chromium canonicalises and
+                percent-encodes the URL itself, so the value used to be accepted and
+                ignored. `None` and `True` describe what already happens.
             curl_options: Rejected; there is no libcurl surface here.
             interface: Rejected; no interface binding in ABI v8.
             doh_url: Rejected; DoH is not exposed.
@@ -2954,7 +2978,9 @@ class AsyncSession(BaseSession):
             content_callback: Called with the fully buffered body on non-streaming
                 requests.
             raise_for_status: Check the response before returning it.
-            quote: ``False`` skips the percent-encoding pass over the URL.
+            quote: Rejected when it is `False`: Chromium canonicalises and
+                percent-encodes the URL itself, so the value used to be accepted and
+                ignored. `None` and `True` describe what already happens.
             curl_options: Rejected; there is no libcurl surface here.
             interface: Rejected; no interface binding in ABI v8.
             doh_url: Rejected; DoH is not exposed.
@@ -3069,7 +3095,9 @@ class AsyncSession(BaseSession):
             content_callback: Called with the fully buffered body on non-streaming
                 requests.
             raise_for_status: Check the response before returning it.
-            quote: ``False`` skips the percent-encoding pass over the URL.
+            quote: Rejected when it is `False`: Chromium canonicalises and
+                percent-encodes the URL itself, so the value used to be accepted and
+                ignored. `None` and `True` describe what already happens.
             curl_options: Rejected; there is no libcurl surface here.
             interface: Rejected; no interface binding in ABI v8.
             doh_url: Rejected; DoH is not exposed.
@@ -3180,7 +3208,9 @@ class AsyncSession(BaseSession):
             content_callback: Called with the fully buffered body on non-streaming
                 requests.
             raise_for_status: Check the response before returning it.
-            quote: ``False`` skips the percent-encoding pass over the URL.
+            quote: Rejected when it is `False`: Chromium canonicalises and
+                percent-encodes the URL itself, so the value used to be accepted and
+                ignored. `None` and `True` describe what already happens.
             curl_options: Rejected; there is no libcurl surface here.
             interface: Rejected; no interface binding in ABI v8.
             doh_url: Rejected; DoH is not exposed.
@@ -3291,7 +3321,9 @@ class AsyncSession(BaseSession):
             content_callback: Called with the fully buffered body on non-streaming
                 requests.
             raise_for_status: Check the response before returning it.
-            quote: ``False`` skips the percent-encoding pass over the URL.
+            quote: Rejected when it is `False`: Chromium canonicalises and
+                percent-encodes the URL itself, so the value used to be accepted and
+                ignored. `None` and `True` describe what already happens.
             curl_options: Rejected; there is no libcurl surface here.
             interface: Rejected; no interface binding in ABI v8.
             doh_url: Rejected; DoH is not exposed.
@@ -3402,7 +3434,9 @@ class AsyncSession(BaseSession):
             content_callback: Called with the fully buffered body on non-streaming
                 requests.
             raise_for_status: Check the response before returning it.
-            quote: ``False`` skips the percent-encoding pass over the URL.
+            quote: Rejected when it is `False`: Chromium canonicalises and
+                percent-encodes the URL itself, so the value used to be accepted and
+                ignored. `None` and `True` describe what already happens.
             curl_options: Rejected; there is no libcurl surface here.
             interface: Rejected; no interface binding in ABI v8.
             doh_url: Rejected; DoH is not exposed.
@@ -3513,7 +3547,9 @@ class AsyncSession(BaseSession):
             content_callback: Called with the fully buffered body on non-streaming
                 requests.
             raise_for_status: Check the response before returning it.
-            quote: ``False`` skips the percent-encoding pass over the URL.
+            quote: Rejected when it is `False`: Chromium canonicalises and
+                percent-encodes the URL itself, so the value used to be accepted and
+                ignored. `None` and `True` describe what already happens.
             curl_options: Rejected; there is no libcurl surface here.
             interface: Rejected; no interface binding in ABI v8.
             doh_url: Rejected; DoH is not exposed.
@@ -3624,7 +3660,9 @@ class AsyncSession(BaseSession):
             content_callback: Called with the fully buffered body on non-streaming
                 requests.
             raise_for_status: Check the response before returning it.
-            quote: ``False`` skips the percent-encoding pass over the URL.
+            quote: Rejected when it is `False`: Chromium canonicalises and
+                percent-encodes the URL itself, so the value used to be accepted and
+                ignored. `None` and `True` describe what already happens.
             curl_options: Rejected; there is no libcurl surface here.
             interface: Rejected; no interface binding in ABI v8.
             doh_url: Rejected; DoH is not exposed.
@@ -3735,7 +3773,9 @@ class AsyncSession(BaseSession):
             content_callback: Called with the fully buffered body on non-streaming
                 requests.
             raise_for_status: Check the response before returning it.
-            quote: ``False`` skips the percent-encoding pass over the URL.
+            quote: Rejected when it is `False`: Chromium canonicalises and
+                percent-encodes the URL itself, so the value used to be accepted and
+                ignored. `None` and `True` describe what already happens.
             curl_options: Rejected; there is no libcurl surface here.
             interface: Rejected; no interface binding in ABI v8.
             doh_url: Rejected; DoH is not exposed.
@@ -3846,7 +3886,9 @@ class AsyncSession(BaseSession):
             content_callback: Called with the fully buffered body on non-streaming
                 requests.
             raise_for_status: Check the response before returning it.
-            quote: ``False`` skips the percent-encoding pass over the URL.
+            quote: Rejected when it is `False`: Chromium canonicalises and
+                percent-encodes the URL itself, so the value used to be accepted and
+                ignored. `None` and `True` describe what already happens.
             curl_options: Rejected; there is no libcurl surface here.
             interface: Rejected; no interface binding in ABI v8.
             doh_url: Rejected; DoH is not exposed.

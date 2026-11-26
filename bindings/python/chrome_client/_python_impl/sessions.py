@@ -3900,6 +3900,20 @@ class BaseSession(object):
         if values.get("max_recv_speed"):
             raise UnsupportedFeature(
                 "max_recv_speed= is not supported: Chromium owns transfer pacing")
+        # `quote` is a curl_cffi parity keyword that this facade accepted and
+        # then never read: the value was copied onto the PreparedRequest and
+        # dropped, so `quote=False` percent-encoded the URL anyway. That is the
+        # silent ignore AGENTS.md section 8 forbids, and the stub documented the
+        # opposite (`False` skips percent-encoding the URL). The Core always
+        # percent-encodes -- Chromium canonicalises the URL -- so the only honest
+        # answer for a caller asking for something else is a refusal.
+        # `quote=None` and `quote=True` describe what already happens.
+        if values.get("quote") is False:
+            raise UnsupportedFeature(
+                "quote=False is not supported: Chromium canonicalises and "
+                "percent-encodes the URL itself, and the ABI has no switch for "
+                "it. The value used to be accepted and ignored, so the URL was "
+                "encoded anyway. Pass the URL already percent-encoded.")
         header_order, form_boundary = self.header_order, self.form_boundary
         if values.get("extra_fp") is not None:
             header_order, form_boundary = validate_extra_fp(values["extra_fp"])

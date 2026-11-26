@@ -484,7 +484,7 @@ def request(
             ``form_boundary`` are honourable.
         content_callback: Called with the fully buffered body.
         raise_for_status: Check the response before returning it.
-        quote: ``False`` skips percent-encoding the URL.
+        quote: Rejected when it is `False`: the URL is always percent-encoded.
         curl_options: Rejected.
         interface: Rejected.
         doh_url: Rejected.
@@ -617,7 +617,7 @@ def get(
             honourable.
         content_callback: Called with the fully buffered body.
         raise_for_status: Check the response before returning it.
-        quote: ``False`` skips percent-encoding the URL.
+        quote: Rejected when it is `False`: the URL is always percent-encoded.
         curl_options: Rejected.
         interface: Rejected.
         doh_url: Rejected.
@@ -744,7 +744,7 @@ def options(
             honourable.
         content_callback: Called with the fully buffered body.
         raise_for_status: Check the response before returning it.
-        quote: ``False`` skips percent-encoding the URL.
+        quote: Rejected when it is `False`: the URL is always percent-encoded.
         curl_options: Rejected.
         interface: Rejected.
         doh_url: Rejected.
@@ -866,7 +866,7 @@ def head(
             honourable.
         content_callback: Called with the fully buffered body.
         raise_for_status: Check the response before returning it.
-        quote: ``False`` skips percent-encoding the URL.
+        quote: Rejected when it is `False`: the URL is always percent-encoded.
         curl_options: Rejected.
         interface: Rejected.
         doh_url: Rejected.
@@ -986,7 +986,7 @@ def post(
             honourable.
         content_callback: Called with the fully buffered body.
         raise_for_status: Check the response before returning it.
-        quote: ``False`` skips percent-encoding the URL.
+        quote: Rejected when it is `False`: the URL is always percent-encoded.
         curl_options: Rejected.
         interface: Rejected.
         doh_url: Rejected.
@@ -1109,7 +1109,7 @@ def put(
             honourable.
         content_callback: Called with the fully buffered body.
         raise_for_status: Check the response before returning it.
-        quote: ``False`` skips percent-encoding the URL.
+        quote: Rejected when it is `False`: the URL is always percent-encoded.
         curl_options: Rejected.
         interface: Rejected.
         doh_url: Rejected.
@@ -1229,7 +1229,7 @@ def patch(
             honourable.
         content_callback: Called with the fully buffered body.
         raise_for_status: Check the response before returning it.
-        quote: ``False`` skips percent-encoding the URL.
+        quote: Rejected when it is `False`: the URL is always percent-encoded.
         curl_options: Rejected.
         interface: Rejected.
         doh_url: Rejected.
@@ -1349,7 +1349,7 @@ def delete(
             honourable.
         content_callback: Called with the fully buffered body.
         raise_for_status: Check the response before returning it.
-        quote: ``False`` skips percent-encoding the URL.
+        quote: Rejected when it is `False`: the URL is always percent-encoded.
         curl_options: Rejected.
         interface: Rejected.
         doh_url: Rejected.
@@ -1469,7 +1469,7 @@ def trace(
             honourable.
         content_callback: Called with the fully buffered body.
         raise_for_status: Check the response before returning it.
-        quote: ``False`` skips percent-encoding the URL.
+        quote: Rejected when it is `False`: the URL is always percent-encoded.
         curl_options: Rejected.
         interface: Rejected.
         doh_url: Rejected.
@@ -1589,7 +1589,7 @@ def query(
             honourable.
         content_callback: Called with the fully buffered body.
         raise_for_status: Check the response before returning it.
-        quote: ``False`` skips percent-encoding the URL.
+        quote: Rejected when it is `False`: the URL is always percent-encoded.
         curl_options: Rejected.
         interface: Rejected.
         doh_url: Rejected.
