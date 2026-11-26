@@ -1,4 +1,9 @@
-"""Body encoding: form data, JSON, ``files=`` multipart, and ``CurlMime``."""
+"""Body encoding: form-urlencoded, JSON, and ``files=`` multipart.
+
+The multipart renderer is private: ``files=`` is the only public spelling. CurlMime
+was the curl_cffi-shaped second entry point and produced byte-identical bodies
+for the same parts, so it went with the rest of that surface.
+"""
 
 import io
 import json as _json
@@ -103,11 +108,14 @@ class Part(object):
         return b"\r\n".join(lines) + b"\r\n\r\n" + _bytes(self.data, encoding) + b"\r\n"
 
 
-class CurlMime(object):
-    """curl_cffi-compatible multipart builder.
+class _MultipartBody(object):
+    """Renderer for ``files=`` bodies. Private: no public entry point builds one.
 
-    ``close()`` is accepted for source compatibility; nothing is held open
-    because parts are read eagerly.
+    The class exists because ``encode_multipart`` needs somewhere to accumulate Part
+    objects before serialising them. It used to be public as CurlMime, a
+    curl_cffi-shaped second entry point; ``files=`` produces byte-identical bodies
+    for the same parts, so the constructor and the ``multipart=`` keyword were
+    removed together.
     """
 
     def __init__(self, parts=None):
@@ -133,16 +141,6 @@ class CurlMime(object):
                 filename = guess_filename(handle)
         self._parts.append(Part(name, data if data is not None else b"", filename,
                                 content_type, headers, content_transfer_encoding))
-        return self
-
-    @classmethod
-    def from_list(cls, files):
-        instance = cls()
-        for entry in files:
-            instance.addpart(**entry)
-        return instance
-
-    def attach(self, curl=None):  # pragma: no cover - curl_cffi source compat
         return self
 
     def close(self):
@@ -209,7 +207,7 @@ def _normalize_file_entry(field, value):
 
 def encode_multipart(data, files, boundary=None, encoding="utf-8"):
     """Builds a ``multipart/form-data`` body from ``data=`` plus ``files=``."""
-    mime = CurlMime()
+    mime = _MultipartBody()
     for key, value in to_key_val_list(data) or ():
         if value is None:
             continue

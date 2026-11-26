@@ -41,7 +41,6 @@ from ._types import (
 )
 from .impersonate import ExtraFingerprints, HttpVersion, Impersonate
 from .models import Response
-from .multipart import CurlMime
 from .sessions import AsyncSession, Session
 
 
@@ -357,7 +356,6 @@ def request(
     cert: Any = None,
     json: Any = None,
     content: Optional[Body] = None,
-    multipart: Optional[CurlMime] = None,
     impersonate: Optional[Impersonate] = None,
     proxy: Optional[str] = None,
     http_version: Optional[HttpVersion] = None,
@@ -409,7 +407,6 @@ def request(
         cert: Rejected; ABI v8 has no client-certificate setting.
         json: JSON body.
         content: Raw body bytes; mutually exclusive with ``data=``.
-        multipart: A :class:`~chrome_client.CurlMime` body.
         impersonate: Profile for this call, e.g. ``"chrome_155"``.
         proxy: Proxy URL for this call.
         http_version: Pin ``"v1"``/``"v2"``/``"v3"``.
@@ -473,7 +470,6 @@ def get(
     cert: Any = None,
     json: Any = None,
     content: Optional[Body] = None,
-    multipart: Optional[CurlMime] = None,
     impersonate: Optional[Impersonate] = None,
     proxy: Optional[str] = None,
     http_version: Optional[HttpVersion] = None,
@@ -518,7 +514,6 @@ def get(
         cert: Rejected; ABI v8 has no client-certificate setting.
         json: JSON body.
         content: Raw body bytes; mutually exclusive with ``data=``.
-        multipart: A :class:`~chrome_client.CurlMime` body.
         impersonate: Profile for this call, e.g. ``"chrome_155"``.
         proxy: Proxy URL for this call.
         http_version: Pin ``"v1"``/``"v2"``/``"v3"``.
@@ -576,7 +571,6 @@ def options(
     cert: Any = None,
     json: Any = None,
     content: Optional[Body] = None,
-    multipart: Optional[CurlMime] = None,
     impersonate: Optional[Impersonate] = None,
     proxy: Optional[str] = None,
     http_version: Optional[HttpVersion] = None,
@@ -621,7 +615,6 @@ def options(
         cert: Rejected; ABI v8 has no client-certificate setting.
         json: JSON body.
         content: Raw body bytes; mutually exclusive with ``data=``.
-        multipart: A :class:`~chrome_client.CurlMime` body.
         impersonate: Profile for this call, e.g. ``"chrome_155"``.
         proxy: Proxy URL for this call.
         http_version: Pin ``"v1"``/``"v2"``/``"v3"``.
@@ -672,7 +665,6 @@ def head(
     cert: Any = None,
     json: Any = None,
     content: Optional[Body] = None,
-    multipart: Optional[CurlMime] = None,
     impersonate: Optional[Impersonate] = None,
     proxy: Optional[str] = None,
     http_version: Optional[HttpVersion] = None,
@@ -719,7 +711,6 @@ def head(
         cert: Rejected; ABI v8 has no client-certificate setting.
         json: JSON body.
         content: Raw body bytes; mutually exclusive with ``data=``.
-        multipart: A :class:`~chrome_client.CurlMime` body.
         impersonate: Profile for this call, e.g. ``"chrome_155"``.
         proxy: Proxy URL for this call.
         http_version: Pin ``"v1"``/``"v2"``/``"v3"``.
@@ -770,7 +761,6 @@ def post(
     verify: Optional[Verify] = None,
     cert: Any = None,
     content: Optional[Body] = None,
-    multipart: Optional[CurlMime] = None,
     impersonate: Optional[Impersonate] = None,
     proxy: Optional[str] = None,
     http_version: Optional[HttpVersion] = None,
@@ -815,7 +805,6 @@ def post(
         verify: ``True``/``False``/CA bundle path.
         cert: Rejected; ABI v8 has no client-certificate setting.
         content: Raw body bytes; mutually exclusive with ``data=``.
-        multipart: A :class:`~chrome_client.CurlMime` body.
         impersonate: Profile for this call, e.g. ``"chrome_155"``.
         proxy: Proxy URL for this call.
         http_version: Pin ``"v1"``/``"v2"``/``"v3"``.
@@ -869,7 +858,6 @@ def put(
     cert: Any = None,
     json: Any = None,
     content: Optional[Body] = None,
-    multipart: Optional[CurlMime] = None,
     impersonate: Optional[Impersonate] = None,
     proxy: Optional[str] = None,
     http_version: Optional[HttpVersion] = None,
@@ -914,7 +902,6 @@ def put(
         cert: Rejected; ABI v8 has no client-certificate setting.
         json: JSON body.
         content: Raw body bytes; mutually exclusive with ``data=``.
-        multipart: A :class:`~chrome_client.CurlMime` body.
         impersonate: Profile for this call, e.g. ``"chrome_155"``.
         proxy: Proxy URL for this call.
         http_version: Pin ``"v1"``/``"v2"``/``"v3"``.
@@ -965,7 +952,6 @@ def patch(
     cert: Any = None,
     json: Any = None,
     content: Optional[Body] = None,
-    multipart: Optional[CurlMime] = None,
     impersonate: Optional[Impersonate] = None,
     proxy: Optional[str] = None,
     http_version: Optional[HttpVersion] = None,
@@ -1010,7 +996,6 @@ def patch(
         cert: Rejected; ABI v8 has no client-certificate setting.
         json: JSON body.
         content: Raw body bytes; mutually exclusive with ``data=``.
-        multipart: A :class:`~chrome_client.CurlMime` body.
         impersonate: Profile for this call, e.g. ``"chrome_155"``.
         proxy: Proxy URL for this call.
         http_version: Pin ``"v1"``/``"v2"``/``"v3"``.
@@ -1061,7 +1046,6 @@ def delete(
     cert: Any = None,
     json: Any = None,
     content: Optional[Body] = None,
-    multipart: Optional[CurlMime] = None,
     impersonate: Optional[Impersonate] = None,
     proxy: Optional[str] = None,
     http_version: Optional[HttpVersion] = None,
@@ -1106,7 +1090,6 @@ def delete(
         cert: Rejected; ABI v8 has no client-certificate setting.
         json: JSON body.
         content: Raw body bytes; mutually exclusive with ``data=``.
-        multipart: A :class:`~chrome_client.CurlMime` body.
         impersonate: Profile for this call, e.g. ``"chrome_155"``.
         proxy: Proxy URL for this call.
         http_version: Pin ``"v1"``/``"v2"``/``"v3"``.
@@ -1157,7 +1140,6 @@ def trace(
     cert: Any = None,
     json: Any = None,
     content: Optional[Body] = None,
-    multipart: Optional[CurlMime] = None,
     impersonate: Optional[Impersonate] = None,
     proxy: Optional[str] = None,
     http_version: Optional[HttpVersion] = None,
@@ -1202,7 +1184,6 @@ def trace(
         cert: Rejected; ABI v8 has no client-certificate setting.
         json: JSON body.
         content: Raw body bytes; mutually exclusive with ``data=``.
-        multipart: A :class:`~chrome_client.CurlMime` body.
         impersonate: Profile for this call, e.g. ``"chrome_155"``.
         proxy: Proxy URL for this call.
         http_version: Pin ``"v1"``/``"v2"``/``"v3"``.
@@ -1253,7 +1234,6 @@ def query(
     cert: Any = None,
     json: Any = None,
     content: Optional[Body] = None,
-    multipart: Optional[CurlMime] = None,
     impersonate: Optional[Impersonate] = None,
     proxy: Optional[str] = None,
     http_version: Optional[HttpVersion] = None,
@@ -1298,7 +1278,6 @@ def query(
         cert: Rejected; ABI v8 has no client-certificate setting.
         json: JSON body.
         content: Raw body bytes; mutually exclusive with ``data=``.
-        multipart: A :class:`~chrome_client.CurlMime` body.
         impersonate: Profile for this call, e.g. ``"chrome_155"``.
         proxy: Proxy URL for this call.
         http_version: Pin ``"v1"``/``"v2"``/``"v3"``.

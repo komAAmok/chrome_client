@@ -122,7 +122,6 @@ from ._python_impl import (
     http_version_from_status_line as http_version_from_status_line,
     parse_raw_headers as parse_raw_headers,
     reason_from_status_line as reason_from_status_line,
-    CurlMime as CurlMime,
     Part as Part,
     body_length as body_length,
     encode_multipart as encode_multipart,

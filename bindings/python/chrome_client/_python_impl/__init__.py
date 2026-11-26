@@ -36,7 +36,6 @@ from .exceptions import (CertificateVerifyError, ChunkedEncodingError, ConnectTi
 from .impersonate import (CurlHttpVersion, ExtraFingerprints, available_profiles,
                           normalize_http_version, normalize_impersonate)
 from .models import AsyncResponse, PreparedRequest, Request, Response
-from .multipart import CurlMime
 from .sessions import (AsyncClient, AsyncSession, Client, RetryStrategy, Session,
                        _proxy_from_proxies, merge_setting,
                        set_default_header_policy)
@@ -72,7 +71,7 @@ __all__ = [
     "WebSocket", "AsyncWebSocket", "WsCloseCode", "CurlWsFrame",
     # containers
     "CaseInsensitiveDict", "Headers", "LookupDict", "CookieJar", "Cookies",
-    "RequestsCookieJar", "Cookie", "CurlMime", "ExtraFingerprints", "CurlHttpVersion",
+    "RequestsCookieJar", "Cookie", "ExtraFingerprints", "CurlHttpVersion",
     "EngineConfig", "DEFAULT_MAX_ENGINES", "SessionBinding",
     # adapters and auth
     "HTTPAdapter", "BaseAdapter", "AuthBase", "HTTPBasicAuth", "HTTPProxyAuth",

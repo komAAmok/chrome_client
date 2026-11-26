@@ -263,6 +263,11 @@ curl_cffi 同时模拟 Chrome / Firefox / Safari，它的 `extra_fp` 有 15 个�
 
 被删掉的 13 个字段与判定理由见下节附录——判定没变，只是不再有「接受后拒绝」这条路。
 
+multipart 同理：`files=` 与 curl_cffi 的 `multipart=`/`CurlMime` 对同一组 part 产出逐字节相同的
+body（实测：`(None, data)` 对应无文件名字段、3 元组对应 content-type、4 元组对应 per-part
+headers），两者只差 part 顺序。`multipart=` 与 `CurlMime` 已删除，渲染器留作私有的
+`_MultipartBody`。
+
 
 #### 附录：被删掉的 13 个 `extra_fp` 字段与它们的判定
 

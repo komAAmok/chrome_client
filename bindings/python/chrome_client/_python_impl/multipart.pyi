@@ -1,6 +1,6 @@
 """Type surface of :mod:`chrome_client.multipart`.
 
-Body encoding: form data, JSON, ``files=`` multipart, and ``CurlMime``.
+Body encoding: form-urlencoded, JSON and ``files=`` multipart.
 
 ``data=`` accepts every shape requests accepts -- a mapping, a sequence of pairs,
 repeated values, ``None`` values being dropped -- and ``files=`` accepts the
@@ -81,123 +81,66 @@ class Part:
         ...
 
 
-class CurlMime:
-    """curl_cffi-compatible multipart builder.
+class _MultipartBody:
+    """Accumulates parts, then renders a multipart/form-data body.
 
-    ``close()`` is accepted for source compatibility; nothing is held open
-    because parts are read eagerly.
-
-    Attributes:
-        boundary: The boundary to use, or ``None`` to generate one per encode.
-
-    Example:
-        >>> mime = CurlMime()
-        >>> mime.addpart(name="title", data="hello")
-        CurlMime(...)
-        >>> mime.addpart(name="photo", filename="p.jpg",
-        ...              content_type="image/jpeg", local_path="/tmp/p.jpg")
-        >>> session.post(url, multipart=mime)
+    Private: files= is the only public spelling. This class used to be public
+    as CurlMime, and curl_cffi callers passed it as multipart=; both were
+    removed because files= produces byte-identical bodies for the same parts.
     """
 
     boundary: Optional[str]
 
-    def __init__(self, parts: Optional[Iterable[Mapping[str, Any]]] = None) -> None:
-        """Creates the builder, optionally from ready-made part descriptions.
-
-        Args:
-            parts: Mappings of :meth:`addpart` keyword arguments.
-        """
+    def __init__(self) -> None:
+        """Creates an empty body."""
         ...
 
     def addpart(
         self,
         name: str,
-        content_type: Optional[str] = None,
-        filename: Optional[str] = None,
-        local_path: Optional[str] = None,
-        data: Any = None,
-        content_transfer_encoding: Optional[str] = None,
-        headers: Any = None,
-    ) -> "CurlMime":
-        """Adds one part.
+        content_type: Optional[str] = ...,
+        filename: Optional[str] = ...,
+        local_path: Optional[str] = ...,
+        data: Any = ...,
+        content_transfer_encoding: Optional[str] = ...,
+        headers: Optional[Mapping[str, str]] = ...,
+    ) -> "_MultipartBody":
+        """Appends one part.
 
         Args:
-            name: Form field name.
-            content_type: Part content type. Guessed from ``local_path`` or
-                ``filename`` when omitted.
-            filename: Filename to advertise.
-            local_path: Path to read the part from; the file is read eagerly.
-            data: Part body; a file object is read here.
-            content_transfer_encoding: Optional transfer encoding.
-            headers: Extra headers for this part.
+            name: Field name in the Content-Disposition.
+            content_type: Content-Type line for this part, or None.
+            filename: Filename parameter; None renders a plain field.
+            local_path: Read the part body from this path.
+            data: Part body, when it is not read from a path or a handle.
+            content_transfer_encoding: Content-Transfer-Encoding line.
+            headers: Extra part headers.
 
         Returns:
-            The builder itself, so calls chain.
-
-        Example:
-            >>> CurlMime().addpart("a", data="1").addpart("b", data="2")
-        """
-        ...
-
-    @classmethod
-    def from_list(cls, files: Iterable[Mapping[str, Any]]) -> "CurlMime":
-        """Builds a multipart body from a list of part descriptions.
-
-        Args:
-            files: Mappings of :meth:`addpart` keyword arguments.
-
-        Returns:
-            The populated builder.
-
-        Example:
-            >>> CurlMime.from_list([{"name": "title", "data": "hello"}])
-        """
-        ...
-
-    def attach(self, curl: Any = None) -> "CurlMime":
-        """Present for curl_cffi source compatibility.
-
-        Args:
-            curl: Ignored; there is no libcurl handle here.
-
-        Returns:
-            The builder itself.
+            This object, so calls can chain.
         """
         ...
 
     def close(self) -> None:
-        """Drops the buffered parts, releasing their memory.
-
-        Parts are read eagerly, so there is nothing else to close.
-        """
+        """Drops the accumulated parts."""
         ...
 
     def __len__(self) -> int:
-        """Returns how many parts were added.
-
-        Returns:
-            The part count.
-        """
+        """Returns the number of parts."""
         ...
 
-    def encode(self, boundary: Optional[str] = None, encoding: str = ...) -> EncodedMultipart:
-        """Renders every part into a complete body.
+    def encode(self, boundary: Optional[str] = None,
+               encoding: str = ...) -> EncodedMultipart:
+        """Returns (body_bytes, content_type_header).
 
         Args:
-            boundary: Boundary to use; the instance's own, or a random hex one.
-            encoding: Codec for str values.
+            boundary: Boundary to use; a random one is generated when unset.
+            encoding: Encoding for the names and values.
 
         Returns:
-            ``(body_bytes, content_type_header)``, where the content type already
-            carries ``boundary=``.
-
-        Example:
-            >>> body, content_type = CurlMime([{"name": "a", "data": "1"}]).encode()
-            >>> content_type.startswith("multipart/form-data; boundary=")
-            True
+            The encoded body and the Content-Type header value.
         """
         ...
-
 
 def encode_params(data: Any, encoding: str = ...) -> str:
     """Encodes ``data=`` as ``application/x-www-form-urlencoded``.

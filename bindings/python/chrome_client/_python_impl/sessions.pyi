@@ -68,7 +68,6 @@ from .impersonate import (
     Impersonate,
 )
 from .models import AsyncResponse, PreparedRequest, Request, Response
-from .multipart import CurlMime
 from .structures import Headers
 from .websockets import AsyncWebSocket, WebSocket
 
@@ -396,7 +395,6 @@ class _StreamFlag(int):
         cert: Any = None,
         json: Any = None,
         content: Optional[Body] = None,
-        multipart: Optional[CurlMime] = None,
         impersonate: Optional[Impersonate] = None,
         proxy: Optional[str] = None,
         http_version: Optional[HttpVersion] = None,
@@ -436,8 +434,6 @@ class _StreamFlag(int):
                 already sets it.
             content: Raw body bytes; an alternative to ``data=`` for pre-encoded
                 payloads. Passing both raises ``ValueError``.
-            multipart: A :class:`~chrome_client.CurlMime` instance that becomes the
-                whole body.
             impersonate: Profile override for this call, either an exact
                 ``chrome_<major>`` name or a curl_cffi ``chrome<major>`` alias.
             proxy: Proxy URL for this call; wins over ``proxies``.
@@ -489,7 +485,6 @@ class _AsyncStreamFlag(int):
         cert: Any = None,
         json: Any = None,
         content: Optional[Body] = None,
-        multipart: Optional[CurlMime] = None,
         impersonate: Optional[Impersonate] = None,
         proxy: Optional[str] = None,
         http_version: Optional[HttpVersion] = None,
@@ -529,8 +524,6 @@ class _AsyncStreamFlag(int):
                 already sets it.
             content: Raw body bytes; an alternative to ``data=`` for pre-encoded
                 payloads. Passing both raises ``ValueError``.
-            multipart: A :class:`~chrome_client.CurlMime` instance that becomes the
-                whole body.
             impersonate: Profile override for this call, either an exact
                 ``chrome_<major>`` name or a curl_cffi ``chrome<major>`` alias.
             proxy: Proxy URL for this call; wins over ``proxies``.
@@ -1054,7 +1047,6 @@ class Session(BaseSession):
         cert: Any = None,
         json: Any = None,
         content: Optional[Body] = None,
-        multipart: Optional[CurlMime] = None,
         impersonate: Optional[Impersonate] = None,
         proxy: Optional[str] = None,
         http_version: Optional[HttpVersion] = None,
@@ -1099,8 +1091,6 @@ class Session(BaseSession):
                 a header already sets it.
             content: Raw body bytes; an alternative to ``data=`` for
                 pre-encoded payloads. Passing both raises ``ValueError``.
-            multipart: A :class:`~chrome_client.CurlMime` instance that becomes
-                the whole body.
             impersonate: Profile override for this call, either an exact
                 ``chrome_<major>`` name or a curl_cffi ``chrome<major>`` alias.
             proxy: Proxy URL for this call; wins over ``proxies``.
@@ -1232,7 +1222,6 @@ class Session(BaseSession):
         cert: Any = None,
         json: Any = None,
         content: Optional[Body] = None,
-        multipart: Optional[CurlMime] = None,
         impersonate: Optional[Impersonate] = None,
         proxy: Optional[str] = None,
         http_version: Optional[HttpVersion] = None,
@@ -1273,8 +1262,6 @@ class Session(BaseSession):
                 already sets it.
             content: Raw body bytes; an alternative to ``data=`` for pre-encoded
                 payloads. Passing both raises ``ValueError``.
-            multipart: A :class:`~chrome_client.CurlMime` instance that becomes the
-                whole body.
             impersonate: Profile override for this call, either an exact
                 ``chrome_<major>`` name or a curl_cffi ``chrome<major>`` alias.
             proxy: Proxy URL for this call; wins over ``proxies``.
@@ -1320,7 +1307,6 @@ class Session(BaseSession):
         cert: Any = None,
         json: Any = None,
         content: Optional[Body] = None,
-        multipart: Optional[CurlMime] = None,
         impersonate: Optional[Impersonate] = None,
         proxy: Optional[str] = None,
         http_version: Optional[HttpVersion] = None,
@@ -1361,8 +1347,6 @@ class Session(BaseSession):
                 already sets it.
             content: Raw body bytes; an alternative to ``data=`` for pre-encoded
                 payloads. Passing both raises ``ValueError``.
-            multipart: A :class:`~chrome_client.CurlMime` instance that becomes the
-                whole body.
             impersonate: Profile override for this call, either an exact
                 ``chrome_<major>`` name or a curl_cffi ``chrome<major>`` alias.
             proxy: Proxy URL for this call; wins over ``proxies``.
@@ -1405,7 +1389,6 @@ class Session(BaseSession):
         cert: Any = None,
         json: Any = None,
         content: Optional[Body] = None,
-        multipart: Optional[CurlMime] = None,
         impersonate: Optional[Impersonate] = None,
         proxy: Optional[str] = None,
         http_version: Optional[HttpVersion] = None,
@@ -1448,8 +1431,6 @@ class Session(BaseSession):
                 already sets it.
             content: Raw body bytes; an alternative to ``data=`` for pre-encoded
                 payloads. Passing both raises ``ValueError``.
-            multipart: A :class:`~chrome_client.CurlMime` instance that becomes the
-                whole body.
             impersonate: Profile override for this call, either an exact
                 ``chrome_<major>`` name or a curl_cffi ``chrome<major>`` alias.
             proxy: Proxy URL for this call; wins over ``proxies``.
@@ -1492,7 +1473,6 @@ class Session(BaseSession):
         verify: Optional[Verify] = None,
         cert: Any = None,
         content: Optional[Body] = None,
-        multipart: Optional[CurlMime] = None,
         impersonate: Optional[Impersonate] = None,
         proxy: Optional[str] = None,
         http_version: Optional[HttpVersion] = None,
@@ -1533,8 +1513,6 @@ class Session(BaseSession):
             cert: Rejected; ABI v8 has no client-certificate setting.
             content: Raw body bytes; an alternative to ``data=`` for pre-encoded
                 payloads. Passing both raises ``ValueError``.
-            multipart: A :class:`~chrome_client.CurlMime` instance that becomes the
-                whole body.
             impersonate: Profile override for this call, either an exact
                 ``chrome_<major>`` name or a curl_cffi ``chrome<major>`` alias.
             proxy: Proxy URL for this call; wins over ``proxies``.
@@ -1581,7 +1559,6 @@ class Session(BaseSession):
         cert: Any = None,
         json: Any = None,
         content: Optional[Body] = None,
-        multipart: Optional[CurlMime] = None,
         impersonate: Optional[Impersonate] = None,
         proxy: Optional[str] = None,
         http_version: Optional[HttpVersion] = None,
@@ -1622,8 +1599,6 @@ class Session(BaseSession):
                 already sets it.
             content: Raw body bytes; an alternative to ``data=`` for pre-encoded
                 payloads. Passing both raises ``ValueError``.
-            multipart: A :class:`~chrome_client.CurlMime` instance that becomes the
-                whole body.
             impersonate: Profile override for this call, either an exact
                 ``chrome_<major>`` name or a curl_cffi ``chrome<major>`` alias.
             proxy: Proxy URL for this call; wins over ``proxies``.
@@ -1665,7 +1640,6 @@ class Session(BaseSession):
         cert: Any = None,
         json: Any = None,
         content: Optional[Body] = None,
-        multipart: Optional[CurlMime] = None,
         impersonate: Optional[Impersonate] = None,
         proxy: Optional[str] = None,
         http_version: Optional[HttpVersion] = None,
@@ -1706,8 +1680,6 @@ class Session(BaseSession):
                 already sets it.
             content: Raw body bytes; an alternative to ``data=`` for pre-encoded
                 payloads. Passing both raises ``ValueError``.
-            multipart: A :class:`~chrome_client.CurlMime` instance that becomes the
-                whole body.
             impersonate: Profile override for this call, either an exact
                 ``chrome_<major>`` name or a curl_cffi ``chrome<major>`` alias.
             proxy: Proxy URL for this call; wins over ``proxies``.
@@ -1749,7 +1721,6 @@ class Session(BaseSession):
         cert: Any = None,
         json: Any = None,
         content: Optional[Body] = None,
-        multipart: Optional[CurlMime] = None,
         impersonate: Optional[Impersonate] = None,
         proxy: Optional[str] = None,
         http_version: Optional[HttpVersion] = None,
@@ -1790,8 +1761,6 @@ class Session(BaseSession):
                 already sets it.
             content: Raw body bytes; an alternative to ``data=`` for pre-encoded
                 payloads. Passing both raises ``ValueError``.
-            multipart: A :class:`~chrome_client.CurlMime` instance that becomes the
-                whole body.
             impersonate: Profile override for this call, either an exact
                 ``chrome_<major>`` name or a curl_cffi ``chrome<major>`` alias.
             proxy: Proxy URL for this call; wins over ``proxies``.
@@ -1833,7 +1802,6 @@ class Session(BaseSession):
         cert: Any = None,
         json: Any = None,
         content: Optional[Body] = None,
-        multipart: Optional[CurlMime] = None,
         impersonate: Optional[Impersonate] = None,
         proxy: Optional[str] = None,
         http_version: Optional[HttpVersion] = None,
@@ -1874,8 +1842,6 @@ class Session(BaseSession):
                 already sets it.
             content: Raw body bytes; an alternative to ``data=`` for pre-encoded
                 payloads. Passing both raises ``ValueError``.
-            multipart: A :class:`~chrome_client.CurlMime` instance that becomes the
-                whole body.
             impersonate: Profile override for this call, either an exact
                 ``chrome_<major>`` name or a curl_cffi ``chrome<major>`` alias.
             proxy: Proxy URL for this call; wins over ``proxies``.
@@ -1917,7 +1883,6 @@ class Session(BaseSession):
         cert: Any = None,
         json: Any = None,
         content: Optional[Body] = None,
-        multipart: Optional[CurlMime] = None,
         impersonate: Optional[Impersonate] = None,
         proxy: Optional[str] = None,
         http_version: Optional[HttpVersion] = None,
@@ -1958,8 +1923,6 @@ class Session(BaseSession):
                 already sets it.
             content: Raw body bytes; an alternative to ``data=`` for pre-encoded
                 payloads. Passing both raises ``ValueError``.
-            multipart: A :class:`~chrome_client.CurlMime` instance that becomes the
-                whole body.
             impersonate: Profile override for this call, either an exact
                 ``chrome_<major>`` name or a curl_cffi ``chrome<major>`` alias.
             proxy: Proxy URL for this call; wins over ``proxies``.
@@ -2316,7 +2279,6 @@ class AsyncSession(BaseSession):
         cert: Any = None,
         json: Any = None,
         content: Optional[Body] = None,
-        multipart: Optional[CurlMime] = None,
         impersonate: Optional[Impersonate] = None,
         proxy: Optional[str] = None,
         http_version: Optional[HttpVersion] = None,
@@ -2357,7 +2319,6 @@ class AsyncSession(BaseSession):
             cert: Rejected.
             json: JSON body.
             content: Raw body bytes; mutually exclusive with ``data=``.
-            multipart: A :class:`~chrome_client.CurlMime` body.
             impersonate: Profile override for this call.
             proxy: Proxy URL for this call.
             http_version: Protocol pin for this call.
@@ -2471,7 +2432,6 @@ class AsyncSession(BaseSession):
         cert: Any = None,
         json: Any = None,
         content: Optional[Body] = None,
-        multipart: Optional[CurlMime] = None,
         impersonate: Optional[Impersonate] = None,
         proxy: Optional[str] = None,
         http_version: Optional[HttpVersion] = None,
@@ -2512,8 +2472,6 @@ class AsyncSession(BaseSession):
                 already sets it.
             content: Raw body bytes; an alternative to ``data=`` for pre-encoded
                 payloads. Passing both raises ``ValueError``.
-            multipart: A :class:`~chrome_client.CurlMime` instance that becomes the
-                whole body.
             impersonate: Profile override for this call, either an exact
                 ``chrome_<major>`` name or a curl_cffi ``chrome<major>`` alias.
             proxy: Proxy URL for this call; wins over ``proxies``.
@@ -2559,7 +2517,6 @@ class AsyncSession(BaseSession):
         cert: Any = None,
         json: Any = None,
         content: Optional[Body] = None,
-        multipart: Optional[CurlMime] = None,
         impersonate: Optional[Impersonate] = None,
         proxy: Optional[str] = None,
         http_version: Optional[HttpVersion] = None,
@@ -2600,8 +2557,6 @@ class AsyncSession(BaseSession):
                 already sets it.
             content: Raw body bytes; an alternative to ``data=`` for pre-encoded
                 payloads. Passing both raises ``ValueError``.
-            multipart: A :class:`~chrome_client.CurlMime` instance that becomes the
-                whole body.
             impersonate: Profile override for this call, either an exact
                 ``chrome_<major>`` name or a curl_cffi ``chrome<major>`` alias.
             proxy: Proxy URL for this call; wins over ``proxies``.
@@ -2643,7 +2598,6 @@ class AsyncSession(BaseSession):
         cert: Any = None,
         json: Any = None,
         content: Optional[Body] = None,
-        multipart: Optional[CurlMime] = None,
         impersonate: Optional[Impersonate] = None,
         proxy: Optional[str] = None,
         http_version: Optional[HttpVersion] = None,
@@ -2684,8 +2638,6 @@ class AsyncSession(BaseSession):
                 already sets it.
             content: Raw body bytes; an alternative to ``data=`` for pre-encoded
                 payloads. Passing both raises ``ValueError``.
-            multipart: A :class:`~chrome_client.CurlMime` instance that becomes the
-                whole body.
             impersonate: Profile override for this call, either an exact
                 ``chrome_<major>`` name or a curl_cffi ``chrome<major>`` alias.
             proxy: Proxy URL for this call; wins over ``proxies``.
@@ -2727,7 +2679,6 @@ class AsyncSession(BaseSession):
         verify: Optional[Verify] = None,
         cert: Any = None,
         content: Optional[Body] = None,
-        multipart: Optional[CurlMime] = None,
         impersonate: Optional[Impersonate] = None,
         proxy: Optional[str] = None,
         http_version: Optional[HttpVersion] = None,
@@ -2768,8 +2719,6 @@ class AsyncSession(BaseSession):
             cert: Rejected; ABI v8 has no client-certificate setting.
             content: Raw body bytes; an alternative to ``data=`` for pre-encoded
                 payloads. Passing both raises ``ValueError``.
-            multipart: A :class:`~chrome_client.CurlMime` instance that becomes the
-                whole body.
             impersonate: Profile override for this call, either an exact
                 ``chrome_<major>`` name or a curl_cffi ``chrome<major>`` alias.
             proxy: Proxy URL for this call; wins over ``proxies``.
@@ -2811,7 +2760,6 @@ class AsyncSession(BaseSession):
         cert: Any = None,
         json: Any = None,
         content: Optional[Body] = None,
-        multipart: Optional[CurlMime] = None,
         impersonate: Optional[Impersonate] = None,
         proxy: Optional[str] = None,
         http_version: Optional[HttpVersion] = None,
@@ -2852,8 +2800,6 @@ class AsyncSession(BaseSession):
                 already sets it.
             content: Raw body bytes; an alternative to ``data=`` for pre-encoded
                 payloads. Passing both raises ``ValueError``.
-            multipart: A :class:`~chrome_client.CurlMime` instance that becomes the
-                whole body.
             impersonate: Profile override for this call, either an exact
                 ``chrome_<major>`` name or a curl_cffi ``chrome<major>`` alias.
             proxy: Proxy URL for this call; wins over ``proxies``.
@@ -2895,7 +2841,6 @@ class AsyncSession(BaseSession):
         cert: Any = None,
         json: Any = None,
         content: Optional[Body] = None,
-        multipart: Optional[CurlMime] = None,
         impersonate: Optional[Impersonate] = None,
         proxy: Optional[str] = None,
         http_version: Optional[HttpVersion] = None,
@@ -2936,8 +2881,6 @@ class AsyncSession(BaseSession):
                 already sets it.
             content: Raw body bytes; an alternative to ``data=`` for pre-encoded
                 payloads. Passing both raises ``ValueError``.
-            multipart: A :class:`~chrome_client.CurlMime` instance that becomes the
-                whole body.
             impersonate: Profile override for this call, either an exact
                 ``chrome_<major>`` name or a curl_cffi ``chrome<major>`` alias.
             proxy: Proxy URL for this call; wins over ``proxies``.
@@ -2979,7 +2922,6 @@ class AsyncSession(BaseSession):
         cert: Any = None,
         json: Any = None,
         content: Optional[Body] = None,
-        multipart: Optional[CurlMime] = None,
         impersonate: Optional[Impersonate] = None,
         proxy: Optional[str] = None,
         http_version: Optional[HttpVersion] = None,
@@ -3020,8 +2962,6 @@ class AsyncSession(BaseSession):
                 already sets it.
             content: Raw body bytes; an alternative to ``data=`` for pre-encoded
                 payloads. Passing both raises ``ValueError``.
-            multipart: A :class:`~chrome_client.CurlMime` instance that becomes the
-                whole body.
             impersonate: Profile override for this call, either an exact
                 ``chrome_<major>`` name or a curl_cffi ``chrome<major>`` alias.
             proxy: Proxy URL for this call; wins over ``proxies``.
@@ -3063,7 +3003,6 @@ class AsyncSession(BaseSession):
         cert: Any = None,
         json: Any = None,
         content: Optional[Body] = None,
-        multipart: Optional[CurlMime] = None,
         impersonate: Optional[Impersonate] = None,
         proxy: Optional[str] = None,
         http_version: Optional[HttpVersion] = None,
@@ -3104,8 +3043,6 @@ class AsyncSession(BaseSession):
                 already sets it.
             content: Raw body bytes; an alternative to ``data=`` for pre-encoded
                 payloads. Passing both raises ``ValueError``.
-            multipart: A :class:`~chrome_client.CurlMime` instance that becomes the
-                whole body.
             impersonate: Profile override for this call, either an exact
                 ``chrome_<major>`` name or a curl_cffi ``chrome<major>`` alias.
             proxy: Proxy URL for this call; wins over ``proxies``.
@@ -3147,7 +3084,6 @@ class AsyncSession(BaseSession):
         cert: Any = None,
         json: Any = None,
         content: Optional[Body] = None,
-        multipart: Optional[CurlMime] = None,
         impersonate: Optional[Impersonate] = None,
         proxy: Optional[str] = None,
         http_version: Optional[HttpVersion] = None,
@@ -3188,8 +3124,6 @@ class AsyncSession(BaseSession):
                 already sets it.
             content: Raw body bytes; an alternative to ``data=`` for pre-encoded
                 payloads. Passing both raises ``ValueError``.
-            multipart: A :class:`~chrome_client.CurlMime` instance that becomes the
-                whole body.
             impersonate: Profile override for this call, either an exact
                 ``chrome_<major>`` name or a curl_cffi ``chrome<major>`` alias.
             proxy: Proxy URL for this call; wins over ``proxies``.

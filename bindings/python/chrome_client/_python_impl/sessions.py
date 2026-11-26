@@ -3827,13 +3827,7 @@ class BaseSession(object):
 
         data = values.get("data")
         files = values.get("files")
-        mime = values.get("multipart")
-        if mime is not None:
-            body, content_type = mime.encode(boundary=form_boundary)
-            data, files = body, None
-            headers = headers if headers is not None else Headers()
-            headers.setdefault("Content-Type", content_type)
-        elif values.get("content") is not None:
+        if values.get("content") is not None:
             if data:
                 raise ValueError("pass either data= or content=, not both")
             data = values["content"]
@@ -4039,7 +4033,7 @@ class Session(BaseSession):
     def request(self, method, url, params=None, data=None, headers=None, cookies=None,
                 files=None, auth=None, timeout=None, allow_redirects=None, proxies=None,
                 hooks=None, stream=None, verify=None, cert=None, json=None,
-                content=None, multipart=None, impersonate=None, proxy=None,
+                content=None, impersonate=None, proxy=None,
                 http_version=None, max_response_bytes=None,
                 accept_encoding=None, default_encoding=None,
                 discard_cookies=None, retry=None, cache_mode=None, priority=None,
@@ -4048,7 +4042,7 @@ class Session(BaseSession):
         """Sends one request and returns a :class:`Response`.
 
         Session defaults are used when an option is ``None``. ``params`` appends
-        query fields; ``data``/``json``/``content``/``multipart`` select the body;
+        query fields; ``data``/``json``/``content``/``files`` select the body;
         ``headers`` and ``cookies`` merge with session state. Transport overrides
         include ``timeout``, redirects, proxy, certificate verification, profile,
         HTTP version, response-size limit, cache mode and request priority.
@@ -4527,7 +4521,7 @@ class AsyncSession(BaseSession):
     async def request(self, method, url, params=None, data=None, headers=None,
                       cookies=None, files=None, auth=None, timeout=None,
                       allow_redirects=None, proxies=None, hooks=None, stream=None,
-                      verify=None, cert=None, json=None, content=None, multipart=None,
+                      verify=None, cert=None, json=None, content=None,
                       impersonate=None, proxy=None, http_version=None,
                       max_response_bytes=None,
                       accept_encoding=None, default_encoding=None,

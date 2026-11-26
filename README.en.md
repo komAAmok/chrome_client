@@ -21,7 +21,7 @@ with Session(impersonate="chrome_155") as session:
 
 The Python API matches two conventions at once: the `requests` shapes of
 `Session`, `Response` and the exception hierarchy, and the `curl_cffi` surface of
-`impersonate`, `http_version`, `AsyncSession`, `CurlMime` and WebSocket. The
+`impersonate`, `http_version`, `AsyncSession` and WebSocket. The
 synchronous and asynchronous APIs share one engine and differ only in how they
 wait.
 
@@ -327,7 +327,7 @@ curl-cffi additions `http_version`, `charset`, `redirect_count`, `redirect_url`.
 ### The curl-cffi shape: fingerprints and protocols
 
 ```python
-from chrome_client import Session, AsyncSession, CurlMime
+from chrome_client import Session, AsyncSession
 
 with Session(impersonate="chrome152", http_version="v2") as session:
     session.get("https://example.com")
@@ -375,11 +375,12 @@ Both multipart spellings work:
 ```python
 session.post(url, data={"title": "t"}, files={"f": ("a.txt", b"...", "text/plain")})
 
-mime = CurlMime()
-mime.addpart(name="title", data="hello")
-mime.addpart(name="photo", filename="p.jpg", content_type="image/jpeg",
-             local_path="/tmp/p.jpg")
-session.post(url, multipart=mime)
+# files= is the only multipart spelling; (None, data) is a plain field and
+# the fourth slot carries per-part headers.
+session.post(url,
+             data={"title": "hello"},
+             files={"photo": ("p.jpg", open("/tmp/p.jpg", "rb"), "image/jpeg"),
+                    "note": (None, b"plain field")})
 ```
 
 
@@ -402,6 +403,7 @@ then refused or ignored.
 | `max_redirects=` | `allow_redirects=False` for one hop; the ceiling is 20 (`CHROMIUM_MAX_REDIRECTS`) | the option could only be `None` |
 | `dns_over_tls=` / `dns_padding=` | none (use `doh_template` for an encrypted resolver) | desktop Chrome has neither |
 | `referer=` | `headers={"Referer": ...}` | the Core routes the header to `URLRequest::SetReferrer` |
+| `multipart=` / `CurlMime` | `files=` (byte-identical bodies for the same parts) | the two spellings differed only in part order |
 ### Streaming and chunked uploads
 
 ```python
@@ -541,7 +543,7 @@ no further edits.
 | The whole `requests.exceptions` tree plus curl-cffi's leaves | ✓ |
 | `impersonate`, `http_version`, `retry`/`RetryStrategy`, `raise_for_status=True` | ✓ |
 | `base_url`, `discard_cookies`, `default_encoding`, `content_callback` | ✓ |
-| `CurlMime`, `ExtraFingerprints(header_order=..., form_boundary=...)` | ✓ |
+| multipart through `files=`, `ExtraFingerprints(header_order=..., form_boundary=...)` | ✓ |
 | `HTTPDigestAuth` | Partial: drive it with `parse_challenge()`/`handle_401()` |
 | `HTTPAdapter(pool_connections=..., pool_maxsize=...)` | Accepted but inert: Chromium owns the pools |
 | `ja3`, `akamai`, `perk`, TLS/HTTP2 fields of `extra_fp` | ✗ raises `UnsupportedFeature` |

@@ -5,7 +5,7 @@ Two API shapes are exposed over one Chromium network stack:
 * ``requests``-shaped:  ``Session``, ``Response``, ``session.cookies``,
   ``session.proxies``, the ``requests.exceptions`` hierarchy, ``codes``.
 * ``curl_cffi``-shaped:  ``impersonate``, ``http_version`` for HTTP/1.1, HTTP/2 and
-  HTTP/3, ``AsyncSession``, ``CurlMime``, ``Headers``, ``Cookies``, ``WebSocket``.
+  HTTP/3, ``AsyncSession``, ``Headers``, ``Cookies``, ``WebSocket``.
 
     import chrome_client
     with chrome_client.Session(impersonate="chrome_155") as session:

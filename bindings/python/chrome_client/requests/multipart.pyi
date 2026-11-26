@@ -10,7 +10,6 @@ from .._python_impl.multipart import (
     EncodedMultipart as EncodedMultipart,
     BodySource as BodySource,
     Part as Part,
-    CurlMime as CurlMime,
     encode_params as encode_params,
     encode_multipart as encode_multipart,
     json_body as json_body,

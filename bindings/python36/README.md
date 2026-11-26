@@ -18,7 +18,7 @@ with Session(impersonate="chrome_155") as session:
 ```
 
 Python API 同时对齐两套习惯：`requests` 的 `Session`/`Response`/异常层次，以及
-`curl_cffi` 的 `impersonate`、`http_version`、`AsyncSession`、`CurlMime` 和
+`curl_cffi` 的 `impersonate`、`http_version`、`AsyncSession` 和
 WebSocket。同步与异步两套 API 共用同一个引擎，行为只在"怎么等待"上不同。
 
 **无法用 Chromium 忠实实现的选项一律抛错**，不会静默忽略——静默降级比缺失更糟，
@@ -320,7 +320,7 @@ CA 用 `verify="/path/ca.pem"`，完全跳过校验用 `verify=False`（Engine �
 ### curl-cffi 风格：指纹与协议
 
 ```python
-from chrome_client import Session, AsyncSession, CurlMime
+from chrome_client import Session, AsyncSession
 
 with Session(impersonate="chrome152", http_version="v2") as session:
     session.get("https://example.com")
@@ -394,11 +394,12 @@ multipart 两种写法都支持：
 ```python
 session.post(url, data={"title": "t"}, files={"f": ("a.txt", b"...", "text/plain")})
 
-mime = CurlMime()
-mime.addpart(name="title", data="hello")
-mime.addpart(name="photo", filename="p.jpg", content_type="image/jpeg",
-             local_path="/tmp/p.jpg")
-session.post(url, multipart=mime)
+# files= 是唯一的 multipart 写法；(None, data) 表示不带文件名的普通字段，
+# 第 4 位可以给每个 part 单独加头。
+session.post(url,
+             data={"title": "hello"},
+             files={"photo": ("p.jpg", open("/tmp/p.jpg", "rb"), "image/jpeg"),
+                    "note": (None, b"plain field")})
 ```
 
 
@@ -420,6 +421,7 @@ session.post(url, multipart=mime)
 | `max_redirects=` | `allow_redirects=False`（单跳）；上限固定 20（`CHROMIUM_MAX_REDIRECTS`） | 参数只可能取 `None` |
 | `dns_over_tls=` / `dns_padding=` | 无（加密解析用 `doh_template`） | Chrome 桌面版没有 DoT，也没有 EDNS0 padding 控制 |
 | `referer=` | `headers={"Referer": ...}` | Core 把 Referer 头路由到 `URLRequest::SetReferrer` |
+| `multipart=` / `CurlMime` | `files=`（同一组 part 产出逐字节相同的 body） | 两套写法只差 part 顺序，服务端按 name 取值 |
 ### 流式读写与分块上传
 
 ```python
@@ -550,7 +552,7 @@ Cookie 会按 URL 匹配后附加到握手上。
 | `requests.exceptions` 全层次 + curl-cffi 叶子类型 | ✓ |
 | `impersonate`、`http_version`、`retry`/`RetryStrategy`、`raise_for_status=True` | ✓ |
 | `base_url`、`discard_cookies`、`default_encoding`、`content_callback` | ✓ |
-| `CurlMime`、`ExtraFingerprints(header_order=..., form_boundary=...)` | ✓ |
+| `files=` 的 multipart、`ExtraFingerprints(header_order=..., form_boundary=...)` | ✓ |
 | `HTTPDigestAuth` | 部分：需要用 `parse_challenge()`/`handle_401()` 显式驱动 |
 | `HTTPAdapter(pool_connections=..., pool_maxsize=...)` | 接受但不生效：连接池由 Chromium 拥有 |
 | `ja3`、`akamai`、`perk`、`extra_fp` 的 TLS/HTTP2 字段 | ✗ 显式抛 `UnsupportedFeature` |

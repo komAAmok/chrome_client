@@ -24,7 +24,6 @@ from typing import Any
 
 from chrome_client import (
     AsyncSession,
-    CurlMime,
     ExtraFingerprints,
     Headers,
     HttpVersion,
@@ -73,9 +72,10 @@ def sync_use() -> None:
             extra_fp=ExtraFingerprints(header_order=["accept", "cookie"]),
         )
 
-        mime = CurlMime()
-        mime.addpart(name="title", data="hello")
-        session.post("https://example.com", multipart=mime)
+        # files= is the only multipart spelling; the curl_cffi CurlMime /
+        # multipart= pair was removed (same bytes, second API shape).
+        session.post("https://example.com",
+                     files={"photo": ("p.jpg", b"\x01\x02", "image/jpeg")})
 
         socket = session.websocket("wss://echo.example.com", protocols=["chat"])
         reveal_type(socket)  # WebSocket

@@ -784,6 +784,11 @@ manifest（`--abi-version 8`）：
 每个关键字都必须有判决（ENGINE / REQUEST / FACADE），已删除的 14 个必须缺席。三个方向都
 做过变异测试（新关键字、已删关键字回来、判决没有对应关键字）。
 
+`multipart=` 与 `CurlMime` 也一起删掉：实测同一组 part 用 `files=`（含 `(None, data)` 无文件名
+字段、3 元组 content-type、4 元组 per-part headers）与 `CurlMime` 产出的 body **逐字节相同**，
+两者只差 part 顺序。渲染器保留为私有 `_MultipartBody`（`encode_multipart` 仍在用），
+`chrome_client.CurlMime` 不再导出。
+
 **ABI 未变**，九个平台产物不需要重建；`audit-pypi-metadata.sh` 的重定向载体随契约改写
 （从「只能是 None」改成「说不上是参数」），同样做过变异测试。
 

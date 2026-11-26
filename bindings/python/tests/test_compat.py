@@ -971,16 +971,26 @@ class CurlCffiSurfaceTests(Base):
         with self.assertRaises(chrome_client.UnsupportedFeature):
             chrome_client.Session(http_version="quic")
 
-    def test_curlmime(self):
-        mime = chrome_client.CurlMime()
-        mime.addpart(name="title", data="hello")
-        mime.addpart(name="photo", filename="p.jpg", content_type="image/jpeg",
-                     data=b"\x01\x02")
+    def test_multipart_is_files_only(self):
+        """files= is the only multipart spelling; CurlMime was removed.
+
+        The two produced byte-identical bodies for the same parts (measured),
+        so the class and the multipart= keyword went with the rest of the
+        curl_cffi surface.
+        """
         with chrome_client.Session() as session:
-            payload = session.post(self.url, multipart=mime).json()
+            payload = session.post(
+                self.url,
+                data={"title": "hello"},
+                files={"photo": ("p.jpg", b"\x01\x02", "image/jpeg")}).json()
         self.assertTrue(payload["content_type"].startswith("multipart/form-data;"))
         self.assertIn('name="photo"', payload["body"])
-        mime.close()
+        self.assertIn('name="title"', payload["body"])
+        self.assertFalse(hasattr(chrome_client, "CurlMime"),
+                         "the class is internal now")
+        with chrome_client.Session() as session:
+            with self.assertRaises(TypeError):
+                session.post(self.url, multipart=object())
 
     def test_content_kwarg_and_callback(self):
         chunks = []

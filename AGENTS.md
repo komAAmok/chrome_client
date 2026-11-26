@@ -172,10 +172,10 @@ LD_LIBRARY_PATH=core/binaries/linux-x86_64 \
 python3 tools/audit-extra-fp.py
 # The keyword surface itself is pinned: every parameter of BaseSession.__init__,
 # AsyncSession.__init__ and both request() methods must carry a verdict, and the
-# fourteen keywords removed in 0.3.0 (ja3/akamai/perk, interface, doh_url,
+# fifteen keywords removed in 0.3.0 (ja3/akamai/perk, interface, doh_url,
 # curl_options, max_recv_speed, max_redirects, dns_over_tls, dns_padding, quote,
-# thread, debug, referer) must stay absent. A new keyword without a verdict fails,
-# and so does a removed one that comes back.
+# thread, debug, referer, multipart) must stay absent. A new keyword without a
+# verdict fails, and so does a removed one that comes back.
 python3 tools/audit-compat-surface.py
 # Two constructors that accept the same option NAME are not accepting the same
 # option: a differing default is a different behaviour, and for platform= that is
