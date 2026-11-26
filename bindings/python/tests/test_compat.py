@@ -4083,6 +4083,22 @@ class HeaderPolicyTests(unittest.TestCase):
         # front of every captured field.
         self.assertLess(order.index("Cache-Control"), order.index("sec-ch-ua"))
 
+    def test_the_module_level_shorthand_can_choose_the_policy(self):
+        """The refusal message recommends a policy the shorthand could not set.
+
+        ``chrome_client.requests.post(..., header_policy='drop')`` was forwarded
+        to Session.request, which has no such keyword: the advice in the
+        UnsupportedFeature message was unreachable from the module-level API.
+        Measured on the 0.2.18 wheel: TypeError instead of a request.
+        """
+        response = chrome_client.requests.post(
+            self.base, data={'a': '1'}, headers={'Connection': 'keep-alive'},
+            header_policy="drop", timeout=10)
+        self.assertEqual(response.status_code, 200)
+        # The shared session is not reconfigured: the option builds a private
+        # one for this call, so the process-wide default stays strict.
+        with self.assertRaises(chrome_client.UnsupportedFeature):
+            chrome_client.requests.post(self.base, headers={'Connection': 'keep-alive'})
     def test_an_unknown_policy_is_refused(self):
         with self.assertRaises(ValueError):
             chrome_client.Session(header_policy="clean")

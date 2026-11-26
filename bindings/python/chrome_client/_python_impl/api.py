@@ -25,7 +25,14 @@ from .sessions import AsyncSession, Session
 #: raised TypeError instead of being accepted for curl_cffi parity.
 _SESSION_ONLY = ("base_url", "default_headers", "trust_env", "max_engines",
                  "user_agent", "accept_language", "cache", "response_class",
-                 "proxy_auth", "impersonate", "platform")
+                 # header_policy configures the session, not one call: the strict
+                 # refusal for a hop-by-hop field is what the caller is opting out
+                 # of, and the refusal message recommends exactly this spelling.
+                 # Without it here, chrome_client.requests.post(...,
+                 # header_policy="drop") raised TypeError from Session.request,
+                 # so the advice in the message was unreachable from the
+                 # module-level API (measured on the 0.2.18 wheel).
+                 "proxy_auth", "impersonate", "platform", "header_policy")
 
 #: Options curl_cffi accepts that the synchronous path has no equivalent for.
 #: Dropped rather than forwarded: ``Session`` would reject the keyword.

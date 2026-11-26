@@ -422,6 +422,7 @@ def request(
     user_agent: Optional[str] = None,
     accept_language: Optional[str] = None,
     cache: Optional[bool] = None,
+    header_policy: Optional[str] = None,
     response_class: ResponseClass = None,
     proxy_auth: AuthLike = None,
     max_clients: Optional[int] = None,
@@ -431,7 +432,7 @@ def request(
     Keyword options match :meth:`chrome_client.Session.request`. Constructor-only
     options (``base_url``, ``default_headers``, ``trust_env``, ``max_engines``,
     ``user_agent``, ``accept_language``, ``cache``, ``response_class``,
-    ``proxy_auth``, ``max_clients``) create a private session for this call, which
+    ``proxy_auth``, ``max_clients``, ``header_policy``) create a private session for this call, which
     is closed before returning.
 
     Args:
@@ -488,6 +489,7 @@ def request(
         accept_language: Private-session option: engine-level
             ``Accept-Language``.
         cache: Private-session option: enable the HTTP cache.
+        header_policy: Private-session option: "strict" (default) or "drop".
         response_class: Private-session option: response class to instantiate.
         proxy_auth: Private-session option: ``(username, password)`` for the
             proxy.
@@ -560,6 +562,7 @@ def get(
     user_agent: Optional[str] = None,
     accept_language: Optional[str] = None,
     cache: Optional[bool] = None,
+    header_policy: Optional[str] = None,
     response_class: ResponseClass = None,
     proxy_auth: AuthLike = None,
     max_clients: Optional[int] = None,
@@ -618,6 +621,7 @@ def get(
         user_agent: Private-session option: engine-level User-Agent.
         accept_language: Private-session option: engine-level ``Accept-Language``.
         cache: Private-session option: enable the HTTP cache.
+        header_policy: Private-session option: "strict" (default) or "drop".
         response_class: Private-session option: response class to instantiate.
         proxy_auth: Private-session option: ``(username, password)`` for the proxy.
         max_clients: Accepted for curl_cffi parity; ignored on the sync path.
@@ -685,6 +689,7 @@ def options(
     user_agent: Optional[str] = None,
     accept_language: Optional[str] = None,
     cache: Optional[bool] = None,
+    header_policy: Optional[str] = None,
     response_class: ResponseClass = None,
     proxy_auth: AuthLike = None,
     max_clients: Optional[int] = None,
@@ -743,6 +748,7 @@ def options(
         user_agent: Private-session option: engine-level User-Agent.
         accept_language: Private-session option: engine-level ``Accept-Language``.
         cache: Private-session option: enable the HTTP cache.
+        header_policy: Private-session option: "strict" (default) or "drop".
         response_class: Private-session option: response class to instantiate.
         proxy_auth: Private-session option: ``(username, password)`` for the proxy.
         max_clients: Accepted for curl_cffi parity; ignored on the sync path.
@@ -803,6 +809,7 @@ def head(
     user_agent: Optional[str] = None,
     accept_language: Optional[str] = None,
     cache: Optional[bool] = None,
+    header_policy: Optional[str] = None,
     response_class: ResponseClass = None,
     proxy_auth: AuthLike = None,
     max_clients: Optional[int] = None,
@@ -863,6 +870,7 @@ def head(
         user_agent: Private-session option: engine-level User-Agent.
         accept_language: Private-session option: engine-level ``Accept-Language``.
         cache: Private-session option: enable the HTTP cache.
+        header_policy: Private-session option: "strict" (default) or "drop".
         response_class: Private-session option: response class to instantiate.
         proxy_auth: Private-session option: ``(username, password)`` for the proxy.
         max_clients: Accepted for curl_cffi parity; ignored on the sync path.
@@ -923,6 +931,7 @@ def post(
     user_agent: Optional[str] = None,
     accept_language: Optional[str] = None,
     cache: Optional[bool] = None,
+    header_policy: Optional[str] = None,
     response_class: ResponseClass = None,
     proxy_auth: AuthLike = None,
     max_clients: Optional[int] = None,
@@ -981,6 +990,7 @@ def post(
         user_agent: Private-session option: engine-level User-Agent.
         accept_language: Private-session option: engine-level ``Accept-Language``.
         cache: Private-session option: enable the HTTP cache.
+        header_policy: Private-session option: "strict" (default) or "drop".
         response_class: Private-session option: response class to instantiate.
         proxy_auth: Private-session option: ``(username, password)`` for the proxy.
         max_clients: Accepted for curl_cffi parity; ignored on the sync path.
@@ -1044,6 +1054,7 @@ def put(
     user_agent: Optional[str] = None,
     accept_language: Optional[str] = None,
     cache: Optional[bool] = None,
+    header_policy: Optional[str] = None,
     response_class: ResponseClass = None,
     proxy_auth: AuthLike = None,
     max_clients: Optional[int] = None,
@@ -1102,6 +1113,7 @@ def put(
         user_agent: Private-session option: engine-level User-Agent.
         accept_language: Private-session option: engine-level ``Accept-Language``.
         cache: Private-session option: enable the HTTP cache.
+        header_policy: Private-session option: "strict" (default) or "drop".
         response_class: Private-session option: response class to instantiate.
         proxy_auth: Private-session option: ``(username, password)`` for the proxy.
         max_clients: Accepted for curl_cffi parity; ignored on the sync path.
@@ -1162,6 +1174,7 @@ def patch(
     user_agent: Optional[str] = None,
     accept_language: Optional[str] = None,
     cache: Optional[bool] = None,
+    header_policy: Optional[str] = None,
     response_class: ResponseClass = None,
     proxy_auth: AuthLike = None,
     max_clients: Optional[int] = None,
@@ -1220,6 +1233,7 @@ def patch(
         user_agent: Private-session option: engine-level User-Agent.
         accept_language: Private-session option: engine-level ``Accept-Language``.
         cache: Private-session option: enable the HTTP cache.
+        header_policy: Private-session option: "strict" (default) or "drop".
         response_class: Private-session option: response class to instantiate.
         proxy_auth: Private-session option: ``(username, password)`` for the proxy.
         max_clients: Accepted for curl_cffi parity; ignored on the sync path.
@@ -1280,6 +1294,7 @@ def delete(
     user_agent: Optional[str] = None,
     accept_language: Optional[str] = None,
     cache: Optional[bool] = None,
+    header_policy: Optional[str] = None,
     response_class: ResponseClass = None,
     proxy_auth: AuthLike = None,
     max_clients: Optional[int] = None,
@@ -1338,6 +1353,7 @@ def delete(
         user_agent: Private-session option: engine-level User-Agent.
         accept_language: Private-session option: engine-level ``Accept-Language``.
         cache: Private-session option: enable the HTTP cache.
+        header_policy: Private-session option: "strict" (default) or "drop".
         response_class: Private-session option: response class to instantiate.
         proxy_auth: Private-session option: ``(username, password)`` for the proxy.
         max_clients: Accepted for curl_cffi parity; ignored on the sync path.
@@ -1398,6 +1414,7 @@ def trace(
     user_agent: Optional[str] = None,
     accept_language: Optional[str] = None,
     cache: Optional[bool] = None,
+    header_policy: Optional[str] = None,
     response_class: ResponseClass = None,
     proxy_auth: AuthLike = None,
     max_clients: Optional[int] = None,
@@ -1456,6 +1473,7 @@ def trace(
         user_agent: Private-session option: engine-level User-Agent.
         accept_language: Private-session option: engine-level ``Accept-Language``.
         cache: Private-session option: enable the HTTP cache.
+        header_policy: Private-session option: "strict" (default) or "drop".
         response_class: Private-session option: response class to instantiate.
         proxy_auth: Private-session option: ``(username, password)`` for the proxy.
         max_clients: Accepted for curl_cffi parity; ignored on the sync path.
@@ -1516,6 +1534,7 @@ def query(
     user_agent: Optional[str] = None,
     accept_language: Optional[str] = None,
     cache: Optional[bool] = None,
+    header_policy: Optional[str] = None,
     response_class: ResponseClass = None,
     proxy_auth: AuthLike = None,
     max_clients: Optional[int] = None,
@@ -1574,6 +1593,7 @@ def query(
         user_agent: Private-session option: engine-level User-Agent.
         accept_language: Private-session option: engine-level ``Accept-Language``.
         cache: Private-session option: enable the HTTP cache.
+        header_policy: Private-session option: "strict" (default) or "drop".
         response_class: Private-session option: response class to instantiate.
         proxy_auth: Private-session option: ``(username, password)`` for the proxy.
         max_clients: Accepted for curl_cffi parity; ignored on the sync path.

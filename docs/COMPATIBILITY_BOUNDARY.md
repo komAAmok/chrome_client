@@ -399,6 +399,12 @@ The counter is the point: a silent drop that leaves no trace is the "asked and
 heard nothing" shape this section refuses, so the session reports what it
 discarded and a caller can assert it is empty in a test.
 
+The module-level shorthand takes the same option — `chrome_client.requests.post(url,
+header_policy="drop", ...)` — and both spellings build a private session for that call,
+so the process-wide default stays `strict`. That was not true of 0.2.18: the option was
+absent from the shorthand's constructor-only list, so the advice in the refusal
+message raised TypeError on the module-level API.
+
 `drop` removes five names beyond the six hop-by-hop fields, all for the same
 reason -- Chromium cannot honour them:
 
