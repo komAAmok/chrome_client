@@ -3821,9 +3821,6 @@ class BaseSession(object):
 
         headers = values.get("headers")
         headers = Headers(headers) if headers is not None else None
-        if values.get("accept_encoding") is not None:
-            headers = headers if headers is not None else Headers()
-            headers["Accept-Encoding"] = values["accept_encoding"]
 
         data = values.get("data")
         files = values.get("files")
@@ -4035,7 +4032,7 @@ class Session(BaseSession):
                 hooks=None, stream=None, verify=None, cert=None, json=None,
                 content=None, impersonate=None, proxy=None,
                 http_version=None, max_response_bytes=None,
-                accept_encoding=None, default_encoding=None,
+                default_encoding=None,
                 discard_cookies=None, retry=None, cache_mode=None, priority=None,
                 extra_fp=None, content_callback=None,
                 raise_for_status=None):
@@ -4524,7 +4521,7 @@ class AsyncSession(BaseSession):
                       verify=None, cert=None, json=None, content=None,
                       impersonate=None, proxy=None, http_version=None,
                       max_response_bytes=None,
-                      accept_encoding=None, default_encoding=None,
+                      default_encoding=None,
                       discard_cookies=None, retry=None, cache_mode=None, priority=None,
                       extra_fp=None,
                       content_callback=None, raise_for_status=None):

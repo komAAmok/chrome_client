@@ -404,6 +404,7 @@ then refused or ignored.
 | `dns_over_tls=` / `dns_padding=` | none (use `doh_template` for an encrypted resolver) | desktop Chrome has neither |
 | `referer=` | `headers={"Referer": ...}` | the Core routes the header to `URLRequest::SetReferrer` |
 | `multipart=` / `CurlMime` | `files=` (byte-identical bodies for the same parts) | the two spellings differed only in part order |
+| `accept_encoding=` | none (`header_policy="drop"` removes the header entirely) | measured: six probes all reached the wire as the profile value `gzip, deflate, br, zstd` -- Chromium owns this header |
 ### Streaming and chunked uploads
 
 ```python

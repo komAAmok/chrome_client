@@ -399,7 +399,6 @@ class _StreamFlag(int):
         proxy: Optional[str] = None,
         http_version: Optional[HttpVersion] = None,
         max_response_bytes: Optional[int] = None,
-        accept_encoding: Optional[str] = None,
         default_encoding: Optional[Union[str, Callable[[bytes], str]]] = None,
         discard_cookies: Optional[bool] = None,
         retry: Retry = None,
@@ -439,8 +438,6 @@ class _StreamFlag(int):
             proxy: Proxy URL for this call; wins over ``proxies``.
             http_version: Pin ``"v1"``, ``"v2"`` or ``"v3"`` for this call.
             max_response_bytes: Body ceiling for this call.
-            accept_encoding: Overrides ``Accept-Encoding``. Chromium would otherwise
-                choose it as part of the profile.
             default_encoding: Fallback encoding for this response only.
             discard_cookies: Neither send nor record cookies for this call.
             retry: Attempt count or strategy for this call.
@@ -489,7 +486,6 @@ class _AsyncStreamFlag(int):
         proxy: Optional[str] = None,
         http_version: Optional[HttpVersion] = None,
         max_response_bytes: Optional[int] = None,
-        accept_encoding: Optional[str] = None,
         default_encoding: Optional[Union[str, Callable[[bytes], str]]] = None,
         discard_cookies: Optional[bool] = None,
         retry: Retry = None,
@@ -529,8 +525,6 @@ class _AsyncStreamFlag(int):
             proxy: Proxy URL for this call; wins over ``proxies``.
             http_version: Pin ``"v1"``, ``"v2"`` or ``"v3"`` for this call.
             max_response_bytes: Body ceiling for this call.
-            accept_encoding: Overrides ``Accept-Encoding``. Chromium would otherwise
-                choose it as part of the profile.
             default_encoding: Fallback encoding for this response only.
             discard_cookies: Neither send nor record cookies for this call.
             retry: Attempt count or strategy for this call.
@@ -1051,7 +1045,6 @@ class Session(BaseSession):
         proxy: Optional[str] = None,
         http_version: Optional[HttpVersion] = None,
         max_response_bytes: Optional[int] = None,
-        accept_encoding: Optional[str] = None,
         default_encoding: Optional[Union[str, Callable[[bytes], str]]] = None,
         discard_cookies: Optional[bool] = None,
         retry: Retry = None,
@@ -1096,8 +1089,6 @@ class Session(BaseSession):
             proxy: Proxy URL for this call; wins over ``proxies``.
             http_version: Pin ``"v1"``, ``"v2"`` or ``"v3"`` for this call.
             max_response_bytes: Body ceiling for this call.
-            accept_encoding: Overrides ``Accept-Encoding``. Chromium would
-                otherwise choose it as part of the profile.
             default_encoding: Fallback encoding for this response only.
             discard_cookies: Neither send nor record cookies for this call.
             retry: Attempt count or strategy for this call.
@@ -1226,7 +1217,6 @@ class Session(BaseSession):
         proxy: Optional[str] = None,
         http_version: Optional[HttpVersion] = None,
         max_response_bytes: Optional[int] = None,
-        accept_encoding: Optional[str] = None,
         default_encoding: Optional[Union[str, Callable[[bytes], str]]] = None,
         discard_cookies: Optional[bool] = None,
         retry: Retry = None,
@@ -1267,8 +1257,6 @@ class Session(BaseSession):
             proxy: Proxy URL for this call; wins over ``proxies``.
             http_version: Pin ``"v1"``, ``"v2"`` or ``"v3"`` for this call.
             max_response_bytes: Body ceiling for this call.
-            accept_encoding: Overrides ``Accept-Encoding``. Chromium would otherwise
-                choose it as part of the profile.
             default_encoding: Fallback encoding for this response only.
             discard_cookies: Neither send nor record cookies for this call.
             retry: Attempt count or strategy for this call.
@@ -1311,7 +1299,6 @@ class Session(BaseSession):
         proxy: Optional[str] = None,
         http_version: Optional[HttpVersion] = None,
         max_response_bytes: Optional[int] = None,
-        accept_encoding: Optional[str] = None,
         default_encoding: Optional[Union[str, Callable[[bytes], str]]] = None,
         discard_cookies: Optional[bool] = None,
         retry: Retry = None,
@@ -1352,8 +1339,6 @@ class Session(BaseSession):
             proxy: Proxy URL for this call; wins over ``proxies``.
             http_version: Pin ``"v1"``, ``"v2"`` or ``"v3"`` for this call.
             max_response_bytes: Body ceiling for this call.
-            accept_encoding: Overrides ``Accept-Encoding``. Chromium would otherwise
-                choose it as part of the profile.
             default_encoding: Fallback encoding for this response only.
             discard_cookies: Neither send nor record cookies for this call.
             retry: Attempt count or strategy for this call.
@@ -1393,7 +1378,6 @@ class Session(BaseSession):
         proxy: Optional[str] = None,
         http_version: Optional[HttpVersion] = None,
         max_response_bytes: Optional[int] = None,
-        accept_encoding: Optional[str] = None,
         default_encoding: Optional[Union[str, Callable[[bytes], str]]] = None,
         discard_cookies: Optional[bool] = None,
         retry: Retry = None,
@@ -1436,8 +1420,6 @@ class Session(BaseSession):
             proxy: Proxy URL for this call; wins over ``proxies``.
             http_version: Pin ``"v1"``, ``"v2"`` or ``"v3"`` for this call.
             max_response_bytes: Body ceiling for this call.
-            accept_encoding: Overrides ``Accept-Encoding``. Chromium would otherwise
-                choose it as part of the profile.
             default_encoding: Fallback encoding for this response only.
             discard_cookies: Neither send nor record cookies for this call.
             retry: Attempt count or strategy for this call.
@@ -1477,7 +1459,6 @@ class Session(BaseSession):
         proxy: Optional[str] = None,
         http_version: Optional[HttpVersion] = None,
         max_response_bytes: Optional[int] = None,
-        accept_encoding: Optional[str] = None,
         default_encoding: Optional[Union[str, Callable[[bytes], str]]] = None,
         discard_cookies: Optional[bool] = None,
         retry: Retry = None,
@@ -1518,8 +1499,6 @@ class Session(BaseSession):
             proxy: Proxy URL for this call; wins over ``proxies``.
             http_version: Pin ``"v1"``, ``"v2"`` or ``"v3"`` for this call.
             max_response_bytes: Body ceiling for this call.
-            accept_encoding: Overrides ``Accept-Encoding``. Chromium would otherwise
-                choose it as part of the profile.
             default_encoding: Fallback encoding for this response only.
             discard_cookies: Neither send nor record cookies for this call.
             retry: Attempt count or strategy for this call.
@@ -1563,7 +1542,6 @@ class Session(BaseSession):
         proxy: Optional[str] = None,
         http_version: Optional[HttpVersion] = None,
         max_response_bytes: Optional[int] = None,
-        accept_encoding: Optional[str] = None,
         default_encoding: Optional[Union[str, Callable[[bytes], str]]] = None,
         discard_cookies: Optional[bool] = None,
         retry: Retry = None,
@@ -1604,8 +1582,6 @@ class Session(BaseSession):
             proxy: Proxy URL for this call; wins over ``proxies``.
             http_version: Pin ``"v1"``, ``"v2"`` or ``"v3"`` for this call.
             max_response_bytes: Body ceiling for this call.
-            accept_encoding: Overrides ``Accept-Encoding``. Chromium would otherwise
-                choose it as part of the profile.
             default_encoding: Fallback encoding for this response only.
             discard_cookies: Neither send nor record cookies for this call.
             retry: Attempt count or strategy for this call.
@@ -1644,7 +1620,6 @@ class Session(BaseSession):
         proxy: Optional[str] = None,
         http_version: Optional[HttpVersion] = None,
         max_response_bytes: Optional[int] = None,
-        accept_encoding: Optional[str] = None,
         default_encoding: Optional[Union[str, Callable[[bytes], str]]] = None,
         discard_cookies: Optional[bool] = None,
         retry: Retry = None,
@@ -1685,8 +1660,6 @@ class Session(BaseSession):
             proxy: Proxy URL for this call; wins over ``proxies``.
             http_version: Pin ``"v1"``, ``"v2"`` or ``"v3"`` for this call.
             max_response_bytes: Body ceiling for this call.
-            accept_encoding: Overrides ``Accept-Encoding``. Chromium would otherwise
-                choose it as part of the profile.
             default_encoding: Fallback encoding for this response only.
             discard_cookies: Neither send nor record cookies for this call.
             retry: Attempt count or strategy for this call.
@@ -1725,7 +1698,6 @@ class Session(BaseSession):
         proxy: Optional[str] = None,
         http_version: Optional[HttpVersion] = None,
         max_response_bytes: Optional[int] = None,
-        accept_encoding: Optional[str] = None,
         default_encoding: Optional[Union[str, Callable[[bytes], str]]] = None,
         discard_cookies: Optional[bool] = None,
         retry: Retry = None,
@@ -1766,8 +1738,6 @@ class Session(BaseSession):
             proxy: Proxy URL for this call; wins over ``proxies``.
             http_version: Pin ``"v1"``, ``"v2"`` or ``"v3"`` for this call.
             max_response_bytes: Body ceiling for this call.
-            accept_encoding: Overrides ``Accept-Encoding``. Chromium would otherwise
-                choose it as part of the profile.
             default_encoding: Fallback encoding for this response only.
             discard_cookies: Neither send nor record cookies for this call.
             retry: Attempt count or strategy for this call.
@@ -1806,7 +1776,6 @@ class Session(BaseSession):
         proxy: Optional[str] = None,
         http_version: Optional[HttpVersion] = None,
         max_response_bytes: Optional[int] = None,
-        accept_encoding: Optional[str] = None,
         default_encoding: Optional[Union[str, Callable[[bytes], str]]] = None,
         discard_cookies: Optional[bool] = None,
         retry: Retry = None,
@@ -1847,8 +1816,6 @@ class Session(BaseSession):
             proxy: Proxy URL for this call; wins over ``proxies``.
             http_version: Pin ``"v1"``, ``"v2"`` or ``"v3"`` for this call.
             max_response_bytes: Body ceiling for this call.
-            accept_encoding: Overrides ``Accept-Encoding``. Chromium would otherwise
-                choose it as part of the profile.
             default_encoding: Fallback encoding for this response only.
             discard_cookies: Neither send nor record cookies for this call.
             retry: Attempt count or strategy for this call.
@@ -1887,7 +1854,6 @@ class Session(BaseSession):
         proxy: Optional[str] = None,
         http_version: Optional[HttpVersion] = None,
         max_response_bytes: Optional[int] = None,
-        accept_encoding: Optional[str] = None,
         default_encoding: Optional[Union[str, Callable[[bytes], str]]] = None,
         discard_cookies: Optional[bool] = None,
         retry: Retry = None,
@@ -1928,8 +1894,6 @@ class Session(BaseSession):
             proxy: Proxy URL for this call; wins over ``proxies``.
             http_version: Pin ``"v1"``, ``"v2"`` or ``"v3"`` for this call.
             max_response_bytes: Body ceiling for this call.
-            accept_encoding: Overrides ``Accept-Encoding``. Chromium would otherwise
-                choose it as part of the profile.
             default_encoding: Fallback encoding for this response only.
             discard_cookies: Neither send nor record cookies for this call.
             retry: Attempt count or strategy for this call.
@@ -2283,7 +2247,6 @@ class AsyncSession(BaseSession):
         proxy: Optional[str] = None,
         http_version: Optional[HttpVersion] = None,
         max_response_bytes: Optional[int] = None,
-        accept_encoding: Optional[str] = None,
         default_encoding: Optional[Union[str, Callable[[bytes], str]]] = None,
         discard_cookies: Optional[bool] = None,
         retry: Retry = None,
@@ -2323,7 +2286,6 @@ class AsyncSession(BaseSession):
             proxy: Proxy URL for this call.
             http_version: Protocol pin for this call.
             max_response_bytes: Body ceiling for this call.
-            accept_encoding: Overrides ``Accept-Encoding``.
             default_encoding: Decoding fallback for this response.
             discard_cookies: Neither send nor record cookies.
             retry: Attempt count or strategy.
@@ -2436,7 +2398,6 @@ class AsyncSession(BaseSession):
         proxy: Optional[str] = None,
         http_version: Optional[HttpVersion] = None,
         max_response_bytes: Optional[int] = None,
-        accept_encoding: Optional[str] = None,
         default_encoding: Optional[Union[str, Callable[[bytes], str]]] = None,
         discard_cookies: Optional[bool] = None,
         retry: Retry = None,
@@ -2477,8 +2438,6 @@ class AsyncSession(BaseSession):
             proxy: Proxy URL for this call; wins over ``proxies``.
             http_version: Pin ``"v1"``, ``"v2"`` or ``"v3"`` for this call.
             max_response_bytes: Body ceiling for this call.
-            accept_encoding: Overrides ``Accept-Encoding``. Chromium would otherwise
-                choose it as part of the profile.
             default_encoding: Fallback encoding for this response only.
             discard_cookies: Neither send nor record cookies for this call.
             retry: Attempt count or strategy for this call.
@@ -2521,7 +2480,6 @@ class AsyncSession(BaseSession):
         proxy: Optional[str] = None,
         http_version: Optional[HttpVersion] = None,
         max_response_bytes: Optional[int] = None,
-        accept_encoding: Optional[str] = None,
         default_encoding: Optional[Union[str, Callable[[bytes], str]]] = None,
         discard_cookies: Optional[bool] = None,
         retry: Retry = None,
@@ -2562,8 +2520,6 @@ class AsyncSession(BaseSession):
             proxy: Proxy URL for this call; wins over ``proxies``.
             http_version: Pin ``"v1"``, ``"v2"`` or ``"v3"`` for this call.
             max_response_bytes: Body ceiling for this call.
-            accept_encoding: Overrides ``Accept-Encoding``. Chromium would otherwise
-                choose it as part of the profile.
             default_encoding: Fallback encoding for this response only.
             discard_cookies: Neither send nor record cookies for this call.
             retry: Attempt count or strategy for this call.
@@ -2602,7 +2558,6 @@ class AsyncSession(BaseSession):
         proxy: Optional[str] = None,
         http_version: Optional[HttpVersion] = None,
         max_response_bytes: Optional[int] = None,
-        accept_encoding: Optional[str] = None,
         default_encoding: Optional[Union[str, Callable[[bytes], str]]] = None,
         discard_cookies: Optional[bool] = None,
         retry: Retry = None,
@@ -2643,8 +2598,6 @@ class AsyncSession(BaseSession):
             proxy: Proxy URL for this call; wins over ``proxies``.
             http_version: Pin ``"v1"``, ``"v2"`` or ``"v3"`` for this call.
             max_response_bytes: Body ceiling for this call.
-            accept_encoding: Overrides ``Accept-Encoding``. Chromium would otherwise
-                choose it as part of the profile.
             default_encoding: Fallback encoding for this response only.
             discard_cookies: Neither send nor record cookies for this call.
             retry: Attempt count or strategy for this call.
@@ -2683,7 +2636,6 @@ class AsyncSession(BaseSession):
         proxy: Optional[str] = None,
         http_version: Optional[HttpVersion] = None,
         max_response_bytes: Optional[int] = None,
-        accept_encoding: Optional[str] = None,
         default_encoding: Optional[Union[str, Callable[[bytes], str]]] = None,
         discard_cookies: Optional[bool] = None,
         retry: Retry = None,
@@ -2724,8 +2676,6 @@ class AsyncSession(BaseSession):
             proxy: Proxy URL for this call; wins over ``proxies``.
             http_version: Pin ``"v1"``, ``"v2"`` or ``"v3"`` for this call.
             max_response_bytes: Body ceiling for this call.
-            accept_encoding: Overrides ``Accept-Encoding``. Chromium would otherwise
-                choose it as part of the profile.
             default_encoding: Fallback encoding for this response only.
             discard_cookies: Neither send nor record cookies for this call.
             retry: Attempt count or strategy for this call.
@@ -2764,7 +2714,6 @@ class AsyncSession(BaseSession):
         proxy: Optional[str] = None,
         http_version: Optional[HttpVersion] = None,
         max_response_bytes: Optional[int] = None,
-        accept_encoding: Optional[str] = None,
         default_encoding: Optional[Union[str, Callable[[bytes], str]]] = None,
         discard_cookies: Optional[bool] = None,
         retry: Retry = None,
@@ -2805,8 +2754,6 @@ class AsyncSession(BaseSession):
             proxy: Proxy URL for this call; wins over ``proxies``.
             http_version: Pin ``"v1"``, ``"v2"`` or ``"v3"`` for this call.
             max_response_bytes: Body ceiling for this call.
-            accept_encoding: Overrides ``Accept-Encoding``. Chromium would otherwise
-                choose it as part of the profile.
             default_encoding: Fallback encoding for this response only.
             discard_cookies: Neither send nor record cookies for this call.
             retry: Attempt count or strategy for this call.
@@ -2845,7 +2792,6 @@ class AsyncSession(BaseSession):
         proxy: Optional[str] = None,
         http_version: Optional[HttpVersion] = None,
         max_response_bytes: Optional[int] = None,
-        accept_encoding: Optional[str] = None,
         default_encoding: Optional[Union[str, Callable[[bytes], str]]] = None,
         discard_cookies: Optional[bool] = None,
         retry: Retry = None,
@@ -2886,8 +2832,6 @@ class AsyncSession(BaseSession):
             proxy: Proxy URL for this call; wins over ``proxies``.
             http_version: Pin ``"v1"``, ``"v2"`` or ``"v3"`` for this call.
             max_response_bytes: Body ceiling for this call.
-            accept_encoding: Overrides ``Accept-Encoding``. Chromium would otherwise
-                choose it as part of the profile.
             default_encoding: Fallback encoding for this response only.
             discard_cookies: Neither send nor record cookies for this call.
             retry: Attempt count or strategy for this call.
@@ -2926,7 +2870,6 @@ class AsyncSession(BaseSession):
         proxy: Optional[str] = None,
         http_version: Optional[HttpVersion] = None,
         max_response_bytes: Optional[int] = None,
-        accept_encoding: Optional[str] = None,
         default_encoding: Optional[Union[str, Callable[[bytes], str]]] = None,
         discard_cookies: Optional[bool] = None,
         retry: Retry = None,
@@ -2967,8 +2910,6 @@ class AsyncSession(BaseSession):
             proxy: Proxy URL for this call; wins over ``proxies``.
             http_version: Pin ``"v1"``, ``"v2"`` or ``"v3"`` for this call.
             max_response_bytes: Body ceiling for this call.
-            accept_encoding: Overrides ``Accept-Encoding``. Chromium would otherwise
-                choose it as part of the profile.
             default_encoding: Fallback encoding for this response only.
             discard_cookies: Neither send nor record cookies for this call.
             retry: Attempt count or strategy for this call.
@@ -3007,7 +2948,6 @@ class AsyncSession(BaseSession):
         proxy: Optional[str] = None,
         http_version: Optional[HttpVersion] = None,
         max_response_bytes: Optional[int] = None,
-        accept_encoding: Optional[str] = None,
         default_encoding: Optional[Union[str, Callable[[bytes], str]]] = None,
         discard_cookies: Optional[bool] = None,
         retry: Retry = None,
@@ -3048,8 +2988,6 @@ class AsyncSession(BaseSession):
             proxy: Proxy URL for this call; wins over ``proxies``.
             http_version: Pin ``"v1"``, ``"v2"`` or ``"v3"`` for this call.
             max_response_bytes: Body ceiling for this call.
-            accept_encoding: Overrides ``Accept-Encoding``. Chromium would otherwise
-                choose it as part of the profile.
             default_encoding: Fallback encoding for this response only.
             discard_cookies: Neither send nor record cookies for this call.
             retry: Attempt count or strategy for this call.
@@ -3088,7 +3026,6 @@ class AsyncSession(BaseSession):
         proxy: Optional[str] = None,
         http_version: Optional[HttpVersion] = None,
         max_response_bytes: Optional[int] = None,
-        accept_encoding: Optional[str] = None,
         default_encoding: Optional[Union[str, Callable[[bytes], str]]] = None,
         discard_cookies: Optional[bool] = None,
         retry: Retry = None,
@@ -3129,8 +3066,6 @@ class AsyncSession(BaseSession):
             proxy: Proxy URL for this call; wins over ``proxies``.
             http_version: Pin ``"v1"``, ``"v2"`` or ``"v3"`` for this call.
             max_response_bytes: Body ceiling for this call.
-            accept_encoding: Overrides ``Accept-Encoding``. Chromium would otherwise
-                choose it as part of the profile.
             default_encoding: Fallback encoding for this response only.
             discard_cookies: Neither send nor record cookies for this call.
             retry: Attempt count or strategy for this call.

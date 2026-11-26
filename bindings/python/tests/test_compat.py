@@ -2150,6 +2150,17 @@ class CoreOwnedHeaderTests(unittest.TestCase):
         with chrome_client.Session(impersonate="chrome_124") as session:
             with self.assertRaises(chrome_client.UnsupportedFeature):
                 session.get(self.base, headers={"Accept-Encoding": None})
+    def test_accept_encoding_is_not_a_keyword(self):
+        """Measured: the value never reached the wire, so the keyword is gone.
+
+        Six probes against a local echo server (default, identity, gzip, br,
+        two header spellings) all arrived as the profile value
+        "gzip, deflate, br, zstd" -- Chromium owns Accept-Encoding, so the
+        keyword promised a control the Core cannot give.
+        """
+        with chrome_client.Session(impersonate="chrome_124") as session:
+            with self.assertRaises(TypeError):
+                session.get(self.base, accept_encoding="identity")
 
     def test_a_session_level_removal_fails_closed_too(self):
         """session.headers.pop() reached no check, so the value came back.

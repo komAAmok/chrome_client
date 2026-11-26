@@ -422,6 +422,7 @@ session.post(url,
 | `dns_over_tls=` / `dns_padding=` | 无（加密解析用 `doh_template`） | Chrome 桌面版没有 DoT，也没有 EDNS0 padding 控制 |
 | `referer=` | `headers={"Referer": ...}` | Core 把 Referer 头路由到 `URLRequest::SetReferrer` |
 | `multipart=` / `CurlMime` | `files=`（同一组 part 产出逐字节相同的 body） | 两套写法只差 part 顺序，服务端按 name 取值 |
+| `accept_encoding=` | 无（`header_policy="drop"` 可以把它整条去掉） | 实测六次探针全部到线为 profile 值 `gzip, deflate, br, zstd`：这个头由 Chromium 拥有 |
 ### 流式读写与分块上传
 
 ```python

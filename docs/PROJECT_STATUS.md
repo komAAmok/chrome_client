@@ -789,6 +789,10 @@ manifest（`--abi-version 8`）：
 两者只差 part 顺序。渲染器保留为私有 `_MultipartBody`（`encode_multipart` 仍在用），
 `chrome_client.CurlMime` 不再导出。
 
+`accept_encoding=` 也删了：六次探针（默认、`identity`、`gzip`、`br`，以及两种 `headers=` 写法）
+到线全部是 profile 值 `gzip, deflate, br, zstd`——Chromium 自己决定这个字段，关键字承诺了一个
+Core 给不了的控制。`Session.request` 31 → 30。
+
 **ABI 未变**，九个平台产物不需要重建；`audit-pypi-metadata.sh` 的重定向载体随契约改写
 （从「只能是 None」改成「说不上是参数」），同样做过变异测试。
 

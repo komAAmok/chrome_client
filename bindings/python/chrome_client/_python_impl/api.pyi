@@ -360,7 +360,6 @@ def request(
     proxy: Optional[str] = None,
     http_version: Optional[HttpVersion] = None,
     max_response_bytes: Optional[int] = None,
-    accept_encoding: Optional[str] = None,
     default_encoding: Optional[Union[str, Callable[[bytes], str]]] = None,
     discard_cookies: Optional[bool] = None,
     retry: Retry = None,
@@ -411,7 +410,6 @@ def request(
         proxy: Proxy URL for this call.
         http_version: Pin ``"v1"``/``"v2"``/``"v3"``.
         max_response_bytes: Body ceiling.
-        accept_encoding: Overrides ``Accept-Encoding``.
         default_encoding: Fallback encoding for the response body, or a callable
             taking the body bytes and returning an encoding name.
         discard_cookies: Neither send nor record cookies.
@@ -474,7 +472,6 @@ def get(
     proxy: Optional[str] = None,
     http_version: Optional[HttpVersion] = None,
     max_response_bytes: Optional[int] = None,
-    accept_encoding: Optional[str] = None,
     default_encoding: Optional[Union[str, Callable[[bytes], str]]] = None,
     discard_cookies: Optional[bool] = None,
     retry: Retry = None,
@@ -518,7 +515,6 @@ def get(
         proxy: Proxy URL for this call.
         http_version: Pin ``"v1"``/``"v2"``/``"v3"``.
         max_response_bytes: Body ceiling.
-        accept_encoding: Overrides ``Accept-Encoding``.
         default_encoding: Fallback encoding for the response body, or a callable taking
             the body bytes and returning an encoding name.
         discard_cookies: Neither send nor record cookies.
@@ -575,7 +571,6 @@ def options(
     proxy: Optional[str] = None,
     http_version: Optional[HttpVersion] = None,
     max_response_bytes: Optional[int] = None,
-    accept_encoding: Optional[str] = None,
     default_encoding: Optional[Union[str, Callable[[bytes], str]]] = None,
     discard_cookies: Optional[bool] = None,
     retry: Retry = None,
@@ -619,7 +614,6 @@ def options(
         proxy: Proxy URL for this call.
         http_version: Pin ``"v1"``/``"v2"``/``"v3"``.
         max_response_bytes: Body ceiling.
-        accept_encoding: Overrides ``Accept-Encoding``.
         default_encoding: Fallback encoding for the response body, or a callable taking
             the body bytes and returning an encoding name.
         discard_cookies: Neither send nor record cookies.
@@ -669,7 +663,6 @@ def head(
     proxy: Optional[str] = None,
     http_version: Optional[HttpVersion] = None,
     max_response_bytes: Optional[int] = None,
-    accept_encoding: Optional[str] = None,
     default_encoding: Optional[Union[str, Callable[[bytes], str]]] = None,
     discard_cookies: Optional[bool] = None,
     retry: Retry = None,
@@ -715,7 +708,6 @@ def head(
         proxy: Proxy URL for this call.
         http_version: Pin ``"v1"``/``"v2"``/``"v3"``.
         max_response_bytes: Body ceiling.
-        accept_encoding: Overrides ``Accept-Encoding``.
         default_encoding: Fallback encoding for the response body, or a callable taking
             the body bytes and returning an encoding name.
         discard_cookies: Neither send nor record cookies.
@@ -765,7 +757,6 @@ def post(
     proxy: Optional[str] = None,
     http_version: Optional[HttpVersion] = None,
     max_response_bytes: Optional[int] = None,
-    accept_encoding: Optional[str] = None,
     default_encoding: Optional[Union[str, Callable[[bytes], str]]] = None,
     discard_cookies: Optional[bool] = None,
     retry: Retry = None,
@@ -809,7 +800,6 @@ def post(
         proxy: Proxy URL for this call.
         http_version: Pin ``"v1"``/``"v2"``/``"v3"``.
         max_response_bytes: Body ceiling.
-        accept_encoding: Overrides ``Accept-Encoding``.
         default_encoding: Fallback encoding for the response body, or a callable taking
             the body bytes and returning an encoding name.
         discard_cookies: Neither send nor record cookies.
@@ -862,7 +852,6 @@ def put(
     proxy: Optional[str] = None,
     http_version: Optional[HttpVersion] = None,
     max_response_bytes: Optional[int] = None,
-    accept_encoding: Optional[str] = None,
     default_encoding: Optional[Union[str, Callable[[bytes], str]]] = None,
     discard_cookies: Optional[bool] = None,
     retry: Retry = None,
@@ -906,7 +895,6 @@ def put(
         proxy: Proxy URL for this call.
         http_version: Pin ``"v1"``/``"v2"``/``"v3"``.
         max_response_bytes: Body ceiling.
-        accept_encoding: Overrides ``Accept-Encoding``.
         default_encoding: Fallback encoding for the response body, or a callable taking
             the body bytes and returning an encoding name.
         discard_cookies: Neither send nor record cookies.
@@ -956,7 +944,6 @@ def patch(
     proxy: Optional[str] = None,
     http_version: Optional[HttpVersion] = None,
     max_response_bytes: Optional[int] = None,
-    accept_encoding: Optional[str] = None,
     default_encoding: Optional[Union[str, Callable[[bytes], str]]] = None,
     discard_cookies: Optional[bool] = None,
     retry: Retry = None,
@@ -1000,7 +987,6 @@ def patch(
         proxy: Proxy URL for this call.
         http_version: Pin ``"v1"``/``"v2"``/``"v3"``.
         max_response_bytes: Body ceiling.
-        accept_encoding: Overrides ``Accept-Encoding``.
         default_encoding: Fallback encoding for the response body, or a callable taking
             the body bytes and returning an encoding name.
         discard_cookies: Neither send nor record cookies.
@@ -1050,7 +1036,6 @@ def delete(
     proxy: Optional[str] = None,
     http_version: Optional[HttpVersion] = None,
     max_response_bytes: Optional[int] = None,
-    accept_encoding: Optional[str] = None,
     default_encoding: Optional[Union[str, Callable[[bytes], str]]] = None,
     discard_cookies: Optional[bool] = None,
     retry: Retry = None,
@@ -1094,7 +1079,6 @@ def delete(
         proxy: Proxy URL for this call.
         http_version: Pin ``"v1"``/``"v2"``/``"v3"``.
         max_response_bytes: Body ceiling.
-        accept_encoding: Overrides ``Accept-Encoding``.
         default_encoding: Fallback encoding for the response body, or a callable taking
             the body bytes and returning an encoding name.
         discard_cookies: Neither send nor record cookies.
@@ -1144,7 +1128,6 @@ def trace(
     proxy: Optional[str] = None,
     http_version: Optional[HttpVersion] = None,
     max_response_bytes: Optional[int] = None,
-    accept_encoding: Optional[str] = None,
     default_encoding: Optional[Union[str, Callable[[bytes], str]]] = None,
     discard_cookies: Optional[bool] = None,
     retry: Retry = None,
@@ -1188,7 +1171,6 @@ def trace(
         proxy: Proxy URL for this call.
         http_version: Pin ``"v1"``/``"v2"``/``"v3"``.
         max_response_bytes: Body ceiling.
-        accept_encoding: Overrides ``Accept-Encoding``.
         default_encoding: Fallback encoding for the response body, or a callable taking
             the body bytes and returning an encoding name.
         discard_cookies: Neither send nor record cookies.
@@ -1238,7 +1220,6 @@ def query(
     proxy: Optional[str] = None,
     http_version: Optional[HttpVersion] = None,
     max_response_bytes: Optional[int] = None,
-    accept_encoding: Optional[str] = None,
     default_encoding: Optional[Union[str, Callable[[bytes], str]]] = None,
     discard_cookies: Optional[bool] = None,
     retry: Retry = None,
@@ -1282,7 +1263,6 @@ def query(
         proxy: Proxy URL for this call.
         http_version: Pin ``"v1"``/``"v2"``/``"v3"``.
         max_response_bytes: Body ceiling.
-        accept_encoding: Overrides ``Accept-Encoding``.
         default_encoding: Fallback encoding for the response body, or a callable taking
             the body bytes and returning an encoding name.
         discard_cookies: Neither send nor record cookies.

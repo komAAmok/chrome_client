@@ -63,7 +63,6 @@ SURFACE = {
     "json": "REQUEST",
     "content": "REQUEST",
     "files": "REQUEST",
-    "accept_encoding": "REQUEST",
     "cache_mode": "REQUEST",
     "priority": "REQUEST",
     "content_callback": "REQUEST",
@@ -100,6 +99,7 @@ REMOVED = (
     "ja3", "akamai", "perk", "interface", "doh_url", "curl_options",
     "max_recv_speed", "max_redirects", "dns_over_tls", "dns_padding",
     "quote", "thread", "debug", "referer", "multipart",
+    "accept_encoding",
 )
 
 ENTRY_POINTS = (
