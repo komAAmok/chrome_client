@@ -759,6 +759,36 @@ manifest（`--abi-version 8`）：
 `sync-core.sh` 先从根 `Cargo.toml` 注入版本头（版本号只在那里），`install-core-binaries.py` 再刷新 manifest。
 三者现已一致：`core_version()` = `__version__` = 根 `Cargo.toml` 的 `workspace.package.version`。
 
+### 变更（main，未发版）：收缩 API 表面，删掉 14 个 curl_cffi 关键字
+
+本项目是 Chromium 后端的指纹客户端，不是 libcurl 的 drop-in。那些「接受后拒绝」或
+「接受后忽略」的关键字现在**不存在**：传了就是 `TypeError`。
+
+| 删除 | 替代 |
+| --- | --- |
+| `ja3` `akamai` `perk` | `impersonate="chrome_<major>"` |
+| `interface` `curl_options` `max_recv_speed` `thread` `debug` `quote` | 无（Core 没有对应能力） |
+| `doh_url` | `doh_template=` + `dns_secure_mode=2` |
+| `max_redirects` | `allow_redirects=False`（单跳）；上限固定 20（`CHROMIUM_MAX_REDIRECTS`） |
+| `dns_over_tls` `dns_padding` | 无（Chrome 桌面版没有 DoT / EDNS0 padding） |
+| `referer` | `headers={"Referer": ...}`（Core 路由到 `SetReferrer`） |
+
+`ExtraFingerprints` 从 15 个字段缩到 2 个（`header_order`、`form_boundary`，两项都真生效）；
+`_NEUTRAL_EXTRA_FP` 整表删除，手写 mapping 里的未知键由 `validate_extra_fp` 点名拒绝。
+
+**连带清掉的死代码**：`_validate_max_redirects`、`self.max_redirects`、`effective_max`、
+`options["max_redirects"]`、`reject_fingerprint_overrides`、`PreparedRequest.quote`、
+`build_url(..., quote=)` 分支、`_NEUTRAL_EXTRA_FP`。
+
+**新增门禁** `tools/audit-compat-surface.py`：四个入口（两个构造器 + 两个 `request()`）的
+每个关键字都必须有判决（ENGINE / REQUEST / FACADE），已删除的 14 个必须缺席。三个方向都
+做过变异测试（新关键字、已删关键字回来、判决没有对应关键字）。
+
+**ABI 未变**，九个平台产物不需要重建；`audit-pypi-metadata.sh` 的重定向载体随契约改写
+（从「只能是 None」改成「说不上是参数」），同样做过变异测试。
+
+规模：构造参数 51 → 41（`AsyncSession` 52 → 42），`Session.request` 43 → 31；
+测试 612 → 608 条（合并/删除针对已删关键字的断言，并新增「它们确实不在了」的断言）。
 ### 变更（main，最近一个 tag 之后）：`header_policy` 默认 `compat`
 
 `Connection: keep-alive` 这类从 devtools 复制出来的头出现在大量旧脚本里，逐个报错的迁移

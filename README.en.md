@@ -100,7 +100,7 @@ Service Workers and persistent browser profiles are not included.
 | Cancellation, timeouts, size limits | ✓ | ✓ | `Timeout`, `ResponseTooLarge`, `RequestException` |
 | WebSocket / WSS | ✓ | ✓ | Sync and async, with the curl-cffi method names |
 | Cookies | ✓ | ✓ | `session.cookies` is a `RequestsCookieJar`; reads and writes both take effect |
-| Redirects | ✓ | ✓ | `history`, final URL, `max_redirects`, `allow_redirects=False` |
+| Redirects | ✓ | ✓ | `history`, final URL, `allow_redirects=False`; the ceiling is Chromium 20 (`CHROMIUM_MAX_REDIRECTS`), `max_redirects=` removed |
 | In-memory cache | ✓ | ✓ | Lives for the Engine's lifetime; `cache=False` disables it |
 
 ## Install and load the Core
@@ -166,7 +166,7 @@ print(response.status_code, response.reason, response.json())
 ```
 
 `Session` has the shape of `requests.Session`: `headers`, `params`, `cookies`,
-`proxies`, `auth`, `hooks`, `stream`, `verify`, `max_redirects`, `trust_env`,
+`proxies`, `auth`, `hooks`, `stream`, `verify`, `trust_env`,
 `adapters`, `mount()`, `prepare_request()`, `send()`, `resolve_redirects()`,
 `close()` and the context manager protocol.
 
@@ -289,11 +289,11 @@ print(response.status_code, response.headers["Location"], response.next.url)
 session.get("https://example.com/r", allow_redirects=False)  # returns the 3xx
 ```
 
-`max_redirects` must be `None` (Chromium stops at 20 hops inside one
-`URLRequest`); a value of 20 or more raises `UnsupportedFeature` instead of being
-silently clamped to 20. The default is `None`, meaning "adopt Chromium's 20" --
-**not** requests' 30. `requests.models.DEFAULT_REDIRECT_LIMIT` is still 30 and
-still importable, but this package does not use it as the session default.
+The hop ceiling belongs to Chromium -- 20 hops inside one `URLRequest` -- and is
+published as `chrome_client.CHROMIUM_MAX_REDIRECTS`. `max_redirects=` is **not a
+parameter any more**: it could only ever be `None`, no number can lower the ceiling,
+and re-issuing hops from Python would reimplement redirect semantics the Core owns. Use
+`allow_redirects=False` for a single hop.
 
 The exception hierarchy matches `requests.exceptions` (`RequestException` derives
 from `IOError`) plus curl-cffi's extra leaves. Chromium net errors map to a
@@ -336,10 +336,10 @@ with Session(impersonate="chrome152", http_version="v2") as session:
 `impersonate` accepts `chrome_155`, `chrome155`, and `chrome` (resolving to the
 newest pinned major). The TLS ClientHello, ALPN, HTTP/2 settings and priorities,
 and HTTP/3 transport parameters all come from that profile. That is why `ja3=`,
-`akamai=`, `perk=` and most `extra_fp` fields raise `UnsupportedFeature`:
-accepting a JA3 string while still sending Chromium's own ClientHello would
-report a fidelity this build does not have. The two `extra_fp` fields the facade
-can honour are accepted: `header_order` and `form_boundary`.
+`akamai=` and `perk=` do not exist (a `TypeError` if you pass one): accepting a JA3
+string while still sending Chromium's own ClientHello would misreport fidelity.
+`extra_fp` keeps only the two knobs the facade really implements, `header_order` and
+`form_boundary`; the other 13 curl_cffi fields are gone as well.
 
 **Default request headers come from the Core, built from the profile's own
 captures.** `impersonate="chrome_155"` sends the same header set that release
@@ -363,11 +363,12 @@ sends only the caller's headers, which always win field by field).
 its captures, and `tools/audit-client-hints.py` re-derives the whole table
 from the captures before a commit.
 
-Also rejected explicitly: `interface=`,
-`doh_url=`, `curl_options=`, `max_recv_speed=` and `referer=`. The last one is
-easy to get wrong: Chromium owns the referrer and strips a caller-supplied
-`Referer` header, and ABI v11 has no referrer field, so setting it would never
-reach the wire on any path.
+`interface=`, `doh_url=`, `curl_options=`, `max_recv_speed`, `thread=`, `debug`,
+`quote`, `dns_over_tls`, `dns_padding` and `referer` are **not parameters any more** (a
+`TypeError`). `referer` is the header: the Core routes `Referer` to
+`URLRequest::SetReferrer` (`core/source/request.cc:245`), so
+`headers={"Referer": ...}` is the spelling that reaches the wire. `doh_url` becomes
+`doh_template=` with `dns_secure_mode=2`.
 
 Both multipart spellings work:
 
@@ -381,6 +382,26 @@ mime.addpart(name="photo", filename="p.jpg", content_type="image/jpeg",
 session.post(url, multipart=mime)
 ```
 
+
+### Migrating from curl_cffi (keywords removed in 0.3.0)
+
+This project is a Chromium-backed fingerprint client, not a libcurl drop-in. These
+keywords are **gone**: passing one raises `TypeError`, instead of being accepted and
+then refused or ignored.
+
+| Removed | Replacement | Why |
+| --- | --- | --- |
+| `ja3=` / `akamai=` / `perk=` | `impersonate="chrome_<major>"` | the TLS/H2 fingerprint comes from the profile; the ABI cannot reach BoringSSL |
+| 13 fields of `extra_fp` | same; only `header_order` and `form_boundary` remain | the rest are frozen per profile or do not exist in Chrome |
+| `interface=` | none | Chromium has no interface binding |
+| `doh_url=` | `doh_template=` with `dns_secure_mode=2` | that pair is what the Core implements |
+| `curl_options=` | none | there is no libcurl option table |
+| `max_recv_speed=` | none | Chromium owns transfer pacing |
+| `thread=` / `debug=` | none | libcurl handle concepts |
+| `quote=` | none | the URL is always canonicalised and percent-encoded |
+| `max_redirects=` | `allow_redirects=False` for one hop; the ceiling is 20 (`CHROMIUM_MAX_REDIRECTS`) | the option could only be `None` |
+| `dns_over_tls=` / `dns_padding=` | none (use `doh_template` for an encrypted resolver) | desktop Chrome has neither |
+| `referer=` | `headers={"Referer": ...}` | the Core routes the header to `URLRequest::SetReferrer` |
 ### Streaming and chunked uploads
 
 ```python
@@ -501,8 +522,8 @@ no further edits.
 | `params`, `data`, `json`, `content`, `files`, `multipart` | ✓ |
 | `headers`, `cookies`, `auth`, `timeout` | ✓ |
 | Removing a Core-owned header (`User-Agent`, `Accept-Encoding`, ...) | ✗ raises `UnsupportedFeature`; overriding still works |
-| `dns_padding=True` | ✗ raises `UnsupportedFeature`; Chromium exposes no EDNS0 padding control. The value used to travel into `EngineOptions` and stop -- `core/source/engine.cc` never read it -- so a caller asking for padded queries got unpadded ones with no error |
-| `dns_over_tls=True` | ✗ raises `UnsupportedFeature`; Chromium desktop ships no DoT client, so setting it only disables the built-in resolver (`net/dns/dns_client.cc:168`) and silently falls back to the system one, dropping `dns_nameservers`/`doh_template`. Use `doh_template` with `dns_secure_mode=2` for an encrypted resolver |
+| `dns_padding=` | ✗ **removed** (`TypeError`); Chromium exposes no EDNS0 padding control. The value used to travel into `EngineOptions` and stop -- `core/source/engine.cc` never read it -- so a caller asking for padded queries got unpadded ones with no error |
+| `dns_over_tls=` | ✗ **removed** (`TypeError`); Chromium desktop ships no DoT client, so setting it only disables the built-in resolver (`net/dns/dns_client.cc:168`) and silently falls back to the system one, dropping `dns_nameservers`/`doh_template`. Use `doh_template` with `dns_secure_mode=2` for an encrypted resolver |
 | Setting a hop-by-hop field (`Connection`, `Keep-Alive`, `TE`, `Trailer`, `Upgrade`, `Proxy-Connection`) | ✓ dropped by default and counted in `session.dropped_headers` (Chromium owns connection lifetime and h2/h3 forbid these); raises `UnsupportedFeature` under `header_policy="strict"` |
 | `timeout=(connect, read)` with two different values | ✗ raises `UnsupportedFeature` (ABI v11 carries one deadline); an agreeing pair works |
 | `proxies`, `proxy`, `proxy_auth`, `trust_env`, `NO_PROXY` | ✓ |
@@ -511,7 +532,7 @@ no further edits.
 | `dns_nameservers`, `doh_template`, `dns_secure_mode`, `dns_rotate` | ✓ these only override fields; the engine **always** uses Chromium's own resolver (which queries the DNS HTTPS record by default); a `doh_template` without `dns_secure_mode` raises rather than being ignored. **Measured**: with `dns_nameservers` pointing at a local port 53, the server really receives both A (1) and HTTPS (65) queries; a `doh_template` pointing at `127.0.0.1:1` fails under `dns_secure_mode=2` and falls back to system resolution under `=1` -- which is exactly the difference between secure and opportunistic |
 | `platform`, `max_sockets_per_group`, `hsts_bypass`, `proxy_chain` | ✓ all engine-level and part of the engine cache key; `platform` also decides the UA group and the client hints |
 | `cert=("c.pem", "k.pem")`, `cert="combined.pem"`, `set_client_certificate()` | ✓ sent only when the server issues a CertificateRequest, so the ClientHello fingerprint is unchanged |
-| `allow_redirects`, `max_redirects`, `history`, final URL | ✓ |
+| `allow_redirects`, `history`, final URL | ✓ (`max_redirects=` removed; the ceiling is 20) |
 | `stream=True`, `iter_content`, `iter_lines`, `raw` | ✓ |
 | `aiter_content`, `aiter_lines`, `atext`, `acontent`, `session.stream(...)` | ✓ |
 | `hooks={"response": ...}`, `prepare_request`, `send`, `mount`, custom adapters | ✓ |

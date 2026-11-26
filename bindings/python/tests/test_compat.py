@@ -644,25 +644,21 @@ class RequestsSurfaceTests(Base):
             self.assertEqual(payload["authorization"], "Basic dXNlcjpwYXNz")
 
     def test_referer_reaches_the_wire(self):
-        """Referer is routed to URLRequest::SetReferrer, so it is sent."""
+        """Referer is routed to URLRequest::SetReferrer, so it is sent.
+
+        The header is the only spelling: the `referer=` keyword was removed with
+        the rest of the curl_cffi surface, because it did nothing the header
+        does not.
+        """
         with chrome_client.Session() as session:
-            response = session.get(self.url + "echo-referer",
-                                   referer="https://example.invalid/")
-            self.assertEqual(ast.literal_eval(response.text),
-                             "https://example.invalid/")
             response = session.get(
                 self.url + "echo-referer",
                 headers={"Referer": "https://other.invalid/path"})
             self.assertEqual(ast.literal_eval(response.text),
                              "https://other.invalid/path")
-            # An explicit header wins over the keyword, matching how
-            # accept_encoding merges below.
-            response = session.get(
-                self.url + "echo-referer",
-                referer="https://keyword.invalid/",
-                headers={"Referer": "https://header.invalid/"})
-            self.assertEqual(ast.literal_eval(response.text),
-                             "https://header.invalid/")
+            with self.assertRaises(TypeError):
+                session.get(self.url + "echo-referer",
+                            referer="https://example.invalid/")
         with chrome_client.Session(headers={"Referer": "https://session.invalid/"}) as session:
             response = session.get(self.url + "echo-referer")
             self.assertEqual(ast.literal_eval(response.text),
@@ -833,8 +829,10 @@ class RedirectTests(Base):
         it cannot honour is an error rather than a different behaviour.
         """
         with chrome_client.Session() as session:
-            with self.assertRaises(chrome_client.UnsupportedFeature):
+            with self.assertRaises(TypeError):
                 session.get(self.url + "redirect/2", max_redirects=5)
+            with self.assertRaises(TypeError):
+                chrome_client.Session(max_redirects=5)
             response = session.get(self.url + "redirect/2")
             self.assertEqual(response.status_code, 200)
             self.assertEqual(len(response.history), 2)
@@ -938,14 +936,20 @@ class CurlCffiSurfaceTests(Base):
                 self.assertEqual(
                     session.get(self.url, impersonate=target).status_code, 200)
 
-    def test_fingerprint_overrides_fail_closed(self):
-        with self.assertRaises(chrome_client.UnsupportedFeature):
-            chrome_client.Session(ja3="771,4865,0,29-23-24,0")
-        with self.assertRaises(chrome_client.UnsupportedFeature):
-            chrome_client.Session(akamai="1:65536;2:0;4:6291456")
-        with self.assertRaises(chrome_client.UnsupportedFeature):
-            chrome_client.Session(extra_fp=chrome_client.ExtraFingerprints(
-                tls_permute_extensions=True))
+    def test_fingerprint_overrides_are_gone_not_refused(self):
+        """ja3/akamai/perk and 13 extra_fp fields were removed, not stubbed."""
+        for name, value in (("ja3", "771,4865,0,29-23-24,0"),
+                            ("akamai", "1:65536;2:0;4:6291456"),
+                            ("perk", "1:65536")):
+            with self.assertRaises(TypeError):
+                chrome_client.Session(**{name: value})
+        with self.assertRaises(TypeError):
+            chrome_client.ExtraFingerprints(tls_permute_extensions=True)
+        # A hand-built mapping still reaches the validator, which names the
+        # field it cannot honour.
+        with self.assertRaises(chrome_client.UnsupportedFeature) as caught:
+            chrome_client.Session(extra_fp={"tls_grease": True})
+        self.assertIn("tls_grease", str(caught.exception))
         with self.assertRaises(chrome_client.UnsupportedFeature):
             chrome_client.Session(cert="/tmp/client.pem")
 
@@ -2698,10 +2702,6 @@ class RefererTests(unittest.TestCase):
             cases["session headers="] = session.get(
                 self.base + "/1", timeout=10).json()["referer"]
         with chrome_client.Session() as session:
-            cases["per-call referer="] = session.get(
-                self.base + "/2", referer=self.REFERER,
-                timeout=10).json()["referer"]
-        with chrome_client.Session() as session:
             cases["per-call headers="] = session.get(
                 self.base + "/3", headers={"Referer": self.REFERER},
                 timeout=10).json()["referer"]
@@ -2726,10 +2726,9 @@ class RefererTests(unittest.TestCase):
                     await session.get(self.base + "/7", timeout=10)
                 ).json()["referer"]
             async with chrome_client.AsyncSession() as session:
-                cases["async referer="] = (
+                with self.assertRaises(TypeError):
                     await session.get(self.base + "/8", referer=self.REFERER,
                                       timeout=10)
-                ).json()["referer"]
         asyncio.run(run())
 
         for label, received in cases.items():
@@ -4152,15 +4151,13 @@ class HeaderPolicyTests(unittest.TestCase):
                                         headers={'Connection': 'keep-alive'})
                 self.assertEqual(response.status_code, 200)
 
-    def test_quote_false_is_refused_instead_of_ignored(self):
-        """curl_cffi parity must not mean accepted-and-dropped."""
+    def test_quote_is_gone(self):
+        """The URL is always percent-encoded; the keyword no longer exists."""
         with chrome_client.Session() as session:
-            with self.assertRaises(chrome_client.UnsupportedFeature) as caught:
+            with self.assertRaises(TypeError):
                 session.request('GET', self.base, quote=False)
-            self.assertIn('quote=False', str(caught.exception))
-            # The two values that describe what already happens still work.
-            response = session.request('GET', self.base, quote=True)
-            self.assertEqual(response.status_code, 200)
+            with self.assertRaises(TypeError):
+                session.request('GET', self.base, quote=True)
     def test_an_unknown_policy_is_refused(self):
         with self.assertRaises(ValueError):
             chrome_client.Session(header_policy="clean")

@@ -319,8 +319,14 @@ class StabilityTests(unittest.TestCase):
         for name in ("headers", "cookies", "files", "auth", "timeout", "allow_redirects",
                      "proxies", "hooks", "stream", "verify", "cert", "json", "content",
                      "multipart", "impersonate", "proxy", "http_version",
-                     "max_redirects", "max_response_bytes"):
+                     "max_response_bytes"):
             self.assertIn(name, parameters)
+        # Removed in 0.3.0 with the rest of the curl_cffi surface: an unknown
+        # keyword must stay unknown, not come back as an ignored one.
+        for name in ("ja3", "akamai", "perk", "interface", "doh_url", "curl_options",
+                     "max_recv_speed", "max_redirects", "dns_over_tls", "dns_padding",
+                     "quote", "thread", "debug", "referer"):
+            self.assertNotIn(name, parameters)
         with self.assertRaises(TypeError):
             chrome_client.Session().request("GET", self.url, legacy_field=True)
 

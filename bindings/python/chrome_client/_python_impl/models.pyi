@@ -147,7 +147,7 @@ def http_version_from_status_line(status_line: str) -> Optional[str]:
     ...
 
 
-def build_url(url: StrOrBytes, params: Optional[ParamsLike], encoding: str = ..., quote: Optional[bool] = ...) -> str:
+def build_url(url: StrOrBytes, params: Optional[ParamsLike], encoding: str = ...) -> str:
     """Appends ``params`` to ``url`` with requests' encoding rules.
 
     Args:

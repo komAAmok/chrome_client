@@ -243,51 +243,50 @@ The cost of the caller rule is that a domain-less write is a statement about the
 name, not about a host, so every host-scoped ``a`` is retired along with it. The
 alternative -- leaving them in place -- is what made the write unreadable and sent
 the value twice.
-### curl_cffi 参数审计：哪些在本项目里结构上无意义
+### curl_cffi 参数审计：只留下 facade 能实现的两项
 
-curl_cffi 同时模拟 Chrome / Firefox / Safari，所以它的 `extra_fp` 里有些旋钮是为**别的浏览器**
-或为**非 Chromium 的 TLS 栈**准备的。本项目只做 Chrome、且协议栈就是 Chromium 本身，
-于是这些旋钮在这里没有对应物。下表逐项给出判定和依据。
+curl_cffi 同时模拟 Chrome / Firefox / Safari，它的 `extra_fp` 有 15 个字段，`Session`/`AsyncSession`
+也还有十来个只有 libcurl 才有意义的关键字。本项目只做 Chrome，协议栈就是 Chromium 本身，
+所以这些旋钮在这里没有对应物：要么 Chrome 自己就这么做，要么值由 `impersonate=` 选定的 profile
+逐版本冻结。
 
-判定分三类：
+**它们已被删除，不是被拒绝**（0.3.0）：传一个已删除的关键字得到 `TypeError`，`extra_fp` 里已删除的
+字段得到 `AttributeError`，手写 mapping 里的未知键得到 `UnsupportedFeature` 并点名。
+`tools/audit-compat-surface.py` 把这条表面钉住——新增关键字必须带判决，已删除的关键字重新出现就红。
 
-- **无意义**：Chrome 自己就这么做，或本项目根本没有那个机制。接受它只会让调用方以为
-  自己改变了一个并不存在的自由度。
-- **已由 profile 决定**：值真实存在，但由 `impersonate=` 选定的 profile 逐版本冻结，
-  按请求覆盖必然破坏指纹一致性。
-- **有意义**：facade 自己能实现，且不影响指纹。
+留下的两项都是 facade 自己实现的：
 
-| curl_cffi 参数 | 判定 | 依据 |
+| 参数 | 依据 |
+| --- | --- |
+| `extra_fp.header_order` | facade 按给定顺序发头，不碰 TLS/HTTP2 指纹（基线见 `audit-frozen-headers.py`）。 |
+| `extra_fp.form_boundary` | multipart 的 boundary 在 Python 侧生成。 |
+
+被删掉的 13 个字段与判定理由见下节附录——判定没变，只是不再有「接受后拒绝」这条路。
+
+
+#### 附录：被删掉的 13 个 `extra_fp` 字段与它们的判定
+
+判定没有变，只是不再有「接受后拒绝」这条路。判定分两类：**在 Chrome 里没有这个机制**、
+**值由 profile 逐版本冻结**。
+
+| 字段 | 判定 | 依据 |
 | --- | --- | --- |
-| `tls_delegated_credential` | **无意义** | Delegated Credentials 是 Firefox/Safari 的机制，Chrome 不发；Core 里 `grep delegated` 零命中。默认值 `""` 表示「关」，而这个「关」是唯一状态。 |
-| `http3_sig_hash_algs` | **无意义** | H3 的 signature_algorithms 与 TLS 层同一份（`profile_table_generated.h` 的 `signature_algorithms` span），不存在独立的 H3 集合。 |
-| `http3_tls_extension_order` | **无意义** | H3 的扩展顺序由 profile 的 `tls_extension_order_policy` 决定（`boringssl_random_fisher_yates`），Chrome 每连接重排；没有「H3 专用顺序」这回事。 |
-| `tls_record_size_limit` | **无意义** | Chrome 不发 record_size_limit 扩展。默认值 `0` 表示「不发」，也是唯一状态。 |
-| `split_cookies` | **无意义** | 这是 curl 的 cookie 引擎概念（把 Set-Cookie 拆开解析）。本项目用 Chromium 的 `CookieStore`，拆分语义由它自己决定，facade 里 `split_cookies` 只出现在字段声明，无任何实现。 |
-| `http2_no_priority` | **无意义** | 实测全部 72 个版本的 HEADERS 帧 priority 恒为 `(weight=256, depends_on=0, exclusive=1)`，Chrome 从不发「无 priority」。默认 `False` 表示「按 Chrome 发」，也是唯一状态。 |
-| `http2_stream_weight` | **已由 profile 决定** | 同上：值恒为 256。要改就得改 HEADERS 帧，那是指纹的一部分。 |
-| `http2_stream_exclusive` | **已由 profile 决定** | 同上：值恒为 1（exclusive）。 |
-| `tls_grease` | **已由 profile 决定** | Chrome 自己发 GREASE，实测 6 条连接出现 8–9 个不同值，由 BoringSSL CSPRNG 每连接抽取。固定它会立刻变成「固定种子」，违反 §3。 |
-| `tls_permute_extensions` | **已由 profile 决定** | Chrome 自己每连接重排扩展，实测 6 条连接 6 种顺序。固定顺序同样是固定种子。 |
-| `tls_min_version` | **已由 profile 决定** | 由 `profile_.tls_version_min` 决定（86–97 是 `0x0301`，98+ 是 `0x0303`），`audit-tls-version-range.py` 断言表与线缆两侧。 |
-| `tls_cert_compression` | **已由 profile 决定** | 实测全部版本的 compress_certificate 都是 `['brotli (2)']`，无版本差异。 |
-| `tls_signature_algorithms` | **已由 profile 决定** | profile 的 `signature_algorithms` span，逐版本审计。 |
-| `header_order` | **有意义** | facade 自己按给定顺序发头，不碰 TLS/H2 指纹。 |
-| `form_boundary` | **有意义** | multipart boundary 由 Python 侧生成。 |
+| `tls_delegated_credential` | 无此机制 | Delegated Credentials 是 Firefox/Safari 的机制，Chrome 不发 |
+| `http3_sig_hash_algs` | 无此机制 | H3 与 TLS 层共用同一份 signature_algorithms，没有独立的 H3 集合 |
+| `http3_tls_extension_order` | 无此机制 | 扩展顺序由 profile 策略决定，不存在按 H3 单独设置 |
+| `tls_record_size_limit` | 无此机制 | Chrome 不发 record_size_limit 扩展 |
+| `split_cookies` | 无此机制 | curl 的 cookie 引擎概念；语义归 Chromium 的 CookieStore |
+| `http2_no_priority` | 无此机制 | 72 个版本一律发 HEADERS priority `(256,0,exclusive)`；「none」不是 Chrome 的状态 |
+| `http2_stream_weight` | profile 冻结 | 全部 72 个版本恒为 256，属 HEADERS 帧 |
+| `http2_stream_exclusive` | profile 冻结 | 全部 72 个版本恒为 1，属 HEADERS 帧 |
+| `tls_grease` | profile 冻结 | BoringSSL 每连接从 CSPRNG 抽新值 |
+| `tls_permute_extensions` | profile 冻结 | Chrome 每连接重排扩展块 |
+| `tls_min_version` | profile 冻结 | profile 的 `tls_version_min`（86..97 为 0x0301，98 起 0x0303） |
+| `tls_cert_compression` | profile 冻结 | `compress_certificate` 所有版本都是 `[brotli]` |
+| `tls_signature_algorithms` | profile 冻结 | profile 的 signature_algorithms span，逐版本审计过 |
 
-**净结论**：15 个字段里 **6 个无意义**（`tls_delegated_credential`、`http3_sig_hash_algs`、
-`http3_tls_extension_order`、`tls_record_size_limit`、`split_cookies`、`http2_no_priority`）、
-**7 个已由 profile 决定**、**2 个有意义**。
-
-### 为什么保留这些字段而不是删掉
-
-保留的理由是迁移成本，不是语义：curl_cffi 的调用方会把这些参数原样传过来，删掉字段会让
-`ExtraFingerprints(...)` 直接抛 `TypeError`，而迁移者拿到的错误信息是「没有这个参数」，
-而不是「这个参数在这里没有意义」。当前实现让它们**接受中性值、拒绝任何实际设置**，
-并在拒绝时说清原因（`the Chromium profile owns the TLS and HTTP/2 fingerprint`）。
-
-这符合 §8 的 fail-closed 承诺：无法忠实实现的选项必须抛错，不得静默忽略。
-
+这份表由 `tools/audit-extra-fp.py` 的历史注释与 `docs/NEXT_STEPS.md` 的 ABI 15 记录共同
+支撑过；现在它只是文档，代码里不再有可以传入这些字段的入口。
 ### Fingerprints are a profile choice, not a set of knobs
 
 The pinned profile owns the TLS ClientHello, ALPN, HTTP/2 SETTINGS and the
@@ -298,9 +297,9 @@ send the HEADERS dependency/weight fields and no RFC 9218 header, chrome_124
 and later additionally send a `priority` request header. Neither half is a
 knob -- `priority=` selects the request priority that feeds both, exactly as
 it does in Chromium.
-`ja3=`, `akamai=`, `perk=` and the TLS/HTTP2 fields of `extra_fp` raise. Only
-`extra_fp.header_order` and `extra_fp.form_boundary` are honoured, because the
-facade implements both itself.
+`ja3=`, `akamai=`, `perk=` and the TLS/HTTP2 fields of `extra_fp` do not exist any
+more (a `TypeError` if you pass one). `extra_fp.header_order` and
+`extra_fp.form_boundary` remain, because the facade implements both itself.
 
 `utils.default_headers()` returns an empty mapping: `requests` seeds
 `User-Agent`, `Accept`, `Accept-Encoding` and `Connection` unconditionally, and a
@@ -953,28 +952,23 @@ path; the facade reconstructs `Response.history` and the post-redirect URL from
 the per-hop redirect events the Core reports. `allow_redirects=False` uses
 manual redirect mode: the Core defers the hop and the facade returns the 3xx.
 
-A `max_redirects` tighter than Chromium's 20 is **refused**, and so is any
-other numeric value. The facade used to re-issue each hop
-from Python to make a tighter cap true, which put redirect semantics in the
-binding layer where they drifted from Chromium's four measurable ways: a
-`Referrer-Policy` on the 302 was not applied to the next hop, the previous
-hop's `Set-Cookie` was not sent, `Response.redirect_count` came back 0, and a
-302 turned a `PUT` into a `GET` although `net/url_request/redirect_info.cc`
-only rewrites `POST`. Since ABI v8 cannot lower
-`net::URLRequest::kMaxRedirects`, the only honest answer is
-`UnsupportedFeature`; `max_redirects=None` means "Chromium's own ceiling".
+Chromium owns the hop ceiling: **20 hops** (`net::URLRequest::kMaxRedirects`,
+installed as the request redirect limit in `url_request.cc`), published as
+`chrome_client.CHROMIUM_MAX_REDIRECTS`. `max_redirects` is **not a parameter** (0.3.0): the only value it could take was `None`, which means "adopt Chromium's 20" --
+**not** requests' 30. `requests.models.DEFAULT_REDIRECT_LIMIT` is
+still 30 and still importable, but adopting it as this session's default would promise
+30 hops from a build that stops at 20, and the lie would surface as an unexplained
+`TooManyRedirects` at hop 21.
 
-The facade's `max_redirects` default is `None`, which means "adopt Chromium's 20"
--- **not** requests' 30. `requests.models.DEFAULT_REDIRECT_LIMIT` is still 30 and
-still importable, but adopting it as this session's default would promise 30 hops
-from a build that stops at 20. The two numbers are different on purpose.
-
-Chromium's own ceiling is **20 hops** (`net::URLRequest::kMaxRedirects`, installed
-as the request's redirect limit in `url_request.cc`). Asking for more than that
-cannot be honoured: a `max_redirects` at or above 20 raises `UnsupportedFeature`
-instead of being silently clamped to 20. Clamping would tell the caller a limit
-this build does not enforce, and the lie would surface later as an unexplained
-`TooManyRedirects` at hop 21. `allow_redirects` defaults to the session setting.
+The facade used to re-issue each hop from Python to make a tighter cap true, which put
+redirect semantics in the binding layer where they drifted from Chromium's four
+measurable ways: a `Referrer-Policy` on the 302 was not applied to the next hop,
+the previous hop's `Set-Cookie` was not sent, `Response.redirect_count` came back
+0, and a 302 turned a `PUT` into a `GET` although `net/url_request/redirect_info.cc`
+only rewrites `POST`. ABI v8 cannot lower the limit either, so the keyword was removed
+rather than accepted and refused: asking for a single hop is `allow_redirects=False`,
+and the ceiling is **20 hops** everywhere else. `allow_redirects` defaults to the
+session setting.
 
 ### Response fields the ABI cannot provide
 

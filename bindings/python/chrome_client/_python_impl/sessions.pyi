@@ -400,28 +400,16 @@ class _StreamFlag(int):
         impersonate: Optional[Impersonate] = None,
         proxy: Optional[str] = None,
         http_version: Optional[HttpVersion] = None,
-        max_redirects: Optional[int] = None,
         max_response_bytes: Optional[int] = None,
-        referer: Optional[str] = None,
         accept_encoding: Optional[str] = None,
         default_encoding: Optional[Union[str, Callable[[bytes], str]]] = None,
         discard_cookies: Optional[bool] = None,
         retry: Retry = None,
         cache_mode: CacheMode = None,
         priority: RequestPriority = None,
-        ja3: Optional[str] = None,
-        akamai: Optional[str] = None,
-        perk: Optional[str] = None,
         extra_fp: Optional[Union[ExtraFingerprints, Mapping[str, Any]]] = None,
         content_callback: Optional[ContentCallback] = None,
         raise_for_status: Optional[bool] = None,
-        quote: Optional[bool] = None,
-        curl_options: Optional[Mapping[Any, Any]] = None,
-        interface: Optional[str] = None,
-        doh_url: Optional[str] = None,
-        max_recv_speed: Optional[int] = None,
-        thread: Any = None,
-        debug: Any = None,
     ) -> "_StreamContext":
         """Opens a streamed request, curl_cffi style.
 
@@ -454,12 +442,7 @@ class _StreamFlag(int):
                 ``chrome_<major>`` name or a curl_cffi ``chrome<major>`` alias.
             proxy: Proxy URL for this call; wins over ``proxies``.
             http_version: Pin ``"v1"``, ``"v2"`` or ``"v3"`` for this call.
-            max_redirects: Must be ``None``. Chromium owns the 20-hop ceiling and ABI v8
-                cannot lower it, so a numeric cap raises
-                ``UnsupportedFeature``.
             max_response_bytes: Body ceiling for this call.
-            referer: Sets ``Referer`` through Chromium's own referrer path, so it
-                reaches the wire the way a real Chrome sends it.
             accept_encoding: Overrides ``Accept-Encoding``. Chromium would otherwise
                 choose it as part of the profile.
             default_encoding: Fallback encoding for this response only.
@@ -467,23 +450,11 @@ class _StreamFlag(int):
             retry: Attempt count or strategy for this call.
             cache_mode: Chromium load flags, e.g. ``"bypass"`` to skip the HTTP cache.
             priority: Request priority hint passed to the Core.
-            ja3: Rejected; the profile owns the ClientHello.
-            akamai: Rejected; the profile owns the HTTP/2 fingerprint.
-            perk: Rejected; the profile owns the TLS fingerprint.
             extra_fp: Fingerprint overrides; only ``header_order`` and ``form_boundary``
                 are honourable.
             content_callback: Called with the fully buffered body on non-streaming
                 requests.
             raise_for_status: Check the response before returning it.
-            quote: Rejected when it is `False`: Chromium canonicalises and
-                percent-encodes the URL itself, so the value used to be accepted and
-                ignored. `None` and `True` describe what already happens.
-            curl_options: Rejected; there is no libcurl surface here.
-            interface: Rejected; no interface binding in ABI v8.
-            doh_url: Rejected; DoH is not exposed.
-            max_recv_speed: Rejected; Chromium owns transfer pacing.
-            thread: Rejected; the sync path already runs on the calling thread.
-            debug: Rejected; not a supported option.
 
         Returns:
             A context manager yielding the :class:`~chrome_client.Response`, so
@@ -522,28 +493,16 @@ class _AsyncStreamFlag(int):
         impersonate: Optional[Impersonate] = None,
         proxy: Optional[str] = None,
         http_version: Optional[HttpVersion] = None,
-        max_redirects: Optional[int] = None,
         max_response_bytes: Optional[int] = None,
-        referer: Optional[str] = None,
         accept_encoding: Optional[str] = None,
         default_encoding: Optional[Union[str, Callable[[bytes], str]]] = None,
         discard_cookies: Optional[bool] = None,
         retry: Retry = None,
         cache_mode: CacheMode = None,
         priority: RequestPriority = None,
-        ja3: Optional[str] = None,
-        akamai: Optional[str] = None,
-        perk: Optional[str] = None,
         extra_fp: Optional[Union[ExtraFingerprints, Mapping[str, Any]]] = None,
         content_callback: Optional[ContentCallback] = None,
         raise_for_status: Optional[bool] = None,
-        quote: Optional[bool] = None,
-        curl_options: Optional[Mapping[Any, Any]] = None,
-        interface: Optional[str] = None,
-        doh_url: Optional[str] = None,
-        max_recv_speed: Optional[int] = None,
-        thread: Any = None,
-        debug: Any = None,
     ) -> "_AsyncStreamContext":
         """Opens a streamed request on an :class:`AsyncSession`.
 
@@ -576,12 +535,7 @@ class _AsyncStreamFlag(int):
                 ``chrome_<major>`` name or a curl_cffi ``chrome<major>`` alias.
             proxy: Proxy URL for this call; wins over ``proxies``.
             http_version: Pin ``"v1"``, ``"v2"`` or ``"v3"`` for this call.
-            max_redirects: Must be ``None``. Chromium owns the 20-hop ceiling and ABI v8
-                cannot lower it, so a numeric cap raises
-                ``UnsupportedFeature``.
             max_response_bytes: Body ceiling for this call.
-            referer: Sets ``Referer`` through Chromium's own referrer path, so it
-                reaches the wire the way a real Chrome sends it.
             accept_encoding: Overrides ``Accept-Encoding``. Chromium would otherwise
                 choose it as part of the profile.
             default_encoding: Fallback encoding for this response only.
@@ -589,23 +543,11 @@ class _AsyncStreamFlag(int):
             retry: Attempt count or strategy for this call.
             cache_mode: Chromium load flags, e.g. ``"bypass"`` to skip the HTTP cache.
             priority: Request priority hint passed to the Core.
-            ja3: Rejected; the profile owns the ClientHello.
-            akamai: Rejected; the profile owns the HTTP/2 fingerprint.
-            perk: Rejected; the profile owns the TLS fingerprint.
             extra_fp: Fingerprint overrides; only ``header_order`` and ``form_boundary``
                 are honourable.
             content_callback: Called with the fully buffered body on non-streaming
                 requests.
             raise_for_status: Check the response before returning it.
-            quote: Rejected when it is `False`: Chromium canonicalises and
-                percent-encodes the URL itself, so the value used to be accepted and
-                ignored. `None` and `True` describe what already happens.
-            curl_options: Rejected; there is no libcurl surface here.
-            interface: Rejected; no interface binding in ABI v8.
-            doh_url: Rejected; DoH is not exposed.
-            max_recv_speed: Rejected; Chromium owns transfer pacing.
-            thread: Rejected; the sync path already runs on the calling thread.
-            debug: Rejected; not a supported option.
 
         Returns:
             An async context manager yielding the
@@ -667,7 +609,6 @@ class BaseSession:
         proxy_auth: ``(username, password)`` for the proxy.
         verify: ``True``, ``False``, or a CA bundle path.
         timeout: Default deadline, or ``(connect, read)``.
-        max_redirects: Cap on redirects followed in Python.
         allow_redirects: Default redirect policy for every request.
         max_response_bytes: Default body ceiling.
         strip_authorization: When ``True``, drop a caller-supplied
@@ -723,7 +664,6 @@ class BaseSession:
     #: so accepting 30 would advertise a limit that never holds. An explicit
     #: value at or above 20 raises ``UnsupportedFeature`` rather than being
     #: clamped to 20.
-    max_redirects: Optional[int]
     trust_env: bool
     allow_redirects: bool
     max_response_bytes: Optional[int]
@@ -741,9 +681,7 @@ class BaseSession:
     dns_nameservers: Optional[str]
     doh_template: Optional[str]
     dns_secure_mode: int
-    dns_over_tls: bool
     dns_rotate: bool
-    dns_padding: bool
     hsts_bypass: Optional[str]
     proxy_chain: Optional[str]
     platform: str
@@ -769,7 +707,6 @@ class BaseSession:
         cert: Any = None,
         stream: bool = False,
         hooks: Optional[Hooks] = None,
-        max_redirects: Optional[int] = None,
         trust_env: bool = True,
         allow_redirects: bool = True,
         max_response_bytes: Optional[int] = None,
@@ -777,9 +714,6 @@ class BaseSession:
         take_body_buffers: bool = False,
         base_url: Optional[str] = None,
         http_version: Optional[HttpVersion] = None,
-        ja3: Optional[str] = None,
-        akamai: Optional[str] = None,
-        perk: Optional[str] = None,
         extra_fp: Optional[Union[ExtraFingerprints, Mapping[str, Any]]] = None,
         default_headers: bool = True,
         default_encoding: Union[str, Callable[[bytes], str]] = "utf-8",
@@ -789,19 +723,13 @@ class BaseSession:
         cache: bool = True,
         user_agent: Optional[str] = None,
         accept_language: Optional[str] = None,
-        interface: Optional[str] = None,
-        doh_url: Optional[str] = None,
-        max_recv_speed: int = 0,
-        curl_options: Optional[Mapping[Any, Any]] = None,
         max_engines: int = 8,
         response_class: ResponseClass = None,
         host_mapping: Optional[HostMappingRules] = None,
         dns_nameservers: Optional[str] = None,
         doh_template: Optional[str] = None,
         dns_secure_mode: Optional[int] = None,
-        dns_over_tls: bool = False,  # refused; see the constructor docstring
         dns_rotate: bool = False,
-        dns_padding: bool = False,
         hsts_bypass: Optional[str] = None,
         proxy_chain: Optional[str] = None,
         platform: str = "auto",
@@ -836,8 +764,6 @@ class BaseSession:
                 not expose.
             stream: Default for the per-request ``stream=`` flag.
             hooks: ``{"response": callable}`` hooks.
-            max_redirects: Must be ``None``. Chromium owns the 20-hop ceiling and ABI
-                v8 cannot lower it, so a numeric cap raises ``UnsupportedFeature``.
             trust_env: Read ``HTTP_PROXY``/``HTTPS_PROXY``/``NO_PROXY``,
                 ``REQUESTS_CA_BUNDLE``/``CURL_CA_BUNDLE`` and ``.netrc``.
             allow_redirects: Default redirect policy.
@@ -846,9 +772,6 @@ class BaseSession:
             base_url: Prefix for relative URLs.
             http_version: Pin ``"v1"``, ``"v2"`` or ``"v3"`` instead of letting
                 Chromium negotiate through ALPN and Alt-Svc.
-            ja3: Rejected; the profile owns the ClientHello.
-            akamai: Rejected; the profile owns the HTTP/2 fingerprint.
-            perk: Rejected; the profile owns the TLS fingerprint.
             extra_fp: :class:`~chrome_client.ExtraFingerprints` overrides. Only
                 ``header_order`` and ``form_boundary`` can be honoured.
             default_headers: Kept for source compatibility. The facade's header
@@ -872,10 +795,6 @@ class BaseSession:
                 Transfer-Encoding and Accept-Encoding. None means the process
                 default, which set_default_header_policy() or
                 CHROME_CLIENT_HEADER_POLICY moves for the whole process.
-            interface: Rejected; ABI v8 has no network-interface binding.
-            doh_url: Rejected; DNS-over-HTTPS config is not exposed.
-            max_recv_speed: Rejected; Chromium owns transfer pacing.
-            curl_options: Rejected; there is no libcurl surface here.
             max_engines: How many distinct engine configurations one session
                 keeps alive for per-request overrides, at least 1.
             response_class: Subclass to instantiate instead of
@@ -1139,28 +1058,16 @@ class Session(BaseSession):
         impersonate: Optional[Impersonate] = None,
         proxy: Optional[str] = None,
         http_version: Optional[HttpVersion] = None,
-        max_redirects: Optional[int] = None,
         max_response_bytes: Optional[int] = None,
-        referer: Optional[str] = None,
         accept_encoding: Optional[str] = None,
         default_encoding: Optional[Union[str, Callable[[bytes], str]]] = None,
         discard_cookies: Optional[bool] = None,
         retry: Retry = None,
         cache_mode: CacheMode = None,
         priority: RequestPriority = None,
-        ja3: Optional[str] = None,
-        akamai: Optional[str] = None,
-        perk: Optional[str] = None,
         extra_fp: Optional[Union[ExtraFingerprints, Mapping[str, Any]]] = None,
         content_callback: Optional[ContentCallback] = None,
         raise_for_status: Optional[bool] = None,
-        quote: Optional[bool] = None,
-        curl_options: Optional[Mapping[Any, Any]] = None,
-        interface: Optional[str] = None,
-        doh_url: Optional[str] = None,
-        max_recv_speed: Optional[int] = None,
-        thread: Any = None,
-        debug: Any = None,
     ) -> Response:
         """Sends one request and returns a :class:`~chrome_client.Response`.
 
@@ -1198,11 +1105,7 @@ class Session(BaseSession):
                 ``chrome_<major>`` name or a curl_cffi ``chrome<major>`` alias.
             proxy: Proxy URL for this call; wins over ``proxies``.
             http_version: Pin ``"v1"``, ``"v2"`` or ``"v3"`` for this call.
-            max_redirects: Must be ``None``. Chromium owns the 20-hop ceiling and ABI
-                v8 cannot lower it, so a numeric cap raises ``UnsupportedFeature``.
             max_response_bytes: Body ceiling for this call.
-            referer: Sets ``Referer`` through Chromium's own referrer path, so
-                it reaches the wire the way a real Chrome sends it.
             accept_encoding: Overrides ``Accept-Encoding``. Chromium would
                 otherwise choose it as part of the profile.
             default_encoding: Fallback encoding for this response only.
@@ -1211,23 +1114,11 @@ class Session(BaseSession):
             cache_mode: Chromium load flags, e.g. ``"bypass"`` to skip the HTTP
                 cache.
             priority: Request priority hint passed to the Core.
-            ja3: Rejected; the profile owns the ClientHello.
-            akamai: Rejected; the profile owns the HTTP/2 fingerprint.
-            perk: Rejected; the profile owns the TLS fingerprint.
             extra_fp: Fingerprint overrides; only ``header_order`` and
                 ``form_boundary`` are honourable.
             content_callback: Called with the fully buffered body on
                 non-streaming requests.
             raise_for_status: Check the response before returning it.
-            quote: Rejected when it is `False`: Chromium canonicalises and
-                percent-encodes the URL itself, so the value used to be accepted and
-                ignored. `None` and `True` describe what already happens.
-            curl_options: Rejected; there is no libcurl surface here.
-            interface: Rejected; no interface binding in ABI v8.
-            doh_url: Rejected; DoH is not exposed.
-            max_recv_speed: Rejected; Chromium owns transfer pacing.
-            thread: Rejected; the sync path already runs on the calling thread.
-            debug: Rejected; not a supported option.
 
         Returns:
             The final :class:`~chrome_client.Response`, with ``history`` holding
@@ -1265,7 +1156,6 @@ class Session(BaseSession):
         impersonate: Optional[Impersonate] = None,
         proxy: Optional[str] = None,
         http_version: Optional[HttpVersion] = None,
-        max_redirects: Optional[int] = None,
         max_response_bytes: Optional[int] = None,
         default_encoding: Optional[Union[str, Callable[[bytes], str]]] = None,
         discard_cookies: Optional[bool] = None,
@@ -1293,9 +1183,6 @@ class Session(BaseSession):
                 ``chrome_<major>`` name or a curl_cffi ``chrome<major>`` alias.
             proxy: Proxy URL for this call; wins over ``proxies``.
             http_version: Pin ``"v1"``, ``"v2"`` or ``"v3"`` for this call.
-            max_redirects: Must be ``None``. Chromium owns the 20-hop ceiling and ABI v8
-                cannot lower it, so a numeric cap raises
-                ``UnsupportedFeature``.
             max_response_bytes: Body ceiling for this call.
             default_encoding: Fallback encoding for this response only.
             discard_cookies: Neither send nor record cookies for this call.
@@ -1349,28 +1236,16 @@ class Session(BaseSession):
         impersonate: Optional[Impersonate] = None,
         proxy: Optional[str] = None,
         http_version: Optional[HttpVersion] = None,
-        max_redirects: Optional[int] = None,
         max_response_bytes: Optional[int] = None,
-        referer: Optional[str] = None,
         accept_encoding: Optional[str] = None,
         default_encoding: Optional[Union[str, Callable[[bytes], str]]] = None,
         discard_cookies: Optional[bool] = None,
         retry: Retry = None,
         cache_mode: CacheMode = None,
         priority: RequestPriority = None,
-        ja3: Optional[str] = None,
-        akamai: Optional[str] = None,
-        perk: Optional[str] = None,
         extra_fp: Optional[Union[ExtraFingerprints, Mapping[str, Any]]] = None,
         content_callback: Optional[ContentCallback] = None,
         raise_for_status: Optional[bool] = None,
-        quote: Optional[bool] = None,
-        curl_options: Optional[Mapping[Any, Any]] = None,
-        interface: Optional[str] = None,
-        doh_url: Optional[str] = None,
-        max_recv_speed: Optional[int] = None,
-        thread: Any = None,
-        debug: Any = None,
     ) -> Response:
         """Sends a ``GET``.
 
@@ -1404,12 +1279,7 @@ class Session(BaseSession):
                 ``chrome_<major>`` name or a curl_cffi ``chrome<major>`` alias.
             proxy: Proxy URL for this call; wins over ``proxies``.
             http_version: Pin ``"v1"``, ``"v2"`` or ``"v3"`` for this call.
-            max_redirects: Must be ``None``. Chromium owns the 20-hop ceiling and ABI v8
-                cannot lower it, so a numeric cap raises
-                ``UnsupportedFeature``.
             max_response_bytes: Body ceiling for this call.
-            referer: Sets ``Referer`` through Chromium's own referrer path, so it
-                reaches the wire the way a real Chrome sends it.
             accept_encoding: Overrides ``Accept-Encoding``. Chromium would otherwise
                 choose it as part of the profile.
             default_encoding: Fallback encoding for this response only.
@@ -1417,23 +1287,11 @@ class Session(BaseSession):
             retry: Attempt count or strategy for this call.
             cache_mode: Chromium load flags, e.g. ``"bypass"`` to skip the HTTP cache.
             priority: Request priority hint passed to the Core.
-            ja3: Rejected; the profile owns the ClientHello.
-            akamai: Rejected; the profile owns the HTTP/2 fingerprint.
-            perk: Rejected; the profile owns the TLS fingerprint.
             extra_fp: Fingerprint overrides; only ``header_order`` and ``form_boundary``
                 are honourable.
             content_callback: Called with the fully buffered body on non-streaming
                 requests.
             raise_for_status: Check the response before returning it.
-            quote: Rejected when it is `False`: Chromium canonicalises and
-                percent-encodes the URL itself, so the value used to be accepted and
-                ignored. `None` and `True` describe what already happens.
-            curl_options: Rejected; there is no libcurl surface here.
-            interface: Rejected; no interface binding in ABI v8.
-            doh_url: Rejected; DoH is not exposed.
-            max_recv_speed: Rejected; Chromium owns transfer pacing.
-            thread: Rejected; the sync path already runs on the calling thread.
-            debug: Rejected; not a supported option.
 
         Returns:
             The :class:`~chrome_client.Response`.
@@ -1466,28 +1324,16 @@ class Session(BaseSession):
         impersonate: Optional[Impersonate] = None,
         proxy: Optional[str] = None,
         http_version: Optional[HttpVersion] = None,
-        max_redirects: Optional[int] = None,
         max_response_bytes: Optional[int] = None,
-        referer: Optional[str] = None,
         accept_encoding: Optional[str] = None,
         default_encoding: Optional[Union[str, Callable[[bytes], str]]] = None,
         discard_cookies: Optional[bool] = None,
         retry: Retry = None,
         cache_mode: CacheMode = None,
         priority: RequestPriority = None,
-        ja3: Optional[str] = None,
-        akamai: Optional[str] = None,
-        perk: Optional[str] = None,
         extra_fp: Optional[Union[ExtraFingerprints, Mapping[str, Any]]] = None,
         content_callback: Optional[ContentCallback] = None,
         raise_for_status: Optional[bool] = None,
-        quote: Optional[bool] = None,
-        curl_options: Optional[Mapping[Any, Any]] = None,
-        interface: Optional[str] = None,
-        doh_url: Optional[str] = None,
-        max_recv_speed: Optional[int] = None,
-        thread: Any = None,
-        debug: Any = None,
     ) -> Response:
         """Sends an ``OPTIONS``.
 
@@ -1521,12 +1367,7 @@ class Session(BaseSession):
                 ``chrome_<major>`` name or a curl_cffi ``chrome<major>`` alias.
             proxy: Proxy URL for this call; wins over ``proxies``.
             http_version: Pin ``"v1"``, ``"v2"`` or ``"v3"`` for this call.
-            max_redirects: Must be ``None``. Chromium owns the 20-hop ceiling and ABI v8
-                cannot lower it, so a numeric cap raises
-                ``UnsupportedFeature``.
             max_response_bytes: Body ceiling for this call.
-            referer: Sets ``Referer`` through Chromium's own referrer path, so it
-                reaches the wire the way a real Chrome sends it.
             accept_encoding: Overrides ``Accept-Encoding``. Chromium would otherwise
                 choose it as part of the profile.
             default_encoding: Fallback encoding for this response only.
@@ -1534,23 +1375,11 @@ class Session(BaseSession):
             retry: Attempt count or strategy for this call.
             cache_mode: Chromium load flags, e.g. ``"bypass"`` to skip the HTTP cache.
             priority: Request priority hint passed to the Core.
-            ja3: Rejected; the profile owns the ClientHello.
-            akamai: Rejected; the profile owns the HTTP/2 fingerprint.
-            perk: Rejected; the profile owns the TLS fingerprint.
             extra_fp: Fingerprint overrides; only ``header_order`` and ``form_boundary``
                 are honourable.
             content_callback: Called with the fully buffered body on non-streaming
                 requests.
             raise_for_status: Check the response before returning it.
-            quote: Rejected when it is `False`: Chromium canonicalises and
-                percent-encodes the URL itself, so the value used to be accepted and
-                ignored. `None` and `True` describe what already happens.
-            curl_options: Rejected; there is no libcurl surface here.
-            interface: Rejected; no interface binding in ABI v8.
-            doh_url: Rejected; DoH is not exposed.
-            max_recv_speed: Rejected; Chromium owns transfer pacing.
-            thread: Rejected; the sync path already runs on the calling thread.
-            debug: Rejected; not a supported option.
 
         Returns:
             The :class:`~chrome_client.Response`, carrying the ``Allow`` header
@@ -1580,28 +1409,16 @@ class Session(BaseSession):
         impersonate: Optional[Impersonate] = None,
         proxy: Optional[str] = None,
         http_version: Optional[HttpVersion] = None,
-        max_redirects: Optional[int] = None,
         max_response_bytes: Optional[int] = None,
-        referer: Optional[str] = None,
         accept_encoding: Optional[str] = None,
         default_encoding: Optional[Union[str, Callable[[bytes], str]]] = None,
         discard_cookies: Optional[bool] = None,
         retry: Retry = None,
         cache_mode: CacheMode = None,
         priority: RequestPriority = None,
-        ja3: Optional[str] = None,
-        akamai: Optional[str] = None,
-        perk: Optional[str] = None,
         extra_fp: Optional[Union[ExtraFingerprints, Mapping[str, Any]]] = None,
         content_callback: Optional[ContentCallback] = None,
         raise_for_status: Optional[bool] = None,
-        quote: Optional[bool] = None,
-        curl_options: Optional[Mapping[Any, Any]] = None,
-        interface: Optional[str] = None,
-        doh_url: Optional[str] = None,
-        max_recv_speed: Optional[int] = None,
-        thread: Any = None,
-        debug: Any = None,
     ) -> Response:
         """Sends a ``HEAD``.
 
@@ -1637,12 +1454,7 @@ class Session(BaseSession):
                 ``chrome_<major>`` name or a curl_cffi ``chrome<major>`` alias.
             proxy: Proxy URL for this call; wins over ``proxies``.
             http_version: Pin ``"v1"``, ``"v2"`` or ``"v3"`` for this call.
-            max_redirects: Must be ``None``. Chromium owns the 20-hop ceiling and ABI v8
-                cannot lower it, so a numeric cap raises
-                ``UnsupportedFeature``.
             max_response_bytes: Body ceiling for this call.
-            referer: Sets ``Referer`` through Chromium's own referrer path, so it
-                reaches the wire the way a real Chrome sends it.
             accept_encoding: Overrides ``Accept-Encoding``. Chromium would otherwise
                 choose it as part of the profile.
             default_encoding: Fallback encoding for this response only.
@@ -1650,23 +1462,11 @@ class Session(BaseSession):
             retry: Attempt count or strategy for this call.
             cache_mode: Chromium load flags, e.g. ``"bypass"`` to skip the HTTP cache.
             priority: Request priority hint passed to the Core.
-            ja3: Rejected; the profile owns the ClientHello.
-            akamai: Rejected; the profile owns the HTTP/2 fingerprint.
-            perk: Rejected; the profile owns the TLS fingerprint.
             extra_fp: Fingerprint overrides; only ``header_order`` and ``form_boundary``
                 are honourable.
             content_callback: Called with the fully buffered body on non-streaming
                 requests.
             raise_for_status: Check the response before returning it.
-            quote: Rejected when it is `False`: Chromium canonicalises and
-                percent-encodes the URL itself, so the value used to be accepted and
-                ignored. `None` and `True` describe what already happens.
-            curl_options: Rejected; there is no libcurl surface here.
-            interface: Rejected; no interface binding in ABI v8.
-            doh_url: Rejected; DoH is not exposed.
-            max_recv_speed: Rejected; Chromium owns transfer pacing.
-            thread: Rejected; the sync path already runs on the calling thread.
-            debug: Rejected; not a supported option.
 
         Returns:
             The :class:`~chrome_client.Response` with an empty body; read
@@ -1696,28 +1496,16 @@ class Session(BaseSession):
         impersonate: Optional[Impersonate] = None,
         proxy: Optional[str] = None,
         http_version: Optional[HttpVersion] = None,
-        max_redirects: Optional[int] = None,
         max_response_bytes: Optional[int] = None,
-        referer: Optional[str] = None,
         accept_encoding: Optional[str] = None,
         default_encoding: Optional[Union[str, Callable[[bytes], str]]] = None,
         discard_cookies: Optional[bool] = None,
         retry: Retry = None,
         cache_mode: CacheMode = None,
         priority: RequestPriority = None,
-        ja3: Optional[str] = None,
-        akamai: Optional[str] = None,
-        perk: Optional[str] = None,
         extra_fp: Optional[Union[ExtraFingerprints, Mapping[str, Any]]] = None,
         content_callback: Optional[ContentCallback] = None,
         raise_for_status: Optional[bool] = None,
-        quote: Optional[bool] = None,
-        curl_options: Optional[Mapping[Any, Any]] = None,
-        interface: Optional[str] = None,
-        doh_url: Optional[str] = None,
-        max_recv_speed: Optional[int] = None,
-        thread: Any = None,
-        debug: Any = None,
     ) -> Response:
         """Sends a ``POST``.
 
@@ -1751,12 +1539,7 @@ class Session(BaseSession):
                 ``chrome_<major>`` name or a curl_cffi ``chrome<major>`` alias.
             proxy: Proxy URL for this call; wins over ``proxies``.
             http_version: Pin ``"v1"``, ``"v2"`` or ``"v3"`` for this call.
-            max_redirects: Must be ``None``. Chromium owns the 20-hop ceiling and ABI v8
-                cannot lower it, so a numeric cap raises
-                ``UnsupportedFeature``.
             max_response_bytes: Body ceiling for this call.
-            referer: Sets ``Referer`` through Chromium's own referrer path, so it
-                reaches the wire the way a real Chrome sends it.
             accept_encoding: Overrides ``Accept-Encoding``. Chromium would otherwise
                 choose it as part of the profile.
             default_encoding: Fallback encoding for this response only.
@@ -1764,23 +1547,11 @@ class Session(BaseSession):
             retry: Attempt count or strategy for this call.
             cache_mode: Chromium load flags, e.g. ``"bypass"`` to skip the HTTP cache.
             priority: Request priority hint passed to the Core.
-            ja3: Rejected; the profile owns the ClientHello.
-            akamai: Rejected; the profile owns the HTTP/2 fingerprint.
-            perk: Rejected; the profile owns the TLS fingerprint.
             extra_fp: Fingerprint overrides; only ``header_order`` and ``form_boundary``
                 are honourable.
             content_callback: Called with the fully buffered body on non-streaming
                 requests.
             raise_for_status: Check the response before returning it.
-            quote: Rejected when it is `False`: Chromium canonicalises and
-                percent-encodes the URL itself, so the value used to be accepted and
-                ignored. `None` and `True` describe what already happens.
-            curl_options: Rejected; there is no libcurl surface here.
-            interface: Rejected; no interface binding in ABI v8.
-            doh_url: Rejected; DoH is not exposed.
-            max_recv_speed: Rejected; Chromium owns transfer pacing.
-            thread: Rejected; the sync path already runs on the calling thread.
-            debug: Rejected; not a supported option.
 
         Returns:
             The :class:`~chrome_client.Response`.
@@ -1814,28 +1585,16 @@ class Session(BaseSession):
         impersonate: Optional[Impersonate] = None,
         proxy: Optional[str] = None,
         http_version: Optional[HttpVersion] = None,
-        max_redirects: Optional[int] = None,
         max_response_bytes: Optional[int] = None,
-        referer: Optional[str] = None,
         accept_encoding: Optional[str] = None,
         default_encoding: Optional[Union[str, Callable[[bytes], str]]] = None,
         discard_cookies: Optional[bool] = None,
         retry: Retry = None,
         cache_mode: CacheMode = None,
         priority: RequestPriority = None,
-        ja3: Optional[str] = None,
-        akamai: Optional[str] = None,
-        perk: Optional[str] = None,
         extra_fp: Optional[Union[ExtraFingerprints, Mapping[str, Any]]] = None,
         content_callback: Optional[ContentCallback] = None,
         raise_for_status: Optional[bool] = None,
-        quote: Optional[bool] = None,
-        curl_options: Optional[Mapping[Any, Any]] = None,
-        interface: Optional[str] = None,
-        doh_url: Optional[str] = None,
-        max_recv_speed: Optional[int] = None,
-        thread: Any = None,
-        debug: Any = None,
     ) -> Response:
         """Sends a ``PUT``.
 
@@ -1869,12 +1628,7 @@ class Session(BaseSession):
                 ``chrome_<major>`` name or a curl_cffi ``chrome<major>`` alias.
             proxy: Proxy URL for this call; wins over ``proxies``.
             http_version: Pin ``"v1"``, ``"v2"`` or ``"v3"`` for this call.
-            max_redirects: Must be ``None``. Chromium owns the 20-hop ceiling and ABI v8
-                cannot lower it, so a numeric cap raises
-                ``UnsupportedFeature``.
             max_response_bytes: Body ceiling for this call.
-            referer: Sets ``Referer`` through Chromium's own referrer path, so it
-                reaches the wire the way a real Chrome sends it.
             accept_encoding: Overrides ``Accept-Encoding``. Chromium would otherwise
                 choose it as part of the profile.
             default_encoding: Fallback encoding for this response only.
@@ -1882,23 +1636,11 @@ class Session(BaseSession):
             retry: Attempt count or strategy for this call.
             cache_mode: Chromium load flags, e.g. ``"bypass"`` to skip the HTTP cache.
             priority: Request priority hint passed to the Core.
-            ja3: Rejected; the profile owns the ClientHello.
-            akamai: Rejected; the profile owns the HTTP/2 fingerprint.
-            perk: Rejected; the profile owns the TLS fingerprint.
             extra_fp: Fingerprint overrides; only ``header_order`` and ``form_boundary``
                 are honourable.
             content_callback: Called with the fully buffered body on non-streaming
                 requests.
             raise_for_status: Check the response before returning it.
-            quote: Rejected when it is `False`: Chromium canonicalises and
-                percent-encodes the URL itself, so the value used to be accepted and
-                ignored. `None` and `True` describe what already happens.
-            curl_options: Rejected; there is no libcurl surface here.
-            interface: Rejected; no interface binding in ABI v8.
-            doh_url: Rejected; DoH is not exposed.
-            max_recv_speed: Rejected; Chromium owns transfer pacing.
-            thread: Rejected; the sync path already runs on the calling thread.
-            debug: Rejected; not a supported option.
 
         Returns:
             The :class:`~chrome_client.Response`.
@@ -1927,28 +1669,16 @@ class Session(BaseSession):
         impersonate: Optional[Impersonate] = None,
         proxy: Optional[str] = None,
         http_version: Optional[HttpVersion] = None,
-        max_redirects: Optional[int] = None,
         max_response_bytes: Optional[int] = None,
-        referer: Optional[str] = None,
         accept_encoding: Optional[str] = None,
         default_encoding: Optional[Union[str, Callable[[bytes], str]]] = None,
         discard_cookies: Optional[bool] = None,
         retry: Retry = None,
         cache_mode: CacheMode = None,
         priority: RequestPriority = None,
-        ja3: Optional[str] = None,
-        akamai: Optional[str] = None,
-        perk: Optional[str] = None,
         extra_fp: Optional[Union[ExtraFingerprints, Mapping[str, Any]]] = None,
         content_callback: Optional[ContentCallback] = None,
         raise_for_status: Optional[bool] = None,
-        quote: Optional[bool] = None,
-        curl_options: Optional[Mapping[Any, Any]] = None,
-        interface: Optional[str] = None,
-        doh_url: Optional[str] = None,
-        max_recv_speed: Optional[int] = None,
-        thread: Any = None,
-        debug: Any = None,
     ) -> Response:
         """Sends a ``PATCH``.
 
@@ -1982,12 +1712,7 @@ class Session(BaseSession):
                 ``chrome_<major>`` name or a curl_cffi ``chrome<major>`` alias.
             proxy: Proxy URL for this call; wins over ``proxies``.
             http_version: Pin ``"v1"``, ``"v2"`` or ``"v3"`` for this call.
-            max_redirects: Must be ``None``. Chromium owns the 20-hop ceiling and ABI v8
-                cannot lower it, so a numeric cap raises
-                ``UnsupportedFeature``.
             max_response_bytes: Body ceiling for this call.
-            referer: Sets ``Referer`` through Chromium's own referrer path, so it
-                reaches the wire the way a real Chrome sends it.
             accept_encoding: Overrides ``Accept-Encoding``. Chromium would otherwise
                 choose it as part of the profile.
             default_encoding: Fallback encoding for this response only.
@@ -1995,23 +1720,11 @@ class Session(BaseSession):
             retry: Attempt count or strategy for this call.
             cache_mode: Chromium load flags, e.g. ``"bypass"`` to skip the HTTP cache.
             priority: Request priority hint passed to the Core.
-            ja3: Rejected; the profile owns the ClientHello.
-            akamai: Rejected; the profile owns the HTTP/2 fingerprint.
-            perk: Rejected; the profile owns the TLS fingerprint.
             extra_fp: Fingerprint overrides; only ``header_order`` and ``form_boundary``
                 are honourable.
             content_callback: Called with the fully buffered body on non-streaming
                 requests.
             raise_for_status: Check the response before returning it.
-            quote: Rejected when it is `False`: Chromium canonicalises and
-                percent-encodes the URL itself, so the value used to be accepted and
-                ignored. `None` and `True` describe what already happens.
-            curl_options: Rejected; there is no libcurl surface here.
-            interface: Rejected; no interface binding in ABI v8.
-            doh_url: Rejected; DoH is not exposed.
-            max_recv_speed: Rejected; Chromium owns transfer pacing.
-            thread: Rejected; the sync path already runs on the calling thread.
-            debug: Rejected; not a supported option.
 
         Returns:
             The :class:`~chrome_client.Response`.
@@ -2040,28 +1753,16 @@ class Session(BaseSession):
         impersonate: Optional[Impersonate] = None,
         proxy: Optional[str] = None,
         http_version: Optional[HttpVersion] = None,
-        max_redirects: Optional[int] = None,
         max_response_bytes: Optional[int] = None,
-        referer: Optional[str] = None,
         accept_encoding: Optional[str] = None,
         default_encoding: Optional[Union[str, Callable[[bytes], str]]] = None,
         discard_cookies: Optional[bool] = None,
         retry: Retry = None,
         cache_mode: CacheMode = None,
         priority: RequestPriority = None,
-        ja3: Optional[str] = None,
-        akamai: Optional[str] = None,
-        perk: Optional[str] = None,
         extra_fp: Optional[Union[ExtraFingerprints, Mapping[str, Any]]] = None,
         content_callback: Optional[ContentCallback] = None,
         raise_for_status: Optional[bool] = None,
-        quote: Optional[bool] = None,
-        curl_options: Optional[Mapping[Any, Any]] = None,
-        interface: Optional[str] = None,
-        doh_url: Optional[str] = None,
-        max_recv_speed: Optional[int] = None,
-        thread: Any = None,
-        debug: Any = None,
     ) -> Response:
         """Sends a ``DELETE``.
 
@@ -2095,12 +1796,7 @@ class Session(BaseSession):
                 ``chrome_<major>`` name or a curl_cffi ``chrome<major>`` alias.
             proxy: Proxy URL for this call; wins over ``proxies``.
             http_version: Pin ``"v1"``, ``"v2"`` or ``"v3"`` for this call.
-            max_redirects: Must be ``None``. Chromium owns the 20-hop ceiling and ABI v8
-                cannot lower it, so a numeric cap raises
-                ``UnsupportedFeature``.
             max_response_bytes: Body ceiling for this call.
-            referer: Sets ``Referer`` through Chromium's own referrer path, so it
-                reaches the wire the way a real Chrome sends it.
             accept_encoding: Overrides ``Accept-Encoding``. Chromium would otherwise
                 choose it as part of the profile.
             default_encoding: Fallback encoding for this response only.
@@ -2108,23 +1804,11 @@ class Session(BaseSession):
             retry: Attempt count or strategy for this call.
             cache_mode: Chromium load flags, e.g. ``"bypass"`` to skip the HTTP cache.
             priority: Request priority hint passed to the Core.
-            ja3: Rejected; the profile owns the ClientHello.
-            akamai: Rejected; the profile owns the HTTP/2 fingerprint.
-            perk: Rejected; the profile owns the TLS fingerprint.
             extra_fp: Fingerprint overrides; only ``header_order`` and ``form_boundary``
                 are honourable.
             content_callback: Called with the fully buffered body on non-streaming
                 requests.
             raise_for_status: Check the response before returning it.
-            quote: Rejected when it is `False`: Chromium canonicalises and
-                percent-encodes the URL itself, so the value used to be accepted and
-                ignored. `None` and `True` describe what already happens.
-            curl_options: Rejected; there is no libcurl surface here.
-            interface: Rejected; no interface binding in ABI v8.
-            doh_url: Rejected; DoH is not exposed.
-            max_recv_speed: Rejected; Chromium owns transfer pacing.
-            thread: Rejected; the sync path already runs on the calling thread.
-            debug: Rejected; not a supported option.
 
         Returns:
             The :class:`~chrome_client.Response`.
@@ -2153,28 +1837,16 @@ class Session(BaseSession):
         impersonate: Optional[Impersonate] = None,
         proxy: Optional[str] = None,
         http_version: Optional[HttpVersion] = None,
-        max_redirects: Optional[int] = None,
         max_response_bytes: Optional[int] = None,
-        referer: Optional[str] = None,
         accept_encoding: Optional[str] = None,
         default_encoding: Optional[Union[str, Callable[[bytes], str]]] = None,
         discard_cookies: Optional[bool] = None,
         retry: Retry = None,
         cache_mode: CacheMode = None,
         priority: RequestPriority = None,
-        ja3: Optional[str] = None,
-        akamai: Optional[str] = None,
-        perk: Optional[str] = None,
         extra_fp: Optional[Union[ExtraFingerprints, Mapping[str, Any]]] = None,
         content_callback: Optional[ContentCallback] = None,
         raise_for_status: Optional[bool] = None,
-        quote: Optional[bool] = None,
-        curl_options: Optional[Mapping[Any, Any]] = None,
-        interface: Optional[str] = None,
-        doh_url: Optional[str] = None,
-        max_recv_speed: Optional[int] = None,
-        thread: Any = None,
-        debug: Any = None,
     ) -> Response:
         """Sends a ``TRACE``.
 
@@ -2208,12 +1880,7 @@ class Session(BaseSession):
                 ``chrome_<major>`` name or a curl_cffi ``chrome<major>`` alias.
             proxy: Proxy URL for this call; wins over ``proxies``.
             http_version: Pin ``"v1"``, ``"v2"`` or ``"v3"`` for this call.
-            max_redirects: Must be ``None``. Chromium owns the 20-hop ceiling and ABI v8
-                cannot lower it, so a numeric cap raises
-                ``UnsupportedFeature``.
             max_response_bytes: Body ceiling for this call.
-            referer: Sets ``Referer`` through Chromium's own referrer path, so it
-                reaches the wire the way a real Chrome sends it.
             accept_encoding: Overrides ``Accept-Encoding``. Chromium would otherwise
                 choose it as part of the profile.
             default_encoding: Fallback encoding for this response only.
@@ -2221,23 +1888,11 @@ class Session(BaseSession):
             retry: Attempt count or strategy for this call.
             cache_mode: Chromium load flags, e.g. ``"bypass"`` to skip the HTTP cache.
             priority: Request priority hint passed to the Core.
-            ja3: Rejected; the profile owns the ClientHello.
-            akamai: Rejected; the profile owns the HTTP/2 fingerprint.
-            perk: Rejected; the profile owns the TLS fingerprint.
             extra_fp: Fingerprint overrides; only ``header_order`` and ``form_boundary``
                 are honourable.
             content_callback: Called with the fully buffered body on non-streaming
                 requests.
             raise_for_status: Check the response before returning it.
-            quote: Rejected when it is `False`: Chromium canonicalises and
-                percent-encodes the URL itself, so the value used to be accepted and
-                ignored. `None` and `True` describe what already happens.
-            curl_options: Rejected; there is no libcurl surface here.
-            interface: Rejected; no interface binding in ABI v8.
-            doh_url: Rejected; DoH is not exposed.
-            max_recv_speed: Rejected; Chromium owns transfer pacing.
-            thread: Rejected; the sync path already runs on the calling thread.
-            debug: Rejected; not a supported option.
 
         Returns:
             The :class:`~chrome_client.Response`.
@@ -2266,28 +1921,16 @@ class Session(BaseSession):
         impersonate: Optional[Impersonate] = None,
         proxy: Optional[str] = None,
         http_version: Optional[HttpVersion] = None,
-        max_redirects: Optional[int] = None,
         max_response_bytes: Optional[int] = None,
-        referer: Optional[str] = None,
         accept_encoding: Optional[str] = None,
         default_encoding: Optional[Union[str, Callable[[bytes], str]]] = None,
         discard_cookies: Optional[bool] = None,
         retry: Retry = None,
         cache_mode: CacheMode = None,
         priority: RequestPriority = None,
-        ja3: Optional[str] = None,
-        akamai: Optional[str] = None,
-        perk: Optional[str] = None,
         extra_fp: Optional[Union[ExtraFingerprints, Mapping[str, Any]]] = None,
         content_callback: Optional[ContentCallback] = None,
         raise_for_status: Optional[bool] = None,
-        quote: Optional[bool] = None,
-        curl_options: Optional[Mapping[Any, Any]] = None,
-        interface: Optional[str] = None,
-        doh_url: Optional[str] = None,
-        max_recv_speed: Optional[int] = None,
-        thread: Any = None,
-        debug: Any = None,
     ) -> Response:
         """Sends a ``QUERY`` (draft-ietf-httpbis-safe-method-w-body).
 
@@ -2321,12 +1964,7 @@ class Session(BaseSession):
                 ``chrome_<major>`` name or a curl_cffi ``chrome<major>`` alias.
             proxy: Proxy URL for this call; wins over ``proxies``.
             http_version: Pin ``"v1"``, ``"v2"`` or ``"v3"`` for this call.
-            max_redirects: Must be ``None``. Chromium owns the 20-hop ceiling and ABI v8
-                cannot lower it, so a numeric cap raises
-                ``UnsupportedFeature``.
             max_response_bytes: Body ceiling for this call.
-            referer: Sets ``Referer`` through Chromium's own referrer path, so it
-                reaches the wire the way a real Chrome sends it.
             accept_encoding: Overrides ``Accept-Encoding``. Chromium would otherwise
                 choose it as part of the profile.
             default_encoding: Fallback encoding for this response only.
@@ -2334,23 +1972,11 @@ class Session(BaseSession):
             retry: Attempt count or strategy for this call.
             cache_mode: Chromium load flags, e.g. ``"bypass"`` to skip the HTTP cache.
             priority: Request priority hint passed to the Core.
-            ja3: Rejected; the profile owns the ClientHello.
-            akamai: Rejected; the profile owns the HTTP/2 fingerprint.
-            perk: Rejected; the profile owns the TLS fingerprint.
             extra_fp: Fingerprint overrides; only ``header_order`` and ``form_boundary``
                 are honourable.
             content_callback: Called with the fully buffered body on non-streaming
                 requests.
             raise_for_status: Check the response before returning it.
-            quote: Rejected when it is `False`: Chromium canonicalises and
-                percent-encodes the URL itself, so the value used to be accepted and
-                ignored. `None` and `True` describe what already happens.
-            curl_options: Rejected; there is no libcurl surface here.
-            interface: Rejected; no interface binding in ABI v8.
-            doh_url: Rejected; DoH is not exposed.
-            max_recv_speed: Rejected; Chromium owns transfer pacing.
-            thread: Rejected; the sync path already runs on the calling thread.
-            debug: Rejected; not a supported option.
 
         Returns:
             The :class:`~chrome_client.Response`.
@@ -2574,7 +2200,6 @@ class AsyncSession(BaseSession):
         cert: Any = None,
         stream: bool = False,
         hooks: Optional[Hooks] = None,
-        max_redirects: Optional[int] = None,
         trust_env: bool = True,
         allow_redirects: bool = True,
         max_response_bytes: Optional[int] = None,
@@ -2582,9 +2207,6 @@ class AsyncSession(BaseSession):
         take_body_buffers: bool = False,
         base_url: Optional[str] = None,
         http_version: Optional[HttpVersion] = None,
-        ja3: Optional[str] = None,
-        akamai: Optional[str] = None,
-        perk: Optional[str] = None,
         extra_fp: Optional[Union[ExtraFingerprints, Mapping[str, Any]]] = None,
         default_headers: bool = True,
         default_encoding: Union[str, Callable[[bytes], str]] = "utf-8",
@@ -2594,10 +2216,6 @@ class AsyncSession(BaseSession):
         cache: bool = True,
         user_agent: Optional[str] = None,
         accept_language: Optional[str] = None,
-        interface: Optional[str] = None,
-        doh_url: Optional[str] = None,
-        max_recv_speed: int = 0,
-        curl_options: Optional[Mapping[Any, Any]] = None,
         max_engines: int = 8,
         response_class: ResponseClass = None,
         max_clients: Optional[int] = None,
@@ -2605,9 +2223,7 @@ class AsyncSession(BaseSession):
         dns_nameservers: Optional[str] = None,
         doh_template: Optional[str] = None,
         dns_secure_mode: Optional[int] = None,
-        dns_over_tls: bool = False,  # refused; see the constructor docstring
         dns_rotate: bool = False,
-        dns_padding: bool = False,
         hsts_bypass: Optional[str] = None,
         proxy_chain: Optional[str] = None,
         platform: str = "auto",
@@ -2632,16 +2248,11 @@ class AsyncSession(BaseSession):
             cert: Rejected; see :class:`BaseSession`.
             stream: Default ``stream=`` flag.
             hooks: Response hooks.
-            max_redirects: Must be ``None``. Chromium owns the 20-hop ceiling and ABI
-                v8 cannot lower it, so a numeric cap raises ``UnsupportedFeature``.
             trust_env: Read environment proxy/CA/``.netrc`` settings.
             allow_redirects: Default redirect policy.
             max_response_bytes: Default body ceiling.
             base_url: Prefix for relative URLs.
             http_version: Pin ``"v1"``/``"v2"``/``"v3"``.
-            ja3: Rejected.
-            akamai: Rejected.
-            perk: Rejected.
             extra_fp: Fingerprint overrides.
             default_headers: Kept for source compatibility.
             default_encoding: Decoding fallback for ``Response.text``.
@@ -2660,22 +2271,13 @@ class AsyncSession(BaseSession):
                 Transfer-Encoding and Accept-Encoding. None means the process
                 default, which set_default_header_policy() or
                 CHROME_CLIENT_HEADER_POLICY moves for the whole process.
-            interface: Rejected.
-            doh_url: Rejected.
-            max_recv_speed: Rejected.
-            curl_options: Rejected.
             max_engines: Engines kept alive per session (at least 1).
             response_class: Response subclass to instantiate.
             host_mapping: Chromium MappedHostResolver rules.
             dns_nameservers: Resolver servers for this engine.
             doh_template: DNS-over-HTTPS template; needs ``dns_secure_mode``.
             dns_secure_mode: 0 system resolver, 1/2 secure DNS modes.
-            dns_over_tls: Refused with ``UnsupportedFeature``. Chromium desktop has no
-                DoT client; setting it only disables the built-in resolver and falls
-                back to the system one, silently dropping ``dns_nameservers`` and
-                ``doh_template``. Use ``doh_template`` with ``dns_secure_mode=2``.
             dns_rotate: Rotate the resolver's servers.
-            dns_padding: Pad the resolver's queries.
             hsts_bypass: Single-label hosts that skip HSTS.
             proxy_chain: Proxy chain rules.
             platform: UA/platform group: ``"windows"``, ``"macos"``,
@@ -2718,28 +2320,16 @@ class AsyncSession(BaseSession):
         impersonate: Optional[Impersonate] = None,
         proxy: Optional[str] = None,
         http_version: Optional[HttpVersion] = None,
-        max_redirects: Optional[int] = None,
         max_response_bytes: Optional[int] = None,
-        referer: Optional[str] = None,
         accept_encoding: Optional[str] = None,
         default_encoding: Optional[Union[str, Callable[[bytes], str]]] = None,
         discard_cookies: Optional[bool] = None,
         retry: Retry = None,
         cache_mode: CacheMode = None,
         priority: RequestPriority = None,
-        ja3: Optional[str] = None,
-        akamai: Optional[str] = None,
-        perk: Optional[str] = None,
         extra_fp: Optional[Union[ExtraFingerprints, Mapping[str, Any]]] = None,
         content_callback: Optional[ContentCallback] = None,
         raise_for_status: Optional[bool] = None,
-        quote: Optional[bool] = None,
-        curl_options: Optional[Mapping[Any, Any]] = None,
-        interface: Optional[str] = None,
-        doh_url: Optional[str] = None,
-        max_recv_speed: Optional[int] = None,
-        thread: Any = None,
-        debug: Any = None,
     ) -> AsyncResponse:
         """Sends one request and returns an :class:`~chrome_client.AsyncResponse`.
 
@@ -2771,29 +2361,16 @@ class AsyncSession(BaseSession):
             impersonate: Profile override for this call.
             proxy: Proxy URL for this call.
             http_version: Protocol pin for this call.
-            max_redirects: Must be ``None``. Chromium owns the 20-hop ceiling and ABI
-                v8 cannot lower it, so a numeric cap raises ``UnsupportedFeature``.
             max_response_bytes: Body ceiling for this call.
-            referer: Routed through Chromium's referrer path.
             accept_encoding: Overrides ``Accept-Encoding``.
             default_encoding: Decoding fallback for this response.
             discard_cookies: Neither send nor record cookies.
             retry: Attempt count or strategy.
             cache_mode: Chromium load flags.
             priority: Request priority hint.
-            ja3: Rejected.
-            akamai: Rejected.
-            perk: Rejected.
             extra_fp: Fingerprint overrides.
             content_callback: Called with the fully buffered body.
             raise_for_status: Check the response before returning it.
-            quote: ``False`` skips percent-encoding the URL.
-            curl_options: Rejected.
-            interface: Rejected.
-            doh_url: Rejected.
-            max_recv_speed: Rejected.
-            thread: Rejected.
-            debug: Rejected.
 
         Returns:
             The :class:`~chrome_client.AsyncResponse`. Await ``acontent()`` or
@@ -2826,7 +2403,6 @@ class AsyncSession(BaseSession):
         impersonate: Optional[Impersonate] = None,
         proxy: Optional[str] = None,
         http_version: Optional[HttpVersion] = None,
-        max_redirects: Optional[int] = None,
         max_response_bytes: Optional[int] = None,
         default_encoding: Optional[Union[str, Callable[[bytes], str]]] = None,
         discard_cookies: Optional[bool] = None,
@@ -2854,9 +2430,6 @@ class AsyncSession(BaseSession):
                 ``chrome_<major>`` name or a curl_cffi ``chrome<major>`` alias.
             proxy: Proxy URL for this call; wins over ``proxies``.
             http_version: Pin ``"v1"``, ``"v2"`` or ``"v3"`` for this call.
-            max_redirects: Must be ``None``. Chromium owns the 20-hop ceiling and ABI v8
-                cannot lower it, so a numeric cap raises
-                ``UnsupportedFeature``.
             max_response_bytes: Body ceiling for this call.
             default_encoding: Fallback encoding for this response only.
             discard_cookies: Neither send nor record cookies for this call.
@@ -2902,28 +2475,16 @@ class AsyncSession(BaseSession):
         impersonate: Optional[Impersonate] = None,
         proxy: Optional[str] = None,
         http_version: Optional[HttpVersion] = None,
-        max_redirects: Optional[int] = None,
         max_response_bytes: Optional[int] = None,
-        referer: Optional[str] = None,
         accept_encoding: Optional[str] = None,
         default_encoding: Optional[Union[str, Callable[[bytes], str]]] = None,
         discard_cookies: Optional[bool] = None,
         retry: Retry = None,
         cache_mode: CacheMode = None,
         priority: RequestPriority = None,
-        ja3: Optional[str] = None,
-        akamai: Optional[str] = None,
-        perk: Optional[str] = None,
         extra_fp: Optional[Union[ExtraFingerprints, Mapping[str, Any]]] = None,
         content_callback: Optional[ContentCallback] = None,
         raise_for_status: Optional[bool] = None,
-        quote: Optional[bool] = None,
-        curl_options: Optional[Mapping[Any, Any]] = None,
-        interface: Optional[str] = None,
-        doh_url: Optional[str] = None,
-        max_recv_speed: Optional[int] = None,
-        thread: Any = None,
-        debug: Any = None,
     ) -> AsyncResponse:
         """Sends a ``GET``.
 
@@ -2957,12 +2518,7 @@ class AsyncSession(BaseSession):
                 ``chrome_<major>`` name or a curl_cffi ``chrome<major>`` alias.
             proxy: Proxy URL for this call; wins over ``proxies``.
             http_version: Pin ``"v1"``, ``"v2"`` or ``"v3"`` for this call.
-            max_redirects: Must be ``None``. Chromium owns the 20-hop ceiling and ABI v8
-                cannot lower it, so a numeric cap raises
-                ``UnsupportedFeature``.
             max_response_bytes: Body ceiling for this call.
-            referer: Sets ``Referer`` through Chromium's own referrer path, so it
-                reaches the wire the way a real Chrome sends it.
             accept_encoding: Overrides ``Accept-Encoding``. Chromium would otherwise
                 choose it as part of the profile.
             default_encoding: Fallback encoding for this response only.
@@ -2970,23 +2526,11 @@ class AsyncSession(BaseSession):
             retry: Attempt count or strategy for this call.
             cache_mode: Chromium load flags, e.g. ``"bypass"`` to skip the HTTP cache.
             priority: Request priority hint passed to the Core.
-            ja3: Rejected; the profile owns the ClientHello.
-            akamai: Rejected; the profile owns the HTTP/2 fingerprint.
-            perk: Rejected; the profile owns the TLS fingerprint.
             extra_fp: Fingerprint overrides; only ``header_order`` and ``form_boundary``
                 are honourable.
             content_callback: Called with the fully buffered body on non-streaming
                 requests.
             raise_for_status: Check the response before returning it.
-            quote: Rejected when it is `False`: Chromium canonicalises and
-                percent-encodes the URL itself, so the value used to be accepted and
-                ignored. `None` and `True` describe what already happens.
-            curl_options: Rejected; there is no libcurl surface here.
-            interface: Rejected; no interface binding in ABI v8.
-            doh_url: Rejected; DoH is not exposed.
-            max_recv_speed: Rejected; Chromium owns transfer pacing.
-            thread: Rejected; the sync path already runs on the calling thread.
-            debug: Rejected; not a supported option.
 
         Returns:
             The :class:`~chrome_client.AsyncResponse`.
@@ -3019,28 +2563,16 @@ class AsyncSession(BaseSession):
         impersonate: Optional[Impersonate] = None,
         proxy: Optional[str] = None,
         http_version: Optional[HttpVersion] = None,
-        max_redirects: Optional[int] = None,
         max_response_bytes: Optional[int] = None,
-        referer: Optional[str] = None,
         accept_encoding: Optional[str] = None,
         default_encoding: Optional[Union[str, Callable[[bytes], str]]] = None,
         discard_cookies: Optional[bool] = None,
         retry: Retry = None,
         cache_mode: CacheMode = None,
         priority: RequestPriority = None,
-        ja3: Optional[str] = None,
-        akamai: Optional[str] = None,
-        perk: Optional[str] = None,
         extra_fp: Optional[Union[ExtraFingerprints, Mapping[str, Any]]] = None,
         content_callback: Optional[ContentCallback] = None,
         raise_for_status: Optional[bool] = None,
-        quote: Optional[bool] = None,
-        curl_options: Optional[Mapping[Any, Any]] = None,
-        interface: Optional[str] = None,
-        doh_url: Optional[str] = None,
-        max_recv_speed: Optional[int] = None,
-        thread: Any = None,
-        debug: Any = None,
     ) -> AsyncResponse:
         """Sends an ``OPTIONS``.
 
@@ -3074,12 +2606,7 @@ class AsyncSession(BaseSession):
                 ``chrome_<major>`` name or a curl_cffi ``chrome<major>`` alias.
             proxy: Proxy URL for this call; wins over ``proxies``.
             http_version: Pin ``"v1"``, ``"v2"`` or ``"v3"`` for this call.
-            max_redirects: Must be ``None``. Chromium owns the 20-hop ceiling and ABI v8
-                cannot lower it, so a numeric cap raises
-                ``UnsupportedFeature``.
             max_response_bytes: Body ceiling for this call.
-            referer: Sets ``Referer`` through Chromium's own referrer path, so it
-                reaches the wire the way a real Chrome sends it.
             accept_encoding: Overrides ``Accept-Encoding``. Chromium would otherwise
                 choose it as part of the profile.
             default_encoding: Fallback encoding for this response only.
@@ -3087,23 +2614,11 @@ class AsyncSession(BaseSession):
             retry: Attempt count or strategy for this call.
             cache_mode: Chromium load flags, e.g. ``"bypass"`` to skip the HTTP cache.
             priority: Request priority hint passed to the Core.
-            ja3: Rejected; the profile owns the ClientHello.
-            akamai: Rejected; the profile owns the HTTP/2 fingerprint.
-            perk: Rejected; the profile owns the TLS fingerprint.
             extra_fp: Fingerprint overrides; only ``header_order`` and ``form_boundary``
                 are honourable.
             content_callback: Called with the fully buffered body on non-streaming
                 requests.
             raise_for_status: Check the response before returning it.
-            quote: Rejected when it is `False`: Chromium canonicalises and
-                percent-encodes the URL itself, so the value used to be accepted and
-                ignored. `None` and `True` describe what already happens.
-            curl_options: Rejected; there is no libcurl surface here.
-            interface: Rejected; no interface binding in ABI v8.
-            doh_url: Rejected; DoH is not exposed.
-            max_recv_speed: Rejected; Chromium owns transfer pacing.
-            thread: Rejected; the sync path already runs on the calling thread.
-            debug: Rejected; not a supported option.
 
         Returns:
             The :class:`~chrome_client.AsyncResponse`.
@@ -3132,28 +2647,16 @@ class AsyncSession(BaseSession):
         impersonate: Optional[Impersonate] = None,
         proxy: Optional[str] = None,
         http_version: Optional[HttpVersion] = None,
-        max_redirects: Optional[int] = None,
         max_response_bytes: Optional[int] = None,
-        referer: Optional[str] = None,
         accept_encoding: Optional[str] = None,
         default_encoding: Optional[Union[str, Callable[[bytes], str]]] = None,
         discard_cookies: Optional[bool] = None,
         retry: Retry = None,
         cache_mode: CacheMode = None,
         priority: RequestPriority = None,
-        ja3: Optional[str] = None,
-        akamai: Optional[str] = None,
-        perk: Optional[str] = None,
         extra_fp: Optional[Union[ExtraFingerprints, Mapping[str, Any]]] = None,
         content_callback: Optional[ContentCallback] = None,
         raise_for_status: Optional[bool] = None,
-        quote: Optional[bool] = None,
-        curl_options: Optional[Mapping[Any, Any]] = None,
-        interface: Optional[str] = None,
-        doh_url: Optional[str] = None,
-        max_recv_speed: Optional[int] = None,
-        thread: Any = None,
-        debug: Any = None,
     ) -> AsyncResponse:
         """Sends a ``HEAD`` (``allow_redirects`` defaults to ``False``).
 
@@ -3187,12 +2690,7 @@ class AsyncSession(BaseSession):
                 ``chrome_<major>`` name or a curl_cffi ``chrome<major>`` alias.
             proxy: Proxy URL for this call; wins over ``proxies``.
             http_version: Pin ``"v1"``, ``"v2"`` or ``"v3"`` for this call.
-            max_redirects: Must be ``None``. Chromium owns the 20-hop ceiling and ABI v8
-                cannot lower it, so a numeric cap raises
-                ``UnsupportedFeature``.
             max_response_bytes: Body ceiling for this call.
-            referer: Sets ``Referer`` through Chromium's own referrer path, so it
-                reaches the wire the way a real Chrome sends it.
             accept_encoding: Overrides ``Accept-Encoding``. Chromium would otherwise
                 choose it as part of the profile.
             default_encoding: Fallback encoding for this response only.
@@ -3200,23 +2698,11 @@ class AsyncSession(BaseSession):
             retry: Attempt count or strategy for this call.
             cache_mode: Chromium load flags, e.g. ``"bypass"`` to skip the HTTP cache.
             priority: Request priority hint passed to the Core.
-            ja3: Rejected; the profile owns the ClientHello.
-            akamai: Rejected; the profile owns the HTTP/2 fingerprint.
-            perk: Rejected; the profile owns the TLS fingerprint.
             extra_fp: Fingerprint overrides; only ``header_order`` and ``form_boundary``
                 are honourable.
             content_callback: Called with the fully buffered body on non-streaming
                 requests.
             raise_for_status: Check the response before returning it.
-            quote: Rejected when it is `False`: Chromium canonicalises and
-                percent-encodes the URL itself, so the value used to be accepted and
-                ignored. `None` and `True` describe what already happens.
-            curl_options: Rejected; there is no libcurl surface here.
-            interface: Rejected; no interface binding in ABI v8.
-            doh_url: Rejected; DoH is not exposed.
-            max_recv_speed: Rejected; Chromium owns transfer pacing.
-            thread: Rejected; the sync path already runs on the calling thread.
-            debug: Rejected; not a supported option.
 
         Returns:
             The :class:`~chrome_client.AsyncResponse` with an empty body.
@@ -3245,28 +2731,16 @@ class AsyncSession(BaseSession):
         impersonate: Optional[Impersonate] = None,
         proxy: Optional[str] = None,
         http_version: Optional[HttpVersion] = None,
-        max_redirects: Optional[int] = None,
         max_response_bytes: Optional[int] = None,
-        referer: Optional[str] = None,
         accept_encoding: Optional[str] = None,
         default_encoding: Optional[Union[str, Callable[[bytes], str]]] = None,
         discard_cookies: Optional[bool] = None,
         retry: Retry = None,
         cache_mode: CacheMode = None,
         priority: RequestPriority = None,
-        ja3: Optional[str] = None,
-        akamai: Optional[str] = None,
-        perk: Optional[str] = None,
         extra_fp: Optional[Union[ExtraFingerprints, Mapping[str, Any]]] = None,
         content_callback: Optional[ContentCallback] = None,
         raise_for_status: Optional[bool] = None,
-        quote: Optional[bool] = None,
-        curl_options: Optional[Mapping[Any, Any]] = None,
-        interface: Optional[str] = None,
-        doh_url: Optional[str] = None,
-        max_recv_speed: Optional[int] = None,
-        thread: Any = None,
-        debug: Any = None,
     ) -> AsyncResponse:
         """Sends a ``POST``.
 
@@ -3300,12 +2774,7 @@ class AsyncSession(BaseSession):
                 ``chrome_<major>`` name or a curl_cffi ``chrome<major>`` alias.
             proxy: Proxy URL for this call; wins over ``proxies``.
             http_version: Pin ``"v1"``, ``"v2"`` or ``"v3"`` for this call.
-            max_redirects: Must be ``None``. Chromium owns the 20-hop ceiling and ABI v8
-                cannot lower it, so a numeric cap raises
-                ``UnsupportedFeature``.
             max_response_bytes: Body ceiling for this call.
-            referer: Sets ``Referer`` through Chromium's own referrer path, so it
-                reaches the wire the way a real Chrome sends it.
             accept_encoding: Overrides ``Accept-Encoding``. Chromium would otherwise
                 choose it as part of the profile.
             default_encoding: Fallback encoding for this response only.
@@ -3313,23 +2782,11 @@ class AsyncSession(BaseSession):
             retry: Attempt count or strategy for this call.
             cache_mode: Chromium load flags, e.g. ``"bypass"`` to skip the HTTP cache.
             priority: Request priority hint passed to the Core.
-            ja3: Rejected; the profile owns the ClientHello.
-            akamai: Rejected; the profile owns the HTTP/2 fingerprint.
-            perk: Rejected; the profile owns the TLS fingerprint.
             extra_fp: Fingerprint overrides; only ``header_order`` and ``form_boundary``
                 are honourable.
             content_callback: Called with the fully buffered body on non-streaming
                 requests.
             raise_for_status: Check the response before returning it.
-            quote: Rejected when it is `False`: Chromium canonicalises and
-                percent-encodes the URL itself, so the value used to be accepted and
-                ignored. `None` and `True` describe what already happens.
-            curl_options: Rejected; there is no libcurl surface here.
-            interface: Rejected; no interface binding in ABI v8.
-            doh_url: Rejected; DoH is not exposed.
-            max_recv_speed: Rejected; Chromium owns transfer pacing.
-            thread: Rejected; the sync path already runs on the calling thread.
-            debug: Rejected; not a supported option.
 
         Returns:
             The :class:`~chrome_client.AsyncResponse`.
@@ -3358,28 +2815,16 @@ class AsyncSession(BaseSession):
         impersonate: Optional[Impersonate] = None,
         proxy: Optional[str] = None,
         http_version: Optional[HttpVersion] = None,
-        max_redirects: Optional[int] = None,
         max_response_bytes: Optional[int] = None,
-        referer: Optional[str] = None,
         accept_encoding: Optional[str] = None,
         default_encoding: Optional[Union[str, Callable[[bytes], str]]] = None,
         discard_cookies: Optional[bool] = None,
         retry: Retry = None,
         cache_mode: CacheMode = None,
         priority: RequestPriority = None,
-        ja3: Optional[str] = None,
-        akamai: Optional[str] = None,
-        perk: Optional[str] = None,
         extra_fp: Optional[Union[ExtraFingerprints, Mapping[str, Any]]] = None,
         content_callback: Optional[ContentCallback] = None,
         raise_for_status: Optional[bool] = None,
-        quote: Optional[bool] = None,
-        curl_options: Optional[Mapping[Any, Any]] = None,
-        interface: Optional[str] = None,
-        doh_url: Optional[str] = None,
-        max_recv_speed: Optional[int] = None,
-        thread: Any = None,
-        debug: Any = None,
     ) -> AsyncResponse:
         """Sends a ``PUT``.
 
@@ -3413,12 +2858,7 @@ class AsyncSession(BaseSession):
                 ``chrome_<major>`` name or a curl_cffi ``chrome<major>`` alias.
             proxy: Proxy URL for this call; wins over ``proxies``.
             http_version: Pin ``"v1"``, ``"v2"`` or ``"v3"`` for this call.
-            max_redirects: Must be ``None``. Chromium owns the 20-hop ceiling and ABI v8
-                cannot lower it, so a numeric cap raises
-                ``UnsupportedFeature``.
             max_response_bytes: Body ceiling for this call.
-            referer: Sets ``Referer`` through Chromium's own referrer path, so it
-                reaches the wire the way a real Chrome sends it.
             accept_encoding: Overrides ``Accept-Encoding``. Chromium would otherwise
                 choose it as part of the profile.
             default_encoding: Fallback encoding for this response only.
@@ -3426,23 +2866,11 @@ class AsyncSession(BaseSession):
             retry: Attempt count or strategy for this call.
             cache_mode: Chromium load flags, e.g. ``"bypass"`` to skip the HTTP cache.
             priority: Request priority hint passed to the Core.
-            ja3: Rejected; the profile owns the ClientHello.
-            akamai: Rejected; the profile owns the HTTP/2 fingerprint.
-            perk: Rejected; the profile owns the TLS fingerprint.
             extra_fp: Fingerprint overrides; only ``header_order`` and ``form_boundary``
                 are honourable.
             content_callback: Called with the fully buffered body on non-streaming
                 requests.
             raise_for_status: Check the response before returning it.
-            quote: Rejected when it is `False`: Chromium canonicalises and
-                percent-encodes the URL itself, so the value used to be accepted and
-                ignored. `None` and `True` describe what already happens.
-            curl_options: Rejected; there is no libcurl surface here.
-            interface: Rejected; no interface binding in ABI v8.
-            doh_url: Rejected; DoH is not exposed.
-            max_recv_speed: Rejected; Chromium owns transfer pacing.
-            thread: Rejected; the sync path already runs on the calling thread.
-            debug: Rejected; not a supported option.
 
         Returns:
             The :class:`~chrome_client.AsyncResponse`.
@@ -3471,28 +2899,16 @@ class AsyncSession(BaseSession):
         impersonate: Optional[Impersonate] = None,
         proxy: Optional[str] = None,
         http_version: Optional[HttpVersion] = None,
-        max_redirects: Optional[int] = None,
         max_response_bytes: Optional[int] = None,
-        referer: Optional[str] = None,
         accept_encoding: Optional[str] = None,
         default_encoding: Optional[Union[str, Callable[[bytes], str]]] = None,
         discard_cookies: Optional[bool] = None,
         retry: Retry = None,
         cache_mode: CacheMode = None,
         priority: RequestPriority = None,
-        ja3: Optional[str] = None,
-        akamai: Optional[str] = None,
-        perk: Optional[str] = None,
         extra_fp: Optional[Union[ExtraFingerprints, Mapping[str, Any]]] = None,
         content_callback: Optional[ContentCallback] = None,
         raise_for_status: Optional[bool] = None,
-        quote: Optional[bool] = None,
-        curl_options: Optional[Mapping[Any, Any]] = None,
-        interface: Optional[str] = None,
-        doh_url: Optional[str] = None,
-        max_recv_speed: Optional[int] = None,
-        thread: Any = None,
-        debug: Any = None,
     ) -> AsyncResponse:
         """Sends a ``PATCH``.
 
@@ -3526,12 +2942,7 @@ class AsyncSession(BaseSession):
                 ``chrome_<major>`` name or a curl_cffi ``chrome<major>`` alias.
             proxy: Proxy URL for this call; wins over ``proxies``.
             http_version: Pin ``"v1"``, ``"v2"`` or ``"v3"`` for this call.
-            max_redirects: Must be ``None``. Chromium owns the 20-hop ceiling and ABI v8
-                cannot lower it, so a numeric cap raises
-                ``UnsupportedFeature``.
             max_response_bytes: Body ceiling for this call.
-            referer: Sets ``Referer`` through Chromium's own referrer path, so it
-                reaches the wire the way a real Chrome sends it.
             accept_encoding: Overrides ``Accept-Encoding``. Chromium would otherwise
                 choose it as part of the profile.
             default_encoding: Fallback encoding for this response only.
@@ -3539,23 +2950,11 @@ class AsyncSession(BaseSession):
             retry: Attempt count or strategy for this call.
             cache_mode: Chromium load flags, e.g. ``"bypass"`` to skip the HTTP cache.
             priority: Request priority hint passed to the Core.
-            ja3: Rejected; the profile owns the ClientHello.
-            akamai: Rejected; the profile owns the HTTP/2 fingerprint.
-            perk: Rejected; the profile owns the TLS fingerprint.
             extra_fp: Fingerprint overrides; only ``header_order`` and ``form_boundary``
                 are honourable.
             content_callback: Called with the fully buffered body on non-streaming
                 requests.
             raise_for_status: Check the response before returning it.
-            quote: Rejected when it is `False`: Chromium canonicalises and
-                percent-encodes the URL itself, so the value used to be accepted and
-                ignored. `None` and `True` describe what already happens.
-            curl_options: Rejected; there is no libcurl surface here.
-            interface: Rejected; no interface binding in ABI v8.
-            doh_url: Rejected; DoH is not exposed.
-            max_recv_speed: Rejected; Chromium owns transfer pacing.
-            thread: Rejected; the sync path already runs on the calling thread.
-            debug: Rejected; not a supported option.
 
         Returns:
             The :class:`~chrome_client.AsyncResponse`.
@@ -3584,28 +2983,16 @@ class AsyncSession(BaseSession):
         impersonate: Optional[Impersonate] = None,
         proxy: Optional[str] = None,
         http_version: Optional[HttpVersion] = None,
-        max_redirects: Optional[int] = None,
         max_response_bytes: Optional[int] = None,
-        referer: Optional[str] = None,
         accept_encoding: Optional[str] = None,
         default_encoding: Optional[Union[str, Callable[[bytes], str]]] = None,
         discard_cookies: Optional[bool] = None,
         retry: Retry = None,
         cache_mode: CacheMode = None,
         priority: RequestPriority = None,
-        ja3: Optional[str] = None,
-        akamai: Optional[str] = None,
-        perk: Optional[str] = None,
         extra_fp: Optional[Union[ExtraFingerprints, Mapping[str, Any]]] = None,
         content_callback: Optional[ContentCallback] = None,
         raise_for_status: Optional[bool] = None,
-        quote: Optional[bool] = None,
-        curl_options: Optional[Mapping[Any, Any]] = None,
-        interface: Optional[str] = None,
-        doh_url: Optional[str] = None,
-        max_recv_speed: Optional[int] = None,
-        thread: Any = None,
-        debug: Any = None,
     ) -> AsyncResponse:
         """Sends a ``DELETE``.
 
@@ -3639,12 +3026,7 @@ class AsyncSession(BaseSession):
                 ``chrome_<major>`` name or a curl_cffi ``chrome<major>`` alias.
             proxy: Proxy URL for this call; wins over ``proxies``.
             http_version: Pin ``"v1"``, ``"v2"`` or ``"v3"`` for this call.
-            max_redirects: Must be ``None``. Chromium owns the 20-hop ceiling and ABI v8
-                cannot lower it, so a numeric cap raises
-                ``UnsupportedFeature``.
             max_response_bytes: Body ceiling for this call.
-            referer: Sets ``Referer`` through Chromium's own referrer path, so it
-                reaches the wire the way a real Chrome sends it.
             accept_encoding: Overrides ``Accept-Encoding``. Chromium would otherwise
                 choose it as part of the profile.
             default_encoding: Fallback encoding for this response only.
@@ -3652,23 +3034,11 @@ class AsyncSession(BaseSession):
             retry: Attempt count or strategy for this call.
             cache_mode: Chromium load flags, e.g. ``"bypass"`` to skip the HTTP cache.
             priority: Request priority hint passed to the Core.
-            ja3: Rejected; the profile owns the ClientHello.
-            akamai: Rejected; the profile owns the HTTP/2 fingerprint.
-            perk: Rejected; the profile owns the TLS fingerprint.
             extra_fp: Fingerprint overrides; only ``header_order`` and ``form_boundary``
                 are honourable.
             content_callback: Called with the fully buffered body on non-streaming
                 requests.
             raise_for_status: Check the response before returning it.
-            quote: Rejected when it is `False`: Chromium canonicalises and
-                percent-encodes the URL itself, so the value used to be accepted and
-                ignored. `None` and `True` describe what already happens.
-            curl_options: Rejected; there is no libcurl surface here.
-            interface: Rejected; no interface binding in ABI v8.
-            doh_url: Rejected; DoH is not exposed.
-            max_recv_speed: Rejected; Chromium owns transfer pacing.
-            thread: Rejected; the sync path already runs on the calling thread.
-            debug: Rejected; not a supported option.
 
         Returns:
             The :class:`~chrome_client.AsyncResponse`.
@@ -3697,28 +3067,16 @@ class AsyncSession(BaseSession):
         impersonate: Optional[Impersonate] = None,
         proxy: Optional[str] = None,
         http_version: Optional[HttpVersion] = None,
-        max_redirects: Optional[int] = None,
         max_response_bytes: Optional[int] = None,
-        referer: Optional[str] = None,
         accept_encoding: Optional[str] = None,
         default_encoding: Optional[Union[str, Callable[[bytes], str]]] = None,
         discard_cookies: Optional[bool] = None,
         retry: Retry = None,
         cache_mode: CacheMode = None,
         priority: RequestPriority = None,
-        ja3: Optional[str] = None,
-        akamai: Optional[str] = None,
-        perk: Optional[str] = None,
         extra_fp: Optional[Union[ExtraFingerprints, Mapping[str, Any]]] = None,
         content_callback: Optional[ContentCallback] = None,
         raise_for_status: Optional[bool] = None,
-        quote: Optional[bool] = None,
-        curl_options: Optional[Mapping[Any, Any]] = None,
-        interface: Optional[str] = None,
-        doh_url: Optional[str] = None,
-        max_recv_speed: Optional[int] = None,
-        thread: Any = None,
-        debug: Any = None,
     ) -> AsyncResponse:
         """Sends a ``TRACE``.
 
@@ -3752,12 +3110,7 @@ class AsyncSession(BaseSession):
                 ``chrome_<major>`` name or a curl_cffi ``chrome<major>`` alias.
             proxy: Proxy URL for this call; wins over ``proxies``.
             http_version: Pin ``"v1"``, ``"v2"`` or ``"v3"`` for this call.
-            max_redirects: Must be ``None``. Chromium owns the 20-hop ceiling and ABI v8
-                cannot lower it, so a numeric cap raises
-                ``UnsupportedFeature``.
             max_response_bytes: Body ceiling for this call.
-            referer: Sets ``Referer`` through Chromium's own referrer path, so it
-                reaches the wire the way a real Chrome sends it.
             accept_encoding: Overrides ``Accept-Encoding``. Chromium would otherwise
                 choose it as part of the profile.
             default_encoding: Fallback encoding for this response only.
@@ -3765,23 +3118,11 @@ class AsyncSession(BaseSession):
             retry: Attempt count or strategy for this call.
             cache_mode: Chromium load flags, e.g. ``"bypass"`` to skip the HTTP cache.
             priority: Request priority hint passed to the Core.
-            ja3: Rejected; the profile owns the ClientHello.
-            akamai: Rejected; the profile owns the HTTP/2 fingerprint.
-            perk: Rejected; the profile owns the TLS fingerprint.
             extra_fp: Fingerprint overrides; only ``header_order`` and ``form_boundary``
                 are honourable.
             content_callback: Called with the fully buffered body on non-streaming
                 requests.
             raise_for_status: Check the response before returning it.
-            quote: Rejected when it is `False`: Chromium canonicalises and
-                percent-encodes the URL itself, so the value used to be accepted and
-                ignored. `None` and `True` describe what already happens.
-            curl_options: Rejected; there is no libcurl surface here.
-            interface: Rejected; no interface binding in ABI v8.
-            doh_url: Rejected; DoH is not exposed.
-            max_recv_speed: Rejected; Chromium owns transfer pacing.
-            thread: Rejected; the sync path already runs on the calling thread.
-            debug: Rejected; not a supported option.
 
         Returns:
             The :class:`~chrome_client.AsyncResponse`.
@@ -3810,28 +3151,16 @@ class AsyncSession(BaseSession):
         impersonate: Optional[Impersonate] = None,
         proxy: Optional[str] = None,
         http_version: Optional[HttpVersion] = None,
-        max_redirects: Optional[int] = None,
         max_response_bytes: Optional[int] = None,
-        referer: Optional[str] = None,
         accept_encoding: Optional[str] = None,
         default_encoding: Optional[Union[str, Callable[[bytes], str]]] = None,
         discard_cookies: Optional[bool] = None,
         retry: Retry = None,
         cache_mode: CacheMode = None,
         priority: RequestPriority = None,
-        ja3: Optional[str] = None,
-        akamai: Optional[str] = None,
-        perk: Optional[str] = None,
         extra_fp: Optional[Union[ExtraFingerprints, Mapping[str, Any]]] = None,
         content_callback: Optional[ContentCallback] = None,
         raise_for_status: Optional[bool] = None,
-        quote: Optional[bool] = None,
-        curl_options: Optional[Mapping[Any, Any]] = None,
-        interface: Optional[str] = None,
-        doh_url: Optional[str] = None,
-        max_recv_speed: Optional[int] = None,
-        thread: Any = None,
-        debug: Any = None,
     ) -> AsyncResponse:
         """Sends a ``QUERY``.
 
@@ -3865,12 +3194,7 @@ class AsyncSession(BaseSession):
                 ``chrome_<major>`` name or a curl_cffi ``chrome<major>`` alias.
             proxy: Proxy URL for this call; wins over ``proxies``.
             http_version: Pin ``"v1"``, ``"v2"`` or ``"v3"`` for this call.
-            max_redirects: Must be ``None``. Chromium owns the 20-hop ceiling and ABI v8
-                cannot lower it, so a numeric cap raises
-                ``UnsupportedFeature``.
             max_response_bytes: Body ceiling for this call.
-            referer: Sets ``Referer`` through Chromium's own referrer path, so it
-                reaches the wire the way a real Chrome sends it.
             accept_encoding: Overrides ``Accept-Encoding``. Chromium would otherwise
                 choose it as part of the profile.
             default_encoding: Fallback encoding for this response only.
@@ -3878,23 +3202,11 @@ class AsyncSession(BaseSession):
             retry: Attempt count or strategy for this call.
             cache_mode: Chromium load flags, e.g. ``"bypass"`` to skip the HTTP cache.
             priority: Request priority hint passed to the Core.
-            ja3: Rejected; the profile owns the ClientHello.
-            akamai: Rejected; the profile owns the HTTP/2 fingerprint.
-            perk: Rejected; the profile owns the TLS fingerprint.
             extra_fp: Fingerprint overrides; only ``header_order`` and ``form_boundary``
                 are honourable.
             content_callback: Called with the fully buffered body on non-streaming
                 requests.
             raise_for_status: Check the response before returning it.
-            quote: Rejected when it is `False`: Chromium canonicalises and
-                percent-encodes the URL itself, so the value used to be accepted and
-                ignored. `None` and `True` describe what already happens.
-            curl_options: Rejected; there is no libcurl surface here.
-            interface: Rejected; no interface binding in ABI v8.
-            doh_url: Rejected; DoH is not exposed.
-            max_recv_speed: Rejected; Chromium owns transfer pacing.
-            thread: Rejected; the sync path already runs on the calling thread.
-            debug: Rejected; not a supported option.
 
         Returns:
             The :class:`~chrome_client.AsyncResponse`.

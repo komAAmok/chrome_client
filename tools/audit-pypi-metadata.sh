@@ -419,26 +419,26 @@ redirect_line = redirect_text[:redirect_match.start()].count(chr(10)) + 1
 
 # (path, regex, human description of the sentence the regex anchors on)
 #
-# v0.2.9 changed the contract: every numeric value is refused, so the carriers
-# now assert *that* instead of "must be below N". The number still has to appear
-# because None means "Chromium's own N", and a stale N would misdescribe the
-# limit the caller inherits.
+# 0.3.0 removed the keyword instead of refusing every numeric value: the only
+# value it could take was None, so the contract is now "the constant is the
+# ceiling and there is no override". The number still has to appear, because it
+# is the limit a caller inherits whether or not they know the keyword is gone.
 redirect_carriers = (
     ("docs/COMPATIBILITY_BOUNDARY.md",
-     r"max_redirects` tighter than Chromium's " + str(redirect_cap),
-     "the 'tighter than Chromium's N' sentence"),
+     r"Chromium owns the hop ceiling: \*\*" + str(redirect_cap) + r" hops\*\*",
+     "the ceiling-is-N-hops sentence"),
     ("docs/COMPATIBILITY_BOUNDARY.md",
-     chr(34) + "adopt Chromium" + chr(39) + "s " + str(redirect_cap) + chr(34),
+     "adopt Chromium" + chr(39) + "s " + str(redirect_cap),
      "the default-means-N sentence"),
     ("docs/COMPATIBILITY_BOUNDARY.md",
-     r"ceiling is \*\*" + str(redirect_cap) + r" hops\*\*",
-     "the 'ceiling is N hops' sentence"),
+     r"max_redirects` is \*\*not a parameter",
+     "the removed-keyword sentence"),
     ("README.md",
-     r"只能是 `None`（= Chromium 在一个 `URLRequest` 内的上限 " + str(redirect_cap),
-     "the Chinese 'only None, Chromium's N' sentence"),
+     "跳数上限由 Chromium 决定（一个 `URLRequest` 内 " + str(redirect_cap) + " 跳）",
+     "the Chinese ceiling sentence"),
     ("README.en.md",
-     r"must be `None` \(Chromium stops at " + str(redirect_cap) + r" hops",
-     "the English 'must be None, stops at N hops' sentence"),
+     "The hop ceiling belongs to Chromium -- " + str(redirect_cap) + " hops inside one",
+     "the English ceiling sentence"),
 )
 for carrier, pattern, what in redirect_carriers:
     text = (root / carrier).read_text()
@@ -453,7 +453,7 @@ for carrier, pattern, what in redirect_carriers:
 # the mirror carries a *different* ceiling, which would mean the copy was edited
 # instead of regenerated.
 mirror_text = (root / "bindings/python36/README.md").read_text()
-if f"只能是 `None`（= Chromium 在一个 `URLRequest` 内的上限 {redirect_cap}" not in mirror_text:
+if f"跳数上限由 Chromium 决定（一个 `URLRequest` 内 {redirect_cap} 跳）" not in mirror_text:
     raise SystemExit(
         "bindings/python36/README.md: the mirrored README does not state "
         f"'只能是 None（= Chromium ... 上限 {redirect_cap}'; copy README.md over it "

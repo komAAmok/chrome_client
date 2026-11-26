@@ -129,94 +129,57 @@ def normalize_impersonate(value):
 
 
 class ExtraFingerprints(object):
-    """curl_cffi-shaped fingerprint overrides.
+    """The two fingerprint knobs a binding can still honour.
 
-    Only fields whose requested value already matches the pinned Chromium
-    profile are accepted; anything else raises ``UnsupportedFeature`` so a caller
-    never believes an override took effect.
+    Everything curl_cffi lets a caller override in the TLS or HTTP/2
+    fingerprint is owned by the pinned Chromium profile: a ClientHello field,
+    a SETTINGS value or a header-order preference that disagrees with the
+    profile is either ignored by BoringSSL or reported as a fingerprint the
+    browser never had. The rest of curl_cffi 15 fields were therefore removed
+    rather than accepted-and-refused; an unknown attribute now raises
+    AttributeError instead of pretending.
+
+    What is left is real: header_order reorders the caller own headers before
+    they reach the Core, and form_boundary sets the multipart boundary, both of
+    which the facade produces itself.
     """
 
-    __slots__ = (
-        "tls_min_version", "tls_grease", "tls_permute_extensions",
-        "tls_cert_compression", "tls_signature_algorithms",
-        "tls_delegated_credential", "tls_record_size_limit",
-        "http2_stream_weight", "http2_stream_exclusive", "http2_no_priority",
-        "header_order", "split_cookies", "form_boundary",
-        "http3_sig_hash_algs", "http3_tls_extension_order",
-    )
+    __slots__ = ("header_order", "form_boundary")
 
-    def __init__(self, tls_min_version=None, tls_grease=None,
-                 tls_permute_extensions=None, tls_cert_compression=None,
-                 tls_signature_algorithms=None, tls_delegated_credential="",
-                 tls_record_size_limit=0, http2_stream_weight=None,
-                 http2_stream_exclusive=None, http2_no_priority=False,
-                 header_order=None, split_cookies=None, form_boundary=None,
-                 http3_sig_hash_algs=None, http3_tls_extension_order=None):
-        self.tls_min_version = tls_min_version
-        self.tls_grease = tls_grease
-        self.tls_permute_extensions = tls_permute_extensions
-        self.tls_cert_compression = tls_cert_compression
-        self.tls_signature_algorithms = tls_signature_algorithms
-        self.tls_delegated_credential = tls_delegated_credential
-        self.tls_record_size_limit = tls_record_size_limit
-        self.http2_stream_weight = http2_stream_weight
-        self.http2_stream_exclusive = http2_stream_exclusive
-        self.http2_no_priority = http2_no_priority
+    def __init__(self, header_order=None, form_boundary=None):
         self.header_order = header_order
-        self.split_cookies = split_cookies
         self.form_boundary = form_boundary
-        self.http3_sig_hash_algs = http3_sig_hash_algs
-        self.http3_tls_extension_order = http3_tls_extension_order
 
     def as_dict(self):
         return {name: getattr(self, name) for name in self.__slots__}
 
 
-# Fields the facade can honour without touching the Core: header order is
-# applied by emitting headers in the requested sequence, and the multipart
-# boundary is generated in Python.
+#: Fields the facade can honour without touching the Core: header order is
+#: applied by emitting headers in the requested sequence, and the multipart
+#: boundary is generated in Python.
 _HONOURED_EXTRA_FP = ("header_order", "form_boundary")
-_NEUTRAL_EXTRA_FP = {
-    "tls_delegated_credential": ("", None),
-    "tls_record_size_limit": (0, None),
-    "http2_no_priority": (False, None),
-}
 
 
 def validate_extra_fp(extra_fp):
-    """Returns ``(header_order, form_boundary)`` or raises for unsupported asks."""
+    """Returns (header_order, form_boundary), or raises for anything else.
+
+    A mapping is accepted as well as an ExtraFingerprints, and any key this
+    facade cannot honour raises rather than being dropped: a caller who built
+    the mapping by hand is asking for something the profile owns.
+    """
     if extra_fp is None:
         return None, None
-    values = extra_fp.as_dict() if isinstance(extra_fp, ExtraFingerprints) else dict(extra_fp)
-    unsupported = []
-    for name, value in values.items():
-        if name in _HONOURED_EXTRA_FP:
-            continue
-        if name in _NEUTRAL_EXTRA_FP and value in _NEUTRAL_EXTRA_FP[name]:
-            continue
-        # ``value in (None, False)`` also matched 0, because ``0 == False``.
-        # That silently accepted real requests for a zero setting --
-        # ``http2_stream_weight=0`` and ``split_cookies=0`` both came back
-        # unapplied and unreported -- which is exactly the silent-ignore the
-        # fail-closed contract forbids. Only a genuine "not asked for" value
-        # (None, or the boolean False) passes.
-        if value is None or value is False:
-            continue
-        unsupported.append(name)
+    values = (extra_fp.as_dict() if isinstance(extra_fp, ExtraFingerprints)
+              else dict(extra_fp))
+    unsupported = sorted(set(values) - set(_HONOURED_EXTRA_FP))
     if unsupported:
         raise UnsupportedFeature(
             "extra_fp field(s) %s cannot be applied: the Chromium profile owns "
-            "the TLS and HTTP/2 fingerprint. Select a different impersonate "
-            "profile instead." % ", ".join(sorted(unsupported)))
+            "the TLS and HTTP/2 fingerprint, and those fields were removed "
+            "rather than accepted and ignored. Keep %s, or select a different "
+            "impersonate profile."
+            % (", ".join(unsupported), " and ".join(_HONOURED_EXTRA_FP)))
     return values.get("header_order"), values.get("form_boundary")
-
-
-def reject_fingerprint_overrides(ja3=None, akamai=None, perk=None):
-    for name, value in (("ja3", ja3), ("akamai", akamai), ("perk", perk)):
-        if value:
-            raise UnsupportedFeature(
-                "%s= is not supported: the TLS and HTTP/2 fingerprints come from "
-                "the pinned Chromium profile selected by impersonate=." % name)
 
 
 def available_profiles():

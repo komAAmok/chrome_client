@@ -94,7 +94,6 @@ from .._python_impl import (
     available_profiles as available_profiles,
     normalize_http_version as normalize_http_version,
     normalize_impersonate as normalize_impersonate,
-    reject_fingerprint_overrides as reject_fingerprint_overrides,
     validate_extra_fp as validate_extra_fp,
     AsyncResponse as AsyncResponse,
     PreparedRequest as PreparedRequest,

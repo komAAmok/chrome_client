@@ -89,7 +89,6 @@ def session(
     cert: Any = None,
     stream: bool = False,
     hooks: Optional[Hooks] = None,
-    max_redirects: Optional[int] = None,
     trust_env: bool = True,
     allow_redirects: bool = True,
     max_response_bytes: Optional[int] = None,
@@ -97,9 +96,6 @@ def session(
     take_body_buffers: bool = False,
     base_url: Optional[str] = None,
     http_version: Optional[HttpVersion] = None,
-    ja3: Optional[str] = None,
-    akamai: Optional[str] = None,
-    perk: Optional[str] = None,
     extra_fp: Optional[Union[ExtraFingerprints, Mapping[str, Any]]] = None,
     default_headers: bool = True,
     default_encoding: Union[str, Callable[[bytes], str]] = 'utf-8',
@@ -109,19 +105,13 @@ def session(
     cache: bool = True,
     user_agent: Optional[str] = None,
     accept_language: Optional[str] = None,
-    interface: Optional[str] = None,
-    doh_url: Optional[str] = None,
-    max_recv_speed: int = 0,
-    curl_options: Optional[Mapping[Any, Any]] = None,
     max_engines: int = 8,
     response_class: ResponseClass = None,
     host_mapping: Optional[HostMappingRules] = None,
     dns_nameservers: Optional[str] = None,
     doh_template: Optional[str] = None,
     dns_secure_mode: Optional[int] = None,
-    dns_over_tls: bool = False,
     dns_rotate: bool = False,
-    dns_padding: bool = False,
     hsts_bypass: Optional[str] = None,
     proxy_chain: Optional[str] = None,
     platform: str = 'auto',
@@ -154,8 +144,6 @@ def session(
         cert: Rejected. Client certificates need a Core setting ABI v8 does not expose.
         stream: Default for the per-request ``stream=`` flag.
         hooks: ``{"response": callable}`` hooks.
-        max_redirects: Must be ``None``. Chromium owns the 20-hop ceiling and ABI v8
-            cannot lower it, so a numeric cap raises ``UnsupportedFeature``.
         trust_env: Read ``HTTP_PROXY``/``HTTPS_PROXY``/``NO_PROXY``,
             ``REQUESTS_CA_BUNDLE``/``CURL_CA_BUNDLE`` and ``.netrc``.
         allow_redirects: Default redirect policy.
@@ -166,9 +154,6 @@ def session(
         base_url: Prefix for relative URLs.
         http_version: Pin ``"v1"``, ``"v2"`` or ``"v3"`` instead of letting Chromium
             negotiate through ALPN and Alt-Svc.
-        ja3: Rejected; the profile owns the ClientHello.
-        akamai: Rejected; the profile owns the HTTP/2 fingerprint.
-        perk: Rejected; the profile owns the TLS fingerprint.
         extra_fp: :class:`~chrome_client.ExtraFingerprints` overrides. Only
             ``header_order`` and ``form_boundary`` can be honoured.
         default_headers: Kept for source compatibility. The facade's header set is
@@ -183,10 +168,6 @@ def session(
             per-request UA because its placement is part of the fingerprint.
         accept_language: Engine-level ``Accept-Language``. With a profile the captured
             value is sent unless this is set.
-        interface: Rejected; ABI v8 has no network-interface binding.
-        doh_url: Rejected; DNS-over-HTTPS config is not exposed.
-        max_recv_speed: Rejected; Chromium owns transfer pacing.
-        curl_options: Rejected; there is no libcurl surface here.
         max_engines: How many distinct engine configurations one session keeps alive for
             per-request overrides, at least 1.
         response_class: Subclass to instantiate instead of
@@ -195,9 +176,7 @@ def session(
         dns_nameservers:
         doh_template:
         dns_secure_mode:
-        dns_over_tls:
         dns_rotate:
-        dns_padding:
         hsts_bypass:
         proxy_chain:
         platform:
@@ -239,7 +218,6 @@ def async_session(
     cert: Any = None,
     stream: bool = False,
     hooks: Optional[Hooks] = None,
-    max_redirects: Optional[int] = None,
     trust_env: bool = True,
     allow_redirects: bool = True,
     max_response_bytes: Optional[int] = None,
@@ -247,9 +225,6 @@ def async_session(
     take_body_buffers: bool = False,
     base_url: Optional[str] = None,
     http_version: Optional[HttpVersion] = None,
-    ja3: Optional[str] = None,
-    akamai: Optional[str] = None,
-    perk: Optional[str] = None,
     extra_fp: Optional[Union[ExtraFingerprints, Mapping[str, Any]]] = None,
     default_headers: bool = True,
     default_encoding: Union[str, Callable[[bytes], str]] = 'utf-8',
@@ -259,19 +234,13 @@ def async_session(
     cache: bool = True,
     user_agent: Optional[str] = None,
     accept_language: Optional[str] = None,
-    interface: Optional[str] = None,
-    doh_url: Optional[str] = None,
-    max_recv_speed: int = 0,
-    curl_options: Optional[Mapping[Any, Any]] = None,
     max_engines: int = 8,
     response_class: ResponseClass = None,
     host_mapping: Optional[HostMappingRules] = None,
     dns_nameservers: Optional[str] = None,
     doh_template: Optional[str] = None,
     dns_secure_mode: Optional[int] = None,
-    dns_over_tls: bool = False,
     dns_rotate: bool = False,
-    dns_padding: bool = False,
     hsts_bypass: Optional[str] = None,
     proxy_chain: Optional[str] = None,
     platform: str = 'auto',
@@ -305,8 +274,6 @@ def async_session(
         cert: Rejected. Client certificates need a Core setting ABI v8 does not expose.
         stream: Default for the per-request ``stream=`` flag.
         hooks: ``{"response": callable}`` hooks.
-        max_redirects: Must be ``None``. Chromium owns the 20-hop ceiling and ABI v8
-            cannot lower it, so a numeric cap raises ``UnsupportedFeature``.
         trust_env: Read ``HTTP_PROXY``/``HTTPS_PROXY``/``NO_PROXY``,
             ``REQUESTS_CA_BUNDLE``/``CURL_CA_BUNDLE`` and ``.netrc``.
         allow_redirects: Default redirect policy.
@@ -317,9 +284,6 @@ def async_session(
         base_url: Prefix for relative URLs.
         http_version: Pin ``"v1"``, ``"v2"`` or ``"v3"`` instead of letting Chromium
             negotiate through ALPN and Alt-Svc.
-        ja3: Rejected; the profile owns the ClientHello.
-        akamai: Rejected; the profile owns the HTTP/2 fingerprint.
-        perk: Rejected; the profile owns the TLS fingerprint.
         extra_fp: :class:`~chrome_client.ExtraFingerprints` overrides. Only
             ``header_order`` and ``form_boundary`` can be honoured.
         default_headers: Kept for source compatibility. The facade's header set is
@@ -334,10 +298,6 @@ def async_session(
             per-request UA because its placement is part of the fingerprint.
         accept_language: Engine-level ``Accept-Language``. With a profile the captured
             value is sent unless this is set.
-        interface: Rejected; ABI v8 has no network-interface binding.
-        doh_url: Rejected; DNS-over-HTTPS config is not exposed.
-        max_recv_speed: Rejected; Chromium owns transfer pacing.
-        curl_options: Rejected; there is no libcurl surface here.
         max_engines: How many distinct engine configurations one session keeps alive for
             per-request overrides, at least 1.
         response_class: Subclass to instantiate instead of
@@ -346,9 +306,7 @@ def async_session(
         dns_nameservers:
         doh_template:
         dns_secure_mode:
-        dns_over_tls:
         dns_rotate:
-        dns_padding:
         hsts_bypass:
         proxy_chain:
         platform:
@@ -403,28 +361,16 @@ def request(
     impersonate: Optional[Impersonate] = None,
     proxy: Optional[str] = None,
     http_version: Optional[HttpVersion] = None,
-    max_redirects: Optional[int] = None,
     max_response_bytes: Optional[int] = None,
-    referer: Optional[str] = None,
     accept_encoding: Optional[str] = None,
     default_encoding: Optional[Union[str, Callable[[bytes], str]]] = None,
     discard_cookies: Optional[bool] = None,
     retry: Retry = None,
     cache_mode: CacheMode = None,
     priority: RequestPriority = None,
-    ja3: Optional[str] = None,
-    akamai: Optional[str] = None,
-    perk: Optional[str] = None,
     extra_fp: Optional[Union[ExtraFingerprints, Mapping[str, Any]]] = None,
     content_callback: Optional[ContentCallback] = None,
     raise_for_status: Optional[bool] = None,
-    quote: Optional[bool] = None,
-    curl_options: Optional[Mapping[Any, Any]] = None,
-    interface: Optional[str] = None,
-    doh_url: Optional[str] = None,
-    max_recv_speed: Optional[int] = None,
-    thread: Any = None,
-    debug: Any = None,
     base_url: Optional[str] = None,
     default_headers: Optional[bool] = None,
     trust_env: Optional[bool] = None,
@@ -467,9 +413,7 @@ def request(
         impersonate: Profile for this call, e.g. ``"chrome_155"``.
         proxy: Proxy URL for this call.
         http_version: Pin ``"v1"``/``"v2"``/``"v3"``.
-        max_redirects: Redirect cap.
         max_response_bytes: Body ceiling.
-        referer: Routed through Chromium's own referrer path.
         accept_encoding: Overrides ``Accept-Encoding``.
         default_encoding: Fallback encoding for the response body, or a callable
             taking the body bytes and returning an encoding name.
@@ -477,20 +421,10 @@ def request(
         retry: Attempt count or :class:`~chrome_client.RetryStrategy`.
         cache_mode: Chromium load flags.
         priority: Request priority hint.
-        ja3: Rejected; the profile owns the ClientHello.
-        akamai: Rejected; the profile owns the HTTP/2 fingerprint.
-        perk: Rejected; the profile owns the TLS fingerprint.
         extra_fp: Fingerprint overrides; only ``header_order`` and
             ``form_boundary`` are honourable.
         content_callback: Called with the fully buffered body.
         raise_for_status: Check the response before returning it.
-        quote: Rejected when it is `False`: the URL is always percent-encoded.
-        curl_options: Rejected.
-        interface: Rejected.
-        doh_url: Rejected.
-        max_recv_speed: Rejected.
-        thread: Rejected.
-        debug: Rejected.
         base_url: Private-session option: prefix for relative URLs.
         default_headers: Private-session option: kept for compatibility.
         trust_env: Private-session option: read environment proxies/CA/netrc.
@@ -543,28 +477,16 @@ def get(
     impersonate: Optional[Impersonate] = None,
     proxy: Optional[str] = None,
     http_version: Optional[HttpVersion] = None,
-    max_redirects: Optional[int] = None,
     max_response_bytes: Optional[int] = None,
-    referer: Optional[str] = None,
     accept_encoding: Optional[str] = None,
     default_encoding: Optional[Union[str, Callable[[bytes], str]]] = None,
     discard_cookies: Optional[bool] = None,
     retry: Retry = None,
     cache_mode: CacheMode = None,
     priority: RequestPriority = None,
-    ja3: Optional[str] = None,
-    akamai: Optional[str] = None,
-    perk: Optional[str] = None,
     extra_fp: Optional[Union[ExtraFingerprints, Mapping[str, Any]]] = None,
     content_callback: Optional[ContentCallback] = None,
     raise_for_status: Optional[bool] = None,
-    quote: Optional[bool] = None,
-    curl_options: Optional[Mapping[Any, Any]] = None,
-    interface: Optional[str] = None,
-    doh_url: Optional[str] = None,
-    max_recv_speed: Optional[int] = None,
-    thread: Any = None,
-    debug: Any = None,
     base_url: Optional[str] = None,
     default_headers: Optional[bool] = None,
     trust_env: Optional[bool] = None,
@@ -600,9 +522,7 @@ def get(
         impersonate: Profile for this call, e.g. ``"chrome_155"``.
         proxy: Proxy URL for this call.
         http_version: Pin ``"v1"``/``"v2"``/``"v3"``.
-        max_redirects: Redirect cap.
         max_response_bytes: Body ceiling.
-        referer: Routed through Chromium's own referrer path.
         accept_encoding: Overrides ``Accept-Encoding``.
         default_encoding: Fallback encoding for the response body, or a callable taking
             the body bytes and returning an encoding name.
@@ -610,20 +530,10 @@ def get(
         retry: Attempt count or :class:`~chrome_client.RetryStrategy`.
         cache_mode: Chromium load flags.
         priority: Request priority hint.
-        ja3: Rejected; the profile owns the ClientHello.
-        akamai: Rejected; the profile owns the HTTP/2 fingerprint.
-        perk: Rejected; the profile owns the TLS fingerprint.
         extra_fp: Fingerprint overrides; only ``header_order`` and ``form_boundary`` are
             honourable.
         content_callback: Called with the fully buffered body.
         raise_for_status: Check the response before returning it.
-        quote: Rejected when it is `False`: the URL is always percent-encoded.
-        curl_options: Rejected.
-        interface: Rejected.
-        doh_url: Rejected.
-        max_recv_speed: Rejected.
-        thread: Rejected.
-        debug: Rejected.
         base_url: Private-session option: prefix for relative URLs.
         default_headers: Private-session option: kept for compatibility.
         trust_env: Private-session option: read environment proxies/CA/netrc.
@@ -670,28 +580,16 @@ def options(
     impersonate: Optional[Impersonate] = None,
     proxy: Optional[str] = None,
     http_version: Optional[HttpVersion] = None,
-    max_redirects: Optional[int] = None,
     max_response_bytes: Optional[int] = None,
-    referer: Optional[str] = None,
     accept_encoding: Optional[str] = None,
     default_encoding: Optional[Union[str, Callable[[bytes], str]]] = None,
     discard_cookies: Optional[bool] = None,
     retry: Retry = None,
     cache_mode: CacheMode = None,
     priority: RequestPriority = None,
-    ja3: Optional[str] = None,
-    akamai: Optional[str] = None,
-    perk: Optional[str] = None,
     extra_fp: Optional[Union[ExtraFingerprints, Mapping[str, Any]]] = None,
     content_callback: Optional[ContentCallback] = None,
     raise_for_status: Optional[bool] = None,
-    quote: Optional[bool] = None,
-    curl_options: Optional[Mapping[Any, Any]] = None,
-    interface: Optional[str] = None,
-    doh_url: Optional[str] = None,
-    max_recv_speed: Optional[int] = None,
-    thread: Any = None,
-    debug: Any = None,
     base_url: Optional[str] = None,
     default_headers: Optional[bool] = None,
     trust_env: Optional[bool] = None,
@@ -727,9 +625,7 @@ def options(
         impersonate: Profile for this call, e.g. ``"chrome_155"``.
         proxy: Proxy URL for this call.
         http_version: Pin ``"v1"``/``"v2"``/``"v3"``.
-        max_redirects: Redirect cap.
         max_response_bytes: Body ceiling.
-        referer: Routed through Chromium's own referrer path.
         accept_encoding: Overrides ``Accept-Encoding``.
         default_encoding: Fallback encoding for the response body, or a callable taking
             the body bytes and returning an encoding name.
@@ -737,20 +633,10 @@ def options(
         retry: Attempt count or :class:`~chrome_client.RetryStrategy`.
         cache_mode: Chromium load flags.
         priority: Request priority hint.
-        ja3: Rejected; the profile owns the ClientHello.
-        akamai: Rejected; the profile owns the HTTP/2 fingerprint.
-        perk: Rejected; the profile owns the TLS fingerprint.
         extra_fp: Fingerprint overrides; only ``header_order`` and ``form_boundary`` are
             honourable.
         content_callback: Called with the fully buffered body.
         raise_for_status: Check the response before returning it.
-        quote: Rejected when it is `False`: the URL is always percent-encoded.
-        curl_options: Rejected.
-        interface: Rejected.
-        doh_url: Rejected.
-        max_recv_speed: Rejected.
-        thread: Rejected.
-        debug: Rejected.
         base_url: Private-session option: prefix for relative URLs.
         default_headers: Private-session option: kept for compatibility.
         trust_env: Private-session option: read environment proxies/CA/netrc.
@@ -790,28 +676,16 @@ def head(
     impersonate: Optional[Impersonate] = None,
     proxy: Optional[str] = None,
     http_version: Optional[HttpVersion] = None,
-    max_redirects: Optional[int] = None,
     max_response_bytes: Optional[int] = None,
-    referer: Optional[str] = None,
     accept_encoding: Optional[str] = None,
     default_encoding: Optional[Union[str, Callable[[bytes], str]]] = None,
     discard_cookies: Optional[bool] = None,
     retry: Retry = None,
     cache_mode: CacheMode = None,
     priority: RequestPriority = None,
-    ja3: Optional[str] = None,
-    akamai: Optional[str] = None,
-    perk: Optional[str] = None,
     extra_fp: Optional[Union[ExtraFingerprints, Mapping[str, Any]]] = None,
     content_callback: Optional[ContentCallback] = None,
     raise_for_status: Optional[bool] = None,
-    quote: Optional[bool] = None,
-    curl_options: Optional[Mapping[Any, Any]] = None,
-    interface: Optional[str] = None,
-    doh_url: Optional[str] = None,
-    max_recv_speed: Optional[int] = None,
-    thread: Any = None,
-    debug: Any = None,
     base_url: Optional[str] = None,
     default_headers: Optional[bool] = None,
     trust_env: Optional[bool] = None,
@@ -849,9 +723,7 @@ def head(
         impersonate: Profile for this call, e.g. ``"chrome_155"``.
         proxy: Proxy URL for this call.
         http_version: Pin ``"v1"``/``"v2"``/``"v3"``.
-        max_redirects: Redirect cap.
         max_response_bytes: Body ceiling.
-        referer: Routed through Chromium's own referrer path.
         accept_encoding: Overrides ``Accept-Encoding``.
         default_encoding: Fallback encoding for the response body, or a callable taking
             the body bytes and returning an encoding name.
@@ -859,20 +731,10 @@ def head(
         retry: Attempt count or :class:`~chrome_client.RetryStrategy`.
         cache_mode: Chromium load flags.
         priority: Request priority hint.
-        ja3: Rejected; the profile owns the ClientHello.
-        akamai: Rejected; the profile owns the HTTP/2 fingerprint.
-        perk: Rejected; the profile owns the TLS fingerprint.
         extra_fp: Fingerprint overrides; only ``header_order`` and ``form_boundary`` are
             honourable.
         content_callback: Called with the fully buffered body.
         raise_for_status: Check the response before returning it.
-        quote: Rejected when it is `False`: the URL is always percent-encoded.
-        curl_options: Rejected.
-        interface: Rejected.
-        doh_url: Rejected.
-        max_recv_speed: Rejected.
-        thread: Rejected.
-        debug: Rejected.
         base_url: Private-session option: prefix for relative URLs.
         default_headers: Private-session option: kept for compatibility.
         trust_env: Private-session option: read environment proxies/CA/netrc.
@@ -912,28 +774,16 @@ def post(
     impersonate: Optional[Impersonate] = None,
     proxy: Optional[str] = None,
     http_version: Optional[HttpVersion] = None,
-    max_redirects: Optional[int] = None,
     max_response_bytes: Optional[int] = None,
-    referer: Optional[str] = None,
     accept_encoding: Optional[str] = None,
     default_encoding: Optional[Union[str, Callable[[bytes], str]]] = None,
     discard_cookies: Optional[bool] = None,
     retry: Retry = None,
     cache_mode: CacheMode = None,
     priority: RequestPriority = None,
-    ja3: Optional[str] = None,
-    akamai: Optional[str] = None,
-    perk: Optional[str] = None,
     extra_fp: Optional[Union[ExtraFingerprints, Mapping[str, Any]]] = None,
     content_callback: Optional[ContentCallback] = None,
     raise_for_status: Optional[bool] = None,
-    quote: Optional[bool] = None,
-    curl_options: Optional[Mapping[Any, Any]] = None,
-    interface: Optional[str] = None,
-    doh_url: Optional[str] = None,
-    max_recv_speed: Optional[int] = None,
-    thread: Any = None,
-    debug: Any = None,
     base_url: Optional[str] = None,
     default_headers: Optional[bool] = None,
     trust_env: Optional[bool] = None,
@@ -969,9 +819,7 @@ def post(
         impersonate: Profile for this call, e.g. ``"chrome_155"``.
         proxy: Proxy URL for this call.
         http_version: Pin ``"v1"``/``"v2"``/``"v3"``.
-        max_redirects: Redirect cap.
         max_response_bytes: Body ceiling.
-        referer: Routed through Chromium's own referrer path.
         accept_encoding: Overrides ``Accept-Encoding``.
         default_encoding: Fallback encoding for the response body, or a callable taking
             the body bytes and returning an encoding name.
@@ -979,20 +827,10 @@ def post(
         retry: Attempt count or :class:`~chrome_client.RetryStrategy`.
         cache_mode: Chromium load flags.
         priority: Request priority hint.
-        ja3: Rejected; the profile owns the ClientHello.
-        akamai: Rejected; the profile owns the HTTP/2 fingerprint.
-        perk: Rejected; the profile owns the TLS fingerprint.
         extra_fp: Fingerprint overrides; only ``header_order`` and ``form_boundary`` are
             honourable.
         content_callback: Called with the fully buffered body.
         raise_for_status: Check the response before returning it.
-        quote: Rejected when it is `False`: the URL is always percent-encoded.
-        curl_options: Rejected.
-        interface: Rejected.
-        doh_url: Rejected.
-        max_recv_speed: Rejected.
-        thread: Rejected.
-        debug: Rejected.
         base_url: Private-session option: prefix for relative URLs.
         default_headers: Private-session option: kept for compatibility.
         trust_env: Private-session option: read environment proxies/CA/netrc.
@@ -1035,28 +873,16 @@ def put(
     impersonate: Optional[Impersonate] = None,
     proxy: Optional[str] = None,
     http_version: Optional[HttpVersion] = None,
-    max_redirects: Optional[int] = None,
     max_response_bytes: Optional[int] = None,
-    referer: Optional[str] = None,
     accept_encoding: Optional[str] = None,
     default_encoding: Optional[Union[str, Callable[[bytes], str]]] = None,
     discard_cookies: Optional[bool] = None,
     retry: Retry = None,
     cache_mode: CacheMode = None,
     priority: RequestPriority = None,
-    ja3: Optional[str] = None,
-    akamai: Optional[str] = None,
-    perk: Optional[str] = None,
     extra_fp: Optional[Union[ExtraFingerprints, Mapping[str, Any]]] = None,
     content_callback: Optional[ContentCallback] = None,
     raise_for_status: Optional[bool] = None,
-    quote: Optional[bool] = None,
-    curl_options: Optional[Mapping[Any, Any]] = None,
-    interface: Optional[str] = None,
-    doh_url: Optional[str] = None,
-    max_recv_speed: Optional[int] = None,
-    thread: Any = None,
-    debug: Any = None,
     base_url: Optional[str] = None,
     default_headers: Optional[bool] = None,
     trust_env: Optional[bool] = None,
@@ -1092,9 +918,7 @@ def put(
         impersonate: Profile for this call, e.g. ``"chrome_155"``.
         proxy: Proxy URL for this call.
         http_version: Pin ``"v1"``/``"v2"``/``"v3"``.
-        max_redirects: Redirect cap.
         max_response_bytes: Body ceiling.
-        referer: Routed through Chromium's own referrer path.
         accept_encoding: Overrides ``Accept-Encoding``.
         default_encoding: Fallback encoding for the response body, or a callable taking
             the body bytes and returning an encoding name.
@@ -1102,20 +926,10 @@ def put(
         retry: Attempt count or :class:`~chrome_client.RetryStrategy`.
         cache_mode: Chromium load flags.
         priority: Request priority hint.
-        ja3: Rejected; the profile owns the ClientHello.
-        akamai: Rejected; the profile owns the HTTP/2 fingerprint.
-        perk: Rejected; the profile owns the TLS fingerprint.
         extra_fp: Fingerprint overrides; only ``header_order`` and ``form_boundary`` are
             honourable.
         content_callback: Called with the fully buffered body.
         raise_for_status: Check the response before returning it.
-        quote: Rejected when it is `False`: the URL is always percent-encoded.
-        curl_options: Rejected.
-        interface: Rejected.
-        doh_url: Rejected.
-        max_recv_speed: Rejected.
-        thread: Rejected.
-        debug: Rejected.
         base_url: Private-session option: prefix for relative URLs.
         default_headers: Private-session option: kept for compatibility.
         trust_env: Private-session option: read environment proxies/CA/netrc.
@@ -1155,28 +969,16 @@ def patch(
     impersonate: Optional[Impersonate] = None,
     proxy: Optional[str] = None,
     http_version: Optional[HttpVersion] = None,
-    max_redirects: Optional[int] = None,
     max_response_bytes: Optional[int] = None,
-    referer: Optional[str] = None,
     accept_encoding: Optional[str] = None,
     default_encoding: Optional[Union[str, Callable[[bytes], str]]] = None,
     discard_cookies: Optional[bool] = None,
     retry: Retry = None,
     cache_mode: CacheMode = None,
     priority: RequestPriority = None,
-    ja3: Optional[str] = None,
-    akamai: Optional[str] = None,
-    perk: Optional[str] = None,
     extra_fp: Optional[Union[ExtraFingerprints, Mapping[str, Any]]] = None,
     content_callback: Optional[ContentCallback] = None,
     raise_for_status: Optional[bool] = None,
-    quote: Optional[bool] = None,
-    curl_options: Optional[Mapping[Any, Any]] = None,
-    interface: Optional[str] = None,
-    doh_url: Optional[str] = None,
-    max_recv_speed: Optional[int] = None,
-    thread: Any = None,
-    debug: Any = None,
     base_url: Optional[str] = None,
     default_headers: Optional[bool] = None,
     trust_env: Optional[bool] = None,
@@ -1212,9 +1014,7 @@ def patch(
         impersonate: Profile for this call, e.g. ``"chrome_155"``.
         proxy: Proxy URL for this call.
         http_version: Pin ``"v1"``/``"v2"``/``"v3"``.
-        max_redirects: Redirect cap.
         max_response_bytes: Body ceiling.
-        referer: Routed through Chromium's own referrer path.
         accept_encoding: Overrides ``Accept-Encoding``.
         default_encoding: Fallback encoding for the response body, or a callable taking
             the body bytes and returning an encoding name.
@@ -1222,20 +1022,10 @@ def patch(
         retry: Attempt count or :class:`~chrome_client.RetryStrategy`.
         cache_mode: Chromium load flags.
         priority: Request priority hint.
-        ja3: Rejected; the profile owns the ClientHello.
-        akamai: Rejected; the profile owns the HTTP/2 fingerprint.
-        perk: Rejected; the profile owns the TLS fingerprint.
         extra_fp: Fingerprint overrides; only ``header_order`` and ``form_boundary`` are
             honourable.
         content_callback: Called with the fully buffered body.
         raise_for_status: Check the response before returning it.
-        quote: Rejected when it is `False`: the URL is always percent-encoded.
-        curl_options: Rejected.
-        interface: Rejected.
-        doh_url: Rejected.
-        max_recv_speed: Rejected.
-        thread: Rejected.
-        debug: Rejected.
         base_url: Private-session option: prefix for relative URLs.
         default_headers: Private-session option: kept for compatibility.
         trust_env: Private-session option: read environment proxies/CA/netrc.
@@ -1275,28 +1065,16 @@ def delete(
     impersonate: Optional[Impersonate] = None,
     proxy: Optional[str] = None,
     http_version: Optional[HttpVersion] = None,
-    max_redirects: Optional[int] = None,
     max_response_bytes: Optional[int] = None,
-    referer: Optional[str] = None,
     accept_encoding: Optional[str] = None,
     default_encoding: Optional[Union[str, Callable[[bytes], str]]] = None,
     discard_cookies: Optional[bool] = None,
     retry: Retry = None,
     cache_mode: CacheMode = None,
     priority: RequestPriority = None,
-    ja3: Optional[str] = None,
-    akamai: Optional[str] = None,
-    perk: Optional[str] = None,
     extra_fp: Optional[Union[ExtraFingerprints, Mapping[str, Any]]] = None,
     content_callback: Optional[ContentCallback] = None,
     raise_for_status: Optional[bool] = None,
-    quote: Optional[bool] = None,
-    curl_options: Optional[Mapping[Any, Any]] = None,
-    interface: Optional[str] = None,
-    doh_url: Optional[str] = None,
-    max_recv_speed: Optional[int] = None,
-    thread: Any = None,
-    debug: Any = None,
     base_url: Optional[str] = None,
     default_headers: Optional[bool] = None,
     trust_env: Optional[bool] = None,
@@ -1332,9 +1110,7 @@ def delete(
         impersonate: Profile for this call, e.g. ``"chrome_155"``.
         proxy: Proxy URL for this call.
         http_version: Pin ``"v1"``/``"v2"``/``"v3"``.
-        max_redirects: Redirect cap.
         max_response_bytes: Body ceiling.
-        referer: Routed through Chromium's own referrer path.
         accept_encoding: Overrides ``Accept-Encoding``.
         default_encoding: Fallback encoding for the response body, or a callable taking
             the body bytes and returning an encoding name.
@@ -1342,20 +1118,10 @@ def delete(
         retry: Attempt count or :class:`~chrome_client.RetryStrategy`.
         cache_mode: Chromium load flags.
         priority: Request priority hint.
-        ja3: Rejected; the profile owns the ClientHello.
-        akamai: Rejected; the profile owns the HTTP/2 fingerprint.
-        perk: Rejected; the profile owns the TLS fingerprint.
         extra_fp: Fingerprint overrides; only ``header_order`` and ``form_boundary`` are
             honourable.
         content_callback: Called with the fully buffered body.
         raise_for_status: Check the response before returning it.
-        quote: Rejected when it is `False`: the URL is always percent-encoded.
-        curl_options: Rejected.
-        interface: Rejected.
-        doh_url: Rejected.
-        max_recv_speed: Rejected.
-        thread: Rejected.
-        debug: Rejected.
         base_url: Private-session option: prefix for relative URLs.
         default_headers: Private-session option: kept for compatibility.
         trust_env: Private-session option: read environment proxies/CA/netrc.
@@ -1395,28 +1161,16 @@ def trace(
     impersonate: Optional[Impersonate] = None,
     proxy: Optional[str] = None,
     http_version: Optional[HttpVersion] = None,
-    max_redirects: Optional[int] = None,
     max_response_bytes: Optional[int] = None,
-    referer: Optional[str] = None,
     accept_encoding: Optional[str] = None,
     default_encoding: Optional[Union[str, Callable[[bytes], str]]] = None,
     discard_cookies: Optional[bool] = None,
     retry: Retry = None,
     cache_mode: CacheMode = None,
     priority: RequestPriority = None,
-    ja3: Optional[str] = None,
-    akamai: Optional[str] = None,
-    perk: Optional[str] = None,
     extra_fp: Optional[Union[ExtraFingerprints, Mapping[str, Any]]] = None,
     content_callback: Optional[ContentCallback] = None,
     raise_for_status: Optional[bool] = None,
-    quote: Optional[bool] = None,
-    curl_options: Optional[Mapping[Any, Any]] = None,
-    interface: Optional[str] = None,
-    doh_url: Optional[str] = None,
-    max_recv_speed: Optional[int] = None,
-    thread: Any = None,
-    debug: Any = None,
     base_url: Optional[str] = None,
     default_headers: Optional[bool] = None,
     trust_env: Optional[bool] = None,
@@ -1452,9 +1206,7 @@ def trace(
         impersonate: Profile for this call, e.g. ``"chrome_155"``.
         proxy: Proxy URL for this call.
         http_version: Pin ``"v1"``/``"v2"``/``"v3"``.
-        max_redirects: Redirect cap.
         max_response_bytes: Body ceiling.
-        referer: Routed through Chromium's own referrer path.
         accept_encoding: Overrides ``Accept-Encoding``.
         default_encoding: Fallback encoding for the response body, or a callable taking
             the body bytes and returning an encoding name.
@@ -1462,20 +1214,10 @@ def trace(
         retry: Attempt count or :class:`~chrome_client.RetryStrategy`.
         cache_mode: Chromium load flags.
         priority: Request priority hint.
-        ja3: Rejected; the profile owns the ClientHello.
-        akamai: Rejected; the profile owns the HTTP/2 fingerprint.
-        perk: Rejected; the profile owns the TLS fingerprint.
         extra_fp: Fingerprint overrides; only ``header_order`` and ``form_boundary`` are
             honourable.
         content_callback: Called with the fully buffered body.
         raise_for_status: Check the response before returning it.
-        quote: Rejected when it is `False`: the URL is always percent-encoded.
-        curl_options: Rejected.
-        interface: Rejected.
-        doh_url: Rejected.
-        max_recv_speed: Rejected.
-        thread: Rejected.
-        debug: Rejected.
         base_url: Private-session option: prefix for relative URLs.
         default_headers: Private-session option: kept for compatibility.
         trust_env: Private-session option: read environment proxies/CA/netrc.
@@ -1515,28 +1257,16 @@ def query(
     impersonate: Optional[Impersonate] = None,
     proxy: Optional[str] = None,
     http_version: Optional[HttpVersion] = None,
-    max_redirects: Optional[int] = None,
     max_response_bytes: Optional[int] = None,
-    referer: Optional[str] = None,
     accept_encoding: Optional[str] = None,
     default_encoding: Optional[Union[str, Callable[[bytes], str]]] = None,
     discard_cookies: Optional[bool] = None,
     retry: Retry = None,
     cache_mode: CacheMode = None,
     priority: RequestPriority = None,
-    ja3: Optional[str] = None,
-    akamai: Optional[str] = None,
-    perk: Optional[str] = None,
     extra_fp: Optional[Union[ExtraFingerprints, Mapping[str, Any]]] = None,
     content_callback: Optional[ContentCallback] = None,
     raise_for_status: Optional[bool] = None,
-    quote: Optional[bool] = None,
-    curl_options: Optional[Mapping[Any, Any]] = None,
-    interface: Optional[str] = None,
-    doh_url: Optional[str] = None,
-    max_recv_speed: Optional[int] = None,
-    thread: Any = None,
-    debug: Any = None,
     base_url: Optional[str] = None,
     default_headers: Optional[bool] = None,
     trust_env: Optional[bool] = None,
@@ -1572,9 +1302,7 @@ def query(
         impersonate: Profile for this call, e.g. ``"chrome_155"``.
         proxy: Proxy URL for this call.
         http_version: Pin ``"v1"``/``"v2"``/``"v3"``.
-        max_redirects: Redirect cap.
         max_response_bytes: Body ceiling.
-        referer: Routed through Chromium's own referrer path.
         accept_encoding: Overrides ``Accept-Encoding``.
         default_encoding: Fallback encoding for the response body, or a callable taking
             the body bytes and returning an encoding name.
@@ -1582,20 +1310,10 @@ def query(
         retry: Attempt count or :class:`~chrome_client.RetryStrategy`.
         cache_mode: Chromium load flags.
         priority: Request priority hint.
-        ja3: Rejected; the profile owns the ClientHello.
-        akamai: Rejected; the profile owns the HTTP/2 fingerprint.
-        perk: Rejected; the profile owns the TLS fingerprint.
         extra_fp: Fingerprint overrides; only ``header_order`` and ``form_boundary`` are
             honourable.
         content_callback: Called with the fully buffered body.
         raise_for_status: Check the response before returning it.
-        quote: Rejected when it is `False`: the URL is always percent-encoded.
-        curl_options: Rejected.
-        interface: Rejected.
-        doh_url: Rejected.
-        max_recv_speed: Rejected.
-        thread: Rejected.
-        debug: Rejected.
         base_url: Private-session option: prefix for relative URLs.
         default_headers: Private-session option: kept for compatibility.
         trust_env: Private-session option: read environment proxies/CA/netrc.

@@ -191,11 +191,12 @@ def _negotiated_http_version(status_line):
     return None
 
 
-def build_url(url, params, encoding="utf-8", quote=None):
-    """Appends ``params`` to *url* with requests' encoding rules.
+def build_url(url, params, encoding="utf-8"):
+    """Appends `params` to *url* with requests' encoding rules.
 
-    ``quote=False`` skips the percent-encoding pass, matching curl_cffi's escape
-    hatch for URLs that are already exactly as the caller wants them on the wire.
+    The result is always percent-encoded: the Core canonicalises the URL itself,
+    and the curl_cffi escape hatch that used to skip this pass (`quote=False`)
+    was removed rather than accepted and ignored.
     """
     if isinstance(url, bytes):
         url = url.decode("utf-8")
@@ -221,7 +222,7 @@ def build_url(url, params, encoding="utf-8", quote=None):
         query = "%s&%s" % (query, extra) if query else extra
     rebuilt = urlunsplit((parts.scheme, parts.netloc, parts.path or "/",
                           query, parts.fragment))
-    return rebuilt if quote is False else requote_uri(rebuilt)
+    return requote_uri(rebuilt)
 
 
 def _encode_params(params, encoding="utf-8"):
@@ -303,7 +304,6 @@ class PreparedRequest(object):
         #: Emission order for headers, when a caller pins one.
         self.header_order = None
         #: ``False`` disables the percent-encoding pass over the URL.
-        self.quote = None
 
     def __repr__(self):
         return "<PreparedRequest [%s]>" % (self.method,)
@@ -320,7 +320,6 @@ class PreparedRequest(object):
         clone.hooks = self.hooks
         clone.stream_body = self.stream_body
         clone.header_order = self.header_order
-        clone.quote = self.quote
         return clone
 
     def prepare(self, method=None, url=None, headers=None, files=None, data=None,
@@ -337,7 +336,7 @@ class PreparedRequest(object):
         self.method = method.upper() if method is not None else None
 
     def prepare_url(self, url, params):
-        self.url = build_url(url, params, quote=self.quote)
+        self.url = build_url(url, params)
 
     def prepare_headers(self, headers):
         """Copies the caller's headers, keeping the removals they asked for.

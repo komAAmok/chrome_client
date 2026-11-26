@@ -197,10 +197,12 @@ class RedirectPolicyTests(Base):
             response = session.get(self.base + "redirect/1")
             self.assertEqual(response.status_code, 302)
 
-    def test_a_numeric_cap_is_refused_at_construction(self):
-        """A cap the Core cannot lower is an error, not a Python-side hop loop."""
-        with self.assertRaises(chrome_client.UnsupportedFeature):
+    def test_a_numeric_cap_is_not_a_parameter_anymore(self):
+        """Chromium owns the ceiling, so the option was removed, not faked."""
+        with self.assertRaises(TypeError):
             chrome_client.Session(max_redirects=5)
+        with self.assertRaises(TypeError):
+            chrome_client.Session().get(self.base + "redirect/2", max_redirects=5)
 
     def test_chromiums_own_ceiling_still_follows(self):
         """No cap means Chromium's 20 hops, driven entirely by the Core."""
@@ -217,17 +219,16 @@ class RedirectPolicyTests(Base):
             self.assertEqual(response.status_code, 200)
             self.assertEqual(len(response.history), 10)
 
-    def test_a_cap_at_chromiums_ceiling_fails_closed(self):
-        """A cap of 30 cannot be honoured; clamping it to 20 would be a lie.
+    def test_chromiums_ceiling_is_the_only_cap(self):
+        """Measured before the removal: a cap of 30 died at hop 21.
 
-        Measured before the fix: the request went down the native path and died
-        with TooManyRedirects at hop 21, a limit the caller never set.
+        The number comes from Chromium (net::URLRequest::kMaxRedirects), so the
+        facade publishes it as a constant and accepts no per-call override.
         """
+        self.assertEqual(sessions_module.CHROMIUM_MAX_REDIRECTS, 20)
         with chrome_client.Session() as session:
-            with self.assertRaises(chrome_client.UnsupportedFeature):
+            with self.assertRaises(TypeError):
                 session.get(self.base + "redirect/2", max_redirects=30)
-        with self.assertRaises(chrome_client.UnsupportedFeature):
-            chrome_client.Session(max_redirects=30)
 
     def test_the_ceiling_constant_matches_chromium(self):
         """The number must come from Chromium, not from a copy of it."""
@@ -1832,54 +1833,39 @@ class DefaultResolverQueriesHttpsRecordTests(unittest.TestCase):
         self.assertEqual(response.ech_status, "not_attempted")
 
 class DnsOverTlsRefusalTests(unittest.TestCase):
-    "    dns_over_tls must fail closed, not silently disable the resolver."
+    """dns_over_tls / dns_padding are gone; the ABI field stays at zero.
 
-    "    Chromium desktop has no DoT client. Setting DnsConfig::dns_over_tls_active"
-    "    only makes DnsClient::CanUseInsecureDnsTransactions() return false"
-    "    (net/dns/dns_client.cc:168), so the built-in resolver declines every job"
-    "    and TaskType::SYSTEM answers. Measured before the refusal: with"
-    "    dns_nameservers on a local UDP port, dns_over_tls=False delivered 4"
-    "    queries and =True delivered 0 on UDP and 0 on TCP, while the request"
-    "    still returned 200 through the system resolver."
-    "    "
+    Chromium desktop has no DoT client. Setting DnsConfig::dns_over_tls_active
+    only makes DnsClient::CanUseInsecureDnsTransactions() return false
+    (net/dns/dns_client.cc:168), so the built-in resolver declines every job and
+    TaskType::SYSTEM answers. Measured before the refusal: with dns_nameservers
+    on a local UDP port, dns_over_tls=False delivered 4 queries and =True
+    delivered 0 on UDP and 0 on TCP, while the request still returned 200
+    through the system resolver. EDNS0 padding has no Chromium control at all.
 
-    def test_the_constructor_refuses_it(self):
-        with self.assertRaises(chrome_client.UnsupportedFeature) as caught:
-            chrome_client.Session(dns_over_tls=True)
-        message = str(caught.exception)
-        self.assertIn("dns_over_tls", message)
-        self.assertIn("doh_template", message,
-                      "the message must name the option that does work")
+    Both keywords were therefore removed rather than accepted-and-refused: an
+    unknown keyword is a TypeError, so no caller can believe the option did
+    something. What remains is the engine's own field, always zero, because the
+    ABI requires it.
+    """
 
-    def test_the_refusal_does_not_wait_for_a_request(self):
-        "        Same rule as proxy=/proxy_chain=: decidable at construction."
-        with self.assertRaises(chrome_client.UnsupportedFeature):
-            chrome_client.Session(dns_nameservers="1.1.1.1", dns_over_tls=True)
+    def test_the_keywords_are_gone(self):
+        for name in ("dns_over_tls", "dns_padding"):
+            with self.assertRaises(TypeError):
+                chrome_client.Session(**{name: True})
+            with self.assertRaises(TypeError):
+                chrome_client.AsyncSession(**{name: True})
 
-    def test_the_async_constructor_refuses_it_too(self):
-        with self.assertRaises(chrome_client.UnsupportedFeature):
-            chrome_client.AsyncSession(dns_over_tls=True)
-
-    def test_dns_padding_is_refused_too(self):
-        "        Same defect class: Chromium has no EDNS0 padding control, so the"
-        "        value reached EngineOptions and stopped. Accepted silently, it"
-        "        promised padded queries and sent unpadded ones."
-        with self.assertRaises(chrome_client.UnsupportedFeature) as caught:
-            chrome_client.Session(dns_padding=True)
-        self.assertIn("dns_padding", str(caught.exception))
+    def test_the_engine_still_carries_the_zero(self):
+        """EngineConfig still passes the ABI field; only the keyword is gone."""
+        with chrome_client.Session() as session:
+            self.assertFalse(session.dns_over_tls)
+            self.assertFalse(session.dns_padding)
 
     def test_dns_rotate_is_still_honoured(self):
-        "        The control case: rotate IS applied (DnsConfigOverrides::rotate),"
-        "        so it must not have been swept up in the refusal."
+        """The control case: rotate IS applied (DnsConfigOverrides::rotate)."""
         with chrome_client.Session(dns_rotate=True) as session:
             self.assertTrue(session.dns_rotate)
-
-    def test_the_async_constructor_refuses_padding_too(self):
-        with self.assertRaises(chrome_client.UnsupportedFeature):
-            chrome_client.AsyncSession(dns_padding=True)
-    def test_false_still_works(self):
-        with chrome_client.Session(dns_over_tls=False) as session:
-            self.assertFalse(session.dns_over_tls)
 
 
 class SessionHeadersAssignmentTests(Base):

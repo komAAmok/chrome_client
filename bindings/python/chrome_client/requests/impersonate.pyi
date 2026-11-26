@@ -19,7 +19,6 @@ from .._python_impl.impersonate import (
     normalize_http_version as normalize_http_version,
     normalize_impersonate as normalize_impersonate,
     validate_extra_fp as validate_extra_fp,
-    reject_fingerprint_overrides as reject_fingerprint_overrides,
     available_profiles as available_profiles,
     default_priority as default_priority,
     ExtraFingerprints as ExtraFingerprints,

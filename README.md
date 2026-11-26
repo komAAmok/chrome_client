@@ -79,7 +79,7 @@ Profile 影响 TLS ClientHello、ALPN、HTTP/2 设置、QUIC/H3 和相关 Chromi
 | HTTPS/TLS、证书校验 | ✓ | ✓ | `verify=False` 或 `verify="/path/ca.pem"` 自定义 CA；证书失败按具体检查项报错 |
 | mTLS 客户端证书 | ✓ | ✓ | `cert=("c.pem","k.pem")` 或单个合并 PEM；服务端要求时自动出示，不改变 ClientHello |
 | 域名映射到指定 IP | ✓ | ✓ | `host_mapping="MAP cdn.test 93.184.216.34"`；**只改写解析结果**，SNI、Host 头、证书校验仍用域名 |
-| DNS 服务器 / DoH（DoT 不支持，抛错） | ✓ | ✓ | `dns_nameservers="1.1.1.1"`、`doh_template=...` 需配 `dns_secure_mode=1/2`、`dns_rotate`（`dns_padding` 不支持，抛错）。实测：指向死服务器的 `dns_nameservers` 仍返回 200（Chromium 的 SYSTEM 兜底）；`dns_secure_mode=2` 的 DoH 不回退 |
+| DNS 服务器 / DoH（DoT 不支持，抛错） | ✓ | ✓ | `dns_nameservers="1.1.1.1"`、`doh_template=...` 需配 `dns_secure_mode=1/2`、`dns_rotate`（`dns_padding=` 已移除）。实测：指向死服务器的 `dns_nameservers` 仍返回 200（Chromium 的 SYSTEM 兜底）；`dns_secure_mode=2` 的 DoH 不回退 |
 | ECH（Encrypted ClientHello） | ✓ GREASE | ✓ 默认真加密 | `Response.ech_status` 报告 `success` / `rejected` / `not_attempted`。**版本边界：`chrome_118` 及以前不发 ECH 扩展，`chrome_119` 起才发**（GREASE 时 payload 长度在 372/436/500/564 间随机）。**默认就会真加密 SNI**：引擎总是自建内置解析器（`core/source/engine.cc`），会查 DNS HTTPS 记录（type 65），拿到 `ech=` 参数就加密 ClientHello——与桌面 Chrome 的默认配置一致（`stub_resolver_config_reader.cc:190` → `kAsyncDns`）。`dns_nameservers` / `doh_template` / `dns_secure_mode` 只覆盖字段，不是开启开关。域名没有 HTTPS 记录（如 `tls.peet.ws`）、**或上游解析器不回答 type 65**（如 systemd-resolved 的 stub）时仍然只发 GREASE，`ech_status` 为 `not_attempted`——真 Chrome 在同一台机器上结果相同，决定权在 DNS 应答。逐版本证据见 `docs/ABI.md` 末节 |
 | 平台身份 | ✓ | ✓ | `platform="windows"/"macos"/"linux"`；UA 组、`sec-ch-ua-platform`、`sec-ch-ua-mobile` 同源，Linux 主机可发 Windows UA |
 | 每 origin 连接上限 | ✓ | ✓ | `max_sockets_per_group=32`；默认 0 保留 Chromium 自身的 6，提高是对被模仿浏览器的可观测偏离 |
@@ -92,7 +92,7 @@ Profile 影响 TLS ClientHello、ALPN、HTTP/2 设置、QUIC/H3 和相关 Chromi
 | 取消、超时、大小限制 | ✓ | ✓ | `Timeout`、`ResponseTooLarge`、`RequestException` |
 | WebSocket / WSS | ✓ | ✓ | 同步与异步，curl-cffi 方法名齐全 |
 | Cookie | ✓ | ✓ | `session.cookies` 为 `RequestsCookieJar`，读写都生效 |
-| 重定向 | ✓ | ✓ | `history`、最终 URL、`max_redirects`、`allow_redirects=False` |
+| 重定向 | ✓ | ✓ | `history`、最终 URL、`allow_redirects=False`；上限固定为 Chromium 的 20（`CHROMIUM_MAX_REDIRECTS`），`max_redirects=` 已移除 |
 | 内存缓存 | ✓ | ✓ | 随 Engine 生命周期存在，`cache=False` 可关闭 |
 
 
@@ -153,7 +153,7 @@ print(response.status_code, response.reason, response.json())
 ```
 
 `Session` 与 `requests.Session` 同形：`headers`、`params`、`cookies`、`proxies`、
-`auth`、`hooks`、`stream`、`verify`、`max_redirects`、`trust_env`、`adapters`、
+`auth`、`hooks`、`stream`、`verify`、`trust_env`、`adapters`、
 `mount()`、`prepare_request()`、`send()`、`resolve_redirects()`、`close()` 和
 上下文管理器都可用。
 
@@ -287,11 +287,10 @@ print(response.status_code, response.headers["Location"], response.next.url)
 session.get("https://example.com/r", allow_redirects=False)  # 拿到 3xx 本身
 ```
 
-`max_redirects` 只能是 `None`（= Chromium 在一个 `URLRequest` 内的上限 20）：数值一律抛
-`UnsupportedFeature`，因为它无法下调该上限，而在 Python 侧重发会另写一套重定向语义；
-大于等于 20 抛 `UnsupportedFeature`，不静默钳到 20。默认值是 `None`，含义是
-「采用 Chromium 的 20」，**不是** requests 的 30——`requests.models.DEFAULT_REDIRECT_LIMIT`
-仍是 30 且仍可导入，但本包不把它当作默认值。
+跳数上限由 Chromium 决定（一个 `URLRequest` 内 20 跳），并作为
+`chrome_client.CHROMIUM_MAX_REDIRECTS` 公开。`max_redirects=` **不再是参数**：它只能取
+`None`，任何数值都改不了上限，在 Python 侧重发又会另写一套重定向语义。要单跳就用
+`allow_redirects=False`。
 
 异常层次与 `requests.exceptions` 一致（`RequestException` 继承 `IOError`），
 并补上 curl-cffi 的叶子类型。Chromium 的 net error 会映射成具体类型和可读名字：
@@ -329,10 +328,10 @@ with Session(impersonate="chrome152", http_version="v2") as session:
 
 `impersonate` 接受 `chrome_155`、`chrome155`，以及解析到最新 pinned 版本的
 `chrome`。TLS ClientHello、ALPN、HTTP/2 设置与优先级、HTTP/3 传输参数全部来自该
-profile：这也是 `ja3=`、`akamai=`、`perk=` 和大部分 `extra_fp` 字段会抛
-`UnsupportedFeature` 的原因——接受一个 JA3 字符串却仍然发送 Chromium 自己的
-ClientHello，等于谎报保真度。`extra_fp` 中 facade 能真正实现的两项会被采纳：
-`header_order` 和 `form_boundary`。
+profile：这也是 `ja3=`、`akamai=`、`perk=` **不存在**的原因——接受一个 JA3
+字符串却仍然发送 Chromium 自己的 ClientHello，等于谎报保真度，所以它们已被删除
+（传了就是 `TypeError`）。`extra_fp` 现在只剩 facade 真正能实现的两项：
+`header_order` 与 `form_boundary`；curl_cffi 的另外 13 个字段同样已删除。
 
 **`http_version=v1` 的 ALPN 与 ALPS 是有意的差异，不是指纹缺陷。** 强制 HTTP/1.1 时
 ALPN 只发 `http/1.1`；ALPS（扩展 17613）也随之为空——Chromium 只对 `alpn_protos`
@@ -384,10 +383,11 @@ URLLoader。因此 chrome_124 起的 profile 会自动带上它，取值由请�
 这些 profile 的默认优先级是 `highest`，发出的正是真实 Chrome 导航的
 `priority: u=0, i`；chrome_86–123 不发这个头，与它们的抓包一致。HTTP/1.1 上不发。
 
-不受支持而显式报错的还有：`interface=`、`doh_url=`、
-`curl_options=`、`max_recv_speed=`、`referer=`。`referer` 尤其容易误判：Chromium
-自己拥有 referrer 并会剥掉调用方设置的 `Referer` 头，ABI v11 也没有 referrer 字段，
-所以设置它在任何路径下都不会到达网络。
+`interface=`、`doh_url=`、`curl_options=`、`max_recv_speed=`、`thread=`、`debug=`、
+`quote=`、`dns_over_tls=`、`dns_padding` 与 `referer` 已**不再是参数**（传了就是 `TypeError`）。
+`referer` 用头代替：Core 把 `Referer` 头路由到 `URLRequest::SetReferrer`
+（`core/source/request.cc:245`），所以 `headers={"Referer": ...}` 才是会到线上的写法。
+`doh_url` 用 `doh_template=` 加 `dns_secure_mode=2` 代替。
 
 multipart 两种写法都支持：
 
@@ -401,6 +401,25 @@ mime.addpart(name="photo", filename="p.jpg", content_type="image/jpeg",
 session.post(url, multipart=mime)
 ```
 
+
+### 从 curl_cffi 迁移（0.3.0 移除的关键字）
+
+本项目是 Chromium 后端的指纹客户端，不是 libcurl 的 drop-in。下列关键字**已删除**：
+传它们会得到 `TypeError`，不再「接受后拒绝」或「接受后忽略」。
+
+| 已移除 | 替代写法 | 为什么 |
+| --- | --- | --- |
+| `ja3=` / `akamai=` / `perk=` | `impersonate="chrome_<major>"` | TLS/H2 指纹由 profile 决定，ABI 塞不进 BoringSSL |
+| `extra_fp` 的 13 个字段 | 同上；只保留 `header_order`、`form_boundary` | 其余字段要么被 profile 冻结，要么在 Chrome 里不存在 |
+| `interface=` | 无 | Chromium 没有网卡绑定 |
+| `doh_url=` | `doh_template=` + `dns_secure_mode=2` | 后者才是 Core 真正实现的 DoH |
+| `curl_options=` | 无 | 没有 libcurl 选项表 |
+| `max_recv_speed=` | 无 | Chromium 自己管发送节奏 |
+| `thread=` / `debug=` | 无 | libcurl 句柄概念 |
+| `quote=` | 无 | URL 永远被 Chromium canonicalise + percent-encode |
+| `max_redirects=` | `allow_redirects=False`（单跳）；上限固定 20（`CHROMIUM_MAX_REDIRECTS`） | 参数只可能取 `None` |
+| `dns_over_tls=` / `dns_padding=` | 无（加密解析用 `doh_template`） | Chrome 桌面版没有 DoT，也没有 EDNS0 padding 控制 |
+| `referer=` | `headers={"Referer": ...}` | Core 把 Referer 头路由到 `URLRequest::SetReferrer` |
 ### 流式读写与分块上传
 
 ```python
@@ -512,8 +531,8 @@ Cookie 会按 URL 匹配后附加到握手上。
 | `params`、`data`、`json`、`content`、`files`、`multipart` | ✓ |
 | `headers`、`cookies`、`auth`、`timeout` | ✓ |
 | 删除 Core 自有的头（`User-Agent`、`Accept-Encoding` 等） | ✗ 抛 `UnsupportedFeature`；覆盖仍然可以 |
-| `dns_padding=True` | ✗ 抛 `UnsupportedFeature`；Chromium 没有任何 EDNS0 padding 控制，这个值曾经一路传到 `EngineOptions` 就断了（`core/source/engine.cc` 从不读它），调用方要求填充查询、实际发出未填充的，且没有任何提示 |
-| `dns_over_tls=True` | ✗ 抛 `UnsupportedFeature`；Chromium 桌面版没有 DoT 客户端，设了只会禁用内置解析器（`net/dns/dns_client.cc:168`）并静默退回系统解析，`dns_nameservers`/`doh_template` 全部失效。加密解析请用 `doh_template` + `dns_secure_mode=2` |
+| `dns_padding=` | ✗ **已移除**（`TypeError`）；Chromium 没有任何 EDNS0 padding 控制，这个值曾经一路传到 `EngineOptions` 就断了（`core/source/engine.cc` 从不读它），调用方要求填充查询、实际发出未填充的，且没有任何提示 |
+| `dns_over_tls=` | ✗ **已移除**（`TypeError`）；Chromium 桌面版没有 DoT 客户端，设了只会禁用内置解析器（`net/dns/dns_client.cc:168`）并静默退回系统解析，`dns_nameservers`/`doh_template` 全部失效。加密解析请用 `doh_template` + `dns_secure_mode=2` |
 | 设置 hop-by-hop 头（`Connection`、`Keep-Alive`、`TE`、`Trailer`、`Upgrade`、`Proxy-Connection`） | ✓ 默认丢弃并计入 `session.dropped_headers`（Chromium 拥有连接生命周期，h2/h3 上这些字段被协议禁止）；`header_policy="strict"` 时抛 `UnsupportedFeature` |
 | `timeout=(connect, read)` 两值不同 | ✗ 抛 `UnsupportedFeature`（ABI v11 只有一个期限）；两值相同可用 |
 | `proxies`、`proxy`、`proxy_auth`、`trust_env`、`NO_PROXY` | ✓ |
@@ -522,7 +541,7 @@ Cookie 会按 URL 匹配后附加到握手上。
 | `dns_nameservers`、`doh_template`、`dns_secure_mode`、`dns_rotate` | ✓ 只覆盖字段，不负责开启解析器——引擎**总是**用 Chromium 自带解析器（默认即查 DNS HTTPS 记录）；`doh_template` 缺 `dns_secure_mode` 抛错而不是被忽略。**实测**：`dns_nameservers` 指向本地 53 端口时服务端真的收到 A(1) 与 HTTPS(65) 两类查询；`doh_template` 指向 `127.0.0.1:1` 在 `dns_secure_mode=2` 下失败、在 `=1` 下回退到系统解析成功——这正是 secure 与 opportunistic 的区别 |
 | `platform`、`max_sockets_per_group`、`hsts_bypass`、`proxy_chain` | ✓ 都是引擎级、进 engine 缓存键；`platform` 同时决定 UA 组与 client hints |
 | `cert=("c.pem","k.pem")`、`cert="combined.pem"`、`set_client_certificate()` | ✓ 服务端发 CertificateRequest 时才出示，不影响 ClientHello 指纹 |
-| `allow_redirects`、`max_redirects`、`history`、最终 URL | ✓ |
+| `allow_redirects`、`history`、最终 URL | ✓（`max_redirects=` 已移除，上限固定 20） |
 | `stream=True`、`iter_content`、`iter_lines`、`raw` | ✓ |
 | `aiter_content`、`aiter_lines`、`atext`、`acontent`、`session.stream(...)` | ✓ |
 | `hooks={"response": ...}`、`prepare_request`、`send`、`mount`、自定义 adapter | ✓ |

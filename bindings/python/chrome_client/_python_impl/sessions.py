@@ -43,8 +43,7 @@ from .exceptions import (InvalidProxyURL, InvalidURL, ProxyError,
                          SSLError, Timeout, TooManyRedirects,
                          UnsupportedFeature, map_native_error)
 from .impersonate import (default_priority, normalize_http_version,
-                          normalize_impersonate, reject_fingerprint_overrides,
-                          validate_extra_fp)
+                          normalize_impersonate, validate_extra_fp)
 from .models import (PreparedRequest, Request, Response, AsyncResponse,
                      _headers_from_fields, _negotiated_http_version, compose_status_line,
                      ech_of, parse_raw_headers,
@@ -600,33 +599,6 @@ def _strip_core_overridden_headers(headers, keep_accept_language=False):
         # name recorded here is indistinguishable from one removed directly.
         kept._remove(name)
     return kept, stripped
-
-
-def _validate_max_redirects(value):
-    """Rejects every caller-supplied cap; Chromium owns the redirect limit.
-
-    ``net::URLRequest::kMaxRedirects`` is 20 and the Core installs no limit of
-    its own, so it is the only ceiling this build can honour. Lowering it is
-    not something ABI v8 can ask for, and the facade used to fake it by
-    re-issuing each hop from Python -- which reimplemented redirect semantics
-    in the binding layer, where they drifted from Chromium four ways:
-    ``Referrer-Policy`` was not applied, the previous hop Set-Cookie was not
-    sent, Response.redirect_count came back 0, and a 302 turned a PUT into a
-    GET although Chromium only rewrites POST.
-
-    The only accepted value is None, meaning Chromium own limit. Anything
-    else fails closed instead of following a different hop count than asked.
-    """
-    if value is None:
-        return None
-    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
-        raise ValueError("max_redirects must be a non-negative integer or None")
-    raise UnsupportedFeature(
-        "max_redirects=%d cannot be honoured: ABI v8 cannot lower Chromium's "
-        "%d-hop ceiling (net::URLRequest::kMaxRedirects), and re-issuing the "
-        "hops from Python would reimplement redirect semantics the Core owns. "
-        "Use allow_redirects=False for a single hop, or omit max_redirects to "
-        "accept Chromium's own limit." % (value, CHROMIUM_MAX_REDIRECTS))
 
 
 #: Schemes Chromium's rule parser accepts in a proxy URI, from
@@ -2146,18 +2118,18 @@ class BaseSession(object):
     def __init__(self, impersonate=None, proxy=None, proxies=None, proxy_auth=None,
                  verify=True, timeout=None, headers=None, cookies=None, params=None,
                  auth=None, cert=None, stream=False, hooks=None,
-                 max_redirects=None, trust_env=True,
+                 trust_env=True,
                  allow_redirects=True, max_response_bytes=None,
                  strip_authorization=False, take_body_buffers=False,
                  base_url=None,
-                 http_version=None, ja3=None, akamai=None, perk=None, extra_fp=None,
+                 http_version=None, extra_fp=None,
                  default_headers=True, default_encoding="utf-8",
                  discard_cookies=False, raise_for_status=False, retry=0, cache=True,
-                 user_agent=None, accept_language=None, interface=None, doh_url=None,
-                 max_recv_speed=0, curl_options=None, max_engines=DEFAULT_MAX_ENGINES,
+                 user_agent=None, accept_language=None,
+                 max_engines=DEFAULT_MAX_ENGINES,
                  response_class=None, host_mapping=None, dns_nameservers=None,
-                 doh_template=None, dns_secure_mode=None, dns_over_tls=False,
-                 dns_rotate=False, dns_padding=False, hsts_bypass=None,
+                 doh_template=None, dns_secure_mode=None,
+                 dns_rotate=False, hsts_bypass=None,
                  proxy_chain=None, platform="auto", max_sockets_per_group=0,
                  header_policy=None):
         """Configures defaults shared by requests made through this session.
@@ -2166,24 +2138,14 @@ class BaseSession(object):
         pin ``v1``, ``v2`` or ``v3``, and ``proxy``/``proxies`` select the route.
         ``verify`` accepts a boolean or CA bundle path; ``timeout`` accepts one
         deadline or a ``(connect, read)`` pair. Request methods may override these
-        defaults for one call. Compatibility-only options unsupported by ABI v8
-        raise ``UnsupportedFeature`` instead of being silently ignored.
+        defaults for one call.
 
-        ``max_redirects`` must stay ``None``: Chromium's 20-hop ceiling is the only
-        limit this build can honour, and ABI v8 exposes no way to lower it. A
-        numeric cap raises ``UnsupportedFeature`` rather than re-issuing the hops
-        from Python, which would put redirect semantics in the binding layer where
-        they would drift from Chromium's.
+        Options curl_cffi and libcurl accept that this Core cannot honour are not
+        parameters any more: `ja3`/`akamai`/`perk`, `interface`, `doh_url`, `curl_options`,
+        `max_recv_speed`, `max_redirects`, `dns_over_tls` and `dns_padding` were removed, so an
+        unknown keyword raises `TypeError` instead of being accepted and then
+        ignored. docs/COMPATIBILITY_BOUNDARY.md lists the replacement for each.
         """
-        reject_fingerprint_overrides(ja3, akamai, perk)
-        for name, value in (("interface", interface), ("doh_url", doh_url),
-                            ("curl_options", curl_options)):
-            if value:
-                raise UnsupportedFeature(
-                    "%s= is not supported: ABI v11 exposes no Core setting for it" % name)
-        if max_recv_speed:
-            raise UnsupportedFeature(
-                "max_recv_speed= is not supported: Chromium owns transfer pacing")
         self.header_order, self.form_boundary = validate_extra_fp(extra_fp)
 
         self.impersonate = normalize_impersonate(impersonate)
@@ -2208,45 +2170,8 @@ class BaseSession(object):
         self.dns_nameservers = normalize_dns_nameservers(dns_nameservers)
         self.doh_template, self.dns_secure_mode = normalize_doh(
             doh_template, dns_secure_mode)
-        # `dns_over_tls` is REFUSED, not honoured, and this is the one option
-        # in this group where accepting it was worse than rejecting it.
-        #
-        # Chromium desktop has no DoT client at all: `net/dns/` contains only a
-        # plaintext TCP attempt, no `dns_over_tls_hostname` consumer, and no
-        # 853 anywhere. `DnsConfig::dns_over_tls_active` is not a transport
-        # selector -- it is a gate that makes
-        # `DnsClient::CanUseInsecureDnsTransactions` return false
-        # (net/dns/dns_client.cc:168), so the built-in resolver declines every
-        # job and TaskType::SYSTEM answers instead.
-        #
-        # Measured before this refusal: with `dns_nameservers` pointed at a
-        # local UDP port, `dns_over_tls=False` delivered 4 queries (A and
-        # HTTPS); `dns_over_tls=True` delivered 0 on UDP *and* 0 on TCP, while
-        # the request still returned 200 from the system resolver. The caller
-        # asked for an encrypted resolver and silently got the plaintext system
-        # one, with `dns_nameservers` dropped -- exactly the silent ignore
-        # AGENTS section 8 forbids.
-        if dns_over_tls:
-            raise UnsupportedFeature(
-                "dns_over_tls= is not supported: Chromium's desktop build has "
-                "no DNS-over-TLS client. Setting it only disables the built-in "
-                "resolver (net/dns/dns_client.cc:168), so the request would "
-                "fall back to the system resolver and silently ignore "
-                "dns_nameservers/doh_template. Use doh_template= with "
-                "dns_secure_mode=2 for an encrypted resolver.")
         self.dns_over_tls = False
         self.dns_rotate = bool(dns_rotate)
-        # Refused for the same reason dns_over_tls is: Chromium has no EDNS0
-        # padding control at all. The option used to travel from here into
-        # EngineOptions and stop -- core/source/engine.cc never read it -- so a
-        # caller who asked for padded queries silently got unpadded ones.
-        if dns_padding:
-            raise UnsupportedFeature(
-                "dns_padding= is not supported: Chromium exposes no EDNS0 "
-                "padding control, and net/dns/ has no option for it. The value "
-                "used to reach EngineOptions and stop there, so the queries "
-                "were sent unpadded with no error. Removing the option here "
-                "is what makes that visible.")
         self.dns_padding = False
         self.hsts_bypass = normalize_hsts_bypass(hsts_bypass)
         # The ABI rejects both at once (core/abi/minicronet.h: proxy_chain and
@@ -2283,7 +2208,6 @@ class BaseSession(object):
         #: so accepting 30 would promise a limit that never holds. None means
         #: "no caller cap"; an explicit value at or above 20 raises from
         #: _validate_max_redirects rather than being clamped to 20.
-        self.max_redirects = _validate_max_redirects(max_redirects)
         # Each of these is documented as a flag with a True/False default, never
         # None. bool(None) is False, so an explicit None silently SELECTED the
         # off state -- measured: cache=None disabled the HTTP cache, and
@@ -3891,42 +3815,12 @@ class BaseSession(object):
         values.pop("self", None)
         method = values.pop("method")
         url = values.pop("url")
-        reject_fingerprint_overrides(values.get("ja3"), values.get("akamai"),
-                                     values.get("perk"))
-        for name in ("interface", "doh_url", "curl_options", "thread", "debug"):
-            if values.get(name):
-                raise UnsupportedFeature(
-                    "%s= is not supported: ABI v11 exposes no Core setting for it" % name)
-        if values.get("max_recv_speed"):
-            raise UnsupportedFeature(
-                "max_recv_speed= is not supported: Chromium owns transfer pacing")
-        # `quote` is a curl_cffi parity keyword that this facade accepted and
-        # then never read: the value was copied onto the PreparedRequest and
-        # dropped, so `quote=False` percent-encoded the URL anyway. That is the
-        # silent ignore AGENTS.md section 8 forbids, and the stub documented the
-        # opposite (`False` skips percent-encoding the URL). The Core always
-        # percent-encodes -- Chromium canonicalises the URL -- so the only honest
-        # answer for a caller asking for something else is a refusal.
-        # `quote=None` and `quote=True` describe what already happens.
-        if values.get("quote") is False:
-            raise UnsupportedFeature(
-                "quote=False is not supported: Chromium canonicalises and "
-                "percent-encodes the URL itself, and the ABI has no switch for "
-                "it. The value used to be accepted and ignored, so the URL was "
-                "encoded anyway. Pass the URL already percent-encoded.")
         header_order, form_boundary = self.header_order, self.form_boundary
         if values.get("extra_fp") is not None:
             header_order, form_boundary = validate_extra_fp(values["extra_fp"])
 
         headers = values.get("headers")
         headers = Headers(headers) if headers is not None else None
-        # Referer is honoured: the Core routes it to URLRequest::SetReferrer
-        # (core/source/request.cc), so it goes out like a real Chrome's. Merge
-        # the keyword first and let an explicit header win, mirroring how
-        # accept_encoding is handled below.
-        if values.get("referer") is not None:
-            headers = headers if headers is not None else Headers()
-            headers.setdefault("Referer", values["referer"])
         if values.get("accept_encoding") is not None:
             headers = headers if headers is not None else Headers()
             headers["Accept-Encoding"] = values["accept_encoding"]
@@ -3956,16 +3850,12 @@ class BaseSession(object):
             auth=values.get("auth"), cookies=values.get("cookies"),
             hooks=values.get("hooks"),
         )
-        request.quote = values.get("quote")
         request.header_order = header_order
         _reject_core_owned_removals(request.headers)
         self._check_header_policy(request.headers)
         allow_redirects = self.allow_redirects \
             if values.get("allow_redirects") is None \
             else bool(values.get("allow_redirects"))
-        effective_max = self.max_redirects \
-            if values.get("max_redirects") is None \
-            else _validate_max_redirects(values.get("max_redirects"))
         stream = values.get("stream")
         limit = values.get("max_response_bytes")
         options = {
@@ -3997,7 +3887,6 @@ class BaseSession(object):
                                   if values.get("impersonate") is not None
                                   else self.impersonate),
             "allow_redirects": bool(allow_redirects),
-            "max_redirects": effective_max,
             "retry": RetryStrategy.coerce(values["retry"])
             if values.get("retry") is not None else None,
             "default_encoding": values.get("default_encoding"),
@@ -4077,8 +3966,6 @@ class BaseSession(object):
             # spelling ``allow_redirects=``; it used to be dropped on the floor
             # here, so the resolved policy always came out of the session.
             resolved["allow_redirects"] = self.allow_redirects
-        if resolved.get("max_redirects") is None:
-            resolved["max_redirects"] = self.max_redirects
         return resolved
 
 
@@ -4153,12 +4040,11 @@ class Session(BaseSession):
                 files=None, auth=None, timeout=None, allow_redirects=None, proxies=None,
                 hooks=None, stream=None, verify=None, cert=None, json=None,
                 content=None, multipart=None, impersonate=None, proxy=None,
-                http_version=None, max_redirects=None, max_response_bytes=None,
-                referer=None, accept_encoding=None, default_encoding=None,
+                http_version=None, max_response_bytes=None,
+                accept_encoding=None, default_encoding=None,
                 discard_cookies=None, retry=None, cache_mode=None, priority=None,
-                ja3=None, akamai=None, perk=None, extra_fp=None, content_callback=None,
-                raise_for_status=None, quote=None, curl_options=None, interface=None,
-                doh_url=None, max_recv_speed=None, thread=None, debug=None):
+                extra_fp=None, content_callback=None,
+                raise_for_status=None):
         """Sends one request and returns a :class:`Response`.
 
         Session defaults are used when an option is ``None``. ``params`` appends
@@ -4585,15 +4471,15 @@ class AsyncSession(BaseSession):
     def __init__(self, impersonate=None, proxy=None, proxies=None, proxy_auth=None,
                  verify=True, timeout=None, headers=None, cookies=None, params=None,
                  auth=None, cert=None, stream=False, hooks=None,
-                 max_redirects=None, trust_env=True,
+                 trust_env=True,
                  allow_redirects=True, max_response_bytes=None,
                  strip_authorization=False, take_body_buffers=False,
                  base_url=None,
-                 http_version=None, ja3=None, akamai=None, perk=None, extra_fp=None,
+                 http_version=None, extra_fp=None,
                  default_headers=True, default_encoding="utf-8",
                  discard_cookies=False, raise_for_status=False, retry=0, cache=True,
-                 user_agent=None, accept_language=None, interface=None, doh_url=None,
-                 max_recv_speed=0, curl_options=None, max_engines=DEFAULT_MAX_ENGINES,
+                 user_agent=None, accept_language=None,
+                 max_engines=DEFAULT_MAX_ENGINES,
                  response_class=None, max_clients=None,
                  # Everything below was appended AFTER max_clients on purpose:
                  # this constructor has no keyword-only marker, so a parameter
@@ -4603,28 +4489,25 @@ class AsyncSession(BaseSession):
                  # -- a working call -- started binding 8 to host_mapping and
                  # raised "host_mapping accepts a rule string ... not 8".
                  host_mapping=None, dns_nameservers=None,
-                 doh_template=None, dns_secure_mode=None, dns_over_tls=False,
-                 dns_rotate=False, dns_padding=False, hsts_bypass=None,
+                 doh_template=None, dns_secure_mode=None,
+                 dns_rotate=False, hsts_bypass=None,
                  proxy_chain=None, platform="auto", max_sockets_per_group=0,
                  header_policy=None):
         BaseSession.__init__(
             self, impersonate=impersonate, proxy=proxy, proxies=proxies,
             proxy_auth=proxy_auth, verify=verify, timeout=timeout, headers=headers,
             cookies=cookies, params=params, auth=auth, cert=cert, stream=stream,
-            hooks=hooks, max_redirects=max_redirects, trust_env=trust_env,
+            hooks=hooks, trust_env=trust_env,
             allow_redirects=allow_redirects, max_response_bytes=max_response_bytes,
-            base_url=base_url, http_version=http_version, ja3=ja3,
-            akamai=akamai, perk=perk, extra_fp=extra_fp,
+            base_url=base_url, http_version=http_version, extra_fp=extra_fp,
             default_headers=default_headers, default_encoding=default_encoding,
             discard_cookies=discard_cookies, raise_for_status=raise_for_status,
             retry=retry, cache=cache, user_agent=user_agent,
-            accept_language=accept_language, interface=interface, doh_url=doh_url,
-            max_recv_speed=max_recv_speed, curl_options=curl_options,
+            accept_language=accept_language,
             max_engines=max_engines, response_class=response_class,
             host_mapping=host_mapping, dns_nameservers=dns_nameservers,
             doh_template=doh_template, dns_secure_mode=dns_secure_mode,
-            dns_over_tls=dns_over_tls, dns_rotate=dns_rotate,
-            dns_padding=dns_padding, hsts_bypass=hsts_bypass,
+            dns_rotate=dns_rotate, hsts_bypass=hsts_bypass,
             proxy_chain=proxy_chain, platform=platform,
             max_sockets_per_group=max_sockets_per_group,
             header_policy=header_policy,
@@ -4646,13 +4529,11 @@ class AsyncSession(BaseSession):
                       allow_redirects=None, proxies=None, hooks=None, stream=None,
                       verify=None, cert=None, json=None, content=None, multipart=None,
                       impersonate=None, proxy=None, http_version=None,
-                      max_redirects=None, max_response_bytes=None, referer=None,
+                      max_response_bytes=None,
                       accept_encoding=None, default_encoding=None,
                       discard_cookies=None, retry=None, cache_mode=None, priority=None,
-                      ja3=None, akamai=None, perk=None, extra_fp=None,
-                      content_callback=None, raise_for_status=None, quote=None,
-                      curl_options=None, interface=None, doh_url=None,
-                      max_recv_speed=None, thread=None, debug=None):
+                      extra_fp=None,
+                      content_callback=None, raise_for_status=None):
         request, options = self._prepare_call(locals())
         return await self.send(self.prepare_request(request), **options)
 
