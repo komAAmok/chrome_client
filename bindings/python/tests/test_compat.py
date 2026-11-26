@@ -1951,6 +1951,27 @@ class NativeModuleSelectionTests(unittest.TestCase):
         self.assertIs(sys.modules.get(loaded.__name__), loaded)
         self.assertEqual(loaded.abi_version, chrome_client.abi_version())
 
+class _BareCookieHandler(BaseHTTPRequestHandler):
+    """Sends the Set-Cookie spelling that broke a real crawl.
+
+    ``Set-Cookie: JSESSIONID`` is a bare name with no "="; cookielib stores it
+    with ``value=None`` while the Core store takes a string.
+    """
+
+    protocol_version = "HTTP/1.1"
+
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Set-Cookie", "JSESSIONID")
+        self.send_header("Set-Cookie", "sid=abc; Path=/")
+        self.send_header("Content-Length", "2")
+        self.end_headers()
+        self.wfile.write(b"ok")
+
+    def log_message(self, *args):
+        return
+
+
 class HopByHopHeaderTests(unittest.TestCase):
     """Fields only the connection layer can honour must fail, not be ignored."""
 
@@ -2023,6 +2044,27 @@ class HopByHopHeaderTests(unittest.TestCase):
         self.assertEqual(_ECHOED[-1].get("X-Signature"), "deadbeef")
         self.assertEqual(_ECHOED[-1].get("X-Unlisted"), "y")
         self.assertEqual(dropped, {})
+
+    def test_a_bare_name_set_cookie_does_not_fail_the_request(self):
+        """Reported from a real crawl: ``Set-Cookie: JSESSIONID`` (a bare name,
+        no "=") made cookielib store ``value=None``, and the ABI write raised
+        "argument 'value': 'NoneType' object cannot be converted to 'PyString'".
+        The response had already arrived, so the request was lost to a cookie
+        spelling RFC 6265 section 5.4 defines as an empty value."""
+        server = ThreadingHTTPServer(("127.0.0.1", 0), _BareCookieHandler)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        base = "http://127.0.0.1:%d/" % server.server_address[1]
+        try:
+            with chrome_client.Session() as session:
+                response = session.get(base)
+                self.assertEqual(response.status_code, 200)
+                stored = [(cookie.name, cookie.value) for cookie in session.cookies]
+        finally:
+            server.shutdown()
+            server.server_close()
+        self.assertIn(("JSESSIONID", ""), stored,
+                      "a valueless cookie must be stored as an empty value, "
+                      "which is what a browser sends and what the Core store holds")
 
     def test_profile_policy_reproduces_the_capture_exactly(self):
         """The only policy that answers "does this look like Chrome N?"."""

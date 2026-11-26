@@ -633,8 +633,17 @@ class EngineSlot(object):
             source_url: The URL the cookie came from.
         """
         expires = cookie.expires
+        # ``cookielib`` stores ``value=None`` for a Set-Cookie line that is a bare
+        # name with no "=", which RFC 6265 section 5.4 reads as an empty value and
+        # which a browser therefore sends as ``name=``. The ABI takes a string, so
+        # None has to become "" here rather than at the store: measured against a
+        # server that sends ``Set-Cookie: JSESSIONID`` (a session id handed out
+        # with no value), forwarding None raised
+        # "argument 'value': 'NoneType' object cannot be converted to 'PyString'"
+        # and the whole request failed even though the response had arrived.
         self.set_cookie(
-            (cookie.name, cookie.value, cookie.domain or "", cookie.path or "/",
+            (cookie.name or "", cookie.value or "", cookie.domain or "",
+             cookie.path or "/",
              expires, cookie.secure, cookie.has_nonstandard_attr("HttpOnly"),
              (cookie._rest.get("SameSite", "") if isinstance(
                  getattr(cookie, "_rest", None), dict) else "")),

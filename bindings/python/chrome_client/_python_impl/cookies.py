@@ -310,6 +310,14 @@ class RequestsCookieJar(cookielib.CookieJar, MutableMapping):
         :meth:`_retire_replaced`; that is the difference between "the server told
         me" and "I am setting this".
         """
+        # A Set-Cookie line that is a bare name (no "=") is stored by
+        # cookielib as value=None. RFC 6265 section 5.4 reads that as an empty
+        # value, a browser sends "name=", and the Core store does exactly that --
+        # so leaving None in the jar made the two disagree and the wire carried
+        # the cookie twice (measured: "Cookie: JSESSIONID; sid=abc; JSESSIONID=").
+        # Coercing here keeps the jar and the store describing one cookie.
+        if cookie.value is None:
+            cookie.value = ""
         if hasattr(cookie.value, "startswith") and cookie.value.startswith('"') \
                 and cookie.value.endswith('"'):
             cookie.value = cookie.value.replace('\\"', "").strip('"')
