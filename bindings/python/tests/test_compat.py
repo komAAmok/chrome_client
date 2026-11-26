@@ -1988,6 +1988,40 @@ class HopByHopHeaderTests(unittest.TestCase):
             with self.assertRaises(chrome_client.UnsupportedFeature):
                 session.get(self.base, headers={"Connection": None})
 
+    def test_profile_policy_reproduces_the_capture_exactly(self):
+        """The only policy that answers "does this look like Chrome N?"."""
+        import json
+        import pathlib
+        captured = (pathlib.Path(__file__).resolve().parents[3] / "profiles"
+                    / "chrome_155" / "h1" / "captures.json")
+        want = [line.split(":", 1)[0].strip()
+                for line in json.loads(captured.read_text().splitlines()[0])
+                ["http1"]["headers"]]
+        with chrome_client.Session(impersonate="chrome_155",
+                                   header_policy="profile") as session:
+            session.get(self.base, headers={"X-Trace": "1", "X-Second": "2"})
+            dropped = dict(session.dropped_headers)
+        echoed = list(_ECHOED[-1].keys())
+        self.assertEqual(echoed, want,
+                         "the wire block must be the capture, in capture order")
+        self.assertEqual(dropped.get("x-trace"), 1)
+        self.assertEqual(dropped.get("x-second"), 1)
+
+    def test_profile_policy_keeps_no_field_an_old_release_did_not_send(self):
+        """A modern hint on a release that predates it is the defect this
+        policy exists for: chrome_86 has no sec-ch-ua at all."""
+        with chrome_client.Session(impersonate="chrome_86",
+                                   header_policy="profile") as session:
+            session.get(self.base, headers={"sec-ch-ua": "leak"})
+            dropped = dict(session.dropped_headers)
+        self.assertIsNone(_ECHOED[-1].get("sec-ch-ua"))
+        self.assertEqual(dropped.get("sec-ch-ua"), 1)
+
+    def test_profile_policy_refuses_a_session_that_claims_no_profile(self):
+        with chrome_client.Session(header_policy="profile") as session:
+            with self.assertRaises(chrome_client.UnsupportedFeature):
+                session.get(self.base)
+
     def test_a_caller_transfer_encoding_never_reaches_the_wire(self):
         """Reverses a decision that was pinned the other way for requests parity.
 

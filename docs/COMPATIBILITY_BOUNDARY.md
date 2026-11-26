@@ -1075,3 +1075,44 @@ An engine is torn down with its `Session`: `close()` is the intended path and
 Chromium `URLRequestContext` resident -- measured, thirty unclosed sessions hold
 about 6 MiB and six descriptors against a flat baseline for closed ones -- so
 use `with Session(...)` or call `close()`.
+
+### `header_policy="profile"`: the profile's own block, and nothing else
+
+The three policies above decide what to do with a field Chromium cannot honour.
+This one answers a different question -- *does this request look like Chrome of
+version N* -- so it is built on the profile's capture instead of on a rule table:
+
+```python
+session = Session(impersonate="chrome_86", header_policy="profile")
+session.get(url, headers={"sec-ch-ua": "leak", "User-Agent": "mine"})
+session.dropped_headers      # {'sec-ch-ua': 1}
+```
+
+Two conditions decide survival, both from the evidence rather than from taste:
+
+| condition | source |
+| --- | --- |
+| the name is in that profile's capture | `profiles/chrome_<major>/h1/captures.json`, six connections per release, identical order in all six |
+| the Core can write it | `mn_header_disposition` `MN_HEADER_FLAG_SETTABLE` |
+
+Measured against the captures, the resulting block is the capture **exactly** --
+same names, same order, nothing added:
+
+| profile | captured fields | wire fields | extra |
+| --- | --- | --- | --- |
+| `chrome_86` | 11 | 11 | 0 |
+| `chrome_90` | 13 | 13 | 0 |
+| `chrome_99` .. `chrome_158` | 14 | 14 | 0 |
+
+`chrome_86` has no `sec-ch-ua` at all, and no `sec-ch-ua-platform`; `chrome_90` has
+the first two hints but not the third. A session pinned to those releases under
+this policy therefore cannot leak a modern hint, which is the case the policy was
+added for. A name the capture *does* carry keeps the caller's value, so
+`headers={"User-Agent": ...}` still works and the rest of the block stays.
+
+Ordering needs no work here: `PreparedRequest.wire_headers` sorts by the capture
+order, and Chromium inserts `Host` / `Connection` / `Content-Length` before
+merging the extra headers, which is the order the capture itself shows.
+
+A session with `impersonate=None` has no capture, so this policy raises
+`UnsupportedFeature` rather than inventing a set.

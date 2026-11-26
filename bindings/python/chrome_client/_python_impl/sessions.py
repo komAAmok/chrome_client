@@ -288,6 +288,13 @@ _WIRE_PREFIX = (
 #: call-forwards-to-Core path to offer.
 #: `"drop"`: those six plus the five fields Chromium overwrites or owns.
 #:
+#: `"profile"`: keeps only the fields that profile's own capture carries and that
+#: the Core can write, in capture order. A name in the capture keeps the caller's
+#: value (so User-Agent or Accept can be overridden without losing the block); a
+#: name the capture does not carry is removed and counted. This is the policy
+#: that answers "does this request look like Chrome of version N", and it needs
+#: a pinned profile: with none there is no set to keep, and it raises.
+#:
 #: The ABI's own zero value is MN_HEADER_POLICY_REJECT, which binds callers that
 #: drive mn_request_create directly (Go/Node/C). This default is a policy choice
 #: of the Python binding, and the value is passed explicitly on every request.
@@ -296,10 +303,10 @@ _DEFAULT_HEADER_POLICY = {}
 
 
 def _normalize_header_policy(value):
-    if value not in ("compat", "strict", "drop"):
+    if value not in ("compat", "strict", "drop", "profile"):
         raise ValueError(
-            "header_policy must be 'compat', 'strict' or 'drop', not %r"
-            % (value,))
+            "header_policy must be 'compat', 'strict', 'drop' or 'profile', "
+            "not %r" % (value,))
     return value
 
 
@@ -377,6 +384,84 @@ def _check_header_policy(headers, policy):
         "protocol. This session asked for header_policy='strict'; the default "
         "drops these fields and counts them in dropped_headers."
         % (", ".join(offending),))
+
+
+def _profile_header_names(profile):
+    """Lower-cased names one profile's own capture carries, in capture order.
+
+    The set is not written here: it is ``profiles/chrome_<major>/h1/
+    captures.json``, six independent connections per release whose header order
+    is identical in all six, which is also what :func:`browser_headers` uses for
+    the values. A release that predates ``sec-ch-ua`` simply has fewer names,
+    which is the point -- 86 through 98 carry a smaller set than 158 and the
+    policy must reproduce that rather than a modern superset.
+
+    Args:
+        profile: A ``chrome_<major>`` name, or ``None``.
+
+    Returns:
+        Lower-cased names in capture order, or an empty tuple when the profile
+        is not pinned.
+    """
+    order = browser_header_order(profile) or []
+    return tuple(name.lower() for name in order)
+
+
+def _apply_profile_policy(headers, profile, sink):
+    """Keeps only the headers that profile's capture carries and can be written.
+
+    Two conditions, both required, so the surviving block is exactly what that
+    Chrome release sends plus the fields Chromium inserts itself:
+
+    * the name appears in that profile's capture (so ``X-Trace`` and a modern
+      ``sec-ch-ua`` on a release that had none are removed), and
+    * the Core can write it (so ``Connection``, which the capture shows but which
+      is Chromium's to insert, is not a caller field).
+
+    A name in both sets is **kept with the caller's value**: that is what makes
+    a per-request ``User-Agent`` or ``Accept`` usable without losing the rest of
+    the block. Order is untouched -- ``PreparedRequest.wire_headers`` sorts by
+    the capture order and Chromium inserts Host/Connection before merging -- so
+    no extra field and no reordering can come from here.
+
+    Args:
+        headers: The prepared request headers, or None.
+        profile: The effective ``chrome_<major>`` name.
+        sink: A mutable mapping counting what was removed, by lower-cased name.
+
+    Returns:
+        The headers to send: the same object when everything survives, otherwise
+        a copy without the removed names.
+
+    Raises:
+        UnsupportedFeature: No pinned profile is in play, so there is no set to
+            keep and the policy cannot answer its own question.
+    """
+    allowed = _profile_header_names(profile)
+    if not allowed:
+        raise UnsupportedFeature(
+            "header_policy='profile' keeps exactly the headers one profile's own "
+            "capture carries; %r is not a pinned profile, so there is no set to "
+            "keep. Pass impersonate='chrome_<major>' or use header_policy="
+            "'compat'." % (profile,))
+    if headers is None:
+        return headers
+    allowed_set = set(allowed)
+    kept = Headers()
+    removed = 0
+    for name, value in headers.multi_items():
+        lowered = name.lower()
+        ## Both conditions: in the capture, and writable by the Core.
+        if lowered in allowed_set and _header_flags(name) & _HEADER_SETTABLE:
+            kept.add(name, value)
+            continue
+        sink[lowered] = sink.get(lowered, 0) + 1
+        removed += 1
+    if not removed:
+        return headers
+    for name in headers.deleted_names:
+        kept._remove(name)
+    return kept
 
 
 def _apply_header_policy(headers, policy, sink):
@@ -2357,6 +2442,38 @@ class BaseSession(object):
         """
         _check_header_policy(headers, self.header_policy)
 
+    def _request_profile(self, request, options=None):
+        """Returns the profile a request will run under.
+
+        Three sources, highest first: what prepare_request stamped on the
+        request, the per-call ``impersonate=`` the options carry, and the
+        session's own. A PreparedRequest built by hand and handed to send() has
+        none of the first two, which is why the session value is a fallback
+        rather than the only source.
+
+        Args:
+            request: The prepared request.
+            options: The resolved call options, or None.
+
+        Returns:
+            A ``chrome_<major>`` name, or None.
+        """
+        return (getattr(request, "impersonate", None)
+                or (options or {}).get("impersonate")
+                or self.impersonate)
+
+    def _apply_profile_policy(self, headers, profile):
+        """Applies ``header_policy="profile"`` to one request.
+
+        Args:
+            headers: The prepared request headers, or None.
+            profile: The profile this request runs under, or None.
+
+        Returns:
+            The headers to send.
+        """
+        return _apply_profile_policy(headers, profile, self._dropped_headers)
+
     def _apply_header_policy(self, headers):
         """Returns the headers to send after the session's policy is applied.
 
@@ -4090,7 +4207,13 @@ class Session(BaseSession):
                 timeout=options.get("timeout"), verify=options.get("verify", True),
                 cert=options.get("cert"), proxies=options.get("proxies"))
         self._check_header_policy(request.headers)
-        request.headers = self._apply_header_policy(request.headers)
+        if self.header_policy == "profile":
+            # The allowed set is per request: impersonate= may be a per-call
+            # override, and a hand-built PreparedRequest carries nothing.
+            request.headers = self._apply_profile_policy(
+                request.headers, self._request_profile(request, options))
+        else:
+            request.headers = self._apply_header_policy(request.headers)
         retry = options.get("retry") or self.retry
         attempt = 0
         proxy_attempt = 0
@@ -4571,7 +4694,13 @@ class AsyncSession(BaseSession):
             raise ValueError("You can only send PreparedRequests")
         options = self._with_session_defaults(options)
         self._check_header_policy(request.headers)
-        request.headers = self._apply_header_policy(request.headers)
+        if self.header_policy == "profile":
+            # The allowed set is per request: impersonate= may be a per-call
+            # override, and a hand-built PreparedRequest carries nothing.
+            request.headers = self._apply_profile_policy(
+                request.headers, self._request_profile(request, options))
+        else:
+            request.headers = self._apply_header_policy(request.headers)
         retry = options.get("retry") or self.retry
         attempt = 0
         proxy_attempt = 0
