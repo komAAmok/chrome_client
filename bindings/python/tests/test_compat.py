@@ -2099,6 +2099,33 @@ class HopByHopHeaderTests(unittest.TestCase):
                          "the cookielib spelling is a different cookie and "
                          "would be sent a second time")
 
+    def test_send_does_not_rewrite_the_callers_prepared_request(self):
+        """A prepared request is the caller's object; sending must not edit it.
+
+        Measured before this fix: the policy assigned the filtered set back onto
+        the request the caller owned, so after one send the caller's own
+        PreparedRequest no longer held X-Sig and a second send went out without
+        it. ``requests`` never mutates a request it sends, and ``_discard_config``
+        already worked on a copy for the same reason."""
+        for policy, allow in (("profile", ["X-Sig"]), ("compat", None)):
+            with chrome_client.Session(impersonate="chrome_155",
+                                       header_policy=policy,
+                                       header_allow=allow) as session:
+                prepared = session.prepare_request(
+                    chrome_client.Request("GET", self.base,
+                                          headers={"X-Sig": "1"}))
+                before = sorted(prepared.headers.keys())
+                session.send(prepared)
+                first = _ECHOED[-1].get("X-Sig")
+                after = sorted(prepared.headers.keys())
+                session.send(prepared)
+                second = _ECHOED[-1].get("X-Sig")
+            self.assertEqual(before, after,
+                             "%s policy rewrote the caller's request" % policy)
+            self.assertEqual(first, "1")
+            self.assertEqual(second, "1",
+                             "%s policy: the second send lost the header" % policy)
+
     def test_profile_policy_reproduces_the_capture_exactly(self):
         """The only policy that answers "does this look like Chrome N?"."""
         import json

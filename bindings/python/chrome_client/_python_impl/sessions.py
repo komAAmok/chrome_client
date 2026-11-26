@@ -4269,13 +4269,22 @@ class Session(BaseSession):
                 timeout=options.get("timeout"), verify=options.get("verify", True),
                 cert=options.get("cert"), proxies=options.get("proxies"))
         self._check_header_policy(request.headers)
+        # Apply the policy to a COPY. ``send()`` takes a PreparedRequest the
+        # caller owns and may reuse, and assigning the filtered set back onto it
+        # rewrote that object: measured, a caller who prepared once and sent
+        # twice lost X-Sig from their own request after the first send, and the
+        # second send went out without it. ``requests`` never mutates a request
+        # it sends. ``_discard_config`` already works on a copy for the same
+        # reason; this is the same rule applied to the header policy.
+        effective = request.copy()
         if self.header_policy == "profile":
             # The allowed set is per request: impersonate= may be a per-call
             # override, and a hand-built PreparedRequest carries nothing.
-            request.headers = self._apply_profile_policy(
-                request.headers, self._request_profile(request, options))
+            effective.headers = self._apply_profile_policy(
+                effective.headers, self._request_profile(effective, options))
         else:
-            request.headers = self._apply_header_policy(request.headers)
+            effective.headers = self._apply_header_policy(effective.headers)
+        request = effective
         retry = options.get("retry") or self.retry
         attempt = 0
         proxy_attempt = 0
@@ -4757,13 +4766,22 @@ class AsyncSession(BaseSession):
             raise ValueError("You can only send PreparedRequests")
         options = self._with_session_defaults(options)
         self._check_header_policy(request.headers)
+        # Apply the policy to a COPY. ``send()`` takes a PreparedRequest the
+        # caller owns and may reuse, and assigning the filtered set back onto it
+        # rewrote that object: measured, a caller who prepared once and sent
+        # twice lost X-Sig from their own request after the first send, and the
+        # second send went out without it. ``requests`` never mutates a request
+        # it sends. ``_discard_config`` already works on a copy for the same
+        # reason; this is the same rule applied to the header policy.
+        effective = request.copy()
         if self.header_policy == "profile":
             # The allowed set is per request: impersonate= may be a per-call
             # override, and a hand-built PreparedRequest carries nothing.
-            request.headers = self._apply_profile_policy(
-                request.headers, self._request_profile(request, options))
+            effective.headers = self._apply_profile_policy(
+                effective.headers, self._request_profile(effective, options))
         else:
-            request.headers = self._apply_header_policy(request.headers)
+            effective.headers = self._apply_header_policy(effective.headers)
+        request = effective
         retry = options.get("retry") or self.retry
         attempt = 0
         proxy_attempt = 0
