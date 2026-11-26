@@ -1152,3 +1152,30 @@ session.dropped_headers      # {'x-other': 1}
 `header_allow` 属性上可读。它不能放宽 `compat` 之外任何策略的移除规则，也不影响顺序——顺序
 仍由抓包决定，放行的字段落在抓包字段之后，因为 Chromium 的 `MergeFrom(extra_headers)` 就是
 在那里追加的。
+
+### 无名 cookie：`Set-Cookie: JSESSIONID` 是 (name="", value="JSESSIONID")
+
+这一行不是「名字为 JSESSIONID、值为空」。Chromium 的解析器在第一个 pair 没有 `=` 时，把整段
+当作**值**、把名字留空（`net/cookies/parsed_cookie.cc:600-607`，注释写明 *treat single
+values as a value with an empty name*），序列化时无名 cookie 不带前导 `=`
+（`net/cookies/canonical_cookie.cc:133-135`）。所以真实 Chrome 存的是
+`("", "JSESSIONID")`，发出去是 `Cookie: JSESSIONID`。
+
+Python 标准库的做法不同：`http.cookiejar` 存成 `name="JSESSIONID", value=None`。这是**另一个
+cookie**，于是它和 Core 里那条并存，线上出现过两次：
+
+```
+修复前   Cookie: JSESSIONID; sid=abc; JSESSIONID=
+修复后   Cookie: JSESSIONID; sid=abc
+```
+
+修复落在 jar 的写入点（`RequestsCookieJar.set_cookie`）：`value is None` 时把它改写成
+`name="", value=<token>`。这样 jar 与 Core store 描述同一个 cookie，重复不再可能出现。
+实测（裸 socket 抓字节）：
+
+| 服务端 | jar | 线上 |
+| --- | --- | --- |
+| `Set-Cookie: JSESSIONID` | `('', 'JSESSIONID')` | `Cookie: JSESSIONID; sid=abc` |
+| `Set-Cookie: JSESSIONID=` | `('JSESSIONID', '')` | `Cookie: JSESSIONID=; sid=abc` |
+
+两种拼写在 Chromium 里本就是两个不同的 cookie，这里如实保留了这个区别，没有合并。

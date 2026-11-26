@@ -1961,6 +1961,9 @@ class _BareCookieHandler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
     def do_GET(self):
+        # Recorded the same way _EchoHeaderHandler does, so a test can assert on
+        # the Cookie line this server actually received.
+        _ECHOED.append({name: value for name, value in self.headers.items()})
         self.send_response(200)
         self.send_header("Set-Cookie", "JSESSIONID")
         self.send_header("Set-Cookie", "sid=abc; Path=/")
@@ -2045,6 +2048,31 @@ class HopByHopHeaderTests(unittest.TestCase):
         self.assertEqual(_ECHOED[-1].get("X-Unlisted"), "y")
         self.assertEqual(dropped, {})
 
+    def test_a_bare_name_cookie_is_sent_once_and_the_way_chrome_sends_it(self):
+        """The duplicate: a bare token was stored under both spellings.
+
+        Measured before this fix, with the two spellings in one response:
+        ``Cookie: JSESSIONID; sid=abc; JSESSIONID=``. Chromium emits the token
+        once, without a leading ``=`` (canonical_cookie.cc:133-135), which is what
+        the Core alone already produced."""
+        server = ThreadingHTTPServer(("127.0.0.1", 0), _BareCookieHandler)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        base = "http://127.0.0.1:%d/" % server.server_address[1]
+        try:
+            with chrome_client.Session() as session:
+                session.get(base)
+                session.get(base)
+        finally:
+            server.shutdown()
+            server.server_close()
+        sent = _ECHOED[-1].get("Cookie")
+        self.assertEqual(sent.count("JSESSIONID"), 1,
+                         "the cookie must appear once, not under both spellings: "
+                         "%r" % (sent,))
+        self.assertIn("JSESSIONID", sent)
+        self.assertNotIn("JSESSIONID=", sent,
+                         "a nameless cookie carries no leading '='")
+
     def test_a_bare_name_set_cookie_does_not_fail_the_request(self):
         """Reported from a real crawl: ``Set-Cookie: JSESSIONID`` (a bare name,
         no "=") made cookielib store ``value=None``, and the ABI write raised
@@ -2062,9 +2090,14 @@ class HopByHopHeaderTests(unittest.TestCase):
         finally:
             server.shutdown()
             server.server_close()
-        self.assertIn(("JSESSIONID", ""), stored,
-                      "a valueless cookie must be stored as an empty value, "
-                      "which is what a browser sends and what the Core store holds")
+        self.assertIn(("", "JSESSIONID"), stored,
+                      "Chromium parses a bare token as a cookie with an empty "
+                      "name and the token as its value "
+                      "(net/cookies/parsed_cookie.cc:600-607); the jar must hold "
+                      "that same cookie, not name=JSESSIONID with no value")
+        self.assertNotIn(("JSESSIONID", ""), stored,
+                         "the cookielib spelling is a different cookie and "
+                         "would be sent a second time")
 
     def test_profile_policy_reproduces_the_capture_exactly(self):
         """The only policy that answers "does this look like Chrome N?"."""

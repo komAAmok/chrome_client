@@ -310,14 +310,22 @@ class RequestsCookieJar(cookielib.CookieJar, MutableMapping):
         :meth:`_retire_replaced`; that is the difference between "the server told
         me" and "I am setting this".
         """
-        # A Set-Cookie line that is a bare name (no "=") is stored by
-        # cookielib as value=None. RFC 6265 section 5.4 reads that as an empty
-        # value, a browser sends "name=", and the Core store does exactly that --
-        # so leaving None in the jar made the two disagree and the wire carried
-        # the cookie twice (measured: "Cookie: JSESSIONID; sid=abc; JSESSIONID=").
-        # Coercing here keeps the jar and the store describing one cookie.
+        # A bare-name Set-Cookie line ("JSESSIONID", no "=") is NOT a cookie with
+        # an empty value: Chromium parses it as a cookie whose name is empty and
+        # whose value is the token (net/cookies/parsed_cookie.cc:600-607, "treat
+        # single values as a value with an empty name"), and serialises a nameless
+        # cookie without a leading "=" (canonical_cookie.cc:133-135). cookielib
+        # instead stores name="JSESSIONID", value=None -- a different cookie, so
+        # both were kept and the wire carried it twice. Measured against the Core
+        # alone (no facade): store [("", "JSESSIONID")], line "Cookie: JSESSIONID",
+        # which is exactly Chromium. Coercing to name="", value=<token> makes the
+        # jar hold the same cookie the store does, so the duplicate cannot exist.
         if cookie.value is None:
-            cookie.value = ""
+            # cookielib tells the two spellings apart only here: a bare token
+            # has value=None, "name=" has value="". Chromium reads the former
+            # as (name="", value=token).
+            cookie.value = cookie.name or ""
+            cookie.name = ""
         if hasattr(cookie.value, "startswith") and cookie.value.startswith('"') \
                 and cookie.value.endswith('"'):
             cookie.value = cookie.value.replace('\\"', "").strip('"')
