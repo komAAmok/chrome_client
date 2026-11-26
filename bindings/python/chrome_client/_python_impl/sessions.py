@@ -272,31 +272,42 @@ _WIRE_PREFIX = (
 )
 
 
-#: Process-wide default for `header_policy` when a session does not name one.
+#: Default for `header_policy` when a session does not name one.
 #:
-#: `strict` stays the default: a field Chromium cannot honour fails closed
-#: rather than disappearing (AGENTS.md section 8), and that is also what the ABI
-#: does when a caller reaches mn_request_create directly. A caller whose scripts
-#: carry `"Connection": "keep-alive"` in a dict copied from devtools wants the
-#: field removed, not an exception, and should not have to spell the policy on
-#: every call: it can be set once for the process, either with the
-#: CHROME_CLIENT_HEADER_POLICY environment variable or with
-#: set_default_header_policy(). Both are explicit; neither is a fallback, and the
-#: removal is still counted in session.dropped_headers.
+#: `"compat"` (the default): the six hop-by-hop fields -- Connection,
+#: Proxy-Connection, Keep-Alive, TE, Trailer, Upgrade -- are removed and counted
+#: in session.dropped_headers. Chromium can never write them: it owns the
+#: connection on HTTP/1.1, and RFC 9113 8.2.2 / RFC 9114 4.2 forbid them on
+#: h2/h3. A header block copied out of devtools carries
+#: `Connection: keep-alive`, so refusing turned every such script into an edit.
+#: Nothing else changes: Cookie, Host, Content-Length, Transfer-Encoding and
+#: Accept-Encoding behave exactly as under `strict` -- dropping those too is a
+#: different promise (the profile's values win), and it stays opt-in.
+#:
+#: `"strict"`: those six raise UnsupportedFeature instead -- the behaviour
+#: before this default changed, and still what AGENTS.md section 8 asks a
+#: call-forwards-to-Core path to offer.
+#: `"drop"`: those six plus the five fields Chromium overwrites or owns.
+#:
+#: The ABI's own zero value is MN_HEADER_POLICY_REJECT, which binds callers that
+#: drive mn_request_create directly (Go/Node/C). This default is a policy choice
+#: of the Python binding, and the value is passed explicitly on every request.
+
 _DEFAULT_HEADER_POLICY = {}
 
 
 def _normalize_header_policy(value):
-    if value not in ("strict", "drop"):
+    if value not in ("compat", "strict", "drop"):
         raise ValueError(
-            "header_policy must be 'strict' or 'drop', not %r" % (value,))
+            "header_policy must be 'compat', 'strict' or 'drop', not %r"
+            % (value,))
     return value
 
 
 def set_default_header_policy(policy):
     """Sets the policy new sessions get when they do not name one.
 
-    The library default is `"strict"`; this exists so a process full of old
+    The library default is `"compat"`; this exists so a process can pick another
     scripts does not have to repeat `header_policy="drop"` on every call. The
     CHROME_CLIENT_HEADER_POLICY environment variable does the same before any
     session exists, which is how a shell or a CI job sets it once.
@@ -315,7 +326,7 @@ def _default_header_policy():
     value = _DEFAULT_HEADER_POLICY.get("value")
     if value is None:
         value = _normalize_header_policy(
-            os.environ.get("CHROME_CLIENT_HEADER_POLICY") or "strict")
+            os.environ.get("CHROME_CLIENT_HEADER_POLICY") or "compat")
         _DEFAULT_HEADER_POLICY["value"] = value
     return value
 
@@ -364,47 +375,72 @@ def _check_header_policy(headers, policy):
         "do not reach the connection pool. On HTTP/2 and HTTP/3 these fields are "
         "discarded outright (RFC 9113 section 8.2.2, RFC 9114 section 4.2), so "
         "accepting a value would make behaviour depend on the negotiated "
-        "protocol. Session(header_policy='drop') removes them instead of "
-        "raising." % (", ".join(offending),))
+        "protocol. This session asked for header_policy='strict'; the default "
+        "drops these fields and counts them in dropped_headers."
+        % (", ".join(offending),))
 
 
 def _apply_header_policy(headers, policy, sink):
-    """Counts what header_policy="drop" removes, and forgets their removals.
+    """Applies one policy to a header set, returning what to send.
 
-    The values are removed by the Core: the request is created with
-    MN_HEADER_POLICY_DROP and mn_request_create omits every name whose
-    MN_HEADER_DROPPED bit is set. Nothing here rewrites the header set -- a
-    second implementation of that decision is what the Core-side table replaced.
+    Three policies, one question: what happens to a name Chromium will not
+    write. Which names those are is the Core's answer (mn_header_disposition);
+    this function never decides that, it only acts on the flags.
 
-    Forgetting a removal of a dropped name is bookkeeping the ABI has no field
-    for: a removal of a field that is not sent is already a no-op, and the Core
-    never sees the deletion record.
+    * `compat` (the default) removes the six names whose
+      MN_HEADER_FLAG_SETTABLE bit is clear -- the hop-by-hop fields, which
+      Chromium cannot write under any circumstances -- and counts them. Those
+      values are filtered here rather than by the Core because the request is
+      created with MN_HEADER_POLICY_REJECT: everything left in the set is
+      accepted, so a settable-but-elsewhere-decided field such as Cookie keeps
+      the behaviour it had before this policy existed.
+    * `strict` removes nothing (the refusal happens in
+      _check_header_policy).
+    * `drop` removes everything carrying MN_HEADER_FLAG_DROPPED, and the Core
+      does the removing: the request is created with MN_HEADER_POLICY_DROP and
+      mn_request_create omits those names, so the profile's own value is what
+      ships. Nothing is rewritten here in that case -- a second implementation
+      of the decision is what the Core-side table replaced.
+
+    Forgetting a removal of a name this policy removes is bookkeeping the ABI has
+    no field for: removing a field that is not sent is already a no-op.
 
     Args:
         headers: The prepared request headers, or None.
-        policy: "strict" or "drop".
-        sink: A mutable mapping counting what was dropped, by lower-cased name.
+        policy: "compat", "strict" or "drop".
+        sink: A mutable mapping counting what was removed, by lower-cased name.
 
     Returns:
-        The headers to send: the same object unless a removal of a dropped name
-        had to be forgotten.
+        The headers to send: the same object when nothing is removed, otherwise
+        a copy without the removed names and their removal records.
     """
-    if headers is None or policy != "drop":
+    if headers is None or policy == "strict":
         return headers
-    for name, _value in headers.multi_items():
-        if _header_flags(name) & _HEADER_DROPPED:
-            lowered = name.lower()
-            sink[lowered] = sink.get(lowered, 0) + 1
+    if policy == "drop":
+        unwanted = _HEADER_DROPPED
+        matches = lambda flags: flags & unwanted
+    else:
+        matches = lambda flags: not flags & _HEADER_SETTABLE
+    removed = [name for name, _value in headers.multi_items()
+               if matches(_header_flags(name))]
+    for name in removed:
+        lowered = name.lower()
+        sink[lowered] = sink.get(lowered, 0) + 1
     removals = [name for name in headers.deleted_names
-                if _header_flags(name) & _HEADER_DROPPED]
-    if not removals:
+                if matches(_header_flags(name))]
+    if policy == "drop" and not removals:
+        # The Core removes these names; the facade only counts them.
         return headers
-    dropped_set = set(removals)
+    if not removed and not removals:
+        return headers
+    removed_lower = {name.lower() for name in removed}
+    forget = set(removals)
     kept = Headers()
     for name, value in headers.multi_items():
-        kept.add(name, value)
+        if name.lower() not in removed_lower:
+            kept.add(name, value)
     for name in headers.deleted_names:
-        if name not in dropped_set:
+        if name not in forget:
             kept._remove(name)
     return kept
 

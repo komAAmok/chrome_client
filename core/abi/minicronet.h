@@ -537,7 +537,16 @@ MN_EXPORT mn_result_t MN_CALL mn_header_disposition(const char *name,
 typedef enum mn_header_policy {
   /* Refuse the request with MN_ERROR_INVALID_ARGUMENT. Sending a different
    * value than the caller asked for is the degradation AGENTS.md section 8
-   * forbids, so refusal is the default. */
+   * forbids, so this is zero: a caller that zero-initialises the config gets
+   * the refusing policy, and no binding inherits a behaviour change from a
+   * field it forgot to set.
+   *
+   * The Python facade's default is that same policy: it removes the six names
+   * whose MN_HEADER_FLAG_SETTABLE bit is clear before calling mn_request_create,
+   * so nothing left in the set can be refused. It passes MN_HEADER_POLICY_DROP
+   * only when a caller asks for header_policy="drop". Either way the value is
+   * explicit on every request, so the rule above still describes everything
+   * that reaches this function. */
   MN_HEADER_POLICY_REJECT = 0,
   /* Remove the field and continue. Which names this removes is the same table
    * mn_header_disposition reports (MN_HEADER_FLAG_DROPPED). */

@@ -1965,7 +1965,7 @@ class HopByHopHeaderTests(unittest.TestCase):
                             ("TE", "trailers"),
                             ("Trailer", "X-Checksum"),
                             ("Upgrade", "h2c")):
-            with chrome_client.Session() as session:
+            with chrome_client.Session(header_policy="strict") as session:
                 with self.assertRaises(chrome_client.UnsupportedFeature):
                     session.get(self.base, headers={name: value})
 
@@ -2047,7 +2047,7 @@ class HopByHopHeaderTests(unittest.TestCase):
                             ("Upgrade", "h2c"),
                             ("Trailer", "X-Checksum"),
                             ("TE", "trailers")):
-            with chrome_client.Session() as session:
+            with chrome_client.Session(header_policy="strict") as session:
                 session.headers[name] = value
                 with self.assertRaises(chrome_client.UnsupportedFeature) as caught:
                     session.get(self.base)
@@ -2059,7 +2059,7 @@ class HopByHopHeaderTests(unittest.TestCase):
         The same header sent down it reached the wire untouched, so the refusal
         has to sit on send(), where every path converges, not on request().
         """
-        with chrome_client.Session() as session:
+        with chrome_client.Session(header_policy="strict") as session:
             prepared = chrome_client.PreparedRequest()
             prepared.prepare(method="GET", url=self.base,
                              headers={"Connection": "close"})
@@ -2074,7 +2074,7 @@ class HopByHopHeaderTests(unittest.TestCase):
         all. Measured before the fix: the Core sent its own
         ``Connection: keep-alive`` and no UnsupportedFeature was raised.
         """
-        with chrome_client.Session() as session:
+        with chrome_client.Session(header_policy="strict") as session:
             request = chrome_client.Request("GET", self.base,
                                             headers={"Connection": None})
             prepared = session.prepare_request(request)
@@ -2092,7 +2092,7 @@ class HopByHopHeaderTests(unittest.TestCase):
     def test_the_async_entry_points_are_refused_too(self):
         """AsyncSession.send never touched the guard either."""
         async def run():
-            async with chrome_client.AsyncSession() as session:
+            async with chrome_client.AsyncSession(header_policy="strict") as session:
                 prepared = chrome_client.PreparedRequest()
                 prepared.prepare(method="GET", url=self.base,
                                  headers={"Upgrade": "h2c"})
@@ -3980,11 +3980,14 @@ class HeaderTableOwnershipTests(unittest.TestCase):
         contract instead of two.
         """
         import unittest.mock as mock
+        # header_policy="strict" so the Core gets MN_HEADER_POLICY_REJECT: with
+        # the facade's pre-check patched out, the refusal has to come from
+        # mn_request_create for this test to mean anything.
         with mock.patch.object(sessions_base(), "_check_header_policy",
                                lambda self, headers: None):
             with self.assertRaises(chrome_client.RequestException):
-                chrome_client.Session().get(self.base,
-                                            headers={"Connection": "keep-alive"})
+                chrome_client.Session(header_policy="strict").get(
+                    self.base, headers={"Connection": "keep-alive"})
 
     def test_the_core_drops_by_itself(self):
         """With both facade-side steps disabled, the field still does not ship."""
@@ -4013,13 +4016,15 @@ def sessions_base():
 
 
 class HeaderPolicyTests(unittest.TestCase):
-    """header_policy="drop" keeps old callers working; "strict" is the default.
+    """Three policies; "compat" is the default.
 
-    The two behaviours exist because the same field can mean different things to
-    different callers: a browser-derived field the profile already owns
-    (Accept-Encoding) or a field Chromium overwrites anyway (Host) is noise from
-    an old requests script, while the guarantee that nothing is silently ignored
-    is what a security-sensitive caller relies on.
+    The same field can mean different things to different callers. A hop-by-hop
+    field (Connection, Keep-Alive, TE, Trailer, Upgrade, Proxy-Connection) can
+    never be written -- Chromium owns the connection on HTTP/1.1 and h2/h3 forbid
+    them -- so the default removes it and counts it. A field Chromium overwrites
+    (Host, Cookie, Content-Length, Transfer-Encoding, Accept-Encoding) is a
+    different promise: removing *those* makes the profile's value win, which is
+    what "drop" is for and why it is not the default.
     """
 
     @classmethod
@@ -4040,13 +4045,29 @@ class HeaderPolicyTests(unittest.TestCase):
     def _last():
         return _ECHOED[-1]
 
-    def test_strict_is_the_default(self):
+    def test_compat_is_the_default(self):
         with chrome_client.Session() as session:
+            self.assertEqual(session.header_policy, "compat")
+            response = session.get(self.base, headers={
+                'Connection': 'keep-alive',
+                'Cookie': 'caller=1',
+                'X-Kept': '1',
+            })
+            self.assertEqual(response.status_code, 200)
+            # Only the unsettable name goes; a field Chromium merely overwrites
+            # keeps the behaviour it had before this policy existed.
+            self.assertEqual(sorted(session.dropped_headers), ["connection"])
+            seen = self._last()
+            self.assertEqual(seen.get("Cookie"), "caller=1")
+            self.assertEqual(seen.get("X-Kept"), "1")
+
+    def test_explicit_strict_still_refuses(self):
+        with chrome_client.Session(header_policy="strict") as session:
             self.assertEqual(session.header_policy, "strict")
             with self.assertRaises(chrome_client.UnsupportedFeature):
-                session.get(self.base, headers={"Connection": "keep-alive"})
+                session.get(self.base, headers={'Connection': 'keep-alive'})
 
-    def test_drop_keeps_the_request_working_and_counts_what_it_removed(self):
+    def test_drop_also_removes_what_chromium_would_overwrite(self):
         with chrome_client.Session(header_policy="drop") as session:
             response = session.get(self.base, headers={
                 "Connection": "keep-alive",
@@ -4087,56 +4108,53 @@ class HeaderPolicyTests(unittest.TestCase):
     def test_the_module_level_shorthand_can_choose_the_policy(self):
         """The refusal message recommends a policy the shorthand could not set.
 
-        ``chrome_client.requests.post(..., header_policy='drop')`` was forwarded
+        ``chrome_client.requests.post(..., header_policy='strict')`` was forwarded
         to Session.request, which has no such keyword: the advice in the
         UnsupportedFeature message was unreachable from the module-level API.
         Measured on the 0.2.18 wheel: TypeError instead of a request.
         """
         response = chrome_client.requests.post(
             self.base, data={'a': '1'}, headers={'Connection': 'keep-alive'},
-            header_policy="drop", timeout=10)
+            timeout=10)
         self.assertEqual(response.status_code, 200)
         # The shared session is not reconfigured: the option builds a private
-        # one for this call, so the process-wide default stays strict.
+        # one for this call, so the process-wide default is untouched.
         with self.assertRaises(chrome_client.UnsupportedFeature):
-            chrome_client.requests.post(self.base, headers={'Connection': 'keep-alive'})
-    def test_the_process_default_removes_them_without_touching_every_call(self):
-        """One switch instead of a policy argument on every call.
+            chrome_client.requests.post(
+                self.base, headers={'Connection': 'keep-alive'},
+                header_policy='strict')
 
-        Old scripts carry 'Connection': 'keep-alive' in a dict copied from
-        devtools. The default stays strict; this only proves the escape hatch
-        works and that an explicit value still wins over it.
-        """
-        import unittest.mock as mock
-        from chrome_client._python_impl import sessions as impl
-        with mock.patch.object(impl, "_DEFAULT_HEADER_POLICY", {"value": "drop"}):
-            with chrome_client.Session() as session:
-                self.assertEqual(session.header_policy, "drop")
-                response = session.get(self.base,
-                                        headers={'Connection': 'keep-alive'})
-                self.assertEqual(response.status_code, 200)
-                self.assertEqual(sorted(session.dropped_headers), ["connection"])
-            with chrome_client.Session(header_policy="strict") as session:
-                with self.assertRaises(chrome_client.UnsupportedFeature):
-                    session.get(self.base, headers={'Connection': 'keep-alive'})
-
-    def test_the_environment_variable_sets_the_default(self):
+    def test_the_environment_variable_moves_the_default(self):
         """A shell or CI job sets it once; no code changes at all."""
         code = 'import chrome_client; print(chrome_client.Session().header_policy)'
-        environment = dict(os.environ, CHROME_CLIENT_HEADER_POLICY='drop')
+        environment = dict(os.environ, CHROME_CLIENT_HEADER_POLICY='strict')
         done = subprocess.run([sys.executable, '-c', code], env=environment,
                               capture_output=True, text=True, timeout=120)
         self.assertEqual(done.returncode, 0, done.stderr)
-        self.assertEqual(done.stdout.strip(), 'drop')
+        self.assertEqual(done.stdout.strip(), 'strict')
         environment['CHROME_CLIENT_HEADER_POLICY'] = 'clean'
         done = subprocess.run([sys.executable, '-c', code], env=environment,
                               capture_output=True, text=True, timeout=120)
         self.assertNotEqual(done.returncode, 0, 'a typo must not pick a policy')
         self.assertIn('header_policy must be', done.stderr)
+
+    def test_the_process_default_can_be_moved_without_touching_every_call(self):
+        """set_default_header_policy() moves it; an explicit value still wins."""
+        import unittest.mock as mock
+        from chrome_client._python_impl import sessions as impl
+        with mock.patch.object(impl, "_DEFAULT_HEADER_POLICY", {"value": "strict"}):
+            with chrome_client.Session() as session:
+                self.assertEqual(session.header_policy, "strict")
+                with self.assertRaises(chrome_client.UnsupportedFeature):
+                    session.get(self.base, headers={'Connection': 'keep-alive'})
+            with chrome_client.Session(header_policy="compat") as session:
+                response = session.get(self.base,
+                                        headers={'Connection': 'keep-alive'})
+                self.assertEqual(response.status_code, 200)
+
     def test_an_unknown_policy_is_refused(self):
         with self.assertRaises(ValueError):
             chrome_client.Session(header_policy="clean")
-
 
 if __name__ == "__main__":
     unittest.main()

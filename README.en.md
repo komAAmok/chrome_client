@@ -503,7 +503,7 @@ no further edits.
 | Removing a Core-owned header (`User-Agent`, `Accept-Encoding`, ...) | ✗ raises `UnsupportedFeature`; overriding still works |
 | `dns_padding=True` | ✗ raises `UnsupportedFeature`; Chromium exposes no EDNS0 padding control. The value used to travel into `EngineOptions` and stop -- `core/source/engine.cc` never read it -- so a caller asking for padded queries got unpadded ones with no error |
 | `dns_over_tls=True` | ✗ raises `UnsupportedFeature`; Chromium desktop ships no DoT client, so setting it only disables the built-in resolver (`net/dns/dns_client.cc:168`) and silently falls back to the system one, dropping `dns_nameservers`/`doh_template`. Use `doh_template` with `dns_secure_mode=2` for an encrypted resolver |
-| Setting a hop-by-hop field (`Connection`, `Keep-Alive`, `TE`, `Trailer`, `Upgrade`, `Proxy-Connection`) | ✗ raises `UnsupportedFeature`; Chromium owns connection lifetime and discards these on h2/h3 |
+| Setting a hop-by-hop field (`Connection`, `Keep-Alive`, `TE`, `Trailer`, `Upgrade`, `Proxy-Connection`) | ✓ dropped by default and counted in `session.dropped_headers` (Chromium owns connection lifetime and h2/h3 forbid these); raises `UnsupportedFeature` under `header_policy="strict"` |
 | `timeout=(connect, read)` with two different values | ✗ raises `UnsupportedFeature` (ABI v11 carries one deadline); an agreeing pair works |
 | `proxies`, `proxy`, `proxy_auth`, `trust_env`, `NO_PROXY` | ✓ |
 | `verify=True/False/"/path/ca.pem"` | ✓ |

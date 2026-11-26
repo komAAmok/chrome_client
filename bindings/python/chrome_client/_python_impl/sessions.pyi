@@ -860,12 +860,14 @@ class BaseSession:
                 the fingerprint.
             accept_language: Engine-level ``Accept-Language``. With a
                 profile the captured value is sent unless this is set.
-            header_policy: "strict" raises UnsupportedFeature for a hop-by-hop
-                field; "drop" removes it instead and counts it in
-                dropped_headers. None (the default) means the process
-                default, which is "strict" unless
-                set_default_header_policy() or CHROME_CLIENT_HEADER_POLICY
-                changed it.
+            header_policy: "compat" (the default) removes the six hop-by-hop
+                fields (Connection, Proxy-Connection, Keep-Alive, TE, Trailer,
+                Upgrade) and counts them in dropped_headers; everything else is
+                sent as before. "strict" raises UnsupportedFeature for those six
+                instead; "drop" also removes Host, Cookie, Content-Length,
+                Transfer-Encoding and Accept-Encoding. None means the process
+                default, which set_default_header_policy() or
+                CHROME_CLIENT_HEADER_POLICY moves for the whole process.
             interface: Rejected; ABI v8 has no network-interface binding.
             doh_url: Rejected; DNS-over-HTTPS config is not exposed.
             max_recv_speed: Rejected; Chromium owns transfer pacing.
@@ -1088,8 +1090,8 @@ def set_default_header_policy(policy: str) -> None:
     """Sets the header policy new sessions get when they do not name one.
 
     Args:
-        policy: "strict" (refuse a hop-by-hop field) or "drop" (remove it
-            and count it in session.dropped_headers).
+        policy: "compat" (remove the six hop-by-hop fields), "strict" (refuse
+            them) or "drop" (also remove the fields Chromium overwrites)
 
     Raises:
         ValueError: The value is neither, so a typo cannot silently pick one.
@@ -2626,12 +2628,14 @@ class AsyncSession(BaseSession):
             user_agent: Engine-level User-Agent for HTTP and WebSocket.
             accept_language: Engine-level ``Accept-Language``. With a
                 profile the captured value is sent unless this is set.
-            header_policy: "strict" raises UnsupportedFeature for a hop-by-hop
-                field; "drop" removes it instead and counts it in
-                dropped_headers. None (the default) means the process
-                default, which is "strict" unless
-                set_default_header_policy() or CHROME_CLIENT_HEADER_POLICY
-                changed it.
+            header_policy: "compat" (the default) removes the six hop-by-hop
+                fields (Connection, Proxy-Connection, Keep-Alive, TE, Trailer,
+                Upgrade) and counts them in dropped_headers; everything else is
+                sent as before. "strict" raises UnsupportedFeature for those six
+                instead; "drop" also removes Host, Cookie, Content-Length,
+                Transfer-Encoding and Accept-Encoding. None means the process
+                default, which set_default_header_policy() or
+                CHROME_CLIENT_HEADER_POLICY moves for the whole process.
             interface: Rejected.
             doh_url: Rejected.
             max_recv_speed: Rejected.

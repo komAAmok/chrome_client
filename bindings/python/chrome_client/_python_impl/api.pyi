@@ -202,11 +202,14 @@ def session(
         proxy_chain:
         platform:
         max_sockets_per_group:
-        header_policy: "strict" raises UnsupportedFeature for a hop-by-hop field; "drop"
-            removes it instead and counts it in dropped_headers. None (the
-            default) means the process default, which is "strict" unless
-            set_default_header_policy() or CHROME_CLIENT_HEADER_POLICY
-            changed it.
+        header_policy: "compat" (the default) removes the six hop-by-hop fields
+            (Connection, Proxy-Connection, Keep-Alive, TE, Trailer, Upgrade)
+            and counts them in dropped_headers; everything else is sent as
+            before. "strict" raises UnsupportedFeature for those six instead;
+            "drop" also removes Host, Cookie, Content-Length,
+            Transfer-Encoding and Accept-Encoding. None means the process
+            default, which set_default_header_policy() or
+            CHROME_CLIENT_HEADER_POLICY moves for the whole process.
 
     Returns:
         The new session. Close it, or use it as a context manager.
@@ -350,11 +353,14 @@ def async_session(
         proxy_chain:
         platform:
         max_sockets_per_group:
-        header_policy: "strict" raises UnsupportedFeature for a hop-by-hop field; "drop"
-            removes it instead and counts it in dropped_headers. None (the
-            default) means the process default, which is "strict" unless
-            set_default_header_policy() or CHROME_CLIENT_HEADER_POLICY
-            changed it.
+        header_policy: "compat" (the default) removes the six hop-by-hop fields
+            (Connection, Proxy-Connection, Keep-Alive, TE, Trailer, Upgrade)
+            and counts them in dropped_headers; everything else is sent as
+            before. "strict" raises UnsupportedFeature for those six instead;
+            "drop" also removes Host, Cookie, Content-Length,
+            Transfer-Encoding and Accept-Encoding. None means the process
+            default, which set_default_header_policy() or
+            CHROME_CLIENT_HEADER_POLICY moves for the whole process.
         max_clients: Maximum concurrently in-flight requests, or None for unbounded.
             Only AsyncSession accepts it; Session has no such limit.
 
@@ -493,7 +499,7 @@ def request(
         accept_language: Private-session option: engine-level
             ``Accept-Language``.
         cache: Private-session option: enable the HTTP cache.
-        header_policy: Private-session option: "strict" (default) or "drop".
+        header_policy: Private-session option: "compat" (default), "strict" or "drop".
         response_class: Private-session option: response class to instantiate.
         proxy_auth: Private-session option: ``(username, password)`` for the
             proxy.
@@ -625,7 +631,7 @@ def get(
         user_agent: Private-session option: engine-level User-Agent.
         accept_language: Private-session option: engine-level ``Accept-Language``.
         cache: Private-session option: enable the HTTP cache.
-        header_policy: Private-session option: "strict" (default) or "drop".
+        header_policy: Private-session option: "compat" (default), "strict" or "drop".
         response_class: Private-session option: response class to instantiate.
         proxy_auth: Private-session option: ``(username, password)`` for the proxy.
         max_clients: Accepted for curl_cffi parity; ignored on the sync path.
@@ -752,7 +758,7 @@ def options(
         user_agent: Private-session option: engine-level User-Agent.
         accept_language: Private-session option: engine-level ``Accept-Language``.
         cache: Private-session option: enable the HTTP cache.
-        header_policy: Private-session option: "strict" (default) or "drop".
+        header_policy: Private-session option: "compat" (default), "strict" or "drop".
         response_class: Private-session option: response class to instantiate.
         proxy_auth: Private-session option: ``(username, password)`` for the proxy.
         max_clients: Accepted for curl_cffi parity; ignored on the sync path.
@@ -874,7 +880,7 @@ def head(
         user_agent: Private-session option: engine-level User-Agent.
         accept_language: Private-session option: engine-level ``Accept-Language``.
         cache: Private-session option: enable the HTTP cache.
-        header_policy: Private-session option: "strict" (default) or "drop".
+        header_policy: Private-session option: "compat" (default), "strict" or "drop".
         response_class: Private-session option: response class to instantiate.
         proxy_auth: Private-session option: ``(username, password)`` for the proxy.
         max_clients: Accepted for curl_cffi parity; ignored on the sync path.
@@ -994,7 +1000,7 @@ def post(
         user_agent: Private-session option: engine-level User-Agent.
         accept_language: Private-session option: engine-level ``Accept-Language``.
         cache: Private-session option: enable the HTTP cache.
-        header_policy: Private-session option: "strict" (default) or "drop".
+        header_policy: Private-session option: "compat" (default), "strict" or "drop".
         response_class: Private-session option: response class to instantiate.
         proxy_auth: Private-session option: ``(username, password)`` for the proxy.
         max_clients: Accepted for curl_cffi parity; ignored on the sync path.
@@ -1117,7 +1123,7 @@ def put(
         user_agent: Private-session option: engine-level User-Agent.
         accept_language: Private-session option: engine-level ``Accept-Language``.
         cache: Private-session option: enable the HTTP cache.
-        header_policy: Private-session option: "strict" (default) or "drop".
+        header_policy: Private-session option: "compat" (default), "strict" or "drop".
         response_class: Private-session option: response class to instantiate.
         proxy_auth: Private-session option: ``(username, password)`` for the proxy.
         max_clients: Accepted for curl_cffi parity; ignored on the sync path.
@@ -1237,7 +1243,7 @@ def patch(
         user_agent: Private-session option: engine-level User-Agent.
         accept_language: Private-session option: engine-level ``Accept-Language``.
         cache: Private-session option: enable the HTTP cache.
-        header_policy: Private-session option: "strict" (default) or "drop".
+        header_policy: Private-session option: "compat" (default), "strict" or "drop".
         response_class: Private-session option: response class to instantiate.
         proxy_auth: Private-session option: ``(username, password)`` for the proxy.
         max_clients: Accepted for curl_cffi parity; ignored on the sync path.
@@ -1357,7 +1363,7 @@ def delete(
         user_agent: Private-session option: engine-level User-Agent.
         accept_language: Private-session option: engine-level ``Accept-Language``.
         cache: Private-session option: enable the HTTP cache.
-        header_policy: Private-session option: "strict" (default) or "drop".
+        header_policy: Private-session option: "compat" (default), "strict" or "drop".
         response_class: Private-session option: response class to instantiate.
         proxy_auth: Private-session option: ``(username, password)`` for the proxy.
         max_clients: Accepted for curl_cffi parity; ignored on the sync path.
@@ -1477,7 +1483,7 @@ def trace(
         user_agent: Private-session option: engine-level User-Agent.
         accept_language: Private-session option: engine-level ``Accept-Language``.
         cache: Private-session option: enable the HTTP cache.
-        header_policy: Private-session option: "strict" (default) or "drop".
+        header_policy: Private-session option: "compat" (default), "strict" or "drop".
         response_class: Private-session option: response class to instantiate.
         proxy_auth: Private-session option: ``(username, password)`` for the proxy.
         max_clients: Accepted for curl_cffi parity; ignored on the sync path.
@@ -1597,7 +1603,7 @@ def query(
         user_agent: Private-session option: engine-level User-Agent.
         accept_language: Private-session option: engine-level ``Accept-Language``.
         cache: Private-session option: enable the HTTP cache.
-        header_policy: Private-session option: "strict" (default) or "drop".
+        header_policy: Private-session option: "compat" (default), "strict" or "drop".
         response_class: Private-session option: response class to instantiate.
         proxy_auth: Private-session option: ``(username, password)`` for the proxy.
         max_clients: Accepted for curl_cffi parity; ignored on the sync path.

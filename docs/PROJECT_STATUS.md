@@ -759,6 +759,27 @@ manifest（`--abi-version 8`）：
 `sync-core.sh` 先从根 `Cargo.toml` 注入版本头（版本号只在那里），`install-core-binaries.py` 再刷新 manifest。
 三者现已一致：`core_version()` = `__version__` = 根 `Cargo.toml` 的 `workspace.package.version`。
 
+### 变更（main，最近一个 tag 之后）：`header_policy` 默认 `compat`
+
+`Connection: keep-alive` 这类从 devtools 复制出来的头出现在大量旧脚本里，逐个报错的迁移
+成本换不到任何安全性——这些字段在 Chromium 里根本写不进去。因此 facade 的默认改成三档：
+
+| 值 | 六个 hop-by-hop 字段 | 五个「Chromium 决定值」的字段 |
+| --- | --- | --- |
+| `compat`（默认） | 移除，计入 `dropped_headers` | 照旧发送 |
+| `strict` | 抛 `UnsupportedFeature` | 照旧发送 |
+| `drop` | 移除并计数 | 也移除（profile 抓到的值上线） |
+
+**为什么不是把 `drop` 设为默认**：那会连 `Cookie`、`Host`、`Content-Length`、
+`Transfer-Encoding`、`Accept-Encoding` 一起静默丢弃。实测过一次：11 条既有测试红，
+其中两条正是「调用方给的 `Cookie` 头必须原样上线」——对这种字段，「发出去」和「被丢掉」
+是两种不同结果，而调用方常常依赖前者。所以默认只收窄到「根本写不进去」的六个。
+
+ABI 侧不变：`MN_HEADER_POLICY_REJECT = 0` 仍是零值，`drop` 才传 `MN_HEADER_POLICY_DROP`；
+`compat` 由 facade 先滤掉那六个名字、再按 REJECT 调用，所以九个平台产物无需重建。
+
+进程级开关仍是 `CHROME_CLIENT_HEADER_POLICY` / `set_default_header_policy()`，只是默认值
+从 `strict` 变成 `compat`；`Session(header_policy=...)` 显式值优先级最高。
 ### 验收（2026-11-26，ABI v15）
 
 这一轮把「哪些头名不可写」从三个绑定层 frozenset 下沉到 Core：ABI 14 → 15，

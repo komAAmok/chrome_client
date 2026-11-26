@@ -318,9 +318,35 @@ python3 -m unittest discover -s bindings/python/tests -p "test_*.py"
 
 ## 8. fail-closed 承诺（对外契约）
 
-无法用 Chromium 忠实实现的选项必须**抛错**（`UnsupportedFeature`），不得静默忽略。
-这条承诺覆盖两层实现：Python facade 与 Core 存储。
-（`discard_cookies` 曾只作用于 Python 侧，导致 Core 仍然发出 cookie。）
+无法用 Chromium 忠实实现的选项必须让调用方**看得出来**，不能无声无息。允许两种形式：
+
+1. **抛错**（`UnsupportedFeature`）——除请求头字段之外的所有选项都用这一种；
+2. **移除并记录**——只用于请求头字段，且按「能不能写」分档：
+   - 根本写不进去的六个 hop-by-hop 字段（`Connection`、`Proxy-Connection`、
+     `Keep-Alive`、`TE`、`Trailer`、`Upgrade`）：**默认**（`header_policy="compat"`）
+     移除，并按名字计入 `session.dropped_headers`；
+   - 写得进去、但值由 Chromium 决定的五个字段（`Host`、`Cookie`、`Content-Length`、
+     `Transfer-Encoding`、`Accept-Encoding`）：默认**照旧发送**，只有显式
+     `header_policy="drop"` 才移除（那是另一个承诺：profile 抓到的值上线）。
+   - 调用方随时可以用 `header_policy="strict"`（或进程级
+     `CHROME_CLIENT_HEADER_POLICY=strict`）要求这六个字段抛错。
+
+判据是「调用方能不能知道它没生效」：异常能知道，计数器能知道，静默丢弃不能。这条承诺
+覆盖两层实现：Python facade 与 Core 存储。hop-by-hop 之所以默认移除：`Connection` 这类
+字段既进不了 HTTP/1.1 的连接层，也在 HTTP/2/3 上被协议禁止，浏览器同样不接受调用方
+指定；从 devtools 复制头块的旧脚本遍地都是，逐个报错换不到任何安全性，只换来改代码。
+默认**不**扩大移除范围，正是因为 `Cookie` 这类字段「发出去」与「被丢掉」是两种不同的
+结果，而调用方常常依赖前者。
+
+**ABI 的零值仍然是拒绝。** `MN_HEADER_POLICY_REJECT = 0` 约束的是直接调用
+`mn_request_create` 的绑定（C / Go / Node）；Python facade 的默认是它自己的一层
+策略选择（默认先把那六个字段滤掉，再按 REJECT 调用 ABI），每个请求都显式把值传下去，
+所以两边的默认不必相同，也不共用一份代码。
+
+（历史：`discard_cookies` 曾只作用于 Python 侧，导致 Core 仍然发出 cookie；
+`dns_over_tls` 与 `dns_padding` 曾被接受后什么都不做；
+`headers={"User-Agent": None}` 曾无效果也不报错；`Connection: close` 曾被发出但三个请求
+仍共用一个 socket。这四条是这条规则存在的原因。）
 
 ## 9. 新增 Chrome profile 的三级证据链（最高优先级约束）
 

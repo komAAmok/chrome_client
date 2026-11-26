@@ -363,59 +363,64 @@ On HTTP/2 and HTTP/3 the situation is worse than "no effect":
 RFC 9113 §8.2.2 / RFC 9114 §4.2 forbid all of them. So accepting a value would
 make the behaviour depend on the negotiated protocol -- silently.
 
-All six are now refused with `UnsupportedFeature`, whether set or removed,
-and on **every** entry point. That last clause is not decoration: the refusal
-originally sat on `request()` alone, and two ordinary spellings of the same
-request went straight past it -- a session-level `session.headers["Connection"]
-= "close"`, and a `PreparedRequest` built by hand and handed to `send()`.
-Measured before the fix, all five fields reached the wire on HTTP/1.1 down both
-paths, which is the same degradation this section refuses, only spelled
-differently. The check now runs inside both `send()` implementations, which is
-where `request()`, `prepare_request()` + `send()`, and `AsyncSession` converge.
+All six are removed by the default policy, and refused with `UnsupportedFeature`
+when a session asks for `header_policy="strict"` -- whether set or removed, and on
+**every** entry point. That last clause is not decoration: the guard originally sat
+on `request()` alone, and two ordinary spellings of the same request went straight
+past it -- a session-level `session.headers["Connection"] = "close"`, and a
+`PreparedRequest` built by hand and handed to `send()`. Measured before the fix, all
+five fields reached the wire on HTTP/1.1 down both paths, which is the same
+degradation this section refuses, only spelled differently. The check now runs
+inside both `send()` implementations, which is where `request()`,
+`prepare_request()` + `send()`, and `AsyncSession` converge.
 `transfer-encoding` and `content-length` stay settable: they are body framing,
 which the caller does control, and removing them was already fail-closed.
 
-#### `header_policy="drop"`: the same refusal, applied instead of raised
+#### The default policy: the six hop-by-hop fields, removed and counted
 
-The removal itself happens in the Core (ABI v15, `MN_HEADER_POLICY_DROP`): the request
-is created with that policy and `mn_request_create` omits every name whose
-`MN_HEADER_FLAG_DROPPED` bit is set, so the facade only counts what it lost. Which names
-those are is `mn_header_disposition`'s answer, not a list kept in the binding.
-
-Old scraping code carries `Connection: keep-alive` in a dict copied from
-somewhere, and asking every caller to edit it before the first request is a
-migration cost, not a correctness requirement -- the field cannot be honoured
-either way. `Session(header_policy="drop")` (`AsyncSession` takes the same
-option) removes the field instead of raising and records it in
-`session.dropped_headers`:
+Old scraping code carries `Connection: keep-alive` in a dict copied from devtools,
+and asking every caller to edit it before the first request is a migration cost,
+not a correctness requirement -- the field cannot be honoured either way. So the
+default policy (`header_policy="compat"`) removes the six names that cannot be
+written at all and records them in `session.dropped_headers`:
 
 ```python
-session = Session(header_policy="drop")
+session = Session()                      # header_policy defaults to "compat"
 session.get(url, headers={"Connection": "keep-alive", "Cookie": "a=1"})
-session.dropped_headers          # {'connection': 1, 'cookie': 1}
+session.dropped_headers          # {'connection': 1}   <- Cookie still ships
 ```
 
-The counter is the point: a silent drop that leaves no trace is the "asked and
-heard nothing" shape this section refuses, so the session reports what it
-discarded and a caller can assert it is empty in a test.
+Everything else keeps the behaviour it had before this default existed: `Cookie`,
+`Host`, `Content-Length`, `Transfer-Encoding` and `Accept-Encoding` are still sent,
+and Chromium still decides what reaches the wire. Removing *those* is a different
+promise -- the profile's captured values win -- so it is a separate policy, `drop`,
+described below.
 
-The module-level shorthand takes the same option — `chrome_client.requests.post(url,
-header_policy="drop", ...)` — and both spellings build a private session for that call,
-so the process-wide default stays `strict`. That was not true of 0.2.18: the option was
-absent from the shorthand's constructor-only list, so the advice in the refusal
-message raised TypeError on the module-level API.
+The counter is the point: a removal that leaves no trace is the "asked and heard
+nothing" shape this section refuses, so the session reports what it discarded and a
+caller can assert it is empty in a test. `header_policy="strict"` restores the
+exception for a caller that would rather fail than send a request whose field
+disappeared; `CHROME_CLIENT_HEADER_POLICY=strict` does the same for a whole process.
 
-A process full of old scripts should not have to repeat that keyword at all, so
-the policy can be set once: `chrome_client.set_default_header_policy("drop")
-or `CHROME_CLIENT_HEADER_POLICY=drop` in the environment. The default stays
-`"strict"` — this is an explicit opt-out, not a fallback — and an explicit
-`header_policy=` on a session still wins over it, so one process can mix both.
-A value that is neither spelling raises `ValueError` at the first session, so a
-typo cannot silently pick one.
+All three values are accepted by the module-level shorthand too --
+`chrome_client.requests.post(url, header_policy="strict", ...)` -- and each builds a
+private session for that call, so one call can ask for the exception in a process
+that defaults to removing. That was not true of 0.2.18: the option was absent from
+the shorthand's constructor-only list, so the advice in the refusal message raised
+TypeError on the module-level API.
 
-`drop` removes five names beyond the six hop-by-hop fields, all for the same
-reason -- Chromium cannot honour them:
+The default itself can be moved, once, without touching any call:
+`chrome_client.set_default_header_policy("strict")` or
+`CHROME_CLIENT_HEADER_POLICY=strict` in the environment. An explicit `header_policy=`
+on a session still wins over it, so one process can mix them. A value that is none of
+the three raises `ValueError` at the first session, so a typo cannot silently pick
+one.
 
+#### `header_policy="drop"`: also the fields Chromium overwrites
+
+That policy removes five names beyond the six hop-by-hop fields, all for the same
+reason -- Chromium cannot honour them either, and the profile's own value is what a
+fingerprint client wants on the wire:
 | field | why dropping it changes nothing |
 | --- | --- |
 | `Host` | overwritten by `SetHeader(kHost, ...)`, `net/http/http_network_transaction.cc:1451` |

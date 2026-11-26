@@ -514,7 +514,7 @@ Cookie 会按 URL 匹配后附加到握手上。
 | 删除 Core 自有的头（`User-Agent`、`Accept-Encoding` 等） | ✗ 抛 `UnsupportedFeature`；覆盖仍然可以 |
 | `dns_padding=True` | ✗ 抛 `UnsupportedFeature`；Chromium 没有任何 EDNS0 padding 控制，这个值曾经一路传到 `EngineOptions` 就断了（`core/source/engine.cc` 从不读它），调用方要求填充查询、实际发出未填充的，且没有任何提示 |
 | `dns_over_tls=True` | ✗ 抛 `UnsupportedFeature`；Chromium 桌面版没有 DoT 客户端，设了只会禁用内置解析器（`net/dns/dns_client.cc:168`）并静默退回系统解析，`dns_nameservers`/`doh_template` 全部失效。加密解析请用 `doh_template` + `dns_secure_mode=2` |
-| 设置 hop-by-hop 头（`Connection`、`Keep-Alive`、`TE`、`Trailer`、`Upgrade`、`Proxy-Connection`） | ✗ 抛 `UnsupportedFeature`；Chromium 拥有连接生命周期，h2/h3 上这些字段被直接丢弃 |
+| 设置 hop-by-hop 头（`Connection`、`Keep-Alive`、`TE`、`Trailer`、`Upgrade`、`Proxy-Connection`） | ✓ 默认丢弃并计入 `session.dropped_headers`（Chromium 拥有连接生命周期，h2/h3 上这些字段被协议禁止）；`header_policy="strict"` 时抛 `UnsupportedFeature` |
 | `timeout=(connect, read)` 两值不同 | ✗ 抛 `UnsupportedFeature`（ABI v11 只有一个期限）；两值相同可用 |
 | `proxies`、`proxy`、`proxy_auth`、`trust_env`、`NO_PROXY` | ✓ |
 | `verify=True/False/"/path/ca.pem"` | ✓ |
