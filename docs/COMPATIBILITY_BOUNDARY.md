@@ -405,6 +405,14 @@ so the process-wide default stays `strict`. That was not true of 0.2.18: the opt
 absent from the shorthand's constructor-only list, so the advice in the refusal
 message raised TypeError on the module-level API.
 
+A process full of old scripts should not have to repeat that keyword at all, so
+the policy can be set once: `chrome_client.set_default_header_policy("drop")
+or `CHROME_CLIENT_HEADER_POLICY=drop` in the environment. The default stays
+`"strict"` — this is an explicit opt-out, not a fallback — and an explicit
+`header_policy=` on a session still wins over it, so one process can mix both.
+A value that is neither spelling raises `ValueError` at the first session, so a
+typo cannot silently pick one.
+
 `drop` removes five names beyond the six hop-by-hop fields, all for the same
 reason -- Chromium cannot honour them:
 

@@ -272,6 +272,54 @@ _WIRE_PREFIX = (
 )
 
 
+#: Process-wide default for `header_policy` when a session does not name one.
+#:
+#: `strict` stays the default: a field Chromium cannot honour fails closed
+#: rather than disappearing (AGENTS.md section 8), and that is also what the ABI
+#: does when a caller reaches mn_request_create directly. A caller whose scripts
+#: carry `"Connection": "keep-alive"` in a dict copied from devtools wants the
+#: field removed, not an exception, and should not have to spell the policy on
+#: every call: it can be set once for the process, either with the
+#: CHROME_CLIENT_HEADER_POLICY environment variable or with
+#: set_default_header_policy(). Both are explicit; neither is a fallback, and the
+#: removal is still counted in session.dropped_headers.
+_DEFAULT_HEADER_POLICY = {}
+
+
+def _normalize_header_policy(value):
+    if value not in ("strict", "drop"):
+        raise ValueError(
+            "header_policy must be 'strict' or 'drop', not %r" % (value,))
+    return value
+
+
+def set_default_header_policy(policy):
+    """Sets the policy new sessions get when they do not name one.
+
+    The library default is `"strict"`; this exists so a process full of old
+    scripts does not have to repeat `header_policy="drop"` on every call. The
+    CHROME_CLIENT_HEADER_POLICY environment variable does the same before any
+    session exists, which is how a shell or a CI job sets it once.
+
+    Args:
+        policy: `"strict"` (refuse) or `"drop"` (remove and count).
+
+    Raises:
+        ValueError: The value is neither, so a typo cannot silently pick one.
+    """
+    _DEFAULT_HEADER_POLICY["value"] = _normalize_header_policy(policy)
+
+
+def _default_header_policy():
+    """Resolves the process default once, from the setter or the environment."""
+    value = _DEFAULT_HEADER_POLICY.get("value")
+    if value is None:
+        value = _normalize_header_policy(
+            os.environ.get("CHROME_CLIENT_HEADER_POLICY") or "strict")
+        _DEFAULT_HEADER_POLICY["value"] = value
+    return value
+
+
 def _check_header_policy(headers, policy):
     """Fails closed for fields the Core will not write.
 
@@ -2075,7 +2123,7 @@ class BaseSession(object):
                  doh_template=None, dns_secure_mode=None, dns_over_tls=False,
                  dns_rotate=False, dns_padding=False, hsts_bypass=None,
                  proxy_chain=None, platform="auto", max_sockets_per_group=0,
-                 header_policy="strict"):
+                 header_policy=None):
         """Configures defaults shared by requests made through this session.
 
         ``impersonate`` selects a pinned Chromium profile, ``http_version`` can
@@ -2238,11 +2286,13 @@ class BaseSession(object):
         #: "strict" refuses a hop-by-hop field; "drop" removes it and counts it
         #: in dropped_headers. See _apply_header_policy for what each removed
         #: field would have done (nothing) and what forwarding it would cost.
-        if header_policy not in ("strict", "drop"):
-            raise ValueError(
-                "header_policy must be 'strict' or 'drop', not %r"
-                % (header_policy,))
-        self.header_policy = header_policy
+        # None means "the process default": set once with
+        # CHROME_CLIENT_HEADER_POLICY or set_default_header_policy(). An explicit
+        # value always wins, so a session can still ask for strict in a process
+        # that defaults to drop.
+        if header_policy is None:
+            header_policy = _default_header_policy()
+        self.header_policy = _normalize_header_policy(header_policy)
         self._dropped_headers = {}
         if headers:
             self.headers.update(headers)
@@ -4506,7 +4556,7 @@ class AsyncSession(BaseSession):
                  doh_template=None, dns_secure_mode=None, dns_over_tls=False,
                  dns_rotate=False, dns_padding=False, hsts_bypass=None,
                  proxy_chain=None, platform="auto", max_sockets_per_group=0,
-                 header_policy="strict"):
+                 header_policy=None):
         BaseSession.__init__(
             self, impersonate=impersonate, proxy=proxy, proxies=proxies,
             proxy_auth=proxy_auth, verify=verify, timeout=timeout, headers=headers,

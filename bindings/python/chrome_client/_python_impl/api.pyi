@@ -126,7 +126,7 @@ def session(
     proxy_chain: Optional[str] = None,
     platform: str = 'auto',
     max_sockets_per_group: int = 0,
-    header_policy: str = 'strict',
+    header_policy: Optional[str] = None,
 ) -> Session:
     """Creates a synchronous :class:`~chrome_client.Session`.
 
@@ -202,9 +202,11 @@ def session(
         proxy_chain:
         platform:
         max_sockets_per_group:
-        header_policy: "strict" (default) raises UnsupportedFeature for a hop-by-hop
-            field; "drop" removes it instead and counts it in
-            dropped_headers.
+        header_policy: "strict" raises UnsupportedFeature for a hop-by-hop field; "drop"
+            removes it instead and counts it in dropped_headers. None (the
+            default) means the process default, which is "strict" unless
+            set_default_header_policy() or CHROME_CLIENT_HEADER_POLICY
+            changed it.
 
     Returns:
         The new session. Close it, or use it as a context manager.
@@ -271,7 +273,7 @@ def async_session(
     proxy_chain: Optional[str] = None,
     platform: str = 'auto',
     max_sockets_per_group: int = 0,
-    header_policy: str = 'strict',
+    header_policy: Optional[str] = None,
     max_clients: Optional[int] = None,
 ) -> AsyncSession:
     """Creates an :class:`~chrome_client.AsyncSession`.
@@ -348,9 +350,11 @@ def async_session(
         proxy_chain:
         platform:
         max_sockets_per_group:
-        header_policy: "strict" (default) raises UnsupportedFeature for a hop-by-hop
-            field; "drop" removes it instead and counts it in
-            dropped_headers.
+        header_policy: "strict" raises UnsupportedFeature for a hop-by-hop field; "drop"
+            removes it instead and counts it in dropped_headers. None (the
+            default) means the process default, which is "strict" unless
+            set_default_header_policy() or CHROME_CLIENT_HEADER_POLICY
+            changed it.
         max_clients: Maximum concurrently in-flight requests, or None for unbounded.
             Only AsyncSession accepts it; Session has no such limit.
 

@@ -24,6 +24,7 @@ from ._python_impl.sessions import (
     normalize_client_cert as normalize_client_cert,
     RetryStrategy as RetryStrategy,
     BaseSession as BaseSession,
+    set_default_header_policy as set_default_header_policy,
     Session as Session,
     AsyncSession as AsyncSession,
     Client as Client,

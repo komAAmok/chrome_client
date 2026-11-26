@@ -802,7 +802,7 @@ class BaseSession:
         proxy_chain: Optional[str] = None,
         platform: str = "auto",
         max_sockets_per_group: int = 0,
-        header_policy: str = "strict",
+        header_policy: Optional[str] = None,
     ) -> None:
         """Configures the defaults shared by every request this session sends.
 
@@ -860,9 +860,12 @@ class BaseSession:
                 the fingerprint.
             accept_language: Engine-level ``Accept-Language``. With a
                 profile the captured value is sent unless this is set.
-            header_policy: "strict" (default) raises UnsupportedFeature for a
-                hop-by-hop field; "drop" removes it instead and counts it in
-                dropped_headers.
+            header_policy: "strict" raises UnsupportedFeature for a hop-by-hop
+                field; "drop" removes it instead and counts it in
+                dropped_headers. None (the default) means the process
+                default, which is "strict" unless
+                set_default_header_policy() or CHROME_CLIENT_HEADER_POLICY
+                changed it.
             interface: Rejected; ABI v8 has no network-interface binding.
             doh_url: Rejected; DNS-over-HTTPS config is not exposed.
             max_recv_speed: Rejected; Chromium owns transfer pacing.
@@ -1079,6 +1082,18 @@ class BaseSession:
     @stream.setter
     def stream(self, value: Any) -> None: ...
 
+
+
+def set_default_header_policy(policy: str) -> None:
+    """Sets the header policy new sessions get when they do not name one.
+
+    Args:
+        policy: "strict" (refuse a hop-by-hop field) or "drop" (remove it
+            and count it in session.dropped_headers).
+
+    Raises:
+        ValueError: The value is neither, so a typo cannot silently pick one.
+    """
 
 class Session(BaseSession):
     """Synchronous session.
@@ -2571,7 +2586,7 @@ class AsyncSession(BaseSession):
         proxy_chain: Optional[str] = None,
         platform: str = "auto",
         max_sockets_per_group: int = 0,
-        header_policy: str = "strict",
+        header_policy: Optional[str] = None,
     ) -> None:
         """Configures the asyncio session.
 
@@ -2611,9 +2626,12 @@ class AsyncSession(BaseSession):
             user_agent: Engine-level User-Agent for HTTP and WebSocket.
             accept_language: Engine-level ``Accept-Language``. With a
                 profile the captured value is sent unless this is set.
-            header_policy: "strict" (default) raises UnsupportedFeature for a
-                hop-by-hop field; "drop" removes it instead and counts it in
-                dropped_headers.
+            header_policy: "strict" raises UnsupportedFeature for a hop-by-hop
+                field; "drop" removes it instead and counts it in
+                dropped_headers. None (the default) means the process
+                default, which is "strict" unless
+                set_default_header_policy() or CHROME_CLIENT_HEADER_POLICY
+                changed it.
             interface: Rejected.
             doh_url: Rejected.
             max_recv_speed: Rejected.

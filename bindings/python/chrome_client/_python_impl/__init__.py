@@ -38,7 +38,8 @@ from .impersonate import (CurlHttpVersion, ExtraFingerprints, available_profiles
 from .models import AsyncResponse, PreparedRequest, Request, Response
 from .multipart import CurlMime
 from .sessions import (AsyncClient, AsyncSession, Client, RetryStrategy, Session,
-                       _proxy_from_proxies, merge_setting)
+                       _proxy_from_proxies, merge_setting,
+                       set_default_header_policy)
 from .status_codes import codes
 from .structures import CaseInsensitiveDict, Headers, LookupDict
 from .websockets import AsyncWebSocket, CurlWsFrame, WebSocket, WsCloseCode
@@ -95,6 +96,7 @@ __all__ = [
     "codes", "available_profiles", "core_version", "abi_version", "capabilities",
     "CAPABILITY_QUIC_PROXY",
     "normalize_impersonate", "normalize_http_version",
+    "set_default_header_policy",
     # submodules
     "exceptions", "structures", "cookies", "models", "sessions", "adapters", "auth",
     "utils", "status_codes", "impersonate", "multipart", "websockets", "engine", "api",

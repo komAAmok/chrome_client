@@ -19,6 +19,7 @@ import shutil
 import socket
 import ssl
 import struct
+import subprocess
 import sys
 import tempfile
 import threading
@@ -4099,6 +4100,39 @@ class HeaderPolicyTests(unittest.TestCase):
         # one for this call, so the process-wide default stays strict.
         with self.assertRaises(chrome_client.UnsupportedFeature):
             chrome_client.requests.post(self.base, headers={'Connection': 'keep-alive'})
+    def test_the_process_default_removes_them_without_touching_every_call(self):
+        """One switch instead of a policy argument on every call.
+
+        Old scripts carry 'Connection': 'keep-alive' in a dict copied from
+        devtools. The default stays strict; this only proves the escape hatch
+        works and that an explicit value still wins over it.
+        """
+        import unittest.mock as mock
+        from chrome_client._python_impl import sessions as impl
+        with mock.patch.object(impl, "_DEFAULT_HEADER_POLICY", {"value": "drop"}):
+            with chrome_client.Session() as session:
+                self.assertEqual(session.header_policy, "drop")
+                response = session.get(self.base,
+                                        headers={'Connection': 'keep-alive'})
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(sorted(session.dropped_headers), ["connection"])
+            with chrome_client.Session(header_policy="strict") as session:
+                with self.assertRaises(chrome_client.UnsupportedFeature):
+                    session.get(self.base, headers={'Connection': 'keep-alive'})
+
+    def test_the_environment_variable_sets_the_default(self):
+        """A shell or CI job sets it once; no code changes at all."""
+        code = 'import chrome_client; print(chrome_client.Session().header_policy)'
+        environment = dict(os.environ, CHROME_CLIENT_HEADER_POLICY='drop')
+        done = subprocess.run([sys.executable, '-c', code], env=environment,
+                              capture_output=True, text=True, timeout=120)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(done.stdout.strip(), 'drop')
+        environment['CHROME_CLIENT_HEADER_POLICY'] = 'clean'
+        done = subprocess.run([sys.executable, '-c', code], env=environment,
+                              capture_output=True, text=True, timeout=120)
+        self.assertNotEqual(done.returncode, 0, 'a typo must not pick a policy')
+        self.assertIn('header_policy must be', done.stderr)
     def test_an_unknown_policy_is_refused(self):
         with self.assertRaises(ValueError):
             chrome_client.Session(header_policy="clean")
