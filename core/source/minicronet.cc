@@ -224,14 +224,76 @@ std::string HistoricalUserAgent(const minicronet::ProfileContext& profile,
          " Safari/537.36";
 }
 
-bool IsForbiddenWebSocketHeader(std::string_view name) {
-  return base::EqualsCaseInsensitiveASCII(name, "Connection") ||
-         base::EqualsCaseInsensitiveASCII(name, "Host") ||
-         base::EqualsCaseInsensitiveASCII(name, "Origin") ||
-         base::EqualsCaseInsensitiveASCII(name, "User-Agent") ||
-         base::EqualsCaseInsensitiveASCII(name, "Upgrade") ||
-         base::StartsWith(name, "Sec-WebSocket-",
-                          base::CompareCase::INSENSITIVE_ASCII);
+// One table, two scopes, and one enforcement site per scope all read it:
+// mn_request_create for MN_HEADER_SCOPE_REQUEST, mn_websocket_create for
+// MN_HEADER_SCOPE_WEBSOCKET, and mn_header_disposition so a binding never has
+// to carry a copy of these names.
+//
+// Request scope is derived from what Chromium actually does, not from an RFC
+// list, because a name refused here is a request this Core will not send:
+//  * Hop-by-hop fields never reach the connection pool through extra headers.
+//    On h2/h3 they are discarded outright (net/spdy/spdy_http_utils.cc:214-221
+//    skips connection, proxy-connection and transfer-encoding; RFC 9113 8.2.2
+//    and RFC 9114 4.2 forbid all of them), and on h1 Chromium owns the
+//    connection, so a caller value changes nothing observable. Not settable.
+//  * Host is overwritten by SetHeader(kHost, ...)
+//    (net/http/http_network_transaction.cc:1451). Cookie is attached by
+//    CookieMonster, which outranks a caller value; Content-Length and
+//    Transfer-Encoding are framing the Core computes from the body it was
+//    given; Accept-Encoding is what the profile froze. Each is settable but its
+//    value is not the caller's, so a removal cannot be honoured either.
+//  * User-Agent and Accept-Language do reach the wire (the latter through
+//    SetHeaderIfMissing, net/url_request/url_request_http_job.cc:750-758), so
+//    both stay settable; only removing them is refused.
+constexpr uint32_t kSettable = MN_HEADER_FLAG_SETTABLE;
+constexpr uint32_t kRemovable = MN_HEADER_FLAG_REMOVABLE;
+constexpr uint32_t kDropped = MN_HEADER_FLAG_DROPPED;
+
+struct HeaderRule {
+  std::string_view name;
+  uint32_t flags;
+};
+
+// Sorted by name so the table can be read as a list of decisions rather than of
+// additions; the lookup is linear either way and the list is thirteen entries.
+constexpr HeaderRule kRequestHeaderRules[] = {
+    {"accept-encoding", kSettable | kDropped},
+    {"accept-language", kSettable},
+    {"connection", kDropped},
+    {"content-length", kSettable | kDropped},
+    {"cookie", kSettable | kDropped},
+    {"host", kSettable | kDropped},
+    {"keep-alive", kRemovable | kDropped},
+    {"proxy-connection", kRemovable | kDropped},
+    {"te", kRemovable | kDropped},
+    {"trailer", kRemovable | kDropped},
+    {"transfer-encoding", kSettable | kDropped},
+    {"upgrade", kRemovable | kDropped},
+    {"user-agent", kSettable},
+};
+
+uint32_t HeaderFlags(std::string_view name, mn_header_scope_t scope) {
+  if (scope == MN_HEADER_SCOPE_WEBSOCKET) {
+    // Chromium appends these to the handshake it builds
+    // (net/websockets/websocket_basic_handshake_stream.cc), so a caller value
+    // would be a second Origin or Upgrade line.
+    if (base::EqualsCaseInsensitiveASCII(name, "Connection") ||
+        base::EqualsCaseInsensitiveASCII(name, "Host") ||
+        base::EqualsCaseInsensitiveASCII(name, "Origin") ||
+        base::EqualsCaseInsensitiveASCII(name, "User-Agent") ||
+        base::EqualsCaseInsensitiveASCII(name, "Upgrade") ||
+        base::StartsWith(name, "Sec-WebSocket-",
+                         base::CompareCase::INSENSITIVE_ASCII)) {
+      return 0;
+    }
+    return kSettable | kRemovable;
+  }
+  for (const HeaderRule &rule : kRequestHeaderRules) {
+    if (base::EqualsCaseInsensitiveASCII(name, rule.name)) {
+      return rule.flags;
+    }
+  }
+  return kSettable | kRemovable;
 }
 
 // Mirrors net::IsStrictlyValidCloseStatusCode
@@ -270,6 +332,17 @@ template <typename T> void Retain(T *object) {
 } // namespace
 
 uint32_t MN_CALL mn_abi_version(void) { return MN_ABI_VERSION; }
+
+mn_result_t MN_CALL mn_header_disposition(const char *name, size_t name_length,
+                                          mn_header_scope_t scope,
+                                          uint32_t *out_flags) {
+  if (!name || name_length == 0 || !out_flags ||
+      (scope != MN_HEADER_SCOPE_REQUEST && scope != MN_HEADER_SCOPE_WEBSOCKET)) {
+    return MN_ERROR_INVALID_ARGUMENT;
+  }
+  *out_flags = HeaderFlags(std::string_view(name, name_length), scope);
+  return MN_OK;
+}
 
 
 mn_result_t MN_CALL mn_platform_user_agent_group(mn_platform_t platform,
@@ -937,6 +1010,8 @@ mn_result_t MN_CALL mn_request_create(mn_engine_t *engine,
       (upload_mode != MN_UPLOAD_FIXED && config->body_length != 0) ||
       (config->body_length != 0 && !config->body) ||
       config->strip_authorization_on_cross_origin_redirect > 1 ||
+      (config->header_policy != MN_HEADER_POLICY_REJECT &&
+       config->header_policy != MN_HEADER_POLICY_DROP) ||
       (redirect_mode == MN_REDIRECT_MANUAL && !callbacks.on_redirect)) {
     return MN_ERROR_INVALID_ARGUMENT;
   }
@@ -991,6 +1066,24 @@ mn_result_t MN_CALL mn_request_create(mn_engine_t *engine,
     if (!net::HttpUtil::IsValidHeaderName(name) ||
         !net::HttpUtil::IsValidHeaderValue(value)) {
       return MN_ERROR_INVALID_ARGUMENT;
+    }
+    // The decision lives here rather than in every binding: under REJECT the
+    // request does not exist, and under DROP the field is not in the set the
+    // wire is built from. Both answers come from the table above, which is also
+    // what mn_header_disposition reports.
+    //
+    // The two policies do not refuse the same names. REJECT covers only what
+    // cannot be written at all (the hop-by-hop fields): a core-owned value such
+    // as Content-Length is written by Chromium from the body it was given, and
+    // every ABI 14 caller was allowed to pass one. DROP also removes those,
+    // because that is the policy's whole point -- the profile's own value ships.
+    const uint32_t flags = HeaderFlags(name, MN_HEADER_SCOPE_REQUEST);
+    if (config->header_policy == MN_HEADER_POLICY_REJECT) {
+      if (!(flags & kSettable)) {
+        return MN_ERROR_INVALID_ARGUMENT;
+      }
+    } else if (!(flags & kSettable) || (flags & kDropped)) {
+      continue;
     }
     headers.emplace_back(std::move(name), std::move(value));
   }
@@ -1173,7 +1266,7 @@ mn_result_t MN_CALL mn_websocket_create(mn_engine_t *engine,
     std::string value(header.value, header.value_length);
     if (!net::HttpUtil::IsValidHeaderName(name) ||
         !net::HttpUtil::IsValidHeaderValue(value) ||
-        IsForbiddenWebSocketHeader(name)) {
+        !(HeaderFlags(name, MN_HEADER_SCOPE_WEBSOCKET) & kSettable)) {
       return MN_ERROR_INVALID_ARGUMENT;
     }
     headers.emplace_back(std::move(name), std::move(value));

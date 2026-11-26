@@ -16,9 +16,9 @@ use std::{
 use minicronet_sys as sys;
 
 pub use request::{
-    CacheMode, EchStatus, Header, HttpVersion, Redirect, RedirectMode, Request, RequestConfig,
-    RequestError, RequestPriority, Response, ResponseFuture, ResponseHeader, ResponseStream,
-    Upload,
+    CacheMode, EchStatus, Header, HeaderPolicy, HttpVersion, Redirect, RedirectMode, Request,
+    RequestConfig, RequestError, RequestPriority, Response, ResponseFuture, ResponseHeader,
+    ResponseStream, Upload,
 };
 pub use websocket::{
     CloseInfo, MessageType, WebSocket, WebSocketConfig, WebSocketEvent, WebSocketEvents,
@@ -81,6 +81,42 @@ impl fmt::Display for Error {
 }
 
 impl std::error::Error for Error {}
+
+/// Which header block a name belongs to. The two scopes answer differently for
+/// the same name -- Connection is refused on a request and on a handshake, but
+/// Origin is refused only on the handshake -- so the scope is never defaulted.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum HeaderScope {
+    Request,
+    WebSocket,
+}
+
+impl From<HeaderScope> for sys::mn_header_scope_t {
+    fn from(value: HeaderScope) -> Self {
+        match value {
+            HeaderScope::Request => Self::MN_HEADER_SCOPE_REQUEST,
+            HeaderScope::WebSocket => Self::MN_HEADER_SCOPE_WEBSOCKET,
+        }
+    }
+}
+
+/// Asks the Core what it does with one header name.
+///
+/// The table lives in the Core because the answer must not depend on the
+/// binding's language: Go and Node get the same bits as Python by asking the
+/// same question. Error::InvalidArgument means the question itself was malformed
+/// (empty name, unknown scope), not that the name is unwritable -- an unwritable
+/// name is a successful answer with the relevant flag clear.
+pub fn header_disposition(name: &str, scope: HeaderScope) -> Result<u32, Error> {
+    let mut flags = 0u32;
+    let result = unsafe {
+        sys::mn_header_disposition(name.as_ptr().cast(), name.len(), scope.into(), &mut flags)
+    };
+    if result != sys::mn_result_t::MN_OK {
+        return Err(result.into());
+    }
+    Ok(flags)
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ProtocolMode {

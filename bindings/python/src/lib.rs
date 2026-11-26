@@ -19,9 +19,9 @@ use std::time::{Duration, Instant};
 
 use minicronet::{
     CacheMode, CloseInfo, Cookie, CookieSameSite, EchStatus, Engine, EngineConfig, Header,
-    HttpCacheMode, HttpVersion, MessageType, Platform, ProtocolMode, Redirect, RedirectMode,
-    RequestConfig, RequestPriority, ResponseFuture, ResponseStream, TlsVerifyMode, Upload,
-    WebSocketConfig, WebSocketEvent, WebSocketEvents,
+    HeaderPolicy, HeaderScope, HttpCacheMode, HttpVersion, MessageType, Platform, ProtocolMode,
+    Redirect, RedirectMode, RequestConfig, RequestPriority, ResponseFuture, ResponseStream,
+    TlsVerifyMode, Upload, WebSocketConfig, WebSocketEvent, WebSocketEvents,
 };
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
@@ -87,6 +87,16 @@ fn cache_mode(name: Option<&str>) -> PyResult<CacheMode> {
         "only_if_cached" => CacheMode::OnlyIfCached,
         other => return Err(native_error(format!("unknown cache mode {other:?}"))),
     })
+}
+
+fn header_policy_mode(name: Option<&str>) -> PyResult<HeaderPolicy> {
+    match name {
+        None | Some("reject") => Ok(HeaderPolicy::Reject),
+        Some("drop") => Ok(HeaderPolicy::Drop),
+        Some(other) => Err(PyValueError::new_err(format!(
+            "header policy must be 'reject' or 'drop', not {other:?}"
+        ))),
+    }
 }
 
 fn request_priority(name: Option<&str>) -> PyResult<RequestPriority> {
@@ -1182,6 +1192,7 @@ impl PyEngine {
         chunked=false,
         strip_authorization=None,
         take_body_buffers=None,
+        header_policy=None,
     ))]
     #[allow(clippy::too_many_arguments)]
     fn request(
@@ -1198,6 +1209,7 @@ impl PyEngine {
         chunked: bool,
         strip_authorization: Option<bool>,
         take_body_buffers: Option<bool>,
+        header_policy: Option<&str>,
     ) -> PyResult<PyRequest> {
         let mut config = RequestConfig::get(url.to_owned());
         config.method = method.to_owned();
@@ -1213,6 +1225,9 @@ impl PyEngine {
         // header on a cross-origin hop and must not start doing so silently.
         config.strip_authorization_on_cross_origin_redirect = strip_authorization.unwrap_or(false);
         config.take_body_buffers = take_body_buffers.unwrap_or(false);
+        // ABI 15. Reject is the default because it is what every ABI 14 caller
+        // got: a reserved name was refused before the request existed.
+        config.header_policy = header_policy_mode(header_policy)?;
         config.headers = headers
             .unwrap_or_default()
             .into_iter()
@@ -1263,12 +1278,33 @@ impl PyEngine {
 // The callback bridge attaches to Python to schedule asyncio callbacks and
 // the public facade owns mutable Python state; retain the GIL on free-threaded
 // interpreters until a dedicated Python 3.13t test matrix is available.
+/// Reports what the Core does with one header name, as MN_HEADER_FLAG_* bits.
+///
+/// The facade asks this instead of keeping a list of reserved names: the table
+/// belongs to the Core, and a second copy in Python is how the same request
+/// starts behaving differently per binding.
+#[pyfunction]
+fn header_flags(name: &str, scope: &str) -> PyResult<u32> {
+    let scope = match scope {
+        "request" => HeaderScope::Request,
+        "websocket" => HeaderScope::WebSocket,
+        other => {
+            return Err(PyValueError::new_err(format!(
+                "header scope must be 'request' or 'websocket', not {other:?}"
+            )))
+        }
+    };
+    minicronet::header_disposition(name, scope)
+        .map_err(|_| PyValueError::new_err(format!("the Core refused a header query for {name:?}")))
+}
+
 #[pymodule(gil_used = true)]
 fn chrome_client_native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<PyEngine>()?;
     module.add_class::<PyRequest>()?;
     module.add_class::<PyResponse>()?;
     module.add_class::<PyWebSocket>()?;
+    module.add_function(wrap_pyfunction!(header_flags, module)?)?;
     module.add("abi_version", Engine::core_abi_version())?;
     Ok(())
 }

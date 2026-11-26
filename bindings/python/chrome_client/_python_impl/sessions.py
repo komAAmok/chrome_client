@@ -30,6 +30,7 @@ except ImportError:  # Python 3.6
     from collections import Mapping
 
 from . import multipart as _multipart
+from ._native import native as _native
 from .browser_headers import (browser_headers,
                               full_header_order as browser_header_order)
 from .auth import build_auth
@@ -93,17 +94,17 @@ STREAM_BUFFER_LIMIT = 1024 * 1024
 #: path a real Chrome uses.
 
 
-#: Headers `mn_websocket_create` rejects (`IsForbiddenWebSocketHeader` in
-#: core/source/minicronet.cc): Chromium derives each of them itself, and the
-#: User-Agent in particular is part of the impersonated fingerprint.
-_FORBIDDEN_WS_HEADERS = ("Connection", "Host", "Origin", "User-Agent", "Upgrade",
-                         "Sec-WebSocket-*")
+def _forbidden_ws_headers(names):
+    """Returns the handshake fields the Core refuses, in the caller's order.
 
-
-def _is_forbidden_ws_header(name):
-    lowered = str(name).lower()
-    return lowered in ("connection", "host", "origin", "user-agent", "upgrade") \
-        or lowered.startswith("sec-websocket-")
+    The set is the Core's (MN_HEADER_SCOPE_WEBSOCKET): Chromium derives the
+    Host, Origin, Upgrade, Connection and Sec-WebSocket-* fields itself, and the
+    User-Agent in particular is part of the impersonated fingerprint. This asks
+    instead of listing them, so the refusal and mn_websocket_create cannot
+    disagree about which names those are.
+    """
+    return [name for name in names
+            if not _header_flags(name, "websocket") & _HEADER_SETTABLE]
 
 
 def _websocket_http_url(url):
@@ -217,88 +218,34 @@ def _validate_max_response_bytes(value):
 
 
 
-#: Headers Chromium or the profile owns: they are produced by the Core, so a
-#: caller cannot remove them through extra headers -- ``SetExtraRequestHeaders``
-#: only ever adds. Deleting one silently changed nothing, which is the
-#: degradation this project refuses: measured, ``headers={"User-Agent": None}``
-#: and ``headers={"Accept-Encoding": None}`` both sent the original value.
-_CORE_OWNED_HEADERS = frozenset((
-    "user-agent",
-    "accept-encoding",
-    "accept-language",
-    "host",
-    "connection",
-    "content-length",
-    "transfer-encoding",
-    # ``CookieMonster`` attaches this field itself and outranks a caller value,
-    # so removing it cannot be honoured: measured, a store holding ``c=3``
-    # still sent ``Cookie: c=3`` after a request asked to delete the header,
-    # and nothing raised. "Use discard_cookies=True" is the working spelling of
-    # the same intent, which is what the refusal message tells the caller.
-    "cookie",
-))
-
-#: Fields Chromium produces itself and whose value it has already decided by the
-#: time the request is built. A caller value here is silently outranked or
-#: overwritten, so accepting it would make the wire disagree with what the caller
-#: asked for -- the fail-closed rule section 8 states. Dropping them is the
-#: behaviour the caller wants anyway: the profile already carries a correct value.
+#: Flag bits mn_header_disposition reports (core/abi/minicronet.h).
 #:
-#: ``User-Agent`` is deliberately absent: the Core derives it from the profile and
-#: the platform, but overriding it is a legitimate impersonation knob and the
-#: frozen header baseline shows the value reaching the wire (`request_head.txt`).
-#: ``Referer`` is absent for the same kind of reason: the Core routes it through
-#: SetReferrer (core/source/request.cc:244), so a value there does take effect.
-_CORE_OVERRIDDEN_HEADERS = frozenset((
-    "host",
-    "accept-encoding",
-    "accept-language",
-))
-
-#: ``Connection`` is not here even though Chromium owns it too: it is a
-#: hop-by-hop field, and ``_reject_hop_by_hop_headers`` already refuses it with a
-#: reason a caller can act on. Silently dropping it would turn "I asked to close
-#: the connection and got a shared socket" into "I asked and heard nothing", which
-#: is the shape of defect that refusal exists to prevent.
+#: The rules themselves -- which name cannot be set, which cannot be removed,
+#: which the "drop" policy removes -- live in the Core and nowhere else. What
+#: used to live here were three copies of them (_CORE_OWNED_HEADERS,
+#: _HOP_BY_HOP_HEADERS, _DROPPED_IN_DROP_POLICY); a name added to one copy was
+#: silently accepted by the others, and the day two of them disagreed the same
+#: request behaved differently depending on the binding that sent it. Asking
+#: costs one call per name and cannot drift.
+_HEADER_SETTABLE = 1
+_HEADER_REMOVABLE = 2
+_HEADER_DROPPED = 4
 
 
-#: RFC 9110 §7.6.1 hop-by-hop fields, minus the ones this facade does honour.
-#: Chromium owns connection lifetime, and ``SetExtraRequestHeaders`` never reaches
-#: the connection pool, so setting any of these changes nothing on HTTP/1.1 --
-#: measured: ``Connection: close`` was sent but three requests still shared one
-#: socket. On HTTP/2 and HTTP/3 they are discarded outright
-#: (``net/spdy/spdy_http_utils.cc:214-221`` skips ``connection``, ``proxy-connection``
-#: and ``transfer-encoding``; RFC 9113 §8.2.2 and RFC 9114 §4.2 forbid all of
-#: them), so accepting a value would make behaviour depend on the negotiated
-#: protocol. ``transfer-encoding`` and ``content-length`` are excluded here
-#: because they are body framing, which the caller does control.
-_HOP_BY_HOP_HEADERS = frozenset((
-    "connection",
-    "proxy-connection",
-    "keep-alive",
-    "te",
-    "trailer",
-    "upgrade",
-))
+def _header_flags(name, scope="request"):
+    """Returns the Core's verdict for one header name, as flag bits.
 
-#: What header_policy="drop" removes. The hop-by-hop set above, plus the fields
-#: Chromium overwrites or owns outright: Host
-#: (net/http/http_network_transaction.cc:1451), Cookie (CookieMonster outranks a
-#: caller value), Content-Length/Transfer-Encoding (framing computed from the
-#: body), and Accept-Encoding, whose caller value would replace the profile's
-#: captured one in place and make the fingerprint depend on what the script
-#: happened to pass.
-#:
-#: Accept-Language is excluded on purpose: Chromium's SetHeaderIfMissing keeps a
-#: caller value (net/url_request/url_request_http_job.cc:750-758), and dropping
-#: it was how a request lost its language entirely.
-_DROPPED_IN_DROP_POLICY = _HOP_BY_HOP_HEADERS | frozenset((
-    "host",
-    "cookie",
-    "content-length",
-    "transfer-encoding",
-    "accept-encoding",
-))
+    Args:
+        name: The header name, in any case.
+        scope: "request" or "websocket". The Core answers differently for the
+            same name -- Origin is derived on a handshake and the caller's on a
+            request -- so the scope is always passed, never defaulted there.
+
+    Returns:
+        The bit set above.
+    """
+    return _native.header_flags(name, scope)
+
 
 #: Fields Chromium inserts before it merges the caller's headers, in its order:
 #: Host, Connection (Proxy-Connection through a plain proxy), Content-Length or
@@ -326,7 +273,12 @@ _WIRE_PREFIX = (
 
 
 def _check_header_policy(headers, policy):
-    """Fails closed for fields only the connection layer can honour.
+    """Fails closed for fields the Core will not write.
+
+    The verdict is the Core's (mn_header_disposition, enforced again by
+    mn_request_create under MN_HEADER_POLICY_REJECT); this only turns a bit into
+    a message, because a caller needs the field names and the reason rather than
+    "invalid argument".
 
     Called from request() (through _prepare_call) and again from both send()
     entry points, because request() is not the only way a header reaches the
@@ -340,18 +292,23 @@ def _check_header_policy(headers, policy):
 
     Args:
         headers: The prepared request headers, or None.
-        policy: "strict" raises; "drop" is handled by _apply_header_policy and
-            does nothing here.
+        policy: "strict" raises; under "drop" the Core removes these fields
+            instead, and _apply_header_policy counts them.
 
     Raises:
-        UnsupportedFeature: A hop-by-hop field was set or removed and the
-            session header_policy is "strict". The message names every
+        UnsupportedFeature: A field the Core cannot write was set or removed and
+            the session header_policy is "strict". The message names every
             offending field and says why it cannot work.
     """
     if headers is None or policy != "strict":
         return
-    present = {name.lower() for name, _ in headers.multi_items()}
-    offending = sorted(present.union(headers.deleted_names) & _HOP_BY_HOP_HEADERS)
+    # Lower-cased because the message is read by a caller who typed "Keep-Alive"
+    # and the field he has to remove is named keep-alive on the wire; the Core's
+    # verdict is case-insensitive either way.
+    present = {name.lower() for name, _value in headers.multi_items()}
+    removed = {name.lower() for name in headers.deleted_names}
+    offending = sorted(name for name in present.union(removed)
+                       if not _header_flags(name) & _HEADER_SETTABLE)
     if not offending:
         return
     raise UnsupportedFeature(
@@ -364,21 +321,16 @@ def _check_header_policy(headers, policy):
 
 
 def _apply_header_policy(headers, policy, sink):
-    """Removes what cannot reach the wire when the policy is "drop".
+    """Counts what header_policy="drop" removes, and forgets their removals.
 
-    Nothing here is honoured by Chromium, so dropping it is not a silent
-    downgrade of a working option: Connection et al. never reach the pool (see
-    _check_header_policy), Host is overwritten by SetHeader(kHost, ...)
-    (net/http/http_network_transaction.cc:1451), Cookie is attached by
-    CookieMonster and outranks a caller value, and Content-Length /
-    Transfer-Encoding are body framing the Core computes from the body it is
-    given. A caller-supplied framing value that disagrees with the body is the
-    request-smuggling shape, so it is dropped rather than forwarded.
+    The values are removed by the Core: the request is created with
+    MN_HEADER_POLICY_DROP and mn_request_create omits every name whose
+    MN_HEADER_DROPPED bit is set. Nothing here rewrites the header set -- a
+    second implementation of that decision is what the Core-side table replaced.
 
-    Accept-Language is deliberately not in the drop set: Chromium's
-    SetHeaderIfMissing keeps a caller value
-    (net/url_request/url_request_http_job.cc:750-758), so dropping it would
-    discard something that works.
+    Forgetting a removal of a dropped name is bookkeeping the ABI has no field
+    for: a removal of a field that is not sent is already a no-op, and the Core
+    never sees the deletion record.
 
     Args:
         headers: The prepared request headers, or None.
@@ -386,26 +338,26 @@ def _apply_header_policy(headers, policy, sink):
         sink: A mutable mapping counting what was dropped, by lower-cased name.
 
     Returns:
-        The headers to send: the same object when nothing is dropped, otherwise
-        a new Headers without the dropped names or their removals.
+        The headers to send: the same object unless a removal of a dropped name
+        had to be forgotten.
     """
     if headers is None or policy != "drop":
         return headers
-    removals = set(headers.deleted_names) & _DROPPED_IN_DROP_POLICY
-    dropped = [name for name, _value in headers.multi_items()
-               if name.lower() in _DROPPED_IN_DROP_POLICY]
-    if not dropped and not removals:
+    for name, _value in headers.multi_items():
+        if _header_flags(name) & _HEADER_DROPPED:
+            lowered = name.lower()
+            sink[lowered] = sink.get(lowered, 0) + 1
+    removals = [name for name in headers.deleted_names
+                if _header_flags(name) & _HEADER_DROPPED]
+    if not removals:
         return headers
+    dropped_set = set(removals)
     kept = Headers()
     for name, value in headers.multi_items():
-        if name.lower() not in _DROPPED_IN_DROP_POLICY:
-            kept.add(name, value)
+        kept.add(name, value)
     for name in headers.deleted_names:
-        if name not in _DROPPED_IN_DROP_POLICY:
+        if name not in dropped_set:
             kept._remove(name)
-    for name in dropped:
-        lowered = name.lower()
-        sink[lowered] = sink.get(lowered, 0) + 1
     return kept
 
 
@@ -460,20 +412,22 @@ def _reject_core_owned_removals(headers):
     """Fails closed when a caller asks to remove a header the Core owns.
 
     Checked on the request headers and again on the session's own: a removal
-    recorded on ``session.headers`` used to reach no check at all, because the
-    merge copies only the caller's deletion record.
+    recorded on session.headers used to reach no check at all, because the merge
+    copies only the caller's deletion record. Which names those are is the
+    Core's answer (MN_HEADER_FLAG_REMOVABLE, enforced by the same table
+    mn_request_create reads); this only words the refusal.
 
     Args:
-        headers: A header mapping, or ``None``.
+        headers: A header mapping, or None.
 
     Raises:
-        UnsupportedFeature: A removal was requested for a header the binding
-            cannot delete. The message names the headers and what to do instead.
+        UnsupportedFeature: A removal was requested for a header whose value the
+            Core produces. The message names the headers and what to do instead.
     """
     if headers is None:
         return
     removed = sorted(name for name in headers.deleted_names
-                     if name in _CORE_OWNED_HEADERS)
+                     if not _header_flags(name) & _HEADER_REMOVABLE)
     if not removed:
         return
     raise UnsupportedFeature(
@@ -482,6 +436,28 @@ def _reject_core_owned_removals(headers):
         "the value you want instead, or choose a profile whose captured header "
         "list already omits it."
         % (", ".join(removed), "it" if len(removed) == 1 else "them"))
+
+
+#: Fields Chromium produces itself and whose value it has already decided by the
+#: time the request is built. A caller value here is silently outranked or
+#: overwritten, so accepting it would make the wire disagree with what the caller
+#: asked for -- the fail-closed rule section 8 states. Dropping them is the
+#: behaviour the caller wants anyway: the profile already carries a correct value.
+#:
+#: This is a different question from the Core's header table: "settable" there
+#: means the value reaches the wire (Host and Accept-Encoding do, and Chromium
+#: then overwrites them; User-Agent is settable and kept), while this set is
+#: about the facade's own default-header merge, where a caller value would
+#: replace the captured one in place. Accept-Language belongs here only when
+#: something else produces it -- SetHeaderIfMissing keeps a caller value
+#: (net/url_request/url_request_http_job.cc:750-758) -- which is why the caller
+#: passes keep_accept_language.
+_CORE_OVERRIDDEN_HEADERS = frozenset((
+    "host",
+    "accept-encoding",
+    "accept-language",
+))
+
 
 def _strip_core_overridden_headers(headers, keep_accept_language=False):
     """Drops fields Chromium decides for itself, rather than forwarding them.
@@ -3812,6 +3788,9 @@ class BaseSession(object):
             _split_timeout(timeout), bool(allow_redirects), None, cache_mode,
             priority, bool(prepared.stream_body), self.strip_authorization,
             take_body_buffers=self.take_body_buffers,
+            # The Core does the removing (mn_request_create, ABI 15); the facade
+            # only reports the policy name and counts what the Core dropped.
+            header_policy="drop" if self.header_policy == "drop" else "reject",
         )
 
 
@@ -3946,15 +3925,16 @@ class BaseSession(object):
         merged = Headers(self.headers)
         if headers:
             merged.update(headers)
-        forbidden = sorted(name for name in merged if _is_forbidden_ws_header(name))
+        forbidden = _forbidden_ws_headers(merged)
         if forbidden:
             raise UnsupportedFeature(
-                "%s cannot be set on a WebSocket handshake: Chromium owns "
-                "%s, and the Core rejects them as extra headers. Set the "
-                "User-Agent for the whole session with Session(user_agent=...) or "
-                "pick an impersonate profile; Host, Origin and the Sec-WebSocket-* "
-                "headers come from the URL and the handshake."
-                % (", ".join(forbidden), ", ".join(_FORBIDDEN_WS_HEADERS)))
+                "%s cannot be set on a WebSocket handshake: Chromium derives "
+                "these fields itself, so mn_websocket_create refuses them as "
+                "extra headers. Set the User-Agent for the whole session with "
+                "Session(user_agent=...) or pick an impersonate profile; Host, "
+                "Origin and the Sec-WebSocket-* headers come from the URL and "
+                "the handshake."
+                % (", ".join(forbidden),))
         return slot.engine.websocket(url, origin or _default_websocket_origin(url),
                                      merged.multi_items(),
                                      _split_timeout(timeout if timeout is not None

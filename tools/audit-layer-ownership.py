@@ -90,25 +90,6 @@ KNOWN = {
     ("bindings/python/chrome_client/_python_impl/models.py", 3): (
         "on_response now passes the reason phrase, so this is only used for a",
         "redirect hop, which has the raw block but no parsed reason."),
-    ("bindings/python/chrome_client/_python_impl/sessions.py", 4): (
-        "the Core accepts every header name, so the refusal has to happen",
-        "somewhere. Moving it needs mn_request_config to reject the seven names",
-        "and return MN_ERROR_INVALID_ARGUMENT, before the loop that calls",
-        "headers.SetHeader in Request::StartOnNetworkThread",
-        "(core/source/request.cc:187-246).",
-        "Scheduled as ABI 13: docs/NEXT_STEPS.md, the ABI 13 plan and the",
-        "three-item header-validation proposal -- head-name rejection is",
-        "item 1."),
-    ("bindings/python/chrome_client/_python_impl/sessions.py", 5): (
-        "SetExtraRequestHeaders only adds, so a caller-owned removal is a no-op",
-        "the Core cannot report. Needs a Core-side per-name removal entry point",
-        "alongside the MergeFrom that builds the merged set",
-        "(core/source/request.cc:276-279). Scheduled as ABI 13, item 2."),
-    ("bindings/python/chrome_client/_python_impl/sessions.py", 6): (
-        "the WebSocket handshake builds its own header block in Chromium",
-        "(websocket_basic_handshake_stream.cc), so the ABI never sees which",
-        "names are reserved. Needs mn_websocket_config to reject them.",
-        "Scheduled as ABI 13, item 3."),
 }
 
 

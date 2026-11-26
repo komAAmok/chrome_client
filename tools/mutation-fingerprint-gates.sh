@@ -66,8 +66,9 @@ import pathlib
 p = pathlib.Path("/tmp/mut-parity-default/bindings/python/chrome_client/_python_impl/sessions.py")
 lines = p.read_text().split("\n")
 hits = [i for i, line in enumerate(lines)
-        if 'proxy_chain=None, platform="auto", max_sockets_per_group=0):' in line]
-assert len(hits) == 2, hits
+        if 'max_sockets_per_group=0,' in line]
+assert len(hits) == 2, ("expected two constructor tails, found %d; update this "
+                                  "mutation" % len(hits))
 lines[hits[-1]] = lines[hits[-1]].replace('platform="auto"', 'platform="windows"')
 p.write_text("\n".join(lines))
 PY
@@ -81,8 +82,14 @@ import pathlib
 p = pathlib.Path("/tmp/mut-parity-missing/bindings/python/chrome_client/_python_impl/sessions.py")
 lines = p.read_text().split("\n")
 hits = [i for i, line in enumerate(lines)
-        if 'proxy_chain=None, platform="auto", max_sockets_per_group=0):' in line]
-lines[hits[-1]] = "                 proxy_chain=None, max_sockets_per_group=0):"
+        if 'max_sockets_per_group=0,' in line]
+index = hits[-1]
+for offset in range(1, 4):
+    if 'header_policy=' in lines[index + offset]:
+        lines[index + offset] = lines[index + offset].replace('header_policy=', 'header_policy_mode=')
+        break
+else:
+    raise SystemExit('no header_policy option after the shared tail')
 p.write_text("\n".join(lines))
 PY
 check "session-parity: an option went missing" \

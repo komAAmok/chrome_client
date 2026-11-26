@@ -578,7 +578,7 @@ Core 体积在 6.1–9.4 MB 之间（Linux ARMv7 最小，Windows x86_64 最大�
 
 | 路径 | 内容 |
 | --- | --- |
-| `core/abi/` | 稳定 C ABI v14 |
+| `core/abi/` | 稳定 C ABI v15 |
 | `core/binaries/` | 9 个已审计平台 Core |
 | `crates/minicronet/` | Rust 安全层、流和生命周期 |
 | `bindings/python/` | Python 3.9–3.15 绑定与共享 facade |

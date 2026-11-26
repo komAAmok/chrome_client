@@ -254,6 +254,7 @@ incomplete」，而真正的错误是根目录少了一层。
 | `strip` | **已在做，且是最大一项**：未 strip 13,294,128 → `llvm-objcopy --strip-unneeded` 后 8,368,280，省 4.9 MB（37%） |
 | 关 `dcheck_always_on` | **零收益**：`-DNDEBUG` 已生效，产物里 `Check failed` 只剩 1 条 |
 | `-ffile-prefix-map` 抹平路径字符串 | **不可行**：见下，字符串来自 Rust rlib 不是 C++ |
+| `optional_trace_events_enabled = false`（桌面默认开） | **零收益**：0.2.18 源码上复测，linux-x86_64 全量重编后产物逐字节相同（8,662,576 字节，sha256 未变） |
 | 裁 UMA 直方图名字 | **不可行**：无编译期开关，需改 Chromium 源码 |
 | 减 profile 数量 / 关 QUIC / 关 WebSocket | **不该做**：放弃功能，与「保证现有功能」冲突 |
 | 裁剪 `chrome_root_store` | **不该做**：347 KB，实测 249 张证书 / 331 KB DER，是 Chrome 的证书信任链本体。换系统 CA 库会让不同机器的校验结果不同 |
@@ -607,39 +608,54 @@ printing its samples`，`stdout_tail` 保留采样。
 「合并首包等待」可先做（只增不改、风险集中在一处），「批量唤醒投递」要等它的观测
 数据稳定后再动。详见本文「提案：两项性能 ABI 改动」。
 
-### ABI 13 计划：三项头部校验下沉（已排期）
+### 已完成：三项头部校验下沉（排期为 ABI 13，落地为 ABI 15）
 
-这是 AGENTS §1.1 迁移的**收尾**，也是 `tools/audit-layer-ownership.py` 里仅剩的三条
-`KNOWN`。它们不是新功能：绑定层今天用三张 frozenset 做 Core 本该做的事，只因为 Core
-还不具备拒绝能力。详细论证与逐条改动见本文末尾「提案：三项头部校验下沉」。
+> 完成日期 2026-11-26。三项在**一次** ABI 推进里落地；版本号是 **15**（v13/v14 已被
+> 能力查询与平台身份占用），所以计划里的「ABI 13」是排期编号，不是最终版本号。
 
-| 序 | 改动 | 绑定层要删的表 | Core 侧落点 |
+**结果**：`tools/audit-layer-ownership.py` 的 KNOWN 从 12 条降到 9 条，删掉的正是
+`sessions.py` 的 `_HOP_BY_HOP_HEADERS`、`_CORE_OWNED_HEADERS`、`_FORBIDDEN_WS_HEADERS`
+三条。绑定层现在没有一张头名表：需要判断时问 `mn_header_disposition`。
+
+| 序 | 改动 | 落点 | 证据 |
 | --- | --- | --- | --- |
-| 1 | 头名拒绝返回 `MN_ERROR_INVALID_ARGUMENT` | `_CORE_OWNED_HEADERS`（7 名） | `Request::StartOnNetworkThread` 头部循环之前 |
-| 2 | 按名删除入口（或"这个名字不可删"的查询） | 同上表里删除分支的名单 | 合并集构建处 `MergeFrom` 旁 |
-| 3 | WebSocket 保留名拒绝 | `_FORBIDDEN_WS_HEADERS` | `mn_websocket_config_t` 校验 |
+| 1 | 头名拒绝 → `MN_ERROR_INVALID_ARGUMENT` | `mn_request_create` 的头循环，表在 `HeaderFlags()` | `HeaderTableOwnershipTests.test_the_core_refuses_a_reserved_name_by_itself`（把 facade 的预检 patch 掉，Core 照样拒绝） |
+| 2 | 删除无效的报告 | `mn_header_disposition` 的 `MN_HEADER_FLAG_REMOVABLE` | `_reject_core_owned_removals()` 只按这个位决定，名单在 Core |
+| 3 | WS 保留名拒绝 | `mn_websocket_create` 用同一张表的 `MN_HEADER_SCOPE_WEBSOCKET` | `_forbidden_ws_headers()` 只问不抄；`test_the_core_drops_by_itself` 证明 Core 独立生效 |
 
-**为什么必须一轮做完**：三项都要动 `MN_ABI_VERSION`。分三次就是三次版本升级、三次
-九平台重建、三次绑定层同步；而且它们共享同一个契约问题——"哪些头名不可写"必须只有
-一处定义，否则头名拒绝与删除报告会各写一份名单，重演今天绑定层的问题。
+**契约**（`core/abi/minicronet.h`）：`mn_header_scope_t`、
+`mn_header_flags_t`（SETTABLE / REMOVABLE / DROPPED）、`mn_header_policy_t`
+（REJECT / DROP），`mn_request_config_t.header_policy` 追加在末尾，结构体大小不变
+（x86_64 152、i686 100 字节，`audit-abi-layout.py` 逐字段核对 105 个字段）。
 
-**顺序不可颠倒**：先让 Core 拒绝，再删绑定层表。反过来会让一次失败同时暴露两个原因。
+**两条策略拒绝的集合不同**，这是实现时最容易写错的一处：REJECT 只拒绝「根本写不了」
+的 6 个 hop-by-hop 字段；DROP 还额外移除 5 个「写得进去但值不是调用方的」字段
+（host / cookie / content-length / transfer-encoding / accept-encoding）。
+第一版把两者合并成一个 `!SETTABLE` 判断，于是 `drop` 策略下发出去的
+`Content-Length: 5` 原样到了服务端——`test_drop_keeps_the_request_working_and_counts_what_it_removed`
+当场红，改成「REJECT 看 SETTABLE、DROP 看 SETTABLE∪DROPPED」之后才通过。
 
-**与 ABI 12 的关系**：ABI 12（结构化重定向头 + 跨域 Authorization 剥离 + 零拷贝接管）
-已经落地并九平台重建完成，是本计划的**前置基线**。三项下沉在它之上叠加，不需要回退任何
-v12 能力。
+**顺序**按计划执行：先让 Core 拒绝，再删绑定层表；反过来会让一次失败同时暴露两个原因。
 
-**完成判据**（与提案一节一致，此处复述以便单点核对）：
+**同时修掉的门禁缺陷**：`tools/audit-core-binaries.sh` 里还有**第四份**手写的导出符号
+表。ABI 15 加了 `mn_header_disposition`，九个产物全部正确，这条门禁却对 linux-x86
+报「exported mn_* set differs from ABI v15」——因为它自己的那份还停在 32 个。已改为直接读
+`core/exports/minicronet.exports`（`audit-abi.sh` 已证明头文件、FFI、Core 与三份导出表
+彼此一致），少一份手抄。
 
-- `KNOWN` 里这三条被删除，且 `audit-layer-ownership.py` 仍通过
-- 绑定层三个 frozenset 消失，相关测试同步更新
-- 九平台重建并重新记录 build-args 快照与 manifest
-- `docs/COMPATIBILITY_BOUNDARY.md` 与 README 写明"这些头名现在由 Core 拒绝"
+第二条：`tools/mutation-fingerprint-gates.sh` 的两条 session-parity 变异自 P0 加入 `header_policy=` 之后就锚不上代码，`assert` 失败被计成 `MUTATION NOT DETECTED`——**这条门禁从那个提交起一直是红的**。改为按选项名定位后 7/7 检出。
 
-**风险**：三项都是**收紧**——今天被静默接受的调用会开始报错。这是 §8 fail-closed 要的
-方向，但属于对外行为变更，必须写进文档，且头名集合要与 Chromium 实际行为一致
-（判据是 `net/spdy/spdy_http_utils.cc:214-221` 与 `SetExtraRequestHeaders` 的真实语义，
-不是照抄 RFC 列表）。
+**体积**：本轮**没有**取得体积收益。`optional_trace_events_enabled = false` 是「已确认无效的优化方向」表里已经记过的一条，这次用 0.2.18 的源码复测：linux-x86_64 全量重编后产物 sha256 与改动前**逐字节相同**（8,662,576 字节），结论被复现，不是新发现。
+九平台相对 ABI 14 的增量全部来自新增代码：
++0 / +544 / +440 / +896 / +64 / +64 / +1,024 / +512 / +1,024 字节，
+见 `docs/PROJECT_STATUS.md` 的「验收（2026-11-26，ABI v15，发布版本 0.2.18）」。
+
+**九平台重建**：ABI 15 的产物先在 0.2.17 下建成；版本推进到 **0.2.18** 后九个目标重新链接，只有版本串变化，九个产物尺寸逐字节不变，sha256 与尺寸见 PROJECT_STATUS。
+
+**仍未做的**：九平台里只有 linux-x86_64 被真实加载并跑过请求（
+`run-http-smoke.py` 与
+607 条 Python 用例），其余八个仍靠 `audit-core-payloads.py` 与各平台静态审计——这一条
+限制没有因为本轮改变。
 
 ## 打 tag 前必须跑 review-before-tag.py（§13）
 
@@ -1063,7 +1079,7 @@ mn_engine_set_wakeup_batch(mn_engine_t *engine,
 
 ## 提案：三项头部校验下沉（头名拒绝 / 删除无效报告 / WS 保留名）
 
-> **状态：已排期为 ABI 13**，见本文「当前可执行顺序」下的「ABI 13 计划」。
+> **状态：已落地为 ABI 15**（2026-11-26），完成记录见本文「已完成：三项头部校验下沉」。
 > 前置基线是已落地的 ABI 12。本节保留完整论证，作为实施时的判据来源。
 
 **这三项是 AGENTS §1.1 迁移的剩余部分**，不是新功能。绑定层今天有三张表在做 Core

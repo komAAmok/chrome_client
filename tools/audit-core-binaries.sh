@@ -15,22 +15,14 @@ targets=(
   windows-x86 windows-x86_64 windows-arm64
   macos-x86_64 macos-arm64
 )
-symbols=(
-  mn_abi_version mn_version_string
-  mn_engine_create mn_engine_retain mn_engine_release
-  mn_request_create mn_request_retain mn_request_release
-  mn_request_start mn_request_cancel mn_request_upload_write
-  mn_request_follow_redirect mn_request_resume_read mn_request_release_buffer
-  mn_request_negotiated_protocol mn_request_ech_status
-  mn_engine_capabilities
-  mn_platform_user_agent_group mn_platform_hint
-  mn_engine_cookies_get mn_engine_cookies_set mn_engine_cookies_delete
-  mn_engine_cookies_clear mn_engine_set_client_certificate
-  mn_engine_clear_client_certificate
-  mn_websocket_create mn_websocket_retain mn_websocket_release
-  mn_websocket_start mn_websocket_send mn_websocket_close
-  mn_websocket_cancel
-)
+# The expected export set is the single declaration core/exports/minicronet.exports ---
+# the same table the header, the FFI and the three link-time export files are
+# checked against by tools/audit-abi.sh. This used to be a fourth hand-written
+# copy, and ABI v15 left it behind: every artifact was correct and this audit
+# failed on linux-x86 with a set that matched its own list. One declaration, read
+# here, cannot be left behind again.
+mapfile -t symbols < <(sed 's/^_//' "$ROOT/core/exports/minicronet.exports")
+[[ ${#symbols[@]} -gt 0 ]]   || die "no symbols in core/exports/minicronet.exports"
 
 # The first and last profile the compiled table carries. Derived from the
 # generated header rather than written here, so adding a profile cannot leave

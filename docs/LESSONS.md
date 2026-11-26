@@ -3057,3 +3057,72 @@ AGENTS §5：它今天干净，以后只在这个 crate 出现的警告至少有
 **判据（补一句）**：共享 facade 的两份原生实现，"能跑一个请求"不足以证明一致；要证明的
 是**两边的名字集合相同**，而且要按类比，不是按名字比。
 
+## 91. 一条规则写在四处，失败的一定是没人再读的那一份
+
+ABI 15 把「哪些头名不可写」从三个绑定层 frozenset 下沉到 Core。三张表各有各的理由：
+一张挡 hop-by-hop，一张挡「删不掉的 Core 自有头」，一张挡 WebSocket 握手保留名。
+问题是它们是**同一条规则的三个切片**：判定标准都是「Chromium 会不会替我写这个字段」，
+而 Go 或 Node 的绑定要把三张表逐字节再抄一遍，抄错一个名字，同一个请求就在两种语言里
+表现不同。
+
+下沉之后 Core 只有一张 `HeaderFlags()` 表、两个作用域（REQUEST / WEBSOCKET），
+`mn_request_create` 与 `mn_websocket_create` 各自读它，绑定层通过
+`mn_header_disposition` 提问。门禁 `audit-layer-ownership.py` 的 KNOWN 从 12 条
+降到 9 条，删掉的正是这三条。
+
+**第一件值得记的事：抓到它的是门禁，不是人。** 迁移完成后 `audit-layer-ownership.py`
+报的是「KNOWN entry for pattern 4 matches nothing now; delete the entry」——条目**过期**
+也算失败。如果它只检查「新违规不能出现」，这次迁移的成果会以三条历史遗留的形式永远留在
+名单里，而名单越长越没人读。
+
+**第二件：同一条规则还有第四份，在门禁自己身上。** `audit-core-binaries.sh` 手抄了一份
+导出符号数组。ABI 15 加了 `mn_header_disposition`，九个产物全部正确，这条门禁却
+对 linux-x86 报「exported mn_* set differs from ABI v15」——它拿 32 个的旧名单去比 33 个的
+新产物。修法不是补一行，是让门禁读 `core/exports/minicronet.exports`（`audit-abi.sh`
+已经证明头文件、FFI、Core 与三份导出表彼此一致）。**手抄的名单越多，下一次 ABI 升级漏掉
+的概率越接近 1。**
+
+**第三件：两条策略不是同一个集合。** 第一版实现把 REJECT 和 DROP 合并成一个
+`!SETTABLE` 判断，于是 `drop` 策略把 `Content-Length: 5` 原样发到了服务端。
+这不是笔误，是把「写不进去」和「写得进去但值不是你的」当成了一件事。两个集合的关系是
+真包含：
+
+    SETTABLE          = 13 - 6 hop-by-hop          = 7 个
+    DROPPED           = 6 hop-by-hop + 5 core-owned = 11 个
+    REJECT 拒绝       = !SETTABLE                   = 6 个
+    DROP 移除         = !SETTABLE ∪ DROPPED         = 11 个
+
+抓到它的是既有的行为测试（`test_drop_keeps_the_request_working_and_counts_what_it_removed`
+断言 `Cookie` 不在线上），不是读代码读出来的。**行为测试比新写的单元测试更可能
+抓到这类错，因为它断言的是线上事实，不是我以为的语义。**
+
+**判据（补一句）**：下沉完成的标准不是「绑定层没有表了」，而是「把绑定层自己的检查全部
+关掉，Core 仍然拒绝、仍然移除」。所以新增的两条测试都用 `mock.patch.object` 把 facade
+的预检和清洗换成 no-op，再断言请求仍被拒绝、字段仍未上线——否则测到的只是 Python 那一层。
+
+## 92. 变异测试锚不住代码时，它报的是「没检出」，而「没检出」看起来像通过
+
+`tools/mutation-fingerprint-gates.sh` 用一次 `assert` 证明「我要破坏的那段代码还在」——
+注入失败就说明这条变异已经和代码脱节。P0 给两个 session 构造函数末尾加了
+`header_policy="strict"`，两条变异找的行尾从 `max_sockets_per_group=0):` 变成了
+`max_sockets_per_group=0,`，于是 `assert len(hits) == 2` 拿到 `[]`：
+
+    Traceback ... AssertionError: []
+    MUTATION NOT DETECTED: session-parity: an option went missing
+
+后面这行才是门禁的结论，而它和「我破坏了代码、门禁没抓到」长得一模一样。区别只在
+Traceback：一条 Python 异常被 shell 的 `check` 函数当成「脚本非零退出 = 检测到了」的反面，
+计进了 `MUTATION NOT DETECTED`。**从 P0 那个提交起，这条门禁一直是红的，没有人看见。**
+
+修法两条，缺一不可：
+
+1. 锚点只认**不会随追加参数漂移的东西**——选项名（`max_sockets_per_group=0,`）而不是
+   行尾（`...=0):`）。行尾是签名的一部分，签名每加一个参数就变一次。
+2. 注入失败必须单独报错：`assert` 的消息要说明「这段代码搬了，去更新这条变异」，
+   而不是落进 `MUTATION NOT DETECTED` 那条分支。现在两条变异各自给出具名原因
+   （`expected two constructor tails, found 0` / `no header_policy option after the
+   shared tail`），一眼能看出是锚点的问题。
+
+**判据（补一句）**：门禁输出里的「没检出」和「没抓到我注入的东西」必须能区分。凡是一个
+检查的失败原因是「找不到要检查的对象」，它的消息里就得有对象的名字，而不是一句通过/
+不通过。

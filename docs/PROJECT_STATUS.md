@@ -8,7 +8,7 @@
 用真实 Chromium 网络栈实现的 HTTP/WebSocket 客户端，提供 requests / curl-cffi 风格
 的 Python API，同时让 TLS 指纹、HTTP/2 SETTINGS、QUIC 参数与真实 Chrome 一致。
 
-分层：`libminicronet`（Chromium C++，唯一协议实现）→ C ABI v14（32 个导出符号）→
+分层：`libminicronet`（Chromium C++，唯一协议实现）→ C ABI v15（33 个导出符号）→
 `minicronet-sys`（手写 FFI 声明）→ `minicronet`（Rust 安全层）→ 各语言薄绑定。
 
 - Chromium revision：`58bcc148f76b8975bbe59f1a6012d4ae409d62a9`（Chrome 156.0.8078.31 stable）
@@ -758,6 +758,62 @@ manifest（`--abi-version 8`）：
 重建是增量的（各 `out/` 已有 obj，只重编 Core 相关目标并重链接），
 `sync-core.sh` 先从根 `Cargo.toml` 注入版本头（版本号只在那里），`install-core-binaries.py` 再刷新 manifest。
 三者现已一致：`core_version()` = `__version__` = 根 `Cargo.toml` 的 `workspace.package.version`。
+
+### 验收（2026-11-26，ABI v15）
+
+这一轮把「哪些头名不可写」从三个绑定层 frozenset 下沉到 Core：ABI 14 → 15，
+新增 `mn_header_disposition` 一个符号（32 → 33），并在 `mn_request_config_t` 末尾追加
+`header_policy`。结构体大小不变——该字段落进
+`strip_authorization_on_cross_origin_redirect` 之后的既有 padding，x86_64 仍是 152
+字节、i686 仍是 100 字节，`audit-abi-layout.py` 核对 8 个结构体 105 个字段。
+
+**规则只有一份**：`mn_request_create` 按 `header_policy` 拒绝（REJECT）或移除（DROP）
+表里的名字，`mn_websocket_create` 用同一张表的 WS 作用域，绑定层通过
+`mn_header_disposition` 只问不抄。`audit-layer-ownership.py` 的 KNOWN 从 12 条降到 9 条。
+
+**九平台产物**（版本串取自根 `Cargo.toml` 的 workspace 版本；本文件不复制那个数字，33 个导出符号，`audit-core-binaries.sh` 9/9）：
+
+| target | ABI 14 尺寸 | 当前尺寸 | Δ | sha256 前缀 |
+| --- | --- | --- | --- | --- |
+| linux-x86_64 | 8,662,576 | 8,662,576 | 0 | `17f9b9a4` |
+| linux-x86 | 8,264,304 | 8,264,848 | +544 | `86c89564` |
+| linux-armv7 | 6,250,672 | 6,251,112 | +440 | `c6211cdf` |
+| linux-arm64 | 8,307,744 | 8,308,640 | +896 | `5f60491e` |
+| macos-x86_64 | 8,140,016 | 8,140,080 | +64 | `a5fedf42` |
+| macos-arm64 | 7,476,800 | 7,476,864 | +64 | `2e6d43fa` |
+| windows-x86_64 | 9,629,184 | 9,630,208 | +1,024 | `2b1f9a17` |
+| windows-x86 | 7,665,664 | 7,666,176 | +512 | `df1b19fb` |
+| windows-arm64 | 8,325,632 | 8,326,656 | +1,024 | `e634cb53` |
+
+尺寸余量：linux 2.01%、windows 2.03%、macos 2.04%（`audit-core-size-ceilings.py`）。
+ABI 15 的产物先在前一个版本下建成、随后随本次版本推进重新链接；只有版本串变化，九个目标
+**尺寸逐字节不变**，只有 sha256 变了。
+
+**门禁**：静态 27 项全绿（含 `audit-profile-probes.sh`：feature boundary 与 profile
+isolation 通过；`profile_state_isolation_probe` 因缺 `HTTP_BASE` / `HTTPS_BASE` 按文档
+跳过）、`cargo fmt/check/clippy/test`、`python36` 的 `clippy --locked`、
+`audit-python36-artifact.py`（本次构建的 manylinux wheel）、`audit-doctests.py`、
+`mutation-fingerprint-gates.sh` 7/7 全部通过，Python 套件 607 条 163 秒 OK（2 skip）。
+
+**本轮同时修掉的门禁缺陷**（两条都先红过）：
+
+1. `tools/audit-core-binaries.sh` 里有**第四份**手写导出表。ABI 15 加符号后九个产物
+   全部正确，门禁却对 linux-x86 报 `set differs`——它自己还停在 32 个。改为读
+   `core/exports/minicronet.exports`（`audit-abi.sh` 已证明四份载体一致）。
+2. `tools/mutation-fingerprint-gates.sh` 两条 session-parity 变异自 P0 加入
+   `header_policy=` 之后就锚不上代码了，`assert` 失败被计成
+   `MUTATION NOT DETECTED`——**这条门禁从那个提交起一直是红的**。改为按选项名定位。
+
+**体积**：复测 `optional_trace_events_enabled = false`（「已排除的精简候选」里已有的
+结论），linux-x86_64 全量重编后产物 sha256 与改动前完全一致、8,662,576 字节——
+结论被复现，不是新发现。args.gn 已还原，`record-core-build-args.py --check` 9/9。
+
+**仍然做不到的**：只有 linux-x86_64 被真实加载并发请求（`run-http-smoke.py`、
+`minicronet_smoke`、`minicronet_abi_cpp_smoke` 与 607 条 Python 用例），其余八个平台
+仍只有 payload 字节一致与静态审计。`audit-v9-profile-fields.py` 需要 19 MiB 的独立抓包
+证据集（按设计不进仓库），本机没有，因此该步在本机不可运行——不是通过。
+
+---
 
 ### 验收（2026-11，ABI v14）
 

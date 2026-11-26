@@ -66,6 +66,31 @@ pub enum RedirectMode {
     Error,
 }
 
+/// What a request does with a header name the Core cannot write.
+///
+/// The names themselves are the Core's table (mn_header_disposition); this is
+/// only the choice between refusing and removing, which is a policy decision
+/// and therefore belongs to the caller.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum HeaderPolicy {
+    /// Refuse the request with InvalidArgument. The default: sending a value
+    /// other than the caller's is the silent substitution AGENTS.md section 8
+    /// forbids.
+    #[default]
+    Reject,
+    /// Remove the field and continue, so the profile's own value ships.
+    Drop,
+}
+
+impl From<HeaderPolicy> for sys::mn_header_policy_t {
+    fn from(value: HeaderPolicy) -> Self {
+        match value {
+            HeaderPolicy::Reject => Self::MN_HEADER_POLICY_REJECT,
+            HeaderPolicy::Drop => Self::MN_HEADER_POLICY_DROP,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum RequestPriority {
     #[default]
@@ -94,6 +119,9 @@ pub struct RequestConfig {
     /// the ceiling. Rust-side only: the ABI has no field for this, because the
     /// choice is expressed by returning MN_READ_TAKE_BUFFER from on_body.
     pub take_body_buffers: bool,
+    /// ABI 15: what to do with a header name the Core cannot write. Reject
+    /// unless the caller asks for Drop, which is what an ABI 14 caller got.
+    pub header_policy: HeaderPolicy,
 }
 
 impl RequestConfig {
@@ -108,6 +136,7 @@ impl RequestConfig {
             redirect: RedirectMode::Follow,
             strip_authorization_on_cross_origin_redirect: false,
             take_body_buffers: false,
+            header_policy: HeaderPolicy::Reject,
             priority: RequestPriority::Default,
         }
     }
@@ -593,6 +622,7 @@ impl Request {
             strip_authorization_on_cross_origin_redirect: u8::from(
                 config.strip_authorization_on_cross_origin_redirect,
             ),
+            header_policy: config.header_policy.into(),
         };
         let mut raw = std::ptr::null_mut();
         let result = unsafe { sys::mn_request_create(engine.raw(), &raw_config, &mut raw) };

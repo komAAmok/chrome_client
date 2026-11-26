@@ -17,7 +17,8 @@ use std::time::{Duration, Instant};
 use minicronet::{
     CacheMode, CloseInfo, Cookie, CookieSameSite, EchStatus, Engine as CoreEngine,
     EngineConfig, Header, HttpCacheMode, HttpVersion, MessageType, Platform, ProtocolMode,
-    Redirect, RedirectMode, RequestConfig, RequestPriority, ResponseFuture, ResponseStream,
+    HeaderPolicy, HeaderScope, Redirect, RedirectMode, RequestConfig, RequestPriority,
+    ResponseFuture, ResponseStream,
     TlsVerifyMode, Upload, WebSocketConfig, WebSocketEvent, WebSocketEvents,
 };
 use pyo3::{
@@ -1084,7 +1085,8 @@ impl PyEngine {
         priority = "None",
         chunked = "false",
         strip_authorization = "None",
-        take_body_buffers = "None"
+        take_body_buffers = "None",
+        header_policy = "None"
     )]
     #[allow(clippy::too_many_arguments)]
     fn request(
@@ -1101,6 +1103,7 @@ impl PyEngine {
         chunked: bool,
         strip_authorization: Option<bool>,
         take_body_buffers: Option<bool>,
+        header_policy: Option<String>,
     ) -> PyResult<PyRequest> {
         let mut config = RequestConfig::get(url);
         config.method = method.to_owned();
@@ -1116,6 +1119,17 @@ impl PyEngine {
         config.strip_authorization_on_cross_origin_redirect =
             strip_authorization.unwrap_or(false);
         config.take_body_buffers = take_body_buffers.unwrap_or(false);
+        // ABI 15, same default as the modern extension.
+        config.header_policy = match header_policy.as_deref() {
+            None | Some("reject") => HeaderPolicy::Reject,
+            Some("drop") => HeaderPolicy::Drop,
+            Some(other) => {
+                return Err(PyValueError::new_err(format!(
+                    "header policy must be 'reject' or 'drop', not {:?}",
+                    other
+                )))
+            }
+        };
         config.headers = headers
             .unwrap_or_default()
             .into_iter()
@@ -1168,12 +1182,34 @@ impl PyEngine {
     }
 }
 
+/// Reports what the Core does with one header name, as MN_HEADER_FLAG_* bits.
+///
+/// The modern extension exposes the same function; the facade asks the Core
+/// rather than keeping a list, on both interpreters.
+#[pyfunction]
+fn header_flags(name: &str, scope: &str) -> PyResult<u32> {
+    let scope = match scope {
+        "request" => HeaderScope::Request,
+        "websocket" => HeaderScope::WebSocket,
+        other => {
+            return Err(PyValueError::new_err(format!(
+                "header scope must be 'request' or 'websocket', not {:?}",
+                other
+            )))
+        }
+    };
+    minicronet::header_disposition(name, scope).map_err(|_| {
+        PyValueError::new_err(format!("the Core refused a header query for {:?}", name))
+    })
+}
+
 #[pymodule]
 fn chrome_client_native36(_py: Python, module: &PyModule) -> PyResult<()> {
     module.add_class::<PyEngine>()?;
     module.add_class::<PyRequest>()?;
     module.add_class::<PyResponse>()?;
     module.add_class::<PyWebSocket>()?;
+    module.add_function(wrap_pyfunction!(header_flags, module)?)?;
     module.add("abi_version", CoreEngine::core_abi_version())?;
     Ok(())
 }

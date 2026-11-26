@@ -20,7 +20,7 @@
 extern "C" {
 #endif
 
-#define MN_ABI_VERSION 14u
+#define MN_ABI_VERSION 15u
 
 /* tools/sync-core.sh installs core/exports/minicronet.lds, whose node name is
  * part of the link-time contract: every extension already built against this
@@ -479,6 +479,71 @@ typedef struct mn_string {
   size_t length;
 } mn_string_t;
 
+/* Which header names a caller may write, asked instead of copied.
+ *
+ * Every binding used to keep its own list of reserved names, which is one
+ * contract stated several times: the same request then behaves differently in
+ * Python, Go and Node, and a name added to one list is silently accepted by the
+ * others. mn_header_disposition answers from the table mn_request_create and
+ * mn_websocket_create enforce, so the answer and the enforcement cannot drift.
+ */
+typedef enum mn_header_scope {
+  /* mn_request_create: fields of an HTTP request. */
+  MN_HEADER_SCOPE_REQUEST = 0,
+  /* mn_websocket_create: fields of the WebSocket handshake. */
+  MN_HEADER_SCOPE_WEBSOCKET = 1,
+} mn_header_scope_t;
+
+/* Bits, not an enumeration: one name can be settable and undroppable, and a
+ * caller that only cares about one question should not have to match a case
+ * list that changes when another question is answered differently. */
+typedef enum mn_header_flags {
+  /* A caller-supplied value reaches the wire as given. */
+  MN_HEADER_FLAG_SETTABLE = 1u << 0,
+  /* A removal request is not refused: the name is the caller's to omit.
+   * Names whose value the Core produces (Host, Cookie, Content-Length,
+   * Transfer-Encoding, Accept-Encoding, User-Agent, Accept-Language) clear
+   * this bit, because deleting one is a request the ABI cannot carry out.
+   * The five hop-by-hop fields keep it: their refusal is the SETTABLE bit
+   * above, and under DROP they are removed rather than refused. */
+  MN_HEADER_FLAG_REMOVABLE = 1u << 1,
+  /* MN_HEADER_POLICY_DROP removes it, and the profile's own value ships. */
+  MN_HEADER_FLAG_DROPPED = 1u << 2,
+} mn_header_flags_t;
+
+/* Reports what the Core does with one header name.
+ *
+ * Returns MN_OK and writes *out_flags for every name, including one the Core
+ * has never heard of: an unknown field belongs to the caller, so its flags are
+ * SETTABLE|REMOVABLE. A null name, a null out_flags or an unrecognised scope is
+ * MN_ERROR_INVALID_ARGUMENT -- an unknown scope is not defaulted to the request
+ * rules, because that would answer a question about a handshake with a request
+ * verdict.
+ *
+ * The name is compared case-insensitively; name_length is required, so a
+ * caller never relies on NUL termination. */
+MN_EXPORT mn_result_t MN_CALL mn_header_disposition(const char *name,
+                                                    size_t name_length,
+                                                    mn_header_scope_t scope,
+                                                    uint32_t *out_flags);
+
+/* What mn_request_create does with a header name it cannot honour.
+ *
+ * The two policies exist because the same field means different things to
+ * different callers: a field the profile already owns (Accept-Encoding) or one
+ * Chromium overwrites anyway (Host) is noise from an old requests script, while
+ * the promise that nothing is silently ignored is what a security-sensitive
+ * caller relies on. Both are explicit; neither is a fallback. */
+typedef enum mn_header_policy {
+  /* Refuse the request with MN_ERROR_INVALID_ARGUMENT. Sending a different
+   * value than the caller asked for is the degradation AGENTS.md section 8
+   * forbids, so refusal is the default. */
+  MN_HEADER_POLICY_REJECT = 0,
+  /* Remove the field and continue. Which names this removes is the same table
+   * mn_header_disposition reports (MN_HEADER_FLAG_DROPPED). */
+  MN_HEADER_POLICY_DROP = 1,
+} mn_header_policy_t;
+
 typedef enum mn_upload_mode {
   MN_UPLOAD_NONE = 0,
   MN_UPLOAD_FIXED = 1,
@@ -615,8 +680,29 @@ typedef struct mn_request_config {
    * every ABI 11 caller got, so the default behaviour is unchanged. A hop that
    * stays on the same origin always keeps it. */
   uint8_t strip_authorization_on_cross_origin_redirect;
+  /* MN_HEADER_POLICY_REJECT unless the caller opts into dropping.
+   *
+   * REJECT refuses the request with MN_ERROR_INVALID_ARGUMENT when a name
+   * without MN_HEADER_FLAG_SETTABLE is present, and leaves every other name
+   * alone. DROP removes those names plus every name carrying
+   * MN_HEADER_FLAG_DROPPED, and the request proceeds. A name whose *removal*
+   * cannot be honoured is the binding's merge to refuse, because the ABI has no
+   * field for a deletion; mn_header_disposition reports that verdict too.
+   *
+   * Under DROP the caller can count what it lost by asking
+   * mn_header_disposition about the names it passed -- the Core does not keep a
+   * second list for it to read. */
+  mn_header_policy_t header_policy;
 } mn_request_config_t;
 
+/* Creates a request. The out-param is cleared on every return path.
+ *
+ * A header name the Core cannot write is handled once, here, according to
+ * config->header_policy: MN_HEADER_POLICY_REJECT returns
+ * MN_ERROR_INVALID_ARGUMENT, MN_HEADER_POLICY_DROP omits the field and the
+ * request proceeds. Every other name reaches the wire as given. Which names are
+ * which is mn_header_disposition's answer for MN_HEADER_SCOPE_REQUEST, not a
+ * list a caller keeps. */
 MN_EXPORT mn_result_t MN_CALL
 mn_request_create(mn_engine_t *engine, const mn_request_config_t *config,
                   mn_request_t **out_request);
@@ -768,6 +854,11 @@ typedef struct mn_websocket_config {
   uint64_t timeout_ms;
 } mn_websocket_config_t;
 
+/* Creates a WebSocket. A header the handshake derives itself -- Host, Origin,
+ * Upgrade, Connection, User-Agent and Sec-WebSocket-* -- is refused with
+ * MN_ERROR_INVALID_ARGUMENT, because Chromium appends its own value and two
+ * sources for one field is the conflict this refuses. MN_HEADER_SCOPE_WEBSOCKET
+ * reports the same set. */
 MN_EXPORT mn_result_t MN_CALL
 mn_websocket_create(mn_engine_t *engine, const mn_websocket_config_t *config,
                     mn_websocket_t **out_websocket);

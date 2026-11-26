@@ -377,6 +377,11 @@ which the caller does control, and removing them was already fail-closed.
 
 #### `header_policy="drop"`: the same refusal, applied instead of raised
 
+The removal itself happens in the Core (ABI v15, `MN_HEADER_POLICY_DROP`): the request
+is created with that policy and `mn_request_create` omits every name whose
+`MN_HEADER_FLAG_DROPPED` bit is set, so the facade only counts what it lost. Which names
+those are is `mn_header_disposition`'s answer, not a list kept in the binding.
+
 Old scraping code carries `Connection: keep-alive` in a dict copied from
 somewhere, and asking every caller to edit it before the first request is a
 migration cost, not a correctness requirement -- the field cannot be honoured
@@ -463,7 +468,10 @@ POST iterator (with or without a caller TE)   Transfer-Encoding: chunked
                                              4\r\naabb\r\n0\r\n\r\n
 ```
 
-Setting either field to `None` is still refused (`_CORE_OWNED_HEADERS`), because
+Setting either field to `None` is still refused, because the binding cannot delete a header the
+Core attaches. Which names those are is no longer a Python list: the
+facade asks `mn_header_disposition` (ABI v15) and the Core answers from the table
+`mn_request_create` itself enforces.
 the binding cannot delete a header the Core attaches.
 
 ### Multipart: a file part carries the type the caller chose, never a guess

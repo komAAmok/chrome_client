@@ -646,6 +646,8 @@ flush 之前就已就绪。我先写了一条走公开 API 的测试，它**通�
 | Core 拥有头表 | `sessions.py` `_CORE_OWNED_HEADERS` | `SetExtraRequestHeaders` 只增不减，删除是 no-op 且 Core 无法报告（`request.cc:275`） |
 | WS 握手保留头表 | `sessions.py` `_FORBIDDEN_WS_HEADERS` | 握手头块在 Chromium 内部构造，ABI 看不到哪些名字是保留的 |
 
+**这三行已在 ABI 15 关闭**（2026-11-26）：`mn_request_create` 按 `header_policy` 拒绝或移除表里的名字，`mn_websocket_create` 用同一张表的 WS 作用域，绑定层通过 `mn_header_disposition` 提问。本节保留为 v9 当时的复核记录，现状见 `docs/NEXT_STEPS.md` 的「已完成：三项头部校验下沉」。
+
 **没有列入的**（判定为归属正确，留个记录避免下次重复讨论）：
 
 - `_split_timeout`：v9 的 `mn_request_config_t` 仍只有一个 `timeout_ms`，
@@ -695,6 +697,10 @@ stream=True -> reason='Custom Reason'   x-dup=['one','two']   body=b'hello'
 ```
 
 #### 二、剩下的三张表：登记理由经复核仍然成立
+
+> **已被 ABI 15 推翻。** 三张表在 2026-11-26 随 `mn_header_disposition` 与
+> `mn_request_config_t.header_policy` 一起删除；下表是 v9 当时的结论，
+> 保留是为了说明「Core 做不到」这个判断在 v15 之前确实成立。
 
 | 表 | 复核方式 | 结论 |
 | --- | --- | --- |

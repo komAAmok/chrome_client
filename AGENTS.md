@@ -100,11 +100,16 @@ requests/curl_cffi 的 API 形状（`session.cookies` 是可变的 jar、`stream
 
 ## 2. ABI 规则
 
-- `core/abi/minicronet.h` 是**唯一** ABI 来源。当前 ABI v14，**32** 个导出符号
+- `core/abi/minicronet.h` 是**唯一** ABI 来源。当前 ABI v15，**33** 个导出符号
   （v11 只追加了 `mn_engine_config_t.max_sockets_per_group`，没有增删符号；
   v12 追加了 `mn_request_negotiated_protocol` 与 `mn_request_ech_status` 两个 getter，28 → 29；
   v13 追加了 `mn_engine_capabilities` 与 `mn_capability_t`，29 → 30；
-  v14 追加了 `mn_platform_user_agent_group` 与 `mn_platform_hint`，30 → 32）。
+  v14 追加了 `mn_platform_user_agent_group` 与 `mn_platform_hint`，30 → 32；
+  v15 追加了 `mn_header_disposition`，32 → 33，并在 `mn_request_config_t`
+  末尾追加 `header_policy`（`mn_header_policy_t`，默认 REJECT）。
+  结构体大小不变：该字段落进 `strip_authorization_on_cross_origin_redirect`
+  之后的既有 padding，x86_64 仍为 152 字节、i686 仍为 100 字节，
+  由 `audit-abi-layout.py` 逐字段核对）。
   能力位只报告 ABI **能兑现**的能力：位 1 是保留的，因为 `proxy_chain` 存不出多跳链。
 - 结构体变更必须同时更新：头文件、`crates/minicronet-sys/src/lib.rs` 的 `#[repr(C)]`
   声明与布局测试、`core/exports/minicronet.{def,exports,lds}`。
@@ -207,7 +212,10 @@ python3 tools/audit-python-typing.py
 # header_fields / http_version as pyo3(get) fields on the modern side only
 # (Response.http_version was None for every response on the cp36 wheel). This
 # compares both: the PyEngine methods the facade calls, and the attribute set of
-# every pyclass present in both crates.
+# every pyclass present in both crates. It also compares the module-level
+# surface -- every registered `wrap_pyfunction!` and `module.add` -- because
+# ABI v15 moved the header table into the Core and the facade reaches it
+# through one module function the method scan would never see.
 python3 tools/audit-binding-surface.py
 tools/audit-core-binaries.sh
 tools/audit-core-inputs.sh

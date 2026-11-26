@@ -5,6 +5,7 @@ EXPORTS
   mn_platform_user_agent_group
   mn_platform_hint
   mn_version_string
+  mn_header_disposition
   mn_engine_create
   mn_engine_retain
   mn_engine_release

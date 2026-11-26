@@ -3,6 +3,7 @@ _mn_engine_capabilities
 _mn_platform_user_agent_group
 _mn_platform_hint
 _mn_version_string
+_mn_header_disposition
 _mn_engine_create
 _mn_engine_retain
 _mn_engine_release

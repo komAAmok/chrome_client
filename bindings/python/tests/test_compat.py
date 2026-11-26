@@ -3938,6 +3938,79 @@ class NetErrorTableShapeTests(unittest.TestCase):
         self.assertIs(category["Protocol"], exc.ConnectionError)
         self.assertIsNot(category["Protocol"], exc.SSLError)
 
+class HeaderTableOwnershipTests(unittest.TestCase):
+    """The Core owns the reserved-name table; the facade asks and keeps no copy.
+
+    Before ABI 15 the facade held three of them -- _HOP_BY_HOP_HEADERS,
+    _CORE_OWNED_HEADERS and _FORBIDDEN_WS_HEADERS -- and Go or Node would have
+    had to hold the same three again. The migration is only real if the Core
+    answers on its own, so these tests break the facade's own checks on purpose
+    and require the request to still be refused or cleaned.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.server = ThreadingHTTPServer(("127.0.0.1", 0), _EchoHeaderHandler)
+        threading.Thread(target=cls.server.serve_forever, daemon=True).start()
+        cls.base = "http://127.0.0.1:%d/" % cls.server.server_address[1]
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.server.shutdown()
+        cls.server.server_close()
+
+    def setUp(self):
+        del _ECHOED[:]
+
+    def test_the_facade_keeps_no_header_table(self):
+        """A table here would be the second definition the gate forbids."""
+        from chrome_client._python_impl import sessions
+        for name in ("_HOP_BY_HOP_HEADERS", "_CORE_OWNED_HEADERS",
+                     "_DROPPED_IN_DROP_POLICY", "_FORBIDDEN_WS_HEADERS"):
+            self.assertFalse(hasattr(sessions, name),
+                             "%s is a second copy of the Core's table" % name)
+
+    def test_the_core_refuses_a_reserved_name_by_itself(self):
+        """With the facade's check disabled, mn_request_create is what refuses.
+
+        The facade normally words this error, so the exception here is the
+        generic Core mapping; what the test pins is that the refusal happens at
+        all when the Python check is gone, which is what makes the rule one
+        contract instead of two.
+        """
+        import unittest.mock as mock
+        with mock.patch.object(sessions_base(), "_check_header_policy",
+                               lambda self, headers: None):
+            with self.assertRaises(chrome_client.RequestException):
+                chrome_client.Session().get(self.base,
+                                            headers={"Connection": "keep-alive"})
+
+    def test_the_core_drops_by_itself(self):
+        """With both facade-side steps disabled, the field still does not ship."""
+        import unittest.mock as mock
+        with mock.patch.object(sessions_base(), "_check_header_policy",
+                               lambda self, headers: None):
+            with mock.patch.object(sessions_base(), "_apply_header_policy",
+                                   lambda self, headers: headers):
+                with chrome_client.Session(header_policy="drop") as session:
+                    response = session.get(self.base, headers={
+                        "Upgrade": "h2c", "TE": "trailers", "X-Kept": "1"})
+                    self.assertEqual(response.status_code, 200)
+                    # Nothing was counted, because the facade's counting step is
+                    # the one that was disabled.
+                    self.assertEqual(dict(session.dropped_headers), {})
+        seen = _ECHOED[-1]
+        self.assertNotIn("Upgrade", seen)
+        self.assertNotIn("TE", seen)
+        self.assertEqual(seen.get("X-Kept"), "1")
+
+
+def sessions_base():
+    """The class both session flavours share, for patching one method on both."""
+    from chrome_client._python_impl.sessions import BaseSession
+    return BaseSession
+
+
 class HeaderPolicyTests(unittest.TestCase):
     """header_policy="drop" keeps old callers working; "strict" is the default.
 

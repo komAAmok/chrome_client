@@ -3,7 +3,7 @@
 
 use core::ffi::c_void;
 
-pub const MN_ABI_VERSION: u32 = 14;
+pub const MN_ABI_VERSION: u32 = 15;
 
 #[repr(C)]
 pub struct mn_engine_t {
@@ -246,6 +246,30 @@ impl mn_request_priority_t {
     pub const MN_REQUEST_PRIORITY_IDLE: Self = Self(5);
 }
 
+/// Which header names a caller may write. The Core owns the table; a binding
+/// asks through mn_header_disposition rather than keeping its own list.
+pub const MN_HEADER_FLAG_SETTABLE: u32 = 1 << 0;
+pub const MN_HEADER_FLAG_REMOVABLE: u32 = 1 << 1;
+pub const MN_HEADER_FLAG_DROPPED: u32 = 1 << 2;
+
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct mn_header_scope_t(pub i32);
+
+impl mn_header_scope_t {
+    pub const MN_HEADER_SCOPE_REQUEST: Self = Self(0);
+    pub const MN_HEADER_SCOPE_WEBSOCKET: Self = Self(1);
+}
+
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct mn_header_policy_t(pub i32);
+
+impl mn_header_policy_t {
+    pub const MN_HEADER_POLICY_REJECT: Self = Self(0);
+    pub const MN_HEADER_POLICY_DROP: Self = Self(1);
+}
+
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct mn_read_disposition_t(pub i32);
@@ -345,6 +369,7 @@ pub struct mn_request_config_t {
     pub redirect_mode: mn_redirect_mode_t,
     pub priority: mn_request_priority_t,
     pub strip_authorization_on_cross_origin_redirect: u8,
+    pub header_policy: mn_header_policy_t,
 }
 
 #[repr(transparent)]
@@ -406,6 +431,12 @@ pub struct mn_websocket_config_t {
 extern "C" {
     pub fn mn_abi_version() -> u32;
     pub fn mn_version_string() -> *const i8;
+    pub fn mn_header_disposition(
+        name: *const i8,
+        name_length: usize,
+        scope: mn_header_scope_t,
+        out_flags: *mut u32,
+    ) -> mn_result_t;
     /// What this artifact was compiled with. Readable before any engine
     /// exists; bits not defined by this revision must be ignored.
     pub fn mn_engine_capabilities(out_flags: *mut u32) -> mn_result_t;
@@ -1011,7 +1042,7 @@ mod abi_layout_tests {
             // because CI only runs the 64-bit branch.
             assert_eq!(size_of::<mn_engine_config_t>(), 136);
             assert_eq!(size_of::<mn_request_callbacks_t>(), 28);
-            assert_eq!(size_of::<mn_request_config_t>(), 96);
+            assert_eq!(size_of::<mn_request_config_t>(), 100);
             assert_eq!(size_of::<mn_websocket_callbacks_t>(), 32);
             assert_eq!(size_of::<mn_websocket_config_t>(), 80);
             assert_eq!(size_of::<mn_header_t>(), 16);
@@ -1031,8 +1062,13 @@ mod abi_layout_tests {
         // Compared against the header, not against a literal: this line
         // was the second place ABI 11 appeared, and a bump that changed
         // only the constant left the test asserting the old number.
-        assert_eq!(MN_ABI_VERSION, 14);
+        assert_eq!(MN_ABI_VERSION, 15);
         assert_eq!(mn_request_priority_t::MN_REQUEST_PRIORITY_IDLE.0, 5);
+        assert_eq!(mn_header_policy_t::MN_HEADER_POLICY_DROP.0, 1);
+        assert_eq!(mn_header_scope_t::MN_HEADER_SCOPE_WEBSOCKET.0, 1);
+        assert_eq!(MN_HEADER_FLAG_SETTABLE, 1);
+        assert_eq!(MN_HEADER_FLAG_REMOVABLE, 2);
+        assert_eq!(MN_HEADER_FLAG_DROPPED, 4);
         assert_eq!(
             mn_websocket_message_type_t::MN_WEBSOCKET_MESSAGE_BINARY.0,
             2

@@ -570,7 +570,7 @@ size ceiling, so a regression fails the build.
 
 | Path | Contents |
 | --- | --- |
-| `core/abi/` | Stable C ABI v14 |
+| `core/abi/` | Stable C ABI v15 |
 | `core/binaries/` | Nine audited Core targets |
 | `crates/minicronet/` | Rust safety layer, streams and lifetimes |
 | `bindings/python/` | Python 3.9–3.15 binding and the shared facade |
