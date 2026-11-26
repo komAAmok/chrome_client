@@ -1,0 +1,48 @@
+{
+  "async_concurrency_128": {
+    "concurrency": 128,
+    "distinct_cache_keys": 200,
+    "requests": 200,
+    "requests_per_second": 966.4,
+    "seconds": 0.207
+  },
+  "async_concurrency_32": {
+    "concurrency": 32,
+    "distinct_cache_keys": 200,
+    "requests": 200,
+    "requests_per_second": 1409.7,
+    "seconds": 0.142
+  },
+  "native_module": "chrome_client_native",
+  "python": "3.12.3",
+  "server": "http://127.0.0.1:46697",
+  "stalled_consumer_isolation": {
+    "other_engine": {
+      "completed": 20,
+      "failed": 0,
+      "latency_ms_max": 4.75,
+      "latency_ms_p50": 1.5
+    },
+    "probes": 20,
+    "same_engine": {
+      "completed": 20,
+      "failed": 0,
+      "latency_ms_max": 2.65,
+      "latency_ms_p50": 1.44
+    },
+    "timeout_seconds": 5.0
+  },
+  "stream_throughput_64mib": {
+    "bytes": 67108864,
+    "mib_per_second": 153.6,
+    "read_chunk_bytes": 65536,
+    "seconds": 0.417
+  },
+  "sync_sequential_1kib": {
+    "latency_ms_p50": 1.43,
+    "latency_ms_p95": 1.94,
+    "requests": 200,
+    "requests_per_second": 661.7,
+    "seconds": 0.302
+  }
+}

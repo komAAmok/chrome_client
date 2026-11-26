@@ -1,0 +1,126 @@
+{
+  "failures": 0,
+  "requests_per_batch": 60,
+  "shapes": [
+    {
+      "fd": [
+        10,
+        10,
+        10
+      ],
+      "fd_growth": 0,
+      "limits": {
+        "fd": 8,
+        "rss_kib": 24576
+      },
+      "rss_growth_kib": 0,
+      "rss_kib": [
+        35220,
+        35260,
+        35260
+      ],
+      "shape": "sync-get",
+      "status": "pass"
+    },
+    {
+      "fd": [
+        10,
+        10,
+        10
+      ],
+      "fd_growth": 0,
+      "limits": {
+        "fd": 8,
+        "rss_kib": 24576
+      },
+      "rss_growth_kib": -44,
+      "rss_kib": [
+        35116,
+        35196,
+        35152
+      ],
+      "shape": "sync-stream",
+      "status": "pass"
+    },
+    {
+      "fd": [
+        11,
+        11,
+        11
+      ],
+      "fd_growth": 0,
+      "limits": {
+        "fd": 8,
+        "rss_kib": 24576
+      },
+      "rss_growth_kib": 0,
+      "rss_kib": [
+        35384,
+        35448,
+        35448
+      ],
+      "shape": "sync-abandon",
+      "status": "pass"
+    },
+    {
+      "fd": [
+        10,
+        10,
+        10
+      ],
+      "fd_growth": 0,
+      "limits": {
+        "fd": 8,
+        "rss_kib": 24576
+      },
+      "rss_growth_kib": 32,
+      "rss_kib": [
+        36084,
+        36192,
+        36224
+      ],
+      "shape": "async-gather",
+      "status": "pass"
+    },
+    {
+      "fd": [
+        10,
+        10,
+        10
+      ],
+      "fd_growth": 0,
+      "limits": {
+        "fd": 8,
+        "rss_kib": 24576
+      },
+      "rss_growth_kib": 0,
+      "rss_kib": [
+        35016,
+        35044,
+        35044
+      ],
+      "shape": "error-path",
+      "status": "pass"
+    },
+    {
+      "fd": [
+        11,
+        11,
+        11
+      ],
+      "fd_growth": 0,
+      "limits": {
+        "fd": 8,
+        "rss_kib": 24576
+      },
+      "rss_growth_kib": -556,
+      "rss_kib": [
+        35576,
+        36160,
+        35604
+      ],
+      "shape": "discard-path",
+      "status": "pass"
+    }
+  ]
+}

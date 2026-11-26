@@ -1181,3 +1181,10 @@ strip 与提交产物逐字节相同）。门禁与泄漏全部复跑：
 - **本地门禁 31/31**；`bindings/python/tests` 609 用例 OK（skip 2）；`cargo test --workspace` 24 用例；六形态泄漏 flat（fd +0，RSS 最差 +24 KiB）。
 - **体积**：linux-x86_64 8,666,672（较 v15 +4,096），九平台合计 72,792,155；linux 上限按「最大产物 × 1.02」重导为 8,850,000。
 - **同期修掉的缺陷**：`__version__` 未随版本 bump、cp36 扩展的 `start_async`/`attach_async` 缺 `batch` 形参、装包内扩展的加载器自递归、`cargo fmt`/clippy 各一处、maturin 复用被 auditwheel 改写过的 `.so`。
+
+## 验收（2026-11-27，ABI 17）
+
+- **九平台产物重建并安装**：35 个导出符号，`audit-core-binaries.sh` 9/9，`targets.json abi_version=17`，manifest 的 SHA-256 与 `core_sources_sha256` 已刷新；linux-x86_64 8,666,672 字节，三档上限余量 2.07% / 2.00% / 1.99%。
+- **review-before-tag.py 0 failures**（证据在 `docs/review-<version>/` 下本轮的 summary、bench、leak、leak-hunt）。
+- **本地门禁 32/32**；`bindings/python/tests` 621 用例 OK（skip 2）；六形态泄漏与十三形态 leak-hunt 全 flat。
+- 本轮修掉的缺陷：`send()` 改写调用方 `PreparedRequest`（两次发送第二次丢头）、无名 cookie 的 Chromium 语义（`Set-Cookie: JSESSIONID` 是 name="" value=token，不是空值）、`Set-Cookie` 无值时的 ABI 类型错误、分帧头可被调用方伪造、`header_allow` 放行签名头。
