@@ -382,8 +382,13 @@ five fields reached the wire on HTTP/1.1 down both paths, which is the same
 degradation this section refuses, only spelled differently. The check now runs
 inside both `send()` implementations, which is where `request()`,
 `prepare_request()` + `send()`, and `AsyncSession` converge.
-`transfer-encoding` and `content-length` stay settable: they are body framing,
-which the caller does control, and removing them was already fail-closed.
+`transfer-encoding` is **not** settable any more (ABI 16 header table): Chromium writes it
+itself for a chunked upload, and a caller value on a fixed body produced the pair
+`Content-Length: 3` + `Transfer-Encoding: chunked` -- the request-smuggling shape
+RFC 9112 section 6.1 tells recipients to reject, which no Chrome release can emit.
+`content-length` stays settable under `reject`: it is framing the Core recomputes from
+the body, so a disagreeing value is corrected rather than refused. Both are removed
+under `drop`.
 
 #### The default policy: the six hop-by-hop fields, removed and counted
 
@@ -446,54 +451,48 @@ session sets one -- otherwise the caller's value reaches the wire.
 The default remains `"strict"`: a drop is only acceptable when the caller asked
 for it.
 
-### Body framing: a caller-supplied `Transfer-Encoding` is passed through
+### Body framing: the body decides, and the caller cannot disagree silently
 
-When a caller sets `Transfer-Encoding: chunked` on a request whose body is
-`bytes`, the framing headers collide: `Content-Length` is computed from the body
-and `Transfer-Encoding` is the caller's, so both reach the wire and RFC 9112
-§6.3 says the recipient must ignore `Content-Length` in that case. Measured:
+Three rules, all measured with a raw socket against a local listener rather than
+inferred from the code:
 
-```
-ours     POST data=b"abc" + TE: chunked   Content-Length: 3, Transfer-Encoding: chunked
-requests same input                       Transfer-Encoding: chunked, Content-Length: 3
-```
+| request | wire | who wrote it |
+| --- | --- | --- |
+| `POST data=b"abc"`, no caller headers | `Content-Length: 3` | Chromium, from the body |
+| `POST data=b"abc"` + caller `Content-Length: 999` | `Content-Length: 3` | the caller value is overwritten with the real length |
+| `POST data=b"abc"` + caller `Transfer-Encoding: chunked` | `Content-Length: 3` | the caller field is dropped and counted in `dropped_headers` |
+| `data=iter([...])` (streamed) | `Transfer-Encoding: chunked` | Chromium, from the chunked upload stream |
+| `GET` + caller `Content-Length: 999` | no framing field at all | the caller field is dropped and counted |
+| `POST` with no body | `Content-Length: 0` | the facade, matching `requests` |
 
-**This is left as it is, on purpose.** `requests` produces the same pair, so
-refusing or rewriting it would make a request that works against `requests` fail
-here -- a divergence this project does not take on for a call the caller spelled
-out. What the caller is asking for is "send this with chunked framing"; the body
-was already encoded as `bytes`, so the pair is what reaches the wire in both
-libraries.
+The GET row is the one that used to be wrong: nothing recomputed a length for a
+request with no body, so `Content-Length: 999` reached the wire and a strict server
+waited for bytes that never came. The bytes-body row used to be wrong the other way:
+the caller `Transfer-Encoding` was passed through next to the computed length, a pair
+no browser emits.
 
-The two differ only in field ORDER: this client appends the caller's field after
-the profile's header block, while `requests` emits both from urllib3 with
-`Transfer-Encoding` first. RFC 9112 §6.3 makes that a difference in principle --
-a message carrying both fields is exactly the smuggling-shaped input servers are
-told to reject -- and in practice a recipient that only looks at the first
-framing field it finds reads the two libraries differently. That is a real
-consequence of the choice, not a detail: a body of `b"abc"` cannot be parsed as
-chunks at all, so a strict chunked reader blocks.
-
-It is still left alone, because the alternative is worse. Rejecting the
-combination breaks callers who do exactly this against `requests` today; dropping
-the computed `Content-Length` silently changes a header the caller did not ask to
-change. The caller spelled out the framing, both libraries send it, and the
-divergence from `requests` would be this project inventing a refusal for a
-request that has a defined meaning.
+`header_policy="strict"` refuses those stale fields instead of dropping them, so the
+choice is visible either way (section 8). This is a deliberate reversal of the earlier
+decision to mirror `requests` here: matching `requests` byte for byte is not worth
+shipping a framing pair that RFC 9112 section 6.1 says must be rejected and that no
+Chrome release can produce.
 
 What the project does guarantee is narrower and testable: **a body the facade
 frames itself is sent correctly.** The streaming path below emits one framing
 field and a chunk-encoded body, and that is pinned by a test rather than by this
 paragraph.
 
-A **streamed** body (an iterator or file object) does not hit this at all:
-`prepare_content_length` drops `Content-Length` and sets `Transfer-Encoding:
-chunked` itself, and the Core encodes the chunks. Measured, that path emits one
-framing field and a properly chunked body:
+A **streamed** body (an iterator or file object) takes the same rule:
+`prepare_content_length` drops `Content-Length` and leaves the framing field out of
+the request block entirely, because Chromium writes `Transfer-Encoding: chunked`
+from the chunked upload stream itself (measured: a chunked upload with no
+`Transfer-Encoding` in the block still reaches the wire with it). A caller who
+spelled `chunked` agrees with what ships and nothing is counted; any other value
+is dropped and counted.
 
 ```
 POST iterator (with or without a caller TE)   Transfer-Encoding: chunked
-                                             4\r\naabb\r\n0\r\n\r\n
+                                             ...chunked body...
 ```
 
 Setting either field to `None` is still refused, because the binding cannot delete a header the

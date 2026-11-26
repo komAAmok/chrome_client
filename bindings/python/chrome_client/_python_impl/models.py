@@ -18,7 +18,7 @@ from urllib.parse import urlsplit, urlunsplit
 from . import multipart
 from .cookies import RequestsCookieJar, cookiejar_from_dict
 from .exceptions import (HTTPError, InvalidURL, JSONDecodeError, MissingSchema,
-                         StreamConsumedError, URLRequired)
+                         StreamConsumedError, UnsupportedFeature, URLRequired)
 from .status_codes import REASONS
 from .structures import Headers
 from .utils import (get_encoding_from_headers, get_encodings_from_content,
@@ -303,6 +303,13 @@ class PreparedRequest(object):
         self.stream_body = False
         #: Emission order for headers, when a caller pins one.
         self.header_order = None
+        #: Body-framing headers dropped here, by lower-cased name. The session
+        #: folds these into ``dropped_headers`` so a caller can see that a
+        #: Content-Length or Transfer-Encoding it set never reached the wire.
+        self.dropped_headers = {}
+        #: The session's policy, so preparing outside a session still decides
+        #: between removing a stale framing header and refusing it.
+        self.header_policy = "compat"
         #: ``False`` disables the percent-encoding pass over the URL.
 
     def __repr__(self):
@@ -383,15 +390,79 @@ class PreparedRequest(object):
             self.headers["Content-Type"] = content_type
 
     def prepare_content_length(self, body):
+        """Sets the body framing headers, dropping a caller's stale ones.
+
+        Three cases, and only the third used to be wrong:
+
+        * A streamed body is chunked, so a caller Content-Length describes a
+          length that does not exist yet.
+        * A fixed body owns Content-Length, and Transfer-Encoding cannot also
+          describe it (RFC 9112 6.1).
+        * **No body at all.** Nothing here used to touch the caller's headers, so
+          ``headers={"Content-Length": "999"}`` on a GET reached the wire --
+          measured with a raw socket: ``Content-Length: 999`` on
+          ``GET /x HTTP/1.1``, after which the server waited for 999 bytes that
+          never came. Real Chrome cannot produce that request, so it was both a
+          fingerprint and a correctness defect.
+
+        A caller value is removed rather than rewritten, and the removal is
+        recorded in ``self.dropped_headers`` so the caller can see it (AGENTS
+        section 8: an option that cannot be honoured must be visible).
+        ``header_policy="strict"`` raises instead, because a caller who asked
+        for strict wants to hear about it.
+
+        Args:
+            body: The fixed body, or ``None`` when the request carries none.
+
+        Raises:
+            UnsupportedFeature: A stale framing header under "strict".
+        """
         if self.stream_body:
+            # No explicit Transfer-Encoding: the Core uploads through
+            # ChunkedUploadDataStream and Chromium writes the field itself.
+            # Measured with a raw socket: a chunked upload with no
+            # Transfer-Encoding in the request block still reaches the wire as
+            # "Transfer-Encoding: chunked", so setting it here only created a
+            # second place that could disagree with the body.
             self.headers.pop("Content-Length", None)
-            self.headers["Transfer-Encoding"] = "chunked"
+            # The wire will carry "Transfer-Encoding: chunked" for this body, so
+            # a caller who asked for exactly that is satisfied and nothing is
+            # counted; any other value (gzip, say) really is lost, and the
+            # counter says so.
+            value = self.headers.get("Transfer-Encoding")
+            if value is not None and value.strip().lower() == "chunked":
+                del self.headers["Transfer-Encoding"]
+            else:
+                self._drop_framing_header("Transfer-Encoding")
             return
         if body is not None:
             self.headers["Content-Length"] = str(len(body))
-        elif self.method not in ("GET", "HEAD") and \
-                "content-length" not in self.headers:
+            self._drop_framing_header("Transfer-Encoding")
+            return
+        for name in ("Content-Length", "Transfer-Encoding"):
+            self._drop_framing_header(name)
+        if self.method not in ("GET", "HEAD"):
             self.headers["Content-Length"] = "0"
+
+    def _drop_framing_header(self, name):
+        """Removes one body-framing header and records why.
+
+        Args:
+            name: The header name, in any case.
+
+        Raises:
+            UnsupportedFeature: Under "strict", instead of removing it.
+        """
+        if name.lower() not in self.headers:
+            return
+        if self.header_policy == "strict":
+            raise UnsupportedFeature(
+                "%s cannot be set here: the body this request carries decides "
+                "it, so a caller value would describe framing the wire does not "
+                "have. Drop it, or use the body to express the framing." % name)
+        del self.headers[name]
+        key = name.lower()
+        self.dropped_headers[key] = self.dropped_headers.get(key, 0) + 1
 
     def prepare_auth(self, auth, url=""):
         if auth is None:

@@ -1988,31 +1988,71 @@ class HopByHopHeaderTests(unittest.TestCase):
             with self.assertRaises(chrome_client.UnsupportedFeature):
                 session.get(self.base, headers={"Connection": None})
 
-    def test_a_caller_transfer_encoding_is_passed_through(self):
-        """A deliberate decision, pinned so it cannot drift silently.
+    def test_a_caller_transfer_encoding_never_reaches_the_wire(self):
+        """Reverses a decision that was pinned the other way for requests parity.
 
-        `Transfer-Encoding: chunked` on a bytes body produces the same framing
-        pair `requests` produces (measured: both send Content-Length and
-        Transfer-Encoding, and RFC 9112 section 6.3 says the recipient ignores
-        Content-Length). Rewriting it here would make a request that works
-        against requests fail, which this project does not do for a call the
-        caller spelled out.
+        The old expectation was that a caller's `Transfer-Encoding: chunked` on
+        a bytes body ships alongside the computed `Content-Length`, because
+        `requests` sends the same pair. Measured with a raw socket, that pair is
+        `Content-Length: 3` + `Transfer-Encoding: chunked` -- the shape RFC 9112
+        section 6.1 tells recipients to reject -- and no Chrome release can emit
+        it, which makes it a fingerprint defect as much as a protocol one.
+        A fingerprint client cannot ship a request its own browser cannot
+        produce, so the field is dropped and counted instead.
         """
         with chrome_client.Session() as session:
             session.post(self.base, headers={"Transfer-Encoding": "chunked"},
                          data=b"abc")
-        self.assertEqual(_ECHOED[-1].get("Transfer-Encoding"), "chunked")
+            dropped = dict(session.dropped_headers)
+        self.assertIsNone(_ECHOED[-1].get("Transfer-Encoding"))
         self.assertEqual(_ECHOED[-1].get("Content-Length"), "3")
+        self.assertEqual(dropped.get("transfer-encoding"), 1)
+
+    def test_a_bodiless_request_never_carries_a_stale_framing_header(self):
+        """Measured with a raw socket before this fix: a GET carried the
+        caller's `Content-Length: 999` and the server waited for bytes that never
+        came. Real Chrome cannot produce that request."""
+        with chrome_client.Session() as session:
+            session.get(self.base, headers={"Content-Length": "999",
+                                            "Transfer-Encoding": "chunked"})
+            dropped = dict(session.dropped_headers)
+        self.assertIsNone(_ECHOED[-1].get("Content-Length"))
+        self.assertIsNone(_ECHOED[-1].get("Transfer-Encoding"))
+        self.assertEqual(dropped.get("content-length"), 1)
+        self.assertEqual(dropped.get("transfer-encoding"), 1)
+
+    def test_strict_refuses_a_stale_framing_header_instead_of_dropping_it(self):
+        """The other half of section 8: a caller who asked for strict hears it."""
+        with chrome_client.Session(header_policy="strict") as session:
+            with self.assertRaises(chrome_client.UnsupportedFeature):
+                session.get(self.base, headers={"Content-Length": "999"})
+
+    def test_a_chunked_upload_declares_no_length_and_one_framing_field(self):
+        """The path that must stay clean, now that the facade never sets the
+        field itself: Chromium writes Transfer-Encoding from the chunked upload
+        stream, and declaring a length as well would be the same collision."""
+        with chrome_client.Session() as session:
+            session.post(self.base, data=iter([b"aa", b"bb"]))
+        self.assertEqual(_ECHOED[-1].get("Transfer-Encoding"), "chunked")
+        self.assertIsNone(_ECHOED[-1].get("Content-Length"))
 
     def test_a_streamed_body_chunks_without_a_content_length(self):
-        """The path that must stay clean: the facade owns the framing here."""
+        """The path that must stay clean: the Core owns the framing here.
+
+        A caller still spelling `Transfer-Encoding: chunked` is fine on this path
+        -- it agrees with what the Core emits -- and the field is not counted as
+        dropped, because nothing was removed: the Core's request block simply
+        never carried it.
+        """
         with chrome_client.Session() as session:
             session.post(self.base,
                          headers={"Transfer-Encoding": "chunked"},
                          data=iter([b"aa", b"bb"]))
+            dropped = dict(session.dropped_headers)
         self.assertEqual(_ECHOED[-1].get("Transfer-Encoding"), "chunked")
         self.assertIsNone(_ECHOED[-1].get("Content-Length"),
                           "a chunked body must not also declare a length")
+        self.assertNotIn("transfer-encoding", dropped)
 
     def test_a_file_part_carries_no_invented_content_type(self):
         """The facade must not guess a part type from the filename.

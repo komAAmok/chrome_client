@@ -2460,6 +2460,10 @@ class BaseSession(object):
         if auth is None and self.trust_env:
             auth = get_netrc_auth(request.url)
         prepared = PreparedRequest()
+        # The body-framing decision belongs to the request (it is the only place
+        # that knows whether a body exists), but which policy applies is the
+        # session's, so it is handed over before prepare() can consult it.
+        prepared.header_policy = self.header_policy
         prepared.header_order = (getattr(request, "header_order", None)
                                  or self.header_order)
         prepared.quote = getattr(request, "quote", None)
@@ -2494,6 +2498,10 @@ class BaseSession(object):
         # assignment that names no domain inherit a source for the store to
         # check it against.
         self.cookies.default_source = prepared.url
+        for name, count in prepared.dropped_headers.items():
+            # Same ledger the policy removals use: a caller that set a
+            # Content-Length this request could not honour reads it there.
+            self._dropped_headers[name] = self._dropped_headers.get(name, 0) + count
         self._flush_pending_store_cookies()
         return prepared
 

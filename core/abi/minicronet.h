@@ -20,7 +20,7 @@
 extern "C" {
 #endif
 
-#define MN_ABI_VERSION 16u
+#define MN_ABI_VERSION 17u
 
 /* tools/sync-core.sh installs core/exports/minicronet.lds, whose node name is
  * part of the link-time contract: every extension already built against this

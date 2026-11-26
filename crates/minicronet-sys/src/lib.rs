@@ -3,7 +3,7 @@
 
 use core::ffi::c_void;
 
-pub const MN_ABI_VERSION: u32 = 16;
+pub const MN_ABI_VERSION: u32 = 17;
 
 #[repr(C)]
 pub struct mn_engine_t {
@@ -1076,7 +1076,7 @@ mod abi_layout_tests {
         // Compared against the header, not against a literal: this line
         // was the second place ABI 11 appeared, and a bump that changed
         // only the constant left the test asserting the old number.
-        assert_eq!(MN_ABI_VERSION, 16);
+        assert_eq!(MN_ABI_VERSION, 17);
         assert_eq!(mn_request_priority_t::MN_REQUEST_PRIORITY_IDLE.0, 5);
         assert_eq!(mn_header_policy_t::MN_HEADER_POLICY_DROP.0, 1);
         assert_eq!(mn_header_scope_t::MN_HEADER_SCOPE_WEBSOCKET.0, 1);

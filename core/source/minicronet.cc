@@ -238,10 +238,18 @@ std::string HistoricalUserAgent(const minicronet::ProfileContext& profile,
 //    connection, so a caller value changes nothing observable. Not settable.
 //  * Host is overwritten by SetHeader(kHost, ...)
 //    (net/http/http_network_transaction.cc:1451). Cookie is attached by
-//    CookieMonster, which outranks a caller value; Content-Length and
-//    Transfer-Encoding are framing the Core computes from the body it was
-//    given; Accept-Encoding is what the profile froze. Each is settable but its
-//    value is not the caller's, so a removal cannot be honoured either.
+//    CookieMonster, which outranks a caller value; Content-Length is framing the
+//    Core computes from the body it was given; Accept-Encoding is what the
+//    profile froze. Each is settable but its value is not the caller's, so a
+//    removal cannot be honoured either.
+//  * Transfer-Encoding is NOT settable. Chromium writes it itself for a chunked
+//    upload (measured with a raw socket: a ChunkedUploadDataStream request with
+//    no Transfer-Encoding in the block still reaches the wire as
+//    "Transfer-Encoding: chunked"), and a caller value on a fixed body produced
+//    the pair "Content-Length: 3" + "Transfer-Encoding: chunked" -- the
+//    request-smuggling shape RFC 9112 6.1 tells recipients to reject, which no
+//    browser can emit. It was settable under ABI 15 for requests parity; a
+//    fingerprint client cannot ship a request real Chrome cannot produce.
 //  * User-Agent and Accept-Language do reach the wire (the latter through
 //    SetHeaderIfMissing, net/url_request/url_request_http_job.cc:750-758), so
 //    both stay settable; only removing them is refused.
@@ -267,7 +275,7 @@ constexpr HeaderRule kRequestHeaderRules[] = {
     {"proxy-connection", kRemovable | kDropped},
     {"te", kRemovable | kDropped},
     {"trailer", kRemovable | kDropped},
-    {"transfer-encoding", kSettable | kDropped},
+    {"transfer-encoding", kDropped},
     {"upgrade", kRemovable | kDropped},
     {"user-agent", kSettable},
 };

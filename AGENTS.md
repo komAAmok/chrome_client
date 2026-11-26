@@ -100,7 +100,7 @@ requests/curl_cffi 的 API 形状（`session.cookies` 是可变的 jar、`stream
 
 ## 2. ABI 规则
 
-- `core/abi/minicronet.h` 是**唯一** ABI 来源。当前 ABI v16，**35** 个导出符号
+- `core/abi/minicronet.h` 是**唯一** ABI 来源。当前 ABI v17，**35** 个导出符号
   （v11 只追加了 `mn_engine_config_t.max_sockets_per_group`，没有增删符号；
   v12 追加了 `mn_request_negotiated_protocol` 与 `mn_request_ech_status` 两个 getter，28 → 29；
   v13 追加了 `mn_engine_capabilities` 与 `mn_capability_t`，29 → 30；
@@ -113,6 +113,9 @@ requests/curl_cffi 的 API 形状（`session.cookies` 是可变的 jar、`stream
   v16 追加了 `mn_engine_set_wakeup_batch` 与 `mn_request_set_wakeup_token`，32 → 35 中的
   最后两个；结构体布局不变，两处都是新增符号。契约写在头文件里：回调在 Core 线程上运行、
   携带调用方 token、一次批里同一 token 至多出现一次、没有 token 的请求行为与 v15 完全一致。
+  v17 不增删符号，只把 `mn_header_disposition` 对 `transfer-encoding` 的答复从
+  `SETTABLE|DROPPED` 收紧为 `DROPPED`：固定 body 加调用方 TE 会同时写出 `Content-Length`
+  与 `Transfer-Encoding`，那是 RFC 9112 §6.1 要求拒绝、真 Chrome 产生不出的组合。
   能力位只报告 ABI **能兑现**的能力：位 1 是保留的，因为 `proxy_chain` 存不出多跳链。
 - 结构体变更必须同时更新：头文件、`crates/minicronet-sys/src/lib.rs` 的 `#[repr(C)]`
   声明与布局测试、`core/exports/minicronet.{def,exports,lds}`。
@@ -338,9 +341,13 @@ python3 -m unittest discover -s bindings/python/tests -p "test_*.py"
    - 根本写不进去的六个 hop-by-hop 字段（`Connection`、`Proxy-Connection`、
      `Keep-Alive`、`TE`、`Trailer`、`Upgrade`）：**默认**（`header_policy="compat"`）
      移除，并按名字计入 `session.dropped_headers`；
-   - 写得进去、但值由 Chromium 决定的五个字段（`Host`、`Cookie`、`Content-Length`、
-     `Transfer-Encoding`、`Accept-Encoding`）：默认**照旧发送**，只有显式
-     `header_policy="drop"` 才移除（那是另一个承诺：profile 抓到的值上线）。
+   - 写得进去、但值由 Chromium 决定的四个字段（`Host`、`Cookie`、`Content-Length`、
+     `Accept-Encoding`）：默认**照旧发送**，只有显式 `header_policy="drop"` 才移除
+     （那是另一个承诺：profile 抓到的值上线）。
+   - `Transfer-Encoding` **不在这个档里**（ABI 17 起）：Chromium 对 chunked 上传自己写
+     它，而调用方在固定 body 上塞一个会同时出现 `Content-Length` 与 `Transfer-Encoding`——
+     RFC 9112 §6.1 要求接收方拒绝、真 Chrome 产生不出的组合。所以它按第一档处理：默认
+     移除并计数，`strict` 抛错。
    - 调用方随时可以用 `header_policy="strict"`（或进程级
      `CHROME_CLIENT_HEADER_POLICY=strict`）要求这六个字段抛错。
 

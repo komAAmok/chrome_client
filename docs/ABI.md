@@ -5,7 +5,17 @@ headers are exposed. Opaque `mn_engine_t`, `mn_request_t`, and
 `mn_websocket_t` handles are reference counted by the Core; Rust is the only
 high-level owner exposed to language adapters.
 
-## v16（当前 ABI）
+## v17（当前 ABI）
+
+`MN_ABI_VERSION` 是 17，导出符号仍是 **35** 个（v17 不新增符号）。v17 只改
+`mn_header_disposition` 的一个答案：`transfer-encoding` 从 `SETTABLE|DROPPED` 变为只
+`DROPPED`，所以 `MN_HEADER_POLICY_REJECT` 下它是一个拒绝项，而不是被原样写出。原因是实测：
+固定 body 加调用方 `Transfer-Encoding: chunked` 时，线上会同时出现 `Content-Length: 3` 与
+`Transfer-Encoding: chunked`——RFC 9112 §6.1 要求接收方拒绝的组合，真 Chrome 产生不出来。
+chunked 上传时 Chromium 自己写这个字段（实测：请求块里不带它，线上仍然是
+`Transfer-Encoding: chunked`），所以调用方那一份从来不是必需的。
+
+### v16（历史）
 
 `MN_ABI_VERSION` 是 16，导出符号 **35** 个。v15 追加了 `mn_header_disposition`，并在
 `mn_request_config_t` 尾部追加 `header_policy`（落进既有 padding，结构体大小不变）；

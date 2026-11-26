@@ -8,7 +8,7 @@
 用真实 Chromium 网络栈实现的 HTTP/WebSocket 客户端，提供 requests / curl-cffi 风格
 的 Python API，同时让 TLS 指纹、HTTP/2 SETTINGS、QUIC 参数与真实 Chrome 一致。
 
-分层：`libminicronet`（Chromium C++，唯一协议实现）→ C ABI v16（35 个导出符号）→
+分层：`libminicronet`（Chromium C++，唯一协议实现）→ C ABI v17（35 个导出符号）→
 `minicronet-sys`（手写 FFI 声明）→ `minicronet`（Rust 安全层）→ 各语言薄绑定。
 
 - Chromium revision：`58bcc148f76b8975bbe59f1a6012d4ae409d62a9`（Chrome 156.0.8078.31 stable）
