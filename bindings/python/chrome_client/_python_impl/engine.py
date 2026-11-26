@@ -502,7 +502,7 @@ class EngineSlot(object):
     """
 
     __slots__ = ("engine", "config", "_lock", "_inflight", "_applied_certs",
-                   "_pending_certs", "_cert_cond", "_single_use")
+                   "_pending_certs", "_cert_cond", "_single_use", "_batch_loop")
 
     def __init__(self, engine, config, single_use=False):
         """Pairs an engine with its configuration.
@@ -526,6 +526,7 @@ class EngineSlot(object):
         self._single_use = bool(single_use)
         self._lock = threading.RLock()
         self._inflight = 0
+        self._batch_loop = None
         #: ``(host, port) -> (cert_pem, key_pem)``: what the Core currently holds,
         #: as far as this slot can tell. Re-registering identical bytes is not
         #: free -- ``SSLClientContext::SetClientCertificate`` synchronously

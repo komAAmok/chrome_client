@@ -3,7 +3,7 @@
 
 use core::ffi::c_void;
 
-pub const MN_ABI_VERSION: u32 = 15;
+pub const MN_ABI_VERSION: u32 = 16;
 
 #[repr(C)]
 pub struct mn_engine_t {
@@ -321,6 +321,10 @@ pub type mn_request_response_fn = unsafe extern "C" fn(
 );
 pub type mn_request_body_fn =
     unsafe extern "C" fn(*mut c_void, *mut mn_request_t, *const u8, usize) -> mn_read_disposition_t;
+/// ABI 16 batch wakeup: called with the requests that have callback output
+/// waiting. Every handle is valid for the duration of the call.
+pub type mn_engine_wakeup_fn =
+    unsafe extern "C" fn(user_data: *mut c_void, tokens: *mut *mut c_void, count: usize);
 pub type mn_request_complete_fn =
     unsafe extern "C" fn(*mut c_void, *mut mn_request_t, mn_result_t, i32);
 pub type mn_request_redirect_fn = unsafe extern "C" fn(
@@ -519,6 +523,16 @@ extern "C" {
         host: *const i8,
         host_length: usize,
         port: u16,
+    ) -> mn_result_t;
+    pub fn mn_engine_set_wakeup_batch(
+        engine: *mut mn_engine_t,
+        callback: Option<mn_engine_wakeup_fn>,
+        user_data: *mut c_void,
+        max_batch: u32,
+    ) -> mn_result_t;
+    pub fn mn_request_set_wakeup_token(
+        request: *mut mn_request_t,
+        token: *mut c_void,
     ) -> mn_result_t;
     pub fn mn_request_negotiated_protocol(
         request: *mut mn_request_t,
@@ -1062,7 +1076,7 @@ mod abi_layout_tests {
         // Compared against the header, not against a literal: this line
         // was the second place ABI 11 appeared, and a bump that changed
         // only the constant left the test asserting the old number.
-        assert_eq!(MN_ABI_VERSION, 15);
+        assert_eq!(MN_ABI_VERSION, 16);
         assert_eq!(mn_request_priority_t::MN_REQUEST_PRIORITY_IDLE.0, 5);
         assert_eq!(mn_header_policy_t::MN_HEADER_POLICY_DROP.0, 1);
         assert_eq!(mn_header_scope_t::MN_HEADER_SCOPE_WEBSOCKET.0, 1);

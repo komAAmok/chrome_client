@@ -100,7 +100,7 @@ requests/curl_cffi 的 API 形状（`session.cookies` 是可变的 jar、`stream
 
 ## 2. ABI 规则
 
-- `core/abi/minicronet.h` 是**唯一** ABI 来源。当前 ABI v15，**33** 个导出符号
+- `core/abi/minicronet.h` 是**唯一** ABI 来源。当前 ABI v16，**35** 个导出符号
   （v11 只追加了 `mn_engine_config_t.max_sockets_per_group`，没有增删符号；
   v12 追加了 `mn_request_negotiated_protocol` 与 `mn_request_ech_status` 两个 getter，28 → 29；
   v13 追加了 `mn_engine_capabilities` 与 `mn_capability_t`，29 → 30；
@@ -110,6 +110,9 @@ requests/curl_cffi 的 API 形状（`session.cookies` 是可变的 jar、`stream
   结构体大小不变：该字段落进 `strip_authorization_on_cross_origin_redirect`
   之后的既有 padding，x86_64 仍为 152 字节、i686 仍为 100 字节，
   由 `audit-abi-layout.py` 逐字段核对）。
+  v16 追加了 `mn_engine_set_wakeup_batch` 与 `mn_request_set_wakeup_token`，32 → 35 中的
+  最后两个；结构体布局不变，两处都是新增符号。契约写在头文件里：回调在 Core 线程上运行、
+  携带调用方 token、一次批里同一 token 至多出现一次、没有 token 的请求行为与 v15 完全一致。
   能力位只报告 ABI **能兑现**的能力：位 1 是保留的，因为 `proxy_chain` 存不出多跳链。
 - 结构体变更必须同时更新：头文件、`crates/minicronet-sys/src/lib.rs` 的 `#[repr(C)]`
   声明与布局测试、`core/exports/minicronet.{def,exports,lds}`。
@@ -176,6 +179,9 @@ python3 tools/audit-extra-fp.py
 # curl_options, max_recv_speed, max_redirects, dns_over_tls, dns_padding, quote,
 # thread, debug, referer, multipart, accept_encoding) must stay absent. A new keyword without a
 # verdict fails, and so does a removed one that comes back.
+# It also pins HTTPAdapter: the four constructor arguments (INERT here, and
+# deleting them would TypeError a caller while no test notices) and the six
+# hooks a subclass overrides.
 python3 tools/audit-compat-surface.py
 # Two constructors that accept the same option NAME are not accepting the same
 # option: a differing default is a different behaviour, and for platform= that is

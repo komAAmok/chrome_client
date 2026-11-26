@@ -1434,3 +1434,59 @@ MINICRONET_PKGCONF_DIR=/tmp/pkgconf/root tools/build-core-linux-arm64.sh
 剩余项只是「要不要把 deb 也纳入仓库以支持离线构建」，不是「命令未知」。
 
 完成条件是每项都有命令输出或目标机报告；“文件存在”不等于“平台支持完成”。
+
+## 本轮实测：并发瓶颈已归因到 Chromium 侧，批量唤醒是唯一剩下的结构项（2026-11-26）
+
+`docs/CORE_BINARY_SIZE_PLAN.md` 的同名小节记录了完整插桩数据，这里只留结论与判据。
+
+### 已排除的三条路（都测过，别再试）
+
+| 方向 | 实测 | 结论 |
+| --- | --- | --- |
+| 加引擎（1→8 个）换并发 | 598.4 / 682.3 / 626.8 / 621.7 req/s，单引擎驻留 561 KiB | 吞吐不变、内存线性涨，**否** |
+| `max_sockets_per_group` 0/32/128/256 | 并发 32/128/256 下 req/s 561–796，无单调关系 | 本地目标不是 socket 池在限流，**否** |
+| 网络线程内联 body 回调（省 ThreadPool 投递） | 0.142 ms/请求在网络线程，但内联会破坏 `stalled_consumer_isolation` | 安全性不允许，**否** |
+
+### 每请求 0.949 ms 网络线程 CPU 的归属（p50）
+
+```text
+0.039 CreateRequest + 设置      本仓库
+0.010 抓包头合并                本仓库
+0.220 request_->Start() 本体    Chromium
+0.344 Start→OnResponseStarted   Chromium（cache / 连接池 / 读 / 解析）
+0.156 头→首块 body              本仓库
+0.142 首块→Complete             本仓库（一次 ThreadPool 投递）
+```
+
+Chromium 侧 0.564 ms 不可改（改它就是换实现），我们的 0.347 ms 里有 0.142 是
+回调线程投递、0.156 是响应头整理。**所以并发侧剩下的唯一结构项就是减少唤醒次数**：
+提案 2（批量唤醒）的价值不再是「有望」，而是「这是唯一还没被消除的一项」。
+
+### ABI v16 批量唤醒的落地判据（已获准，下一轮实施）
+
+1. 新增 `mn_engine_set_wakeup_batch(engine, callback, user_data, max_batch)`，
+   `MN_ABI_VERSION` 15 → 16，`core/exports/minicronet.{def,exports,lds}` 与
+   `crates/minicronet-sys` 的布局测试同步；既有 33 个符号的签名与语义不动。
+2. 未调用该函数的调用方走原路径：每请求一次投递，保持 ABI v15 行为。
+3. 批次的空闲判定由 Core 侧驱动（队列空或达 `max_batch`），**不引入固定延迟**——
+   固定延迟会直接抬高 p50，这条在提案里已经写明。
+4. Rust 侧 `notify_scheduled` 的「每请求一个」语义要重写成「每批一个」，这是最大风险点，
+   必须与 `_AsyncState.notify()` 的 `ASYNC_POLL_BATCH` 排空逻辑一起改并单独立测试。
+5. 验收：并发 128 与 512 两档，p99 不退化，req/s 中位数上升；六形态泄漏仍 flat。
+
+当前 Python 侧每请求成本（实测，非 cProfile）：`prepare_request` 199 µs（netrc 路径解析
+18.8、`PreparedRequest.prepare` 30、`_browser_headers` 22.6、合并与 cookie 处理约 60），
+`_engine_config` 43.6 µs。它们在 128 并发下被 GIL 竞争放大到 414–556 µs 墙钟——
+所以先把唤醒次数砍下来，再谈这几个几十微秒。
+
+## ABI v16 已落地（2026-11-26）
+
+批量唤醒不再是提案：Core 侧 `Engine` 维护 token 批队列并在空闲时一次投递，绑定侧用
+进程级 id 注册表把一次投递翻译成一次 `call_soon_threadsafe`。契约、验收数字与修掉的缺陷见
+`docs/PROJECT_STATUS.md` 的同日条目，否决与实测数据见 `docs/CORE_BINARY_SIZE_PLAN.md`。
+
+**仍然欠的三件事**（都不是代码问题）：
+
+1. **真机运行**：macOS / Windows / ARM64 三个平台没有可运行的目标机，README 的 ✓ 只覆盖构建与审计，不覆盖一次真实请求。
+2. **`review-before-tag.py` 归档**：`concurrency` 与 `leaks` 两组依赖本机跑，结果要写进 `docs/review-<version>/`。
+3. **profile 证据链的网络级**：`audit-profile-addition.py --levels 1` 与 `audit-v9-profile-fields.py --evidence-dir` 需要网络与 19 MiB 抓包，本机未跑。

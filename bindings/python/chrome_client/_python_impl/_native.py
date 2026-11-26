@@ -12,6 +12,7 @@ wheel refuses to install on 3.7 and 3.8.  Those two versions stay on the
 """
 
 import importlib
+import importlib.machinery
 import importlib.util
 import pathlib
 import sys
@@ -100,9 +101,44 @@ def _from_search_path(failures=None, module_name=None):
     return None
 
 
+def _installed_in_package(name):
+    """Loads ``chrome_client/<name>*.so`` from inside this package.
+
+    A wheel built by maturin places the extension *inside* the package
+    (``chrome_client/chrome_client_native36.abi3.so``), so the only importable
+    spelling is the dotted one. Importing it the ordinary way re-enters this
+    module: the parent package's ``__init__`` calls :func:`load`, which asks
+    for the submodule, which imports the parent again. That produced
+    "is not installed and no build was found" for a wheel whose extension was
+    right there. Loading the file directly skips the parent entirely.
+    """
+    directory = pathlib.Path(__file__).resolve().parent.parent
+    for suffix in importlib.machinery.EXTENSION_SUFFIXES:
+        path = directory / (name + suffix)
+        if not path.is_file():
+            continue
+        spec = importlib.util.spec_from_file_location(
+            "chrome_client." + name, str(path))
+        if spec is None or spec.loader is None:
+            continue
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        sys.modules.setdefault("chrome_client." + name, module)
+        return module
+    return None
+
+
 def _try_import(name):
     """Imports *name* as an installed extension, or returns ``None``."""
     for candidate in ("chrome_client." + name, name):
+        if candidate.startswith("chrome_client."):
+            # Try the packaged file first: a dotted import re-enters load().
+            try:
+                module = _installed_in_package(name)
+            except ImportError:
+                module = None
+            if module is not None:
+                return module
         try:
             return importlib.import_module(candidate)
         except ImportError:

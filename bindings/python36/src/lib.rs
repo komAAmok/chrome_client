@@ -798,14 +798,35 @@ impl PyRequest {
         })
     }
 
-    fn start_async(&self, py: Python, loop_: PyObject, notify: PyObject) -> PyResult<()> {
-        self.attach_async(py, loop_, notify);
+    #[args(batch = "true")]
+    fn start_async(
+        &self,
+        py: Python,
+        loop_: PyObject,
+        notify: PyObject,
+        batch: bool,
+    ) -> PyResult<()> {
+        // ABI 16 batch wakeup is not wired into the 3.6 crate: it registers no
+        // batch consumer, so the facade's getattr finds nothing and every request
+        // keeps its own wakeup. The argument still has to exist: one Python
+        // package ships both extensions and the facade passes it, so a shorter
+        // signature here is a TypeError on every async request of the cp36 wheel.
+        let _ = batch;
+        self.attach_async(py, loop_, notify, batch);
         let future = self.inner.start().map_err(error)?;
         *self.response_future.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Some(future);
         Ok(())
     }
 
-    fn attach_async(&self, py: Python, loop_: PyObject, notify: PyObject) {
+    #[args(batch = "true")]
+    fn attach_async(
+        &self,
+        py: Python,
+        loop_: PyObject,
+        notify: PyObject,
+        batch: bool,
+    ) {
+        let _ = batch;
         let scheduled = Arc::clone(&self.notify_scheduled);
         let loop_ref = loop_.clone_ref(py);
         let notify_ref = notify.clone_ref(py);

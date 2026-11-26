@@ -5,10 +5,21 @@ headers are exposed. Opaque `mn_engine_t`, `mn_request_t`, and
 `mn_websocket_t` handles are reference counted by the Core; Rust is the only
 high-level owner exposed to language adapters.
 
-## v14（当前 ABI）
+## v16（当前 ABI）
 
-`MN_ABI_VERSION` 是 14，导出符号 **32** 个：v13 追加了 `mn_engine_capabilities`，
-v14 追加了 `mn_platform_user_agent_group` 与 `mn_platform_hint`。
+`MN_ABI_VERSION` 是 16，导出符号 **35** 个。v15 追加了 `mn_header_disposition`，并在
+`mn_request_config_t` 尾部追加 `header_policy`（落进既有 padding，结构体大小不变）；
+v16 追加了批量唤醒的两个符号，结构体布局不变：
+
+| 符号 | 作用 |
+| --- | --- |
+| `mn_engine_set_wakeup_batch(engine, callback, user_data, max_batch)` | 一个引擎注册一个批消费者：多个请求就绪时 Core 合成一次回调，数组里是调用方 token |
+| `mn_request_set_wakeup_token(request, token)` | 设置/清除该请求在批次里上报的 token；token 由调用方拥有，Core 只比较与转发，从不解引用 |
+
+契约（写在头文件里）：回调在 Core 自己的线程上运行、不得阻塞；同一 token 在一次批里至多出现
+一次，交付期间到达的事件会排下一次调用，因此既不丢也不重；`max_batch=0` 用 Core 的 64；
+**没有 token 的请求行为与 v15 完全一致**；回调为 NULL 即注销。批队列里存的是 token，不是
+句柄或引用，所以批次不可能比请求活得久，也不会与引擎形成引用环。
 
 ### 为什么需要能力位
 

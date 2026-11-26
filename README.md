@@ -4,11 +4,13 @@
 [![Python 版本](https://img.shields.io/badge/python-3.6%20%7C%203.7%20%7C%203.8%20%7C%203.9%20%7C%203.10%20%7C%203.11%20%7C%203.12%20%7C%203.13%20%7C%203.14%20%7C%203.15-blue)](https://pypi.org/project/chrome-client/)
 [![许可证：MIT](https://img.shields.io/pypi/l/chrome-client)](https://pypi.org/project/chrome-client/)
 
-**Chromium 驱动的 HTTP/HTTPS 与 WebSocket 指纹客户端。**
+**Chromium 网络栈直接编译成库的 HTTP/HTTPS/WebSocket 客户端：指纹不是模仿，是那一版 Chrome 本人。**
 
-它不是一个"带相似指纹"的客户端，而是把真实 Chromium 的网络栈编译成
-`libminicronet`，直接由它发出请求。因此 TLS 的 ClientHello、HTTP/2 SETTINGS、
-QUIC 传输参数、请求头顺序都不是模仿出来的，而是那一版 Chrome 自己的行为。
+- **不是模拟**：`libminicronet` 就是 Chromium 自己的 TLS、HTTP/1.1、HTTP/2、HTTP/3/QUIC 与 WebSocket 实现，ClientHello、SETTINGS、请求头顺序由它发出。
+- **73 个 Chrome profile（86–158）**：每个版本用自己 tag 的源码与六条抓包对齐，`impersonate="chrome_155"` 得到的就是该版本的行为。
+- **两套 API、同一个引擎**：`requests` 的 `Session`/`Response`/异常层次，加 `curl_cffi` 的 `impersonate`/`http_version`/`AsyncSession`/WebSocket。
+- **并发**：同一事件循环上的请求按批唤醒（ABI v16），实测 128 并发 1104 req/s（+39%）、512 并发 1090 req/s（+26%），p99 分别下降 30% 与 23%。
+- **失败可见**：无法用 Chromium 忠实实现的选项一律抛 `UnsupportedFeature`，不静默降级。
 
 ```python
 from chrome_client import Session
@@ -17,13 +19,7 @@ with Session(impersonate="chrome_155") as session:
     response = session.get("https://example.com")
 ```
 
-Python API 同时对齐两套习惯：`requests` 的 `Session`/`Response`/异常层次，以及
-`curl_cffi` 的 `impersonate`、`http_version`、`AsyncSession` 和
-WebSocket。同步与异步两套 API 共用同一个引擎，行为只在"怎么等待"上不同。
-
-**无法用 Chromium 忠实实现的选项一律抛错**，不会静默忽略——静默降级比缺失更糟，
-因为它让调用方以为自己在模仿一个指纹，实际上不是。细则见
-[兼容边界](https://github.com/komAAmok/chrome_client/blob/main/docs/COMPATIBILITY_BOUNDARY.md)。
+九个平台的 Core 产物随仓库提交（Linux x86/x86_64/ARM64、Windows x86/x86_64/ARM64、macOS x86_64/ARM64），每份带 ABI 版本、Chromium revision 与 SHA-256；ABI 当前 v16。行为边界见 [兼容边界](https://github.com/komAAmok/chrome_client/blob/main/docs/COMPATIBILITY_BOUNDARY.md)。
 
 [English README](https://github.com/komAAmok/chrome_client/blob/main/README.en.md) · [构建说明](https://github.com/komAAmok/chrome_client/blob/main/docs/BUILD.md) · [兼容边界](https://github.com/komAAmok/chrome_client/blob/main/docs/COMPATIBILITY_BOUNDARY.md) · [第三方许可](https://github.com/komAAmok/chrome_client/blob/main/THIRD_PARTY_NOTICES.md)
 
@@ -40,8 +36,7 @@ WebSocket。同步与异步两套 API 共用同一个引擎，行为只在"怎�
 
 
 每个 Core 产物位于 `core/binaries/<target>/`，带 ABI 版本、Chromium revision、
-SHA-256 和依赖清单。ABI 当前为 v12。Go 和 Node.js 目录目前是绑定设计说明，
-不是已发布的可安装包。
+SHA-256 和依赖清单。ABI 当前为 v16。
 
 ### Chrome profile
 
@@ -600,7 +595,7 @@ Core 体积在 6.1–9.4 MB 之间（Linux ARMv7 最小，Windows x86_64 最大�
 
 | 路径 | 内容 |
 | --- | --- |
-| `core/abi/` | 稳定 C ABI v15 |
+| `core/abi/` | 稳定 C ABI v16 |
 | `core/binaries/` | 9 个已审计平台 Core |
 | `crates/minicronet/` | Rust 安全层、流和生命周期 |
 | `bindings/python/` | Python 3.9–3.15 绑定与共享 facade |

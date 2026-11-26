@@ -963,6 +963,22 @@ mn_result_t MN_CALL mn_engine_clear_client_certificate(mn_engine_t *engine,
   return engine->impl->ClearClientCertificate(host_text, port);
 }
 
+mn_result_t MN_CALL mn_engine_set_wakeup_batch(mn_engine_t *engine,
+                                               mn_engine_wakeup_fn callback,
+                                               void *user_data,
+                                               uint32_t max_batch) {
+  if (!engine) {
+    return MN_ERROR_INVALID_ARGUMENT;
+  }
+  return engine->impl->SetWakeupBatch(callback, user_data, max_batch);
+}
+
+mn_result_t MN_CALL mn_request_set_wakeup_token(mn_request_t *request,
+                                               void *token) {
+  return request ? request->impl->SetWakeupToken(token)
+                 : MN_ERROR_INVALID_ARGUMENT;
+}
+
 mn_result_t MN_CALL mn_request_create(mn_engine_t *engine,
                                       const mn_request_config_t *config,
                                       mn_request_t **out_request) {

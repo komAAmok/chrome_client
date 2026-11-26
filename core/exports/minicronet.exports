@@ -13,6 +13,8 @@ _mn_engine_cookies_delete
 _mn_engine_cookies_clear
 _mn_engine_set_client_certificate
 _mn_engine_clear_client_certificate
+_mn_engine_set_wakeup_batch
+_mn_request_set_wakeup_token
 _mn_request_create
 _mn_request_retain
 _mn_request_release

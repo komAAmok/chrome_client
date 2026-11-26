@@ -1,4 +1,5 @@
 #include "minicronet/engine.h"
+#include "minicronet/request.h"
 #include "minicronet/profile_ssl_config_service.h"
 #include "platform_identity.h"
 
@@ -31,6 +32,7 @@
 #include "base/time/time.h"
 #include "base/task/thread_pool/thread_pool_instance.h"
 #include "base/threading/thread.h"
+#include "base/task/thread_pool.h"
 #include "net/base/ip_address.h"
 #include "net/base/ip_endpoint.h"
 #include "net/base/network_change_notifier.h"
@@ -492,6 +494,101 @@ Engine::Engine(std::string user_agent, std::string accept_language,
       tls_verify_mode_(tls_verify_mode), custom_ca_pem_(std::move(custom_ca_pem)),
       profile_(std::move(profile)), options_(std::move(options)),
       fork_generation_(CurrentForkGeneration()) {}
+
+namespace {
+
+// ABI 16 bounds. The default is what a loop wants: one wakeup draining up to 64
+// requests, which is far more than the 1-2 a single callback burst produces.
+constexpr uint32_t kWakeupBatchDefault = 64;
+constexpr uint32_t kWakeupBatchLimit = 4096;
+
+}  // namespace
+
+mn_result_t Engine::SetWakeupBatch(mn_engine_wakeup_fn callback, void *user_data,
+                                   uint32_t max_batch) {
+  if (max_batch > kWakeupBatchLimit) {
+    return MN_ERROR_INVALID_ARGUMENT;
+  }
+  base::AutoLock lock(wakeup_lock_);
+  if (!callback) {
+    wakeup_fn_ = nullptr;
+    wakeup_user_data_ = nullptr;
+    wakeup_max_batch_ = 0;
+    wakeup_registered_.store(false, std::memory_order_release);
+    wakeup_queue_.clear();
+    wakeup_queued_.clear();
+    return MN_OK;
+  }
+  if (!wakeup_runner_) {
+    wakeup_runner_ = base::ThreadPool::CreateSequencedTaskRunner({});
+  }
+  wakeup_fn_ = callback;
+  wakeup_user_data_ = user_data;
+  wakeup_max_batch_ = max_batch;
+  wakeup_registered_.store(true, std::memory_order_release);
+  return MN_OK;
+}
+
+void Engine::NoteWakeup(void *token) {
+  scoped_refptr<base::SequencedTaskRunner> runner;
+  {
+    base::AutoLock lock(wakeup_lock_);
+    if (!wakeup_fn_ || !token) {
+      return;
+    }
+    // Queueing the same token twice would deliver it twice for one burst. The
+    // set is per engine, and tokens are the caller's to keep distinct.
+    if (!wakeup_queued_.insert(token).second) {
+      return;
+    }
+    wakeup_queue_.push_back(token);
+    if (wakeup_delivery_scheduled_) {
+      return;
+    }
+    wakeup_delivery_scheduled_ = true;
+    runner = wakeup_runner_;
+  }
+  runner->PostTask(FROM_HERE, base::BindOnce(&Engine::DeliverWakeupBatch,
+                                             base::RetainedRef(this)));
+}
+
+void Engine::DeliverWakeupBatch() {
+  std::vector<void *> batch;
+  mn_engine_wakeup_fn callback = nullptr;
+  void *user_data = nullptr;
+  scoped_refptr<base::SequencedTaskRunner> runner;
+  {
+    base::AutoLock lock(wakeup_lock_);
+    wakeup_delivery_scheduled_ = false;
+    callback = wakeup_fn_;
+    user_data = wakeup_user_data_;
+    if (!callback) {
+      wakeup_queue_.clear();
+      wakeup_queued_.clear();
+      return;
+    }
+    const size_t limit = wakeup_max_batch_ ? wakeup_max_batch_ : kWakeupBatchDefault;
+    const size_t take = std::min(limit, wakeup_queue_.size());
+    batch.assign(wakeup_queue_.begin(), wakeup_queue_.begin() + take);
+    for (void *token : batch) {
+      wakeup_queued_.erase(token);
+    }
+    // Clearing the queued entries before the callback is what makes a burst that
+    // arrives during delivery schedule a later invocation instead of vanishing.
+    wakeup_queue_.erase(wakeup_queue_.begin(), wakeup_queue_.begin() + take);
+    if (!wakeup_queue_.empty()) {
+      wakeup_delivery_scheduled_ = true;
+      runner = wakeup_runner_;
+    }
+  }
+  if (runner) {
+    runner->PostTask(FROM_HERE, base::BindOnce(&Engine::DeliverWakeupBatch,
+                                               base::RetainedRef(this)));
+  }
+  if (!batch.empty() && callback) {
+    callback(user_data, batch.data(), batch.size());
+  }
+}
 
 Engine::~Engine() {
   if (!context_) {

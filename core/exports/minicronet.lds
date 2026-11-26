@@ -15,6 +15,8 @@ MINICRONET_2 {
     mn_engine_cookies_clear;
     mn_engine_set_client_certificate;
     mn_engine_clear_client_certificate;
+    mn_engine_set_wakeup_batch;
+    mn_request_set_wakeup_token;
     mn_request_create;
     mn_request_retain;
     mn_request_release;

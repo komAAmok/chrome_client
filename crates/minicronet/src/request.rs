@@ -531,6 +531,26 @@ pub struct Request(Arc<RequestInner>);
 
 impl Request {
     /// The Core's handle, for the ABI getters that take one.
+    /// Public handle, for ABI calls a binding makes itself (ABI 16 wakeup tokens).
+    pub fn raw_handle(&self) -> *mut sys::mn_request_t {
+        self.raw()
+    }
+
+    /// ABI 16: sets the opaque token this request reports through the engine's
+    /// batch callback, or clears it with null.
+    ///
+    /// The Core stores and compares the value and never dereferences it, which is
+    /// why this stays a safe method over a raw pointer: the caller owns whatever
+    /// the token names, and an id (the usual choice) names nothing at all.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
+    pub fn set_wakeup_token(&self, token: *mut core::ffi::c_void) -> Result<(), Error> {
+        let result = unsafe { sys::mn_request_set_wakeup_token(self.raw(), token) };
+        if result != sys::mn_result_t::MN_OK {
+            return Err(result.into());
+        }
+        Ok(())
+    }
+
     pub(crate) fn raw(&self) -> *mut sys::mn_request_t {
         self.0.raw.as_ptr()
     }

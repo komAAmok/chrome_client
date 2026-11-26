@@ -6,6 +6,7 @@
 mod request;
 mod websocket;
 
+use std::collections::HashMap;
 use std::{
     ffi::CStr,
     fmt,
@@ -13,6 +14,7 @@ use std::{
     sync::{Arc, Mutex, MutexGuard},
 };
 
+use core::ffi::c_void;
 use minicronet_sys as sys;
 
 pub use request::{
@@ -377,6 +379,10 @@ impl CoreCapabilities {
 }
 struct EngineInner {
     raw: NonNull<sys::mn_engine_t>,
+    /// ABI 16 batch consumer. `Arc::as_ptr` of this allocation is what the Core
+    /// hands back as user_data, so the field must own it for the life of the
+    /// engine.
+    wakeup_id: Mutex<Option<usize>>,
 }
 
 // The Core ABI documents retain/release and engine operations as thread-safe.
@@ -387,6 +393,18 @@ unsafe impl Sync for EngineInner {}
 
 impl Drop for EngineInner {
     fn drop(&mut self) {
+        // ABI 16: stop the Core first, then forget the consumer, then release.
+        // The order matters -- a delivery still queued when this runs must find
+        // either a live consumer or none, never a freed one.
+        let id = lock(&self.wakeup_id).take();
+        if id.is_some() {
+            unsafe {
+                sys::mn_engine_set_wakeup_batch(self.raw.as_ptr(), None, std::ptr::null_mut(), 0)
+            };
+        }
+        if let Some(id) = id {
+            unregister_wakeup_consumer(id);
+        }
         // The Core contract makes the final release safe after all operations
         // have completed; Engine owns the sole Rust reference here.
         unsafe { sys::mn_engine_release(self.raw.as_ptr()) };
@@ -395,6 +413,57 @@ impl Drop for EngineInner {
 
 #[derive(Clone)]
 pub struct Engine(Arc<EngineInner>);
+
+/// A consumer registered for ABI 16 batch wakeups: it receives the caller
+/// tokens of the requests whose callback output is ready.
+pub type WakeupConsumer = Arc<dyn Fn(&[usize]) + Send + Sync>;
+
+/// ABI 16 consumers, keyed by the id handed to the Core.
+///
+/// The Core holds the id across calls, and a delivery can still be queued when
+/// the binding drops its engine, so the consumer cannot live in the engine: a
+/// raw pointer to it would be freed while the Core was about to call it. The
+/// registry is process-wide and the trampoline clones the Arc under its lock, so
+/// a lookup either finds a live consumer or finds nothing and returns.
+fn wakeup_consumers() -> &'static Mutex<HashMap<usize, WakeupConsumer>> {
+    static CONSUMERS: std::sync::OnceLock<Mutex<HashMap<usize, WakeupConsumer>>> =
+        std::sync::OnceLock::new();
+    CONSUMERS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn register_wakeup_consumer(consumer: WakeupConsumer) -> usize {
+    static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(1);
+    let id = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    lock(wakeup_consumers()).insert(id, consumer);
+    id
+}
+
+fn unregister_wakeup_consumer(id: usize) {
+    lock(wakeup_consumers()).remove(&id);
+}
+
+/// ABI 16 trampoline. `user_data` is the registration id, never a pointer: an id
+/// that is no longer registered simply produces no call.
+unsafe extern "C" fn engine_wakeup_trampoline(
+    user_data: *mut c_void,
+    tokens: *mut *mut c_void,
+    count: usize,
+) {
+    if user_data.is_null() || tokens.is_null() {
+        return;
+    }
+    let id = user_data as usize;
+    let Some(consumer) = lock(wakeup_consumers()).get(&id).cloned() else {
+        return;
+    };
+    let mut batch = Vec::with_capacity(count);
+    for index in 0..count {
+        // SAFETY: the Core passes an array of count entries.
+        let token = unsafe { *tokens.add(index) };
+        batch.push(token as usize);
+    }
+    consumer(&batch);
+}
 
 impl Engine {
     pub fn new(config: EngineConfig) -> Result<Self, Error> {
@@ -462,7 +531,10 @@ impl Engine {
             return Err(result.into());
         }
         let raw = NonNull::new(raw).ok_or(Error::InitializationFailed)?;
-        Ok(Self(Arc::new(EngineInner { raw })))
+        Ok(Self(Arc::new(EngineInner {
+            raw,
+            wakeup_id: Mutex::new(None),
+        })))
     }
 
     pub fn core_abi_version() -> u32 {
@@ -538,6 +610,43 @@ impl Engine {
 
     pub fn websocket(&self, config: WebSocketConfig) -> Result<WebSocket, Error> {
         WebSocket::new(self, config)
+    }
+
+    /// Public handle for ABI calls a binding has to make itself (ABI 16 batch
+    /// wakeup registration). Nothing else should reach for it.
+    pub fn raw_handle(&self) -> *mut sys::mn_engine_t {
+        self.raw()
+    }
+
+    /// ABI 16: installs the batch wakeup consumer.
+    ///
+    /// The consumer runs on a Core thread and receives the tokens of the
+    /// requests whose callback output is ready. It is held by the engine, so a
+    /// binding that captures a registry in it does not have to keep a second
+    /// owner alive.
+    pub fn set_wakeup_batch(&self, consumer: WakeupConsumer, max_batch: u32) -> Result<(), Error> {
+        let mut slot = lock(&self.0.wakeup_id);
+        let id = register_wakeup_consumer(consumer);
+        let result = unsafe {
+            sys::mn_engine_set_wakeup_batch(
+                self.raw(),
+                Some(engine_wakeup_trampoline),
+                id as *mut core::ffi::c_void,
+                max_batch,
+            )
+        };
+        if result != sys::mn_result_t::MN_OK {
+            unregister_wakeup_consumer(id);
+            return Err(result.into());
+        }
+        let previous = slot.replace(id);
+        drop(slot);
+        if let Some(previous) = previous {
+            // Only reachable when a caller re-registers on the same engine; the
+            // Core has already switched to the new id, so the old one is done.
+            unregister_wakeup_consumer(previous);
+        }
+        Ok(())
     }
 
     pub(crate) fn raw(&self) -> *mut sys::mn_engine_t {

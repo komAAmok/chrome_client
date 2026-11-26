@@ -40,6 +40,7 @@ public:
 
   mn_result_t Start();
   mn_result_t Cancel();
+  mn_result_t SetWakeupToken(void *token);
   mn_result_t UploadWrite(std::vector<uint8_t> data, bool final_chunk);
   mn_result_t FollowRedirect();
   mn_result_t ResumeRead();
@@ -72,6 +73,10 @@ private:
   void UploadWriteOnNetworkThread(std::vector<uint8_t> data, bool final_chunk);
   void FollowRedirectOnNetworkThread();
   void Complete(mn_result_t result, int net_error);
+  // ABI 16: reports this request to the engine batch queue after a callback has
+  // been invoked, so whatever the callback published is already visible to the
+  // consumer that drains it.
+  void NoteBatchWakeup();
   void ReadMore();
   void PostReadMore();
   // Returns the read buffer to the network thread and continues or pauses.
@@ -138,6 +143,10 @@ private:
     kReadResumeRequested = 2,
   };
   std::atomic<int> read_state_{kReadReading};
+
+  // ABI 16: the token this request reports through the engine batch callback,
+  // or null when it does not participate. The Core never dereferences it.
+  std::atomic<void *> wakeup_token_{nullptr};
 };
 
 } // namespace minicronet

@@ -8,7 +8,7 @@
 用真实 Chromium 网络栈实现的 HTTP/WebSocket 客户端，提供 requests / curl-cffi 风格
 的 Python API，同时让 TLS 指纹、HTTP/2 SETTINGS、QUIC 参数与真实 Chrome 一致。
 
-分层：`libminicronet`（Chromium C++，唯一协议实现）→ C ABI v15（33 个导出符号）→
+分层：`libminicronet`（Chromium C++，唯一协议实现）→ C ABI v16（35 个导出符号）→
 `minicronet-sys`（手写 FFI 声明）→ `minicronet`（Rust 安全层）→ 各语言薄绑定。
 
 - Chromium revision：`58bcc148f76b8975bbe59f1a6012d4ae409d62a9`（Chrome 156.0.8078.31 stable）
@@ -1156,3 +1156,28 @@ Python 套件能进 CI 是因为 linux-x86_64 Core 已提交在仓库里；已�
 仍在 CI 之外的是需要 Chromium 源码树的两项：`audit-core-linux.sh` 的源码级审计
 （529 个 net 源文件、166 处 FeatureList 读取、体积上限）和 8 个平台的构建。它们依赖
 一份 70 GB 的固定 revision 检出加 xwin/osxcross 工具链，免费 runner 承担不了。
+
+## 本轮（2026-11-26）：并发/内存/体积的实测与判定
+
+代码未变（一次尺寸档试验已完整回退，`core/binaries/linux-x86_64/libminicronet.so` 重建后
+strip 与提交产物逐字节相同）。门禁与泄漏全部复跑：
+
+| 项 | 结果 |
+| --- | --- |
+| 15 项静态门禁（abi / layout / layer-ownership / ceilings / source-fingerprint / binaries / payloads / compat-surface / session-parity / frozen-headers / discard-fingerprint / client-hints / binding-surface / extra-fp / stubs） | 全绿 |
+| Python 套件 | 609 tests, OK (skipped=2) |
+| 六形态泄漏 `leak-probe.py` | 6/6 flat（fd +0；RSS −48…+280 KiB） |
+| 基准（三次，本机） | 同步 485–555 req/s、异步 32 823–905、异步 128 832–953、流式 106–130 MiB/s |
+
+并发侧的归因（临时 `ThreadTicks` 插桩，已删除）与三条被排除的路线、以及 `//base`
+`optimize_max` 的否决数据，分别记在 `docs/CORE_BINARY_SIZE_PLAN.md` 与
+`docs/NEXT_STEPS.md` 的同名小节。结论一句话：每请求 0.949 ms 网络线程 CPU 里 0.564 ms
+是 Chromium 的 URLRequest 机器，剩下能动的只有唤醒次数，也就是已获准的 ABI v16 批量唤醒。
+
+## 验收（2026-11-26，ABI v16）
+
+- **九个平台产物重建并安装**：35 个导出符号，`audit-core-binaries.sh` 9/9，`targets.json abi_version=16`，manifest 的 SHA-256 与 `core_sources_sha256` 均已刷新。
+- **批量唤醒实测**（同一二进制，只切 `CHROME_CLIENT_WAKEUP_BATCH`）：128 并发 792 → 1,104 req/s、p99 186 → 130 ms；512 并发 866 → 1,090 req/s、p99 550 → 421 ms。
+- **本地门禁 31/31**；`bindings/python/tests` 609 用例 OK（skip 2）；`cargo test --workspace` 24 用例；六形态泄漏 flat（fd +0，RSS 最差 +24 KiB）。
+- **体积**：linux-x86_64 8,666,672（较 v15 +4,096），九平台合计 72,792,155；linux 上限按「最大产物 × 1.02」重导为 8,850,000。
+- **同期修掉的缺陷**：`__version__` 未随版本 bump、cp36 扩展的 `start_async`/`attach_async` 缺 `batch` 形参、装包内扩展的加载器自递归、`cargo fmt`/clippy 各一处、maturin 复用被 auditwheel 改写过的 `.so`。

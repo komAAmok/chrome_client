@@ -672,3 +672,82 @@ LD_LIBRARY_PATH=<dir> PYTHONPATH=bindings/python:target/release \
   --profile chrome_140 --profile chrome_155 --repeat 2 --out /tmp/fp.json
 ```
 
+
+## 本轮实测：并发归因、引擎扩展与 //base 尺寸档（2026-11-26）
+
+三项都是**测出来的结论**，不是提案。代码未改动（尺寸档一项已回退，重建后的
+`core/binaries/linux-x86_64/libminicronet.so` 与提交产物 strip 后逐字节相同：8,662,576 字节）。
+测量机：8 核，linux-x86_64，本地 `ThreadingHTTPServer`。
+
+### 一、每请求 CPU 去哪了（临时插桩，测完已删除）
+
+在 `request.cc` 里临时加 `base::ThreadTicks`（线程 CPU，不是墙钟），200 次 1 KiB
+keep-alive 请求，p50（毫秒）：
+
+| 阶段 | 线程 CPU | 归属 |
+| --- | --- | --- |
+| `CreateRequest` + isolation + method + load flags | 0.039 | 本仓库 |
+| profile 抓包头合并（`SetExtraRequestHeaders`） | 0.010 | 本仓库 |
+| `request_->Start()` 本体 | 0.220 | Chromium |
+| `Start()` 返回 → `OnResponseStarted` | 0.344 | Chromium（cache / socket pool / 读 / 解析） |
+| `OnResponseStarted` → 首个 body 回调 | 0.156 | 本仓库 |
+| 首个 body → `Complete` | 0.142 | 本仓库（含一次 ThreadPool 投递） |
+| **网络线程合计** | **0.949** | |
+| `Start()` → 网络线程拿到任务（墙钟） | 0.100 | 任务投递延迟 |
+
+结论：**0.56 ms 在 Chromium 的 URLRequest 机器里，0.35 ms 在我们自己的回调路径里**。
+把后者压到零也只能拿回约 37%，而其中 body 回调跑在 `callback_runner_` 上是
+`stalled_consumer_isolation` 依赖的安全性，不能换成网络线程内联。
+
+### 二、加引擎不提高并发，只提高内存
+
+`AsyncClient` 每引擎并发 128、共 800 请求：
+
+| 引擎数 | req/s | RSS |
+| --- | --- | --- |
+| 1 | 598.4 | 40,048 KiB |
+| 2 | 682.3 | 40,428 KiB |
+| 4 | 626.8 | 40,960 KiB |
+| 8 | 621.7 | 41,200 KiB |
+
+单个空闲引擎的驻留成本实测 **561 KiB**（4 个引擎 +2,244 KiB）。吞吐在 1 引擎就到顶，
+所以「多开引擎换并发」是负收益：瓶颈不在网络线程数量上。
+
+### 三、`max_sockets_per_group` 不是瓶颈
+
+并发 32/128/256 × 上限 0/32/128/256，req/s 区间 561–796，没有一格随上限单调上升。
+ABI v11 的这条旋钮对本机本地目标没有可测收益。
+
+### 四、`//base` 的 `optimize_max`（第四例同类缺陷）已实测并否决
+
+`base/BUILD.gn` 有 4 处 `configs -= default_optimization; configs += optimize_max`，
+在非 debug 构建里把 `optimize_for_size` 顶掉。对象普查（`ninja -t commands` + 对象大小）：
+
+| 目录 | 对象数 | 档位 | 字节 |
+| --- | --- | --- | --- |
+| `base/base` | 426 | -O2 | 14,462,920 |
+| `base/allocator` | 72 | -O3 | 1,439,768 |
+| `base/i18n` | 20 | -O2 | 436,176 |
+| `third_party/zstd` | 12 | -O3 | 257,228 |
+| `third_party/brotli` | 6 | -O2 | 103,584 |
+
+对其中 3 处带 `if (!is_debug)` 的（`//base:base`、`//base:base_static`、`//base:i18n`，
+共 446 个对象）加 `&& !is_minicronet_build`，重新编译并 strip：
+
+- **体积：8,662,576 → 8,343,088（−319,488，−3.688%）**
+- 吞吐（3 对配对，其中一轮交换了臂顺序）：
+
+| 指标 | 基线中位数 | -Oz 中位数 | 差 |
+| --- | --- | --- | --- |
+| 同步顺序 | 545.9 / 499.7 | 511.4 / 447.3 | −6.3% / −10.5% |
+| 异步 32 | 903.5 / 823.5 | 847.7 / 800.6 | −6.2% / −2.8% |
+| 异步 128 | 870.4 / 905.3 | 800.6 / 953.4 | −8.0% / +5.3% |
+| 流式 64 MiB | 124.8 / 129.9 | 116.0 / 119.5 | −7.1% / −8.0% |
+
+同步与流式两个臂在两个顺序下同号（−6~−10%），异步反号。按「方向一致且区间不重叠才采纳」
+的规矩，**这一项否决**：3.69% 的体积换 6–10% 的顺序/流式吞吐不划算，而且它顶掉的正是
+每次请求都要走的 task scheduler / message pump。补丁与 `sync-core.sh` 的注册都已回退，
+`base/BUILD.gn` 恢复原状。
+
+其余候选（HSTS 753,232、partition_alloc 336,559、`use_safe_libcxx`、BoringSSL 错误串
+16,384）仍是取舍项，按本轮决策不做。

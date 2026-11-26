@@ -20,6 +20,7 @@ symbols=(
   mn_engine_cookies_get mn_engine_cookies_set mn_engine_cookies_delete
   mn_engine_cookies_clear mn_engine_set_client_certificate
   mn_engine_clear_client_certificate
+  mn_engine_set_wakeup_batch mn_request_set_wakeup_token
   mn_websocket_create mn_websocket_retain mn_websocket_release
   mn_websocket_start mn_websocket_send mn_websocket_close
   mn_websocket_cancel

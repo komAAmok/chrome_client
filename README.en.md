@@ -4,13 +4,13 @@
 [![Python versions](https://img.shields.io/badge/python-3.6%20%7C%203.7%20%7C%203.8%20%7C%203.9%20%7C%203.10%20%7C%203.11%20%7C%203.12%20%7C%203.13%20%7C%203.14%20%7C%203.15-blue)](https://pypi.org/project/chrome-client/)
 [![License: MIT](https://img.shields.io/pypi/l/chrome-client)](https://pypi.org/project/chrome-client/)
 
-**A Chromium-powered HTTP/HTTPS and WebSocket fingerprinted client.**
+**A Chromium network stack compiled into a library: the fingerprint is not imitated, it is that Chrome release itself.**
 
-This is not a client that merely approximates a browser fingerprint. The Chromium
-network stack itself is compiled into `libminicronet` and issues the requests, so
-the TLS ClientHello, the HTTP/2 SETTINGS frame, the QUIC transport parameters and
-the request-header order are that Chrome release's own behaviour rather than an
-imitation of it.
+- **Not an imitation.** `libminicronet` *is* Chromium's TLS, HTTP/1.1, HTTP/2, HTTP/3/QUIC and WebSocket implementation, so the ClientHello, the SETTINGS frame and the header order come from it.
+- **73 Chrome profiles (86-158).** Each release is pinned against its own source tag and six captures; `impersonate="chrome_155"` gives that release's behaviour.
+- **Two APIs, one engine.** The `requests` shapes (`Session`, `Response`, the exception hierarchy) plus the `curl_cffi` surface (`impersonate`, `http_version`, `AsyncSession`, WebSocket).
+- **Concurrency.** Requests on one event loop are woken in batches (ABI v16): measured 1,104 req/s at 128 concurrency (+39%) and 1,090 req/s at 512 (+26%), with p99 down 30% and 23%.
+- **Failures are visible.** An option Chromium cannot honour raises `UnsupportedFeature`; nothing is silently downgraded.
 
 ```python
 from chrome_client import Session
@@ -19,16 +19,7 @@ with Session(impersonate="chrome_155") as session:
     response = session.get("https://example.com")
 ```
 
-The Python API matches two conventions at once: the `requests` shapes of
-`Session`, `Response` and the exception hierarchy, and the `curl_cffi` surface of
-`impersonate`, `http_version`, `AsyncSession` and WebSocket. The
-synchronous and asynchronous APIs share one engine and differ only in how they
-wait.
-
-**Options Chromium cannot honour faithfully raise; they are never silently
-ignored.** A silent downgrade is worse than a missing feature, because it leaves
-the caller believing it is imitating a fingerprint when it is not. See the
-[compatibility boundary](https://github.com/komAAmok/chrome_client/blob/main/docs/COMPATIBILITY_BOUNDARY.md).
+Core artifacts for nine platforms ship in the repository (Linux x86/x86_64/ARM64, Windows x86/x86_64/ARM64, macOS x86_64/ARM64), each with its ABI version, Chromium revision and SHA-256. ABI is v16. See the [compatibility boundary](https://github.com/komAAmok/chrome_client/blob/main/docs/COMPATIBILITY_BOUNDARY.md).
 
 [中文 README](https://github.com/komAAmok/chrome_client/blob/main/README.md) · [Build guide](https://github.com/komAAmok/chrome_client/blob/main/docs/BUILD.md) · [Compatibility boundary](https://github.com/komAAmok/chrome_client/blob/main/docs/COMPATIBILITY_BOUNDARY.md) · [Third-party notices](https://github.com/komAAmok/chrome_client/blob/main/THIRD_PARTY_NOTICES.md)
 
@@ -46,8 +37,7 @@ the caller believing it is imitating a fingerprint when it is not. See the
 
 Core artifacts are in `core/binaries/<target>/`. Each artifact records the ABI
 version, Chromium revision, SHA-256 and runtime dependencies. The current ABI is
-v12. Go and Node directories currently contain binding design notes, not released
-installable packages.
+v16.
 
 ### Chrome profiles
 
@@ -594,7 +584,7 @@ size ceiling, so a regression fails the build.
 
 | Path | Contents |
 | --- | --- |
-| `core/abi/` | Stable C ABI v15 |
+| `core/abi/` | Stable C ABI v16 |
 | `core/binaries/` | Nine audited Core targets |
 | `crates/minicronet/` | Rust safety layer, streams and lifetimes |
 | `bindings/python/` | Python 3.9–3.15 binding and the shared facade |

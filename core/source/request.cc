@@ -150,6 +150,24 @@ mn_result_t Request::Start() {
   return MN_OK;
 }
 
+mn_result_t Request::SetWakeupToken(void *token) {
+  wakeup_token_.store(token, std::memory_order_release);
+  return MN_OK;
+}
+
+void Request::NoteBatchWakeup() {
+  // Two cheap reads on the event path: an engine without a batch consumer and a
+  // request without a token both fall straight through to the ABI 15 behaviour.
+  if (!engine_->has_wakeup_batch()) {
+    return;
+  }
+  void *token = wakeup_token_.load(std::memory_order_acquire);
+  if (!token) {
+    return;
+  }
+  engine_->NoteWakeup(token);
+}
+
 mn_result_t Request::Cancel() {
   if (!started_.load() || completed_.load()) {
     return MN_ERROR_INVALID_STATE;
@@ -435,6 +453,7 @@ void Request::OnReceivedRedirect(net::URLRequest *request,
                              header_fields.size(), headers.data(),
                              headers.size(), new_url.data(), new_url.size(),
                              new_method.data(), new_method.size());
+                         self->NoteBatchWakeup();
                        },
                        callback, user_data, base::RetainedRef(this),
                        redirect_info.status_code, std::move(header_storage),
@@ -571,6 +590,7 @@ void Request::OnResponseStarted(net::URLRequest *request, int net_error) {
                                      reason_phrase.size(), header_fields.data(),
                                      header_fields.size(), headers.data(),
                                      headers.size());
+              self->NoteBatchWakeup();
               self->PostReadMore();
             },
             callback, user_data, base::RetainedRef(this), status_code,
@@ -640,6 +660,7 @@ void Request::OnReadCompleted(net::URLRequest *request, int bytes_read) {
               const mn_read_disposition_t disposition = InvokeBodyCallback(
                   callback, user_data, self->public_handle_, data,
                   static_cast<size_t>(bytes_read));
+              self->NoteBatchWakeup();
               if (disposition == MN_READ_TAKE_BUFFER) {
                 // The caller keeps this buffer until it releases it. Handing
                 // the same allocation to the next Read would let a later read
@@ -805,6 +826,7 @@ void Request::Complete(mn_result_t result, int net_error) {
                                                 self->public_handle_, result,
                                                 net_error);
                        }
+                       self->NoteBatchWakeup();
                        mn_request_release(self->public_handle_);
                      },
                      callback, user_data, base::RetainedRef(this), result,

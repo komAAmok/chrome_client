@@ -1756,6 +1756,26 @@ class _AsyncBodyReader(object):
         self._state.finish(cancel=cancel)
 
 
+#: Set CHROME_CLIENT_WAKEUP_BATCH=0 to run ABI 16 with per-request wakeups.
+#: Kept as a measurement switch: the only difference between the two arms of a
+#: batch A/B is then this flag, not a different library or a different build.
+_WAKEUP_BATCH_DISABLED = os.environ.get("CHROME_CLIENT_WAKEUP_BATCH", "1") == "0"
+
+
+def _batch_drain(notifies):
+    """Drains one Core batch on the loop thread.
+
+    ABI 16 reports several ready requests in one callback so the loop is woken
+    once per batch instead of once per request. Each entry here is the
+    per-request notify the Core would otherwise have scheduled on its own.
+
+    Args:
+        notifies: The per-request notify callables for this batch.
+    """
+    for notify in notifies:
+        notify()
+
+
 class _AsyncState(object):
     """Per-request asyncio bridge.
 
@@ -4693,14 +4713,35 @@ class AsyncSession(BaseSession):
         except RuntimeError as error:
             raise map_native_error(error, request=prepared)
         follow = bool(options.get("allow_redirects", True))
+        # ABI 16: one wakeup per batch instead of one per request. Called per
+        # request on purpose -- it is idempotent (two locks and two references)
+        # and it keeps the engine's report pointing at the loop this request is
+        # actually waiting on.
+        batch_register = getattr(slot.engine, "set_wakeup_batch", None)
+        if _WAKEUP_BATCH_DISABLED:
+            batch_register = None
+        if batch_register is not None and slot._batch_loop is not loop:
+            # Once per engine and loop: the Core keeps the consumer address, so
+            # re-registering per request would free the previous one while a
+            # queued batch may still be about to call it.
+            batch_register(loop, _batch_drain)
+            slot._batch_loop = loop
         state = _AsyncState(native, loop, stream, limit, timeout, follow)
         try:
             if prepared.stream_body:
-                native.attach_async(loop, state.notify)
+                # Streaming uploads own their wake path (the body feed loop), so
+                # they keep per-request wakeups.
+                native.attach_async(loop, state.notify, False)
                 native.start()
                 await self._feed_upload(native, prepared.body)
             else:
-                native.start_async(loop, state.notify)
+                # A streaming response throttles inside notify() when its buffer
+                # hits the ceiling; a batch would consume the token while the
+                # reader is paused and no further Core event would arrive, which
+                # deadlocks the reader. Measured: with batching on, the async
+                # streaming-body test never completes. So a stream keeps the
+                # per-request wakeup.
+                native.start_async(loop, state.notify, not stream)
         except BaseException as error:
             # Only ``RuntimeError`` was caught here, so an ``OSError`` from the
             # caller's async body iterator -- and ``CancelledError``, which is

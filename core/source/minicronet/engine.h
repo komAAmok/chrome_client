@@ -7,10 +7,14 @@
 #include <memory>
 #include <string>
 #include <string_view>
+#include <unordered_set>
 #include <vector>
 
 #include "base/memory/ref_counted.h"
 #include "base/memory/scoped_refptr.h"
+#include "base/synchronization/lock.h"
+#include "base/thread_annotations.h"
+#include "base/task/sequenced_task_runner.h"
 #include "base/task/single_thread_task_runner.h"
 #include "minicronet.h"
 #include "net/proxy_resolution/proxy_config.h"
@@ -96,6 +100,19 @@ public:
   // the closure inline instead of reposting it
   // (net/cookies/cookie_monster.cc:2899-2915), and nothing here holds a lock
   // the network thread wants while it waits.
+  // ABI 16. One batch consumer per engine; a NULL callback unregisters. See the
+  // contract in core/abi/minicronet.h: delivery runs on a Core-owned thread and
+  // the array carries caller tokens, never handles.
+  mn_result_t SetWakeupBatch(mn_engine_wakeup_fn callback, void *user_data,
+                             uint32_t max_batch);
+  bool has_wakeup_batch() const {
+    return wakeup_registered_.load(std::memory_order_acquire);
+  }
+  // Called by a request after one of its callbacks has been invoked. The token
+  // is the caller's; the Core only compares and forwards it.
+  void NoteWakeup(void *token);
+  void DeliverWakeupBatch();
+
   mn_result_t GetCookies(const std::string *url, CookieView *out);
   mn_result_t SetCookie(const mn_cookie_t &cookie,
                         const std::string &source_url,
@@ -158,6 +175,20 @@ private:
   //: its network thread is gone and must not be waited on; see engine.cc.
   const int fork_generation_;
   std::unique_ptr<net::URLRequestContext> context_;
+
+  // ABI 16 batch wakeup. The queue holds caller tokens, not handles: the Core
+  // owns no reference into the caller's objects, so a batch can never outlive a
+  // request and cannot form a reference cycle with the engine.
+  std::atomic_bool wakeup_registered_{false};
+  base::Lock wakeup_lock_;
+  mn_engine_wakeup_fn wakeup_fn_ GUARDED_BY(wakeup_lock_) = nullptr;
+  void *wakeup_user_data_ GUARDED_BY(wakeup_lock_) = nullptr;
+  uint32_t wakeup_max_batch_ GUARDED_BY(wakeup_lock_) = 0;
+  bool wakeup_delivery_scheduled_ GUARDED_BY(wakeup_lock_) = false;
+  std::vector<void *> wakeup_queue_ GUARDED_BY(wakeup_lock_);
+  std::unordered_set<void *> wakeup_queued_ GUARDED_BY(wakeup_lock_);
+  scoped_refptr<base::SequencedTaskRunner> wakeup_runner_
+      GUARDED_BY(wakeup_lock_);
 };
 
 class Request;

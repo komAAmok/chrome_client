@@ -11,8 +11,9 @@
 //! `PyRequest::finish`), which is what keeps completed async requests from
 //! leaking.
 
+use std::collections::HashMap;
 use std::sync::{
-    atomic::{AtomicBool, Ordering},
+    atomic::{AtomicBool, AtomicUsize, Ordering},
     Arc, Mutex,
 };
 use std::time::{Duration, Instant};
@@ -293,6 +294,52 @@ impl PyResponse {
     }
 }
 
+/// ABI 16 batch wakeup state shared by one engine's requests.
+///
+/// The Core reports the tokens of the requests whose callback output is ready;
+/// this table turns one report into one `call_soon_threadsafe` for the whole
+/// batch. Entries are added by `install_event_bridge` and removed by `finish`,
+/// so the table cannot outlive the requests it names.
+#[derive(Default)]
+struct BatchRegistry {
+    next_token: AtomicUsize,
+    entries: Mutex<HashMap<usize, Py<PyAny>>>,
+    event_loop: Mutex<Option<Py<PyAny>>>,
+    notify_batch: Mutex<Option<Py<PyAny>>>,
+}
+
+impl BatchRegistry {
+    fn is_active(&self) -> bool {
+        self.notify_batch
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .is_some()
+    }
+
+    fn take_token(&self) -> usize {
+        // Zero is the ABI's "not batched" value, so the counter skips it.
+        loop {
+            let token = self
+                .next_token
+                .fetch_add(1, Ordering::Relaxed)
+                .wrapping_add(1);
+            if token != 0 {
+                return token;
+            }
+        }
+    }
+
+    fn remove(&self, token: usize) {
+        if token == 0 {
+            return;
+        }
+        self.entries
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(&token);
+    }
+}
+
 #[pyclass]
 struct PyRequest {
     inner: minicronet::Request,
@@ -300,6 +347,10 @@ struct PyRequest {
     body_stream: Mutex<Option<ResponseStream>>,
     notify_scheduled: Arc<AtomicBool>,
     done: AtomicBool,
+    /// ABI 16: the engine's batch table, shared so one report can wake the loop
+    /// once for many requests, and this request's key into it.
+    batch: Arc<BatchRegistry>,
+    batch_token: AtomicUsize,
 }
 
 impl PyRequest {
@@ -309,6 +360,11 @@ impl PyRequest {
     /// asyncio bridge creates.
     fn finish(&self) {
         self.inner.clear_event_callback();
+        let token = self.batch_token.swap(0, Ordering::AcqRel);
+        if token != 0 {
+            let _ = self.inner.set_wakeup_token(std::ptr::null_mut());
+            self.batch.remove(token);
+        }
         self.response_future
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -741,8 +797,15 @@ impl PyRequest {
     /// Starts a request and arranges a thread-safe notification on an
     /// asyncio-compatible event loop. The callback only schedules `notify`; it
     /// never runs user Python code or waits for network I/O.
-    fn start_async(&self, py: Python<'_>, loop_: Py<PyAny>, notify: Py<PyAny>) -> PyResult<()> {
-        self.attach_async(py, loop_, notify);
+    #[pyo3(signature = (loop_, notify, batch=true))]
+    fn start_async(
+        &self,
+        py: Python<'_>,
+        loop_: Py<PyAny>,
+        notify: Py<PyAny>,
+        batch: bool,
+    ) -> PyResult<()> {
+        self.attach_async(py, loop_, notify, batch);
         let response_future = self.inner.start().map_err(native_error)?;
         *self
             .response_future
@@ -753,8 +816,9 @@ impl PyRequest {
 
     /// Registers the asyncio bridge without starting the request, for chunked
     /// uploads that must be fed after `start`.
-    fn attach_async(&self, py: Python<'_>, loop_: Py<PyAny>, notify: Py<PyAny>) {
-        self.install_event_bridge(py, loop_, notify);
+    #[pyo3(signature = (loop_, notify, batch=true))]
+    fn attach_async(&self, py: Python<'_>, loop_: Py<PyAny>, notify: Py<PyAny>, batch: bool) {
+        self.install_event_bridge(py, loop_, notify, batch);
     }
 
     /// Returns one non-blocking event as `(kind, status, headers, body, error)`.
@@ -794,7 +858,37 @@ impl PyRequest {
     /// passes through Rust, so Python's GC cannot break it; `finish` clears the
     /// callback to release it. Both `start_async` and `attach_async` install
     /// exactly this bridge, so it lives here once.
-    fn install_event_bridge(&self, py: Python<'_>, loop_: Py<PyAny>, notify: Py<PyAny>) {
+    fn install_event_bridge(
+        &self,
+        py: Python<'_>,
+        loop_: Py<PyAny>,
+        notify: Py<PyAny>,
+        batch: bool,
+    ) {
+        // ABI 16: when the engine has a batch consumer, the Core wakes the loop
+        // once per batch. Leaving the per-request closure installed would restore
+        // exactly the N-wakeups-per-request cost the batch exists to remove, so
+        // this request reports a token instead; if the Core refuses the token the
+        // direct bridge below still runs, so the request cannot go deaf.
+        if batch && self.batch.is_active() {
+            let token = self.batch.take_token();
+            let entry = notify.clone_ref(py);
+            self.batch
+                .entries
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .insert(token, entry);
+            self.batch_token.store(token, Ordering::Release);
+            if self
+                .inner
+                .set_wakeup_token(token as *mut core::ffi::c_void)
+                .is_ok()
+            {
+                return;
+            }
+            self.batch.remove(token);
+            self.batch_token.store(0, Ordering::Release);
+        }
         let scheduled = Arc::clone(&self.notify_scheduled);
         let loop_ref = loop_.clone_ref(py);
         let notify_ref = notify.clone_ref(py);
@@ -930,10 +1024,74 @@ fn profile_identifier(value: String) -> String {
 #[pyclass]
 struct PyEngine {
     inner: Engine,
+    /// ABI 16: shared with every request this engine creates.
+    batch: Arc<BatchRegistry>,
 }
 
 #[pymethods]
 impl PyEngine {
+    /// ABI 16: registers the batch wakeup consumer for this engine.
+    ///
+    /// `notify_batch` is called from the event loop with a list of the
+    /// per-request notify callables whose events are ready, so one Core report
+    /// costs one `call_soon_threadsafe` instead of one per request.
+    fn set_wakeup_batch(
+        &self,
+        py: Python<'_>,
+        loop_: Py<PyAny>,
+        notify_batch: Py<PyAny>,
+    ) -> PyResult<()> {
+        *self
+            .batch
+            .event_loop
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(loop_.clone_ref(py));
+        *self
+            .batch
+            .notify_batch
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(notify_batch);
+        let registry = Arc::clone(&self.batch);
+        self.inner
+            .set_wakeup_batch(
+                Arc::new(move |tokens: &[usize]| {
+                    Python::attach(|py| {
+                        let loop_ref = registry
+                            .event_loop
+                            .lock()
+                            .ok()
+                            .and_then(|guard| guard.as_ref().map(|value| value.clone_ref(py)));
+                        let notify_ref = registry
+                            .notify_batch
+                            .lock()
+                            .ok()
+                            .and_then(|guard| guard.as_ref().map(|value| value.clone_ref(py)));
+                        let (Some(loop_ref), Some(notify_ref)) = (loop_ref, notify_ref) else {
+                            return;
+                        };
+                        let mut states: Vec<Py<PyAny>> = Vec::with_capacity(tokens.len());
+                        if let Ok(entries) = registry.entries.lock() {
+                            for token in tokens {
+                                if let Some(state) = entries.get(token) {
+                                    states.push(state.clone_ref(py));
+                                }
+                            }
+                        }
+                        if states.is_empty() {
+                            return;
+                        }
+                        let Ok(list) = pyo3::types::PyList::new(py, states) else {
+                            return;
+                        };
+                        let _ =
+                            loop_ref.call_method1(py, "call_soon_threadsafe", (notify_ref, list));
+                    });
+                }),
+                64,
+            )
+            .map_err(native_error)
+    }
+
     #[new]
     #[pyo3(signature = (
         impersonate=None,
@@ -1035,7 +1193,10 @@ impl PyEngine {
         // Nothing in the closure needs the interpreter: config is owned and the
         // result is a Rust handle.
         let engine = py.detach(|| Engine::new(config).map_err(native_error))?;
-        Ok(Self { inner: engine })
+        Ok(Self {
+            inner: engine,
+            batch: Arc::new(BatchRegistry::default()),
+        })
     }
 
     // ---- cookie store (ABI v9).
@@ -1242,6 +1403,8 @@ impl PyEngine {
             }
         };
         Ok(PyRequest {
+            batch: Arc::clone(&self.batch),
+            batch_token: AtomicUsize::new(0),
             inner: self.inner.request(config).map_err(native_error)?,
             response_future: Mutex::new(None),
             body_stream: Mutex::new(None),

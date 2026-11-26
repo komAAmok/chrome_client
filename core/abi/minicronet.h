@@ -20,7 +20,7 @@
 extern "C" {
 #endif
 
-#define MN_ABI_VERSION 15u
+#define MN_ABI_VERSION 16u
 
 /* tools/sync-core.sh installs core/exports/minicronet.lds, whose node name is
  * part of the link-time contract: every extension already built against this
@@ -466,6 +466,90 @@ mn_engine_set_client_certificate(mn_engine_t *engine, const char *host,
 MN_EXPORT mn_result_t MN_CALL
 mn_engine_clear_client_certificate(mn_engine_t *engine, const char *host,
                                    size_t host_length, uint16_t port);
+
+/* ABI 16: optional batch wakeup.
+
+ *
+
+ * A binding that multiplexes many requests on one event loop does not need one
+
+ * cross-thread wakeup per request. Each request can carry an opaque token; with
+
+ * a batch callback registered, the Core coalesces "this request produced callback
+
+ * output" across one engine and invokes the callback once with the tokens of the
+
+ * requests that are ready. The caller then drains each of them through the
+
+ * channel it already installed (its request callbacks and mn_request_* getters).
+
+ *
+
+ * The token is the caller's, never dereferenced by the Core, and it exists so
+
+ * that a batch never carries a handle whose lifetime the Core would have to
+
+ * guess: a caller uses a value it can look up (an id, or a pointer it keeps
+
+ * alive) and simply ignores a token it no longer knows.
+
+ *
+
+ * Contract:
+
+ *  - The callback runs on a Core-owned thread, never on the caller's, and must
+
+ *    not block.
+
+ *  - A token appears at most once per invocation; an event that arrives while the
+
+ *    callback runs schedules a later invocation, so an event is neither lost nor
+
+ *    delivered twice.
+
+ *  - Only requests whose token is non-NULL are batched. A request with no token
+
+ *    keeps the ABI 15 behaviour exactly, whatever the engine has registered.
+
+ *  - max_batch caps the array length; 0 uses the Core bound (64). Leftover tokens
+
+ *    are delivered by the next invocation.
+
+ *  - Registering does not disable the per-request callbacks: a caller that also
+
+ *    wants those gets both. A NULL callback unregisters.
+
+ *  - One registration per engine; a second non-NULL registration replaces the
+
+ *    previous callback and user_data.
+
+ */
+
+typedef void(MN_CALL *mn_engine_wakeup_fn)(void *user_data,
+
+                                           void *const *tokens, size_t count);
+
+
+
+MN_EXPORT mn_result_t MN_CALL
+
+mn_engine_set_wakeup_batch(mn_engine_t *engine, mn_engine_wakeup_fn callback,
+
+                           void *user_data, uint32_t max_batch);
+
+
+
+/* ABI 16: sets the token this request reports through the engine's batch
+
+ * callback, or clears it with NULL. Safe from any thread and at any time before
+
+ * the request is released; a change applies to the next batch. A request that
+
+ * is already queued keeps the token it was queued with. */
+
+MN_EXPORT mn_result_t MN_CALL mn_request_set_wakeup_token(mn_request_t *request,
+
+                                                         void *token);
 
 typedef struct mn_header {
   const char *name;

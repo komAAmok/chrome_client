@@ -20,6 +20,18 @@ verdict must describe a keyword that still exists:
 A keyword with no verdict fails, a verdict whose keyword is gone fails, and a
 name on REMOVED that reappears in a signature fails.
 
+The same reasoning applies one level out, to HTTPAdapter. Its four constructor
+arguments and six hooks are requests' adapter protocol, not this Core's:
+requests.Session.mount takes the object, and callers construct it with
+pool_maxsize= and friends. Every one of them is inert here (Chromium owns
+connection limits, retries go through RetryStrategy), and that is precisely why
+they are dangerous to remove: nothing in the suite mounts an adapter with
+arguments, so deleting them would keep every gate green while turning an
+accepted-and-inert argument into a TypeError in a caller's script.
+ADAPTER_KEYWORDS therefore pins the four names with an INERT verdict in both
+directions, and ADAPTER_HOOKS keeps the subclass hooks a custom adapter
+overrides.
+
     python3 tools/audit-compat-surface.py
     python3 tools/audit-compat-surface.py --verbose
 """
@@ -33,6 +45,25 @@ import sys
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 SESSIONS = ROOT / "bindings" / "python" / "chrome_client" / "_python_impl" / "sessions.py"
+ADAPTERS = ROOT / "bindings" / "python" / "chrome_client" / "_python_impl" / "adapters.py"
+
+# HTTPAdapter's signature is requests' API, not ours: requests.Session.mount
+# takes one, and scripts pass pool_* and max_retries to it. All four are inert
+# here -- Chromium owns connection limits, and retries go through
+# RetryStrategy -- but removing them turns an accepted-and-inert argument into
+# a TypeError in a caller's script. Nothing in the suite mounts an adapter with
+# arguments, so without this table the removal would pass every gate and break
+# users.
+ADAPTER_KEYWORDS = {
+    "pool_connections": "INERT",
+    "pool_maxsize": "INERT",
+    "max_retries": "INERT",
+    "pool_block": "INERT",
+}
+# Subclass hooks requests' own adapter protocol defines; a custom adapter
+# overrides them, so their absence is a break even though we never call them.
+ADAPTER_HOOKS = ("init_poolmanager", "proxy_manager_for", "cert_verify",
+                 "build_response", "send", "close")
 
 # keyword -> verdict
 SURFACE = {
@@ -127,6 +158,25 @@ def parameters():
     return found
 
 
+def adapter_surface():
+    """Returns (__init__ keywords, hook names) for the facade HTTPAdapter."""
+    tree = ast.parse(ADAPTERS.read_text())
+    for node in tree.body:
+        if not isinstance(node, ast.ClassDef) or node.name != "HTTPAdapter":
+            continue
+        keywords = None
+        hooks = set()
+        for item in node.body:
+            if not isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            hooks.add(item.name)
+            if item.name == "__init__":
+                arguments = item.args
+                keywords = [argument.arg for argument in arguments.args[1:]]
+                keywords += [argument.arg for argument in arguments.kwonlyargs]
+        return keywords, hooks
+    return None, set()
+
 def main(argv):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--verbose", action="store_true")
@@ -164,6 +214,30 @@ def main(argv):
             failures.append(
                 "%s: was removed in 0.3.0 because the Core cannot honour it, "
                 "and it is accepted again" % name)
+
+    # 4. The adapter's requests-compatible signature stays put.
+    keywords, hooks = adapter_surface()
+    if keywords is None:
+        failures.append("adapters.py: HTTPAdapter or its __init__ is gone")
+    else:
+        if set(keywords) != set(ADAPTER_KEYWORDS):
+            for name in sorted(set(ADAPTER_KEYWORDS) - set(keywords)):
+                failures.append(
+                    "HTTPAdapter.%s: removed. It is the requests signature, "
+                    "not ours: a caller doing HTTPAdapter(pool_maxsize=32) "
+                    "would now get a TypeError, and no test mounts one "
+                    "with arguments" % name)
+            for name in sorted(set(keywords) - set(ADAPTER_KEYWORDS)):
+                failures.append(
+                    "HTTPAdapter.%s: accepted but has no verdict. Record "
+                    "it in ADAPTER_KEYWORDS with INERT (and say in the "
+                    "docstring what the caller should set instead)" % name)
+        for name in ADAPTER_HOOKS:
+            if name not in hooks:
+                failures.append(
+                    "HTTPAdapter.%s: missing. A subclass overriding it "
+                    "would break at super().__init__ even though this "
+                    "facade never calls it" % name)
 
     if failures:
         print("compat surface audit FAILED:", file=sys.stderr)
