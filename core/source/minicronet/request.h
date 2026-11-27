@@ -108,6 +108,9 @@ private:
   std::unique_ptr<net::URLRequest> request_;
   std::unique_ptr<net::ChunkedUploadDataStream::Writer> upload_writer_;
   scoped_refptr<net::IOBufferWithSize> read_buffer_;
+  // The size the next allocation asks for. Starts at the small size and is
+  // raised once the body proves large; see the constants in request.cc.
+  int read_buffer_size_ = 32 * 1024;
   // ABI 12: buffers handed to the caller by returning MN_READ_TAKE_BUFFER.
   // Keyed by the data pointer the callback received, so release can prove the
   // pointer came from this request and refuse a double release.

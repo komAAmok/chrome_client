@@ -2053,12 +2053,24 @@ class _AsyncState(object):
             elif kind == "response":
                 self.status = code
                 self.raw_headers = raw_headers
-                # The protocol is a getter on the request, not part of the
-                # event tuple: only the head needs it, and widening the tuple
+                # The Core parsed the block; the binding hands the fields and
+                # the reason phrase over in this event because the response head
+                # it took them from is consumed by the same call. Reading them
+                # off the request instead (header_fields() / reason_phrase())
+                # answered None on every asynchronous response, so _finalize
+                # fell back to parse_raw_headers and the facade redid the Core's
+                # grammar in Python -- measured, one parse per response.
+                #
+                # The cp36 extension still reports an empty field list and a None
+                # message, and this fallback then parses exactly as it used to, so
+                # the two bindings stay interchangeable (tools/audit-binding-surface.py
+                # compares their surfaces).
+                self.reason_phrase = message
+                self.header_fields = fields or None
+                # These two are still getters: neither the protocol nor the ECH
+                # status is part of the response head, and widening the tuple
                 # would change a shape several places unpack positionally.
                 self.http_version = self.request.http_version()
-                self.header_fields = self.request.header_fields()
-                self.reason_phrase = self.request.reason_phrase()
                 self.ech_status = self.request.ech_status()
                 if self.stream:
                     self._signal()

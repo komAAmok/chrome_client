@@ -951,13 +951,32 @@ impl PyRequest {
                         .body_stream
                         .lock()
                         .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(response.body);
+                    // The reason phrase and the parsed fields ride along in this
+                    // event, because the response head they came from is consumed
+                    // right here: a facade that read them off the request
+                    // afterwards got None and re-parsed the raw block in Python --
+                    // measured, one parse_raw_headers call per asynchronous
+                    // response against zero on the synchronous path, which is the
+                    // one place the facade still redid the Core's grammar
+                    // (AGENTS.md 1.1).
+                    //
+                    // Element 4 is the message slot, unused on a response event;
+                    // element 5 is the fields slot. The tuple keeps its width, so
+                    // no other unpack site changes. The phrase is passed even when
+                    // empty, which is exactly what the synchronous path hands
+                    // _finalize from PyResponse.reason_phrase.
+                    let fields = response
+                        .header_fields
+                        .into_iter()
+                        .map(|header| (header.name, header.value))
+                        .collect();
                     (
                         "response".into(),
                         response.status_code,
                         response.headers,
                         Vec::new(),
-                        None,
-                        Vec::new(),
+                        Some(response.reason_phrase),
+                        fields,
                     )
                 }
                 Err(error) => {

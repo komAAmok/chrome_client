@@ -1,6 +1,6 @@
 # chrome_client 项目状态
 
-记录时间：2026-10-22。本文覆盖已完成、进行中、已知缺陷和后续计划。数字都来自本机
+记录时间：2026-11-27。本文覆盖已完成、进行中、已知缺陷和后续计划。数字都来自本机
 实测，可用 `tools/` 下的脚本复现。
 
 ## 项目定位
@@ -17,6 +17,29 @@
 - Chrome profile：`chrome_86` — `chrome_158`，73 个
 
 ## 已完成
+
+### 性能审计轮：facade 四项 + Core 三项 + 九平台重建
+
+完整记录与全部实测数据见 [PERF_AUDIT_0.2.20.md](PERF_AUDIT_0.2.20.md)（文件名沿用审计开始时的版本号）。
+
+- **facade（Python/Rust，无 ABI 变更）**：`Headers.add` 从每次追加重扫字段表改成增量维护
+  （构造 13 字段头块 14.68 -> 5.56 us）；`environ_proxy_map` 改走字节键扫描（12.60 -> 6.08 us）；
+  `browser_headers` / `full_header_order` 记忆化（3.18+4.81 -> 0.53+0.14 us）；`EngineCache.get`
+  只取一次 key。`prepare_request` 118.5 -> 82.1 us、`_slot` 45.8 -> 36.6 us（每请求 -45.7 us）。
+- **异步响应不再重解头块**：response 事件此前丢弃 Core 已解析的 `header_fields`/`reason_phrase`，
+  facade 于是每响应调用一次 `parse_raw_headers`（AGENTS §1.1 的反面清单）。现在由事件携带，
+  实测 1 次/响应 -> **0 次**；同步与异步的头块、`reason`、`status_line`、`http_version` 逐项相等。
+- **Core 三项（`core/source/request.cc`）**：请求头块单遍构造（省 12 次 `SetHeader`，
+  **八种请求形状的线上字节逐字节等价**）、响应头字段 `std::move`、读缓冲按 body 自适应
+  （32 KiB -> 128 KiB，声明长度 ≥96 KiB 或首次读满才升）。
+  实测：16 MiB 流式 89.1 -> 211.2 MiB/s（**+137%**）、4 MiB async +111%、网络线程 CPU/MiB 减半；
+  1 KiB 响应持平（恒定 128 KiB 版本曾让四个格子全负，因此改成自适应）。
+- **九平台产物已重建并安装**（ABI 仍 17、35 符号，大小与上一版相同、哈希不同），
+  `core_sources_sha256` 与当前源码一致。单目标重建 26 s，改一个 TU 8.9-12.4 s。
+- 自查缺陷并修复：C3 首版让 `Read` 的长度与复用缓冲大小脱钩，96 KiB 堆溢出；
+  多 chunk 流式测试以「挂住 + SIGTRAP」暴露，修法是让两者都取 `read_buffer_->size()`。
+  第一轮九个产物因此作废重来。
+- 回归：`unittest discover` **642 条通过 / 2 跳过**；17 项门禁全绿。
 
 ### 阶段 0：可复现构建与基线
 

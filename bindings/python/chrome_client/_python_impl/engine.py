@@ -913,6 +913,14 @@ class EngineCache(object):
         Example:
             >>> slot = cache.get(EngineConfig(proxy="http://127.0.0.1:8080"))  # doctest: +SKIP
         """
+        # Bound once instead of five times. NOTE: this is not where the cost is.
+        # EngineConfig.key returns a tuple memoised in __init__ (see engine.py:384),
+        # so five accesses cost five attribute reads, and hoisting them measured
+        # 13.50 -> 13.54 us for a warm get(), i.e. nothing. What the 13.5 us is:
+        # the RLock, os.getpid() for the fork check, and hashing a twenty-field
+        # tuple. Kept because one local is simpler than five repeated lookups,
+        # not because it made anything faster (docs/PERF_AUDIT_0.2.20.md).
+        key = config.key
         with self._lock:
             if self._closed:
                 # SessionClosed, not the bare base class: a caller writing
@@ -922,15 +930,15 @@ class EngineCache(object):
                 # BaseSession._ensure_open.
                 raise SessionClosed("Session is closed")
             self._reset_after_fork_locked()
-            slot = self._slots.get(config.key)
+            slot = self._slots.get(key)
             if slot is not None:
-                self._order.pop(config.key, None)
-                self._order[config.key] = None
+                self._order.pop(key, None)
+                self._order[key] = None
                 self._stats["hits"] += 1
                 return slot
             slot = EngineSlot(config.build(), config)
-            self._slots[config.key] = slot
-            self._order[config.key] = None
+            self._slots[key] = slot
+            self._order[key] = None
             self._stats["builds"] += 1
             while len(self._order) > self._max:
                 # dict iteration is insertion-ordered, so the first key is the
@@ -1008,9 +1016,10 @@ class EngineCache(object):
         Returns:
             ``None``.
         """
+        key = config.key
         with self._lock:
-            if self._slots.pop(config.key, None) is not None:
-                self._order.pop(config.key, None)
+            if self._slots.pop(key, None) is not None:
+                self._order.pop(key, None)
 
     def clear(self):
         """Empties the cache, releasing the engines it held."""

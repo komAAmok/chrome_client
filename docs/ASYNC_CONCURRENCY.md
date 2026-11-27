@@ -4,6 +4,10 @@
 两者共用同一条 Chromium 网络线程（`MiniCronetNet`），但等待方式完全不同：同步是
 调用线程阻塞在 Rust `Condvar` 上，异步是把回调排进 asyncio 的事件循环。
 
+2026-11-27 的 facade 层审计（头块构造、环境扫描、profile 头记忆化、异步响应字段）见
+[PERF_AUDIT_0.2.20.md](PERF_AUDIT_0.2.20.md)；那份记录同时给出独立进程 fixture 的对照数据，
+说明本文的历史绝对数为何偏低。
+
 工具：`tools/async-diag.py`（lag / futures / slow-consumer / flood / tasks）、
 `tools/perf_harness.py`（线路级 fixture）、`tools/prof-attr.py`（wchan / strace / gdb / cProfile）。
 
@@ -27,7 +31,7 @@ Core 网络线程 MiniCronetNet
 | --- | --- | --- |
 | `ASYNC_POLL_BATCH` | 64 | 每次唤醒最多取 64 个事件，打满则立刻重新排队 |
 | `STREAM_BUFFER_LIMIT` | 1 MiB | 异步流式 body 的 Python 侧缓冲上限，超过即停止 `poll_events`；Rust 侧另有一层 1 MiB 的 `BODY_BUFFER_LIMIT`，两层合计每条停滞流 2 MiB |
-| `max_clients` | 可选 | `asyncio.Semaphore`，**只覆盖到响应头**（见 `test_max_clients_gate.py`） |
+| `max_clients` | 可选 | `asyncio.Semaphore`。**配额覆盖到哪一步取决于 `stream`**：`stream=True` 在响应头放行，`stream=False` 一直占到 body 收完（`sessions.py:4939-4950` 的 `gate.release()` 在 `_perform` 返回之后）。见 `test_max_clients_gate.py` |
 
 **没有自带事件循环，也没有内部线程池**：协程跑在调用方给的 loop 上，网络 IO 在
 Chromium 的网络线程上。所以「线程池调度饥饿」在这个库里同样没有对应结构。
@@ -244,7 +248,7 @@ python3 tools/async-diag.py futures --requests 256 --concurrency 64
 # 取消与 fd
 python3 tools/async-diag.py tasks --requests 32
 
-# 回归测试（6 条，含变异验证）
+# 回归测试（`test_async_model.py` 现有 17 条；本节写作时是 6 条，含变异验证）
 python3 -m unittest bindings.python.tests.test_async_model -v
 ```
 
@@ -425,7 +429,8 @@ stdev 143/160），因为 cookie 解析本身仍是 `cookielib` 的成本。
 
 1. **减少每请求的跨线程唤醒**（网络线程 → 循环线程）。已作为 ABI 提案登记在
    `docs/NEXT_STEPS.md`「提案：两项性能 ABI 改动」§三（`mn_engine_set_wakeup_batch`），
-   预期把唤醒从约 1.7 次/请求降到接近 1 次/批；
+   预期把唤醒从约 1.7 次/请求降到接近 1 次/批。**本节写于提案阶段**：批量唤醒已落地为 ABI 16，
+   Core 侧实现见 `core/source/engine.cc:541-590`，绑定侧见 `sessions.py:5043-5052`；
 2. **把同步前缀挪出循环线程**（`asyncio.to_thread`），会牺牲连接复用，需单独评估。
 
 第 1 条的前置条件是同步侧的「合并首包等待」提案（同文件 §二）先落地并观测稳定，

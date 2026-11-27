@@ -1,0 +1,78 @@
+{
+  "cpu_count": 8,
+  "fixture": "http://127.0.0.1:40681",
+  "profile": "chrome_120",
+  "python": "3.12.3",
+  "rows": {
+    "async": [
+      {
+        "distinct": true,
+        "mode": "async",
+        "network_thread_ms_per_request": 0.9375,
+        "ok": 256,
+        "profile": "chrome_120",
+        "qps": 834.1808741343588,
+        "requests": 256,
+        "rss_kib_delta": 196,
+        "wall_seconds": 0.3068878800004313
+      },
+      {
+        "distinct": false,
+        "mode": "async",
+        "network_thread_ms_per_request": 2.6171875000000004,
+        "ok": 256,
+        "profile": "chrome_120",
+        "qps": 293.19646177306083,
+        "requests": 256,
+        "rss_kib_delta": -652,
+        "wall_seconds": 0.873134683999524
+      },
+      {
+        "distinct": true,
+        "mode": "async",
+        "network_thread_ms_per_request": 1.0839843750000002,
+        "ok": 1024,
+        "profile": "chrome_120",
+        "qps": 643.9379004074734,
+        "requests": 1024,
+        "rss_kib_delta": 10764,
+        "wall_seconds": 1.5902154529994732
+      },
+      {
+        "distinct": false,
+        "mode": "async",
+        "network_thread_ms_per_request": 6.669921874999998,
+        "ok": 1024,
+        "profile": "chrome_120",
+        "qps": 136.38387566298246,
+        "requests": 1024,
+        "rss_kib_delta": -2388,
+        "wall_seconds": 7.508218951999879
+      }
+    ],
+    "sync": [
+      {
+        "latency_ms_p50": 10.732537999501801,
+        "latency_ms_p99": 29.21249399878434,
+        "mode": "sync",
+        "network_thread_ms_per_request": 1.0624999999999996,
+        "profile": "chrome_120",
+        "qps": 675.4973121512014,
+        "requests": 320,
+        "threads": 8,
+        "wall_seconds": 0.47372505299972545
+      },
+      {
+        "latency_ms_p50": 41.6317010003695,
+        "latency_ms_p99": 70.31137199919613,
+        "mode": "sync",
+        "network_thread_ms_per_request": 1.0390624999999987,
+        "profile": "chrome_120",
+        "qps": 718.9248149585927,
+        "requests": 1280,
+        "threads": 32,
+        "wall_seconds": 1.780436525999903
+      }
+    ]
+  }
+}

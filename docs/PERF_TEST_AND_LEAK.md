@@ -388,7 +388,7 @@ GC 会在两批之间把环收掉；`test_async_requests_do_not_leak` 只覆盖�
 
 ### 5.3 回归测试（含变异验证）
 
-`bindings/python/tests/test_resource_release.py` 三条：
+`bindings/python/tests/test_resource_release.py` 三条（该文件现在 7 条，本条只列与本节改动对应的三处）：
 
 | 测试 | 断言 | 变异后 |
 | --- | --- | --- |

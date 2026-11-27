@@ -37,7 +37,23 @@
 namespace minicronet {
 namespace {
 
-constexpr int kReadBufferSize = 32 * 1024;
+// Read buffer sizing. Every chunk costs two cross-thread task posts (to the
+// callback runner, then back to the network thread), so the buffer size sets how
+// many times a large body pays that round trip. Measured on loopback, 4
+// alternating rounds, medians: at a flat 128 KiB, 16 MiB streamed 97.0 -> 204.4
+// MiB/s and network-thread CPU per MiB halves (6.17 -> 3.28 ms) -- but 1 KiB
+// responses lost 4 cells out of 4 (sync-8 -4.2%), because every request then
+// allocated and page-faulted 128 KiB for a body that fits in one chunk.
+//
+// So the size follows the body: a response whose declared length is under
+// kLargeBodyBytes (and a chunked one until its first full read proves
+// otherwise) keeps the 32 KiB that Request::read_buffer_size_ starts at, and only a body that has actually shown
+// it is large gets the 128 KiB buffer. Same large-body win, no small-response
+// tax (docs/PERF_AUDIT_0.2.20.md 3.3.5 measures both sides).
+constexpr int kLargeReadBufferSize = 128 * 1024;
+// Between the two sizes: a body at least this long amortises the larger
+// allocation, one shorter does not.
+constexpr int64_t kLargeBodyBytes = 96 * 1024;
 
 DISABLE_CFI_ICALL void
 InvokeResponseCallback(mn_request_response_fn callback, void *user_data,
@@ -257,28 +273,22 @@ void Request::StartOnNetworkThread() {
   // (CLEAR_ON_TRANSITION_FROM_SECURE_TO_INSECURE), which would drop an
   // explicitly provided header; never clear it. The caller owns the header,
   // exactly as with requests/curl.
-  net::HttpRequestHeaders headers;
-  for (const auto &[name, value] : headers_) {
-    if (base::EqualsCaseInsensitiveASCII(name, net::HttpRequestHeaders::kReferer)) {
-      request_->SetReferrer(value);
-      request_->set_referrer_policy(net::ReferrerPolicy::NEVER_CLEAR);
-      continue;
-    }
-    headers.SetHeader(name, value);
-  }
-  // The captured browser header set for this profile, applied through the same
-  // channel the caller's own headers use. This is the hook the proposal names:
-  // SetExtraRequestHeaders is what URLRequestHttpJob merges into the request,
-  // so Accept-CH negotiation sees a request a real browser would have sent
-  // rather than one the binding patched up after the fact.
+  // One block, built in place, lowest precedence first: the captured profile
+  // set, then the caller's fields. There used to be two objects and a MergeFrom
+  // between them, which copied every caller header a second time.
   //
-  // The caller's headers win: they were set above, so a value here only fills a
-  // field the caller left alone. That ordering is the whole precedence rule --
-  // captured set lowest, then session headers, then request headers.
+  // MergeFrom only ever added the fields that were missing, so its result was
+  // "captured order first with the caller's value winning, then the caller's
+  // extra fields in caller order". Seeding this one block and then
+  // SetHeader-ing the caller's fields gives the same order and the same values,
+  // because SetHeader replaces in place: the field keeps the captured position
+  // and takes the caller's value. Same bytes on the wire, one pass fewer --
+  // N SetHeader calls saved per request, N = 12 for the Python facade
+  // (docs/PERF_AUDIT_0.2.20.md 3.3.5).
+  net::HttpRequestHeaders block;
   const RuntimeProfileData *profile = engine_->profile().data();
   if (profile && engine_->inject_client_hints()) {
     const BrowserHeaderSet &set = GetBrowserHeaderSet(profile->browser_header_set);
-    net::HttpRequestHeaders captured;
     for (const BrowserHeader &entry : set.headers) {
       const std::string_view name(entry.name);
       // Two fields describe the host, not the release, so they are rewritten
@@ -286,24 +296,25 @@ void Request::StartOnNetworkThread() {
       // the captured value would announce the Windows machine the capture ran
       // on from a Linux build -- a louder contradiction than a missing hint.
       if (base::EqualsCaseInsensitiveASCII(name, "user-agent")) {
-        captured.SetHeader(name, engine_->user_agent());
+        block.SetHeader(name, engine_->user_agent());
         continue;
       }
       if (base::EqualsCaseInsensitiveASCII(name, "sec-ch-ua-platform")) {
-        captured.SetHeader(name, engine_->platform_hint());
+        block.SetHeader(name, engine_->platform_hint());
         continue;
       }
-      captured.SetHeader(name, entry.value);
+      block.SetHeader(name, entry.value);
     }
-    // Merge rather than replace: HttpRequestHeaders::MergeFrom keeps every
-    // header the caller already set and only adds the ones still missing.
-    captured.MergeFrom(headers);
-    request_->SetExtraRequestHeaders(captured);
-  } else {
-    // chromium_current has no captured set; the caller's headers are the whole
-    // request header block, exactly as before v9.
-    request_->SetExtraRequestHeaders(headers);
   }
+  for (const auto &[name, value] : headers_) {
+    if (base::EqualsCaseInsensitiveASCII(name, net::HttpRequestHeaders::kReferer)) {
+      request_->SetReferrer(value);
+      request_->set_referrer_policy(net::ReferrerPolicy::NEVER_CLEAR);
+      continue;
+    }
+    block.SetHeader(name, value);
+  }
+  request_->SetExtraRequestHeaders(block);
   if (upload_mode_ == MN_UPLOAD_FIXED) {
     auto reader = std::make_unique<net::UploadBytesElementReader>(
         base::span<const uint8_t>(body_));
@@ -521,6 +532,15 @@ void Request::OnResponseStarted(net::URLRequest *request, int net_error) {
                         : MN_ECH_NOT_ATTEMPTED);
   response_started_.store(true);
 
+  // Pre-size from the declared length so a large body starts with the large
+  // buffer instead of paying one 32 KiB allocation first. Unknown length
+  // (chunked) is decided later, by the first full read in OnReadCompleted.
+  if (net::HttpResponseHeaders *for_size = request->response_headers()) {
+    const std::optional<base::ByteSize> length = for_size->GetContentLength();
+    if (length.has_value() && length->InBytes() >= kLargeBodyBytes) {
+      read_buffer_size_ = kLargeReadBufferSize;
+    }
+  }
   int status_code = request->GetResponseCode();
   std::string headers;
   std::string reason_phrase;
@@ -541,8 +561,12 @@ void Request::OnResponseStarted(net::URLRequest *request, int net_error) {
     std::string name;
     std::string value;
     while (response_headers->EnumerateHeaderLines(&iter, &name, &value)) {
-      header_storage.push_back(name);
-      header_storage.push_back(value);
+      // Move, do not copy: EnumerateHeaderLines assigns into both strings on the
+      // next iteration, so the moved-from ones are immediately reusable. The
+      // redirect path below (OnReceivedRedirect) has always done this; this loop
+      // copied each field a second time for no reason.
+      header_storage.push_back(std::move(name));
+      header_storage.push_back(std::move(value));
     }
     // The array itself is built inside the callback task, from storage that has
     // already reached its final address. Filling it here would mean carrying
@@ -611,10 +635,19 @@ void Request::ReadMore() {
     // function again.
     return;
   }
-  if (!read_buffer_) {
-    read_buffer_ = base::MakeRefCounted<net::IOBufferWithSize>(kReadBufferSize);
+  // The allocation must match the length passed to Read exactly. It did not
+  // have to be stated before this change, because both were the same constant;
+  // once the size can grow mid-response, a buffer left over from the small size
+  // would turn a 128 KiB Read into a 96 KiB heap overflow. Measured: the
+  // multi-chunk streaming test hung instead of failing, because the corrupted
+  // heap was the request's own queue. Replacing the buffer here is safe even
+  // though the paused path holds one: this early return above runs before the
+  // allocation, so a paused request keeps whatever it holds until resume.
+  if (!read_buffer_ || read_buffer_->size() != read_buffer_size_) {
+    read_buffer_ =
+        base::MakeRefCounted<net::IOBufferWithSize>(read_buffer_size_);
   }
-  int result = request_->Read(read_buffer_.get(), kReadBufferSize);
+  int result = request_->Read(read_buffer_.get(), read_buffer_->size());
   if (result != net::ERR_IO_PENDING) {
     OnReadCompleted(request_.get(), result);
   }
@@ -632,6 +665,14 @@ void Request::OnReadCompleted(net::URLRequest *request, int bytes_read) {
     return;
   }
 
+  // A read that filled the buffer exactly means the body is at least that
+  // long, so the next allocation asks for the large size. A response that fits
+  // in one chunk never reaches this, which is what keeps the common case at
+  // its old allocation size.
+  if (read_buffer_size_ < kLargeReadBufferSize &&
+      bytes_read == read_buffer_size_) {
+    read_buffer_size_ = kLargeReadBufferSize;
+  }
   if (callbacks_.on_body) {
     auto callback = callbacks_.on_body;
     void *user_data = callbacks_.user_data;
@@ -704,9 +745,12 @@ void Request::ReturnBufferAndContinue(
     mn_read_disposition_t disposition) {
   // On the network thread: the callback that was reading this memory has
   // returned, so refilling it cannot race with anything.
-  if (!read_buffer_) {
+  if (!read_buffer_ && buffer->size() == read_buffer_size_) {
     read_buffer_ = std::move(buffer);
   }
+  // Otherwise this buffer is the old size: drop it (it is refcounted, so the
+  // allocation goes away here) and let ReadMore allocate the size the body has
+  // now earned. Dropping it while paused is harmless, the read is not running.
   if (disposition == MN_READ_PAUSE) {
     PauseRead();
     return;

@@ -4,6 +4,9 @@
 `docs/COMPATIBILITY_BOUNDARY.md` 与 `bindings/python/tests/test_max_clients_gate.py`；
 两者共用同一条 Chromium 网络线程，所以有些结论相通，但等待方式不同，不能互相套用。
 
+2026-11-27 的 facade 层审计（`prepare_request` 从 118.5 us 降到 82.1 us 等四项）见
+[PERF_AUDIT_0.2.20.md](PERF_AUDIT_0.2.20.md)。
+
 工具：`tools/thread-ladder.py`（线程阶梯 + 拐点）、`tools/sync-diag.py`（线程 dump /
 锁等待 / 连接池曲线）、`tools/prof-attr.py`（wchan、strace、gdb 栈、cProfile）、
 `tools/perf_harness.py`（线路级 fixture，服务端并发计数）。
@@ -115,7 +118,7 @@ Python 调用线程
 新增的那些。requests 兼容面不变（`prepared._cookies` 仍是被请求时的合并视图，否则是
 空 jar）。
 
-回归测试：`bindings/python/tests/test_cookie_request_cost.py`（8 条，含变异验证）。
+回归测试：`bindings/python/tests/test_cookie_request_cost.py`（10 条，含变异验证）。
 
 - 剩余开销：store 里 cookie 数从 0 涨到 177 时，单请求 p50 从 2.16 ms 涨到 3.88 ms。
   这是 Chromium `CookieMonster` 对每个请求做域名/路径匹配的固有成本，不是绑定层能消掉的；

@@ -168,6 +168,24 @@ def profile_major(profile):
     return major if major in CAPTURED_HEADERS else None
 
 
+#: Memoised results for the two pure functions below.
+#:
+#: Both are a function of the capture table, which is a module-level constant
+#: read from profiles/chrome_<major>/h1/captures.json at import and never
+#: mutated afterwards. Each is called once per request (the header set, then the
+#: emission order) and rebuilt the same twelve pairs every time: measured 9.4 us
+#: of the 113 us prepare_request costs, on a path the async loop charges to every
+#: coroutine's synchronous prefix.
+#:
+#: The cache holds tuples and every call returns a fresh list, so a caller that
+#: mutates what it receives cannot corrupt the next request. Both caches are
+#: bounded: the key space is profiles x accept-language x platform, and a clear
+#: on overflow is cheaper than an LRU that would run on every hit.
+_BROWSER_HEADERS_CACHE = {}
+_FULL_HEADER_ORDER_CACHE = {}
+_CACHE_LIMIT = 256
+
+
 def browser_headers(profile, accept_language=None, platform="auto"):
     """Returns the ordered headers Chrome of *profile* would send.
 
@@ -187,6 +205,30 @@ def browser_headers(profile, accept_language=None, platform="auto"):
     major = profile_major(profile)
     if major is None:
         return []
+    key = (major, accept_language, platform)
+    cached = _BROWSER_HEADERS_CACHE.get(key)
+    if cached is None:
+        cached = _build_browser_headers(major, accept_language, platform)
+        if len(_BROWSER_HEADERS_CACHE) >= _CACHE_LIMIT:
+            _BROWSER_HEADERS_CACHE.clear()
+        _BROWSER_HEADERS_CACHE[key] = cached
+    return list(cached)
+
+
+def _build_browser_headers(major, accept_language, platform):
+    """Builds the pair list behind :func:`browser_headers`.
+
+    Split out so the public entry point can answer from the memo without
+    duplicating the field substitutions below.
+
+    Args:
+        major: The profile major, already known to be a captured one.
+        accept_language: Overrides the captured Accept-Language.
+        platform: The engine's platform identity.
+
+    Returns:
+        A tuple of (name, value) pairs in capture order.
+    """
     token = _platform_token(platform)
     platform_hint = _sec_ch_ua_platform(platform)
     pairs = []
@@ -202,7 +244,7 @@ def browser_headers(profile, accept_language=None, platform="auto"):
         elif name == "Accept-Language" and accept_language:
             value = accept_language
         pairs.append((name, value))
-    return pairs
+    return tuple(pairs)
 
 
 def full_header_order(profile):
@@ -231,6 +273,9 @@ def full_header_order(profile):
         seeded slots inserted; empty for an unknown profile, matching
         :func:`header_order`.
     """
+    cached = _FULL_HEADER_ORDER_CACHE.get(profile)
+    if cached is not None:
+        return list(cached)
     order = header_order(profile)
     if not order:
         return order
@@ -240,7 +285,11 @@ def full_header_order(profile):
     # even these, but Chromium emits those from BuildRequestHeaders directly and
     # they never appear in extra_headers, so this list cannot express them.
     seeded = [name for name, _value in SEEDED_HEADERS if name.lower() not in lowered]
-    return [name.lower() for name in seeded] + lowered
+    built = tuple([name.lower() for name in seeded] + lowered)
+    if len(_FULL_HEADER_ORDER_CACHE) >= _CACHE_LIMIT:
+        _FULL_HEADER_ORDER_CACHE.clear()
+    _FULL_HEADER_ORDER_CACHE[profile] = built
+    return list(built)
 
 
 def header_order(profile):

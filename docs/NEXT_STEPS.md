@@ -872,6 +872,21 @@ ECH 只暴露状态（第 2.5 节）：桌面端 Chromium 的 `EchMode` 恒为 `
 提案没有登记、也不应等 v9 的三项：`headers={"User-Agent": None}` 的删除语义、
 `tools/audit-python-stubs.py` 的硬编码清单、`bindings/python36` 的空壳门禁与 `include` 路径。
 
+## 已完成：Core 三项性能改动（九平台重建）
+
+三项都已落地并重建九个平台，实测与论证见 [PERF_AUDIT_0.2.20.md](PERF_AUDIT_0.2.20.md) §3.3：
+
+| 项 | 位置 | 结果 |
+| --- | --- | --- |
+| 请求头块单遍构造 | `request.cc:260-306` | 省 N 次 `SetHeader`；八种形状线上字节等价（裸 socket 逐字节对照） |
+| 响应头字段 move | `request.cc:543-546` | 每响应省 12 次 `std::string` 拷贝 |
+| 读缓冲自适应 | `request.cc:40`、`request.h` | 16 MiB 流式 +137%、4 MiB async +111%、网络线程 CPU/MiB 减半；1 KiB 持平 |
+
+**仍然开放的一项**：`mn_request_read_into`（ABI 18）。原判断是「大 body 的差距在整段 copy，
+所以它比读缓冲更重要」——本轮的实测**推翻了那个排序**（投递次数就是主要成本），但它本身仍然成立：
+非流式路径把 body 复制进 Rust `Vec`、`PyResponse.content` 再 clone 一次给 Python（`docs/ABI.md:400-404`）。
+下一轮做它时不需要再论证收益，只需要论证 ABI 形状。
+
 ## 提案：两项性能 ABI 改动（合并首包等待 / 批量唤醒投递）
 
 这两项来自同步与异步两侧的压测结论（`docs/SYNC_CONCURRENCY.md`、
@@ -934,7 +949,7 @@ mn_request_await_head(mn_request_t *request, uint64_t timeout_ms,
 （`WaitableEvent` + `Lock`）、一次首块堆分配，以及一条与 `on_body` 并存的
 **双路径首块语义**——后者意味着任何一处状态竞争都会让首块丢失或重复，而这正是
 本项目现有门禁（`leak-hunt`、`test_compat`）覆盖不到的一类缺陷。实测代码已写完
-又整体撤回，撤回后 `audit-abi` 仍为 28 符号。
+又整体撤回，撤回后 `audit-abi` 仍为 28 符号（ABI 17 追加 `header_disposition`、批量唤醒与 token 之后是 **35** 符号；这一句记录的是当时的数目）。
 
 **代价与风险**：
 
