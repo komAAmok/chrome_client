@@ -17,7 +17,10 @@ Run with the audited Core available::
     python3 -m unittest bindings/python/tests/test_session_binding.py
 """
 
+import asyncio
+import gc
 import threading
+import warnings
 import time
 import unittest
 
@@ -463,6 +466,120 @@ class BodyChunkingTests(unittest.TestCase):
 
     def test_an_empty_body_yields_nothing(self):
         self.assertEqual(self._blocks([], 512), [])
+
+
+class StreamLeaseServer(ThreadingHTTPServer):
+    """Swallows the broken pipe a client close leaves behind."""
+
+    daemon_threads = True
+
+    def handle_error(self, request, client_address):
+        pass
+
+
+class StreamLeaseTests(unittest.TestCase):
+    """A body that is still readable keeps its engine pinned.
+
+    The pin used to end with the response headers, so ``inflight`` reported 0
+    while a streamed body was still being consumed and an eviction in that same
+    window was counted as free (``deferred=0``).  Measured before the transfer:
+    mid-body ``inflight=0``, and the slot evicted under the live stream showed
+    ``evictions=1, deferred=0`` while the server was still sending.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.server = StreamLeaseServer(("127.0.0.1", 0), BigHandler)
+        cls.thread = threading.Thread(target=cls.server.serve_forever)
+        cls.thread.daemon = True
+        cls.thread.start()
+        cls.base = "http://127.0.0.1:%d" % cls.server.server_address[1]
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.server.shutdown()
+        cls.server.server_close()
+        cls.thread.join(timeout=5)
+
+    def test_a_streamed_body_holds_the_pin_until_close(self):
+        session = chrome_client.Session()
+        try:
+            response = session.get(self.base + "/big", stream=True)
+            chunks = iter(response.iter_content(chunk_size=4096))
+            next(chunks)
+            self.assertEqual(session.stats["inflight"], 1,
+                             "a body the caller can still read is in flight")
+            response.close()
+            self.assertEqual(session.stats["inflight"], 0)
+        finally:
+            session.close()
+
+    def test_an_eviction_while_streaming_is_not_counted_as_free(self):
+        session = chrome_client.Session(max_engines=1)
+        try:
+            response = session.get(self.base + "/big", stream=True)
+            chunks = iter(response.iter_content(chunk_size=4096))
+            next(chunks)
+            session.get(self.base + "/big", impersonate="chrome_151")
+            stats = session.stats
+            self.assertEqual(stats["evictions"], 1)
+            self.assertEqual(stats["deferred"], 1,
+                             "an eviction under a live body is not a free one")
+            self.assertEqual(stats["inflight"], 1,
+                             "the evicted slot still serves the streaming request")
+            response.close()
+            self.assertEqual(session.stats["inflight"], 0)
+        finally:
+            session.close()
+
+    def test_a_dropped_stream_releases_the_pin(self):
+        session = chrome_client.Session()
+        try:
+            response = session.get(self.base + "/big", stream=True)
+            chunks = iter(response.iter_content(chunk_size=4096))
+            next(chunks)
+            self.assertEqual(session.stats["inflight"], 1)
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter("always")
+                del chunks, response
+                gc.collect()
+            self.assertEqual(
+                sum(1 for w in caught if w.category is ResourceWarning), 1,
+                "a dropped stream is the one case that warns")
+            self.assertEqual(session.stats["inflight"], 0)
+        finally:
+            session.close()
+
+    def test_closing_twice_releases_one_pin(self):
+        session = chrome_client.Session()
+        try:
+            response = session.get(self.base + "/big", stream=True)
+            chunks = iter(response.iter_content(chunk_size=4096))
+            next(chunks)
+            response.close()
+            response.close()
+            self.assertEqual(session.stats["inflight"], 0)
+            self.assertEqual(session.stats["live"], 1,
+                             "the engine itself is still cached")
+        finally:
+            session.close()
+
+    def test_the_async_body_holds_the_pin_until_aclose(self):
+        async def run():
+            session = chrome_client.AsyncSession()
+            try:
+                response = await session.get(self.base + "/big", stream=True)
+                reader = response._async_body_reader
+                await reader.__anext__()
+                mid = session.stats["inflight"]
+                await response.aclose()
+                return mid, session.stats["inflight"]
+            finally:
+                session.close()
+
+        mid, after = asyncio.run(run())
+        self.assertEqual(mid, 1)
+        self.assertEqual(after, 0)
 
 
 class AsyncParityTests(unittest.TestCase):

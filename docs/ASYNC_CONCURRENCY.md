@@ -26,7 +26,7 @@ Core 网络线程 MiniCronetNet
 | 项 | 值 | 含义 |
 | --- | --- | --- |
 | `ASYNC_POLL_BATCH` | 64 | 每次唤醒最多取 64 个事件，打满则立刻重新排队 |
-| `STREAM_BUFFER_LIMIT` | 1 MiB | 流式 body 队列上限，超过即暂停 Core 读取 |
+| `STREAM_BUFFER_LIMIT` | 1 MiB | 异步流式 body 的 Python 侧缓冲上限，超过即停止 `poll_events`；Rust 侧另有一层 1 MiB 的 `BODY_BUFFER_LIMIT`，两层合计每条停滞流 2 MiB |
 | `max_clients` | 可选 | `asyncio.Semaphore`，**只覆盖到响应头**（见 `test_max_clients_gate.py`） |
 
 **没有自带事件循环，也没有内部线程池**：协程跑在调用方给的 loop 上，网络 IO 在

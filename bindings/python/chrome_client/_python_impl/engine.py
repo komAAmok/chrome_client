@@ -33,6 +33,7 @@ Two rules follow from the split:
 
 import os
 import threading
+import warnings
 
 from .exceptions import RequestException, SessionClosed, SSLError, map_native_error
 from ._native import native
@@ -871,6 +872,15 @@ class EngineCache(object):
         self._pid = os.getpid()
         self._closed = False
         self._stats = {"hits": 0, "builds": 0, "evictions": 0, "deferred": 0}
+        #: Slots evicted while a request was still running on them.  They are
+        #: gone from ``_slots`` but the work is not, so ``inflight`` has to see
+        #: them: without this, a streamed body reported ``inflight=0`` while
+        #: ``deferred`` counted the same request as an eviction that was not
+        #: free.  Pruned as soon as a slot reaches 0.
+        self._deferred_slots = set()
+        #: Set once the thrash warning has been reported, so a cache that never
+        #: hits warns once instead of once per request.
+        self._warned_evictions = False
 
     def _reset_after_fork_locked(self):
         # Chromium's threads do not survive fork(); a child inheriting the parent
@@ -880,6 +890,8 @@ class EngineCache(object):
             self._order.clear()
             self._pid = os.getpid()
             self._stats = {"hits": 0, "builds": 0, "evictions": 0, "deferred": 0}
+            self._deferred_slots = set()
+            self._warned_evictions = False
 
     def get(self, config):
         """Returns the engine for a configuration, building it on first use.
@@ -933,6 +945,28 @@ class EngineCache(object):
                     # the response holding it; only the cache entry is gone, and
                     # the count records that this eviction was not free.
                     self._stats["deferred"] += 1
+                    self._deferred_slots.add(victim)
+            # A cache that has never hit and keeps evicting is not a
+            # performance smell, it is a configuration mismatch: every one of
+            # those evictions built and tore down a whole Chromium
+            # ``URLRequestContext`` (its own thread, socket pool, DNS cache and
+            # TLS session cache) and opened a fresh TCP connection.  The counter
+            # existed but nobody read it; README documents the same measurement,
+            # and `docs/LESSONS.md` 29 is why it is worth interrupting the
+            # caller over.  Threshold: eight evictions with zero hits, or twice
+            # the budget once the budget is larger than that.
+            if (not self._warned_evictions and self._stats["hits"] == 0
+                    and self._stats["evictions"] >= max(2 * self._max, 8)):
+                self._warned_evictions = True
+                warnings.warn(
+                    "EngineCache(max_engines=%d) has evicted %d engine(s) with "
+                    "zero cache hits: the requests are changing transport faster "
+                    "than the budget holds, so each one builds a new Chromium "
+                    "URLRequestContext and opens a new connection. A rotating "
+                    "proxy pool wider than max_engines is the usual cause; set "
+                    "max_engines to the pool size."
+                    % (self._max, self._stats["evictions"]),
+                    RuntimeWarning, stacklevel=3)
             return slot
 
     def acquire(self, config):
@@ -983,6 +1017,7 @@ class EngineCache(object):
         with self._lock:
             self._slots.clear()
             self._order.clear()
+            self._deferred_slots.clear()
 
     def close(self):
         """Closes the cache; later :meth:`get` calls raise."""
@@ -990,6 +1025,7 @@ class EngineCache(object):
             self._closed = True
             self._slots.clear()
             self._order.clear()
+            self._deferred_slots.clear()
 
     @property
     def closed(self):
@@ -1023,14 +1059,23 @@ class EngineCache(object):
             return snapshot
 
     def inflight(self):
-        """Returns how many requests the cached engines are serving.
+        """Returns how many requests are in flight, cached engines or not.
+
+        A slot evicted while a streamed body was still being read is no longer
+        cached, but the request is still running on it -- which is exactly the
+        case ``deferred`` counts.  Summing only the cached slots reported 0 for
+        that request, so the two counters disagreed about it.
 
         Returns:
-            The sum of every slot's in-flight count.
+            The sum of every live slot's in-flight count.
         """
         with self._lock:
-            slots = list(self._slots.values())
-        return sum(slot.inflight for slot in slots)
+            # Pruned here as well as on get(): an entry that reached 0 would
+            # otherwise keep an engine alive until the next request.
+            self._deferred_slots = {
+                slot for slot in self._deferred_slots if slot.inflight}
+            slots = list(self._slots.values()) + list(self._deferred_slots)
+            return sum(slot.inflight for slot in slots)
 
     def __len__(self):
         """Returns how many engines are cached.
@@ -1045,18 +1090,17 @@ class EngineCache(object):
 class _SlotLease(object):
     """Pins one engine slot for the duration of a request.
 
-    The pin is what tells an eviction that the slot is still in use.  A
-    streaming response keeps reading from the slot's context after the lease
-    ends -- the Core request holds its own reference to the Chromium context --
-    but the in-flight count belongs to the lease, so the
-    window the lease covers is exactly the window in which the facade still
-    reads or writes slot state.
+    The pin is what tells an eviction that the slot is still in use.  For a
+    streaming response the pin is handed to the body reader (``transfer``), so
+    the window it covers is the body's lifetime, not the header's: the Core
+    request holds its own reference to the Chromium context either way, but
+    only the lease can say that a caller is still reading from that slot.
 
     Attributes:
         slot: The pinned :class:`EngineSlot`, or ``None`` outside the block.
     """
 
-    __slots__ = ("_cache", "_config", "_slot")
+    __slots__ = ("_cache", "_config", "_slot", "_transferred")
 
     def __init__(self, cache, config):
         """Prepares a lease.
@@ -1068,6 +1112,7 @@ class _SlotLease(object):
         self._cache = cache
         self._config = config
         self._slot = None
+        self._transferred = False
 
     @property
     def slot(self):
@@ -1096,6 +1141,39 @@ class _SlotLease(object):
         if previous is not None:
             previous._release()
 
+    def transfer(self):
+        """Hands the pin to the caller instead of releasing it at block exit.
+
+        A streaming response keeps reading from the slot's context after the
+        headers arrive, so the window in which "in flight" describes the work is
+        the body's lifetime, not the head's.  Measured before this: a stream
+        whose consumer had stalled still reported ``inflight=0``, and an
+        eviction of that same slot was counted as a free one (``deferred=0``)
+        while the server was still sending body bytes.
+
+        Returns:
+            The pinned :class:`EngineSlot`.
+        """
+        self._transferred = True
+        return self._slot
+
+    def release(self):
+        """Releases the pin, whether or not it was transferred.
+
+        Idempotent: the several teardown paths around a body (``close()``,
+        ``release()``, ``__del__``, ``release_without_loop``) all call it, and a
+        second call must not decrement a count that belongs to some other
+        request.
+
+        Returns:
+            The slot whose in-flight count was decremented, or ``None`` when the
+            lease held no pin.
+        """
+        slot, self._slot = self._slot, None
+        if slot is not None:
+            slot._release()
+        return slot
+
     def __enter__(self):
         slot = self._cache.get(self._config)
         slot._retain()
@@ -1103,9 +1181,14 @@ class _SlotLease(object):
         return slot
 
     def __exit__(self, *_exc):
-        slot, self._slot = self._slot, None
-        if slot is not None:
-            slot._release()
+        if self._transferred:
+            # The reader owns the pin now, and the slot reference with it: the
+            # count taken in __enter__ is released by lease.release() when the
+            # body ends.  Clearing _slot here instead left release() with nothing
+            # to release and leaked the pin -- measured as inflight=1 forever
+            # after close().
+            return False
+        self.release()
         return False
 
 

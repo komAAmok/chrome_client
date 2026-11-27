@@ -578,6 +578,11 @@ impl PyRequest {
 impl PyRequest {
     fn cancel(&self) -> PyResult<()> {
         let result = self.inner.cancel().map_err(error);
+        // Mirrors bindings/python: a cancelled request is never drained again,
+        // so release its queued body now instead of at collection time.  The
+        // stream itself stays put, so a wakeup already scheduled on the loop
+        // reports end-of-body rather than "request body stream is not started".
+        self.inner.discard_body();
         self.finish();
         result
     }

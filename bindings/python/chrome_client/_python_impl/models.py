@@ -12,6 +12,7 @@ import asyncio
 import codecs
 import datetime
 import json as _json
+import warnings
 from collections import deque
 from urllib.parse import urlsplit, urlunsplit
 
@@ -760,13 +761,13 @@ class Response(object):
         # ``iter_lines()`` streamed the discarded one. Release it.
         if self._body_reader is not None:
             reader, self._body_reader = self._body_reader, None
-            reader.close(cancel=True)
+            reader.release()
         # The same applies to a reader an ``iter_content()`` call already
         # claimed: leaving it live let the abandoned native body keep
         # streaming while ``.content`` answered with the assigned bytes.
         if self._claimed_reader is not None:
             reader, self._claimed_reader = self._claimed_reader, None
-            reader.close(cancel=True)
+            reader.release()
 
     @property
     def text(self):
@@ -913,6 +914,15 @@ class Response(object):
                 yield block
         finally:
             pending.clear()
+            # No argument on purpose: only the reader knows whether the body was
+            # exhausted, so ``close()`` cancels when it was not (see
+            # ``_SyncBodyReader.close``).  This is the call that used to leave a
+            # dropped generator detach-only, after which the Rust side's
+            # ``abandon_body`` resumed the read and drained the rest of the body:
+            # measured, dropping a response stalled at 3.44 MiB of a 256 MiB body
+            # pulled the remaining 252.56 MiB in 1.5 s.  Deciding it here also
+            # coupled this generator to the reader's internals, which a stand-in
+            # reader (the chunking tests pass one) does not have.
             reader.close()
             if self._claimed_reader is reader:
                 self._claimed_reader = None
@@ -1006,7 +1016,7 @@ class Response(object):
         catchable the same way as every other failure here.
         """
         if self._body_reader is not None:
-            self._body_reader.close(cancel=True)
+            self._body_reader.release()
             self._body_reader = None
         # An ``iter_content()`` call has taken ownership of the reader, so
         # ``_body_reader`` is already None here and the cancellation above
@@ -1016,7 +1026,7 @@ class Response(object):
         # closed and is a no-op.
         if self._claimed_reader is not None:
             reader, self._claimed_reader = self._claimed_reader, None
-            reader.close(cancel=True)
+            reader.release()
         self._content_consumed = True
 
     def _release_async_body(self):
@@ -1059,6 +1069,19 @@ class AsyncResponse(Response):
         will never run it would leak the very request this is releasing.
         """
         try:
+            # Warn before releasing: after the release both reader fields are
+            # None, and the state that says whether the body was finished is
+            # gone with them.
+            live = [reader for reader in (self._async_body_reader,
+                                          self._claimed_async_reader)
+                    if reader is not None and not reader._closed]
+            if live:
+                warnings.warn(
+                    "unclosed async streaming response: an AsyncResponse was "
+                    "collected without aclose(); its body has been cancelled. "
+                    "Use 'async with session.get(url, stream=True) as response:' "
+                    "or await response.aclose().",
+                    ResourceWarning, stacklevel=2)
             self._release_async_body()
         except Exception:
             # A destructor that raises is reported as "Exception ignored in
@@ -1246,6 +1269,16 @@ class AsyncResponse(Response):
         except AttributeError:
             return
         if loop.is_closed():
+            # Nothing will ever run on that loop again, so scheduling here is a
+            # leak, not a deferral: the reader keeps the native request, and the
+            # Rust-spanning cycle (state -> PyRequest -> event callback ->
+            # ``state.notify`` -> state) is invisible to CPython's collector, so
+            # neither the socket nor the queue is ever released.  Measured:
+            # dropping an AsyncResponse after its loop closed left the transfer
+            # frozen at 4.38 MiB with the server handler still open and the fd
+            # count unchanged 9 s later.  Release synchronously, exactly as the
+            # "loop exists but is not running" branch below does.
+            reader.release_without_loop(cancel=True)
             return
         # `asyncio.get_running_loop` is 3.7+. The package still installs on 3.6
         # (cp36-abi3 wheel), where calling it raised AttributeError past the

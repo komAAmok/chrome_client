@@ -22,6 +22,7 @@ import struct
 import threading
 import time
 import unittest
+import warnings
 from urllib.parse import quote, unquote
 
 try:
@@ -913,6 +914,44 @@ class EngineBudgetValidationTests(unittest.TestCase):
         with chrome_client.Session() as session:
             self.assertEqual(session.stats["max_engines"], 8)
 
+
+class EngineEvictionWarningTests(unittest.TestCase):
+    """A cache that only ever builds says so, once.
+
+    `Session.stats["evictions"]` counted the thrash but nothing said it out
+    loud, so a proxy pool wider than `max_engines` was only discovered as
+    TIME_WAIT exhaustion or as a latency cliff. Every eviction here is a whole
+    Chromium `URLRequestContext` built and destroyed, so the warning is worth
+    interrupting a caller over -- once, not once per request.
+    """
+
+    def _thrash(self, count, ceiling=1):
+        from chrome_client.engine import EngineCache, EngineConfig
+
+        cache = EngineCache(max_engines=ceiling)
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            for index in range(count):
+                cache.get(EngineConfig(impersonate="chrome_%d" % (120 + index)))
+        return cache, [c for c in caught if issubclass(c.category, RuntimeWarning)]
+
+    def test_a_thrashing_cache_warns_once(self):
+        cache, caught = self._thrash(10)
+        self.assertEqual(cache.stats["builds"], 10)
+        self.assertEqual(cache.stats["evictions"], 9)
+        self.assertEqual(len(caught), 1, [str(c.message) for c in caught])
+        self.assertIn("max_engines=1", str(caught[0].message))
+        self.assertIn("zero cache hits", str(caught[0].message))
+
+    def test_a_cache_that_fits_its_working_set_is_silent(self):
+        cache, caught = self._thrash(3, ceiling=8)
+        self.assertEqual(cache.stats["evictions"], 0)
+        self.assertEqual(caught, [])
+
+    def test_the_threshold_is_not_reached_by_a_short_burst(self):
+        cache, caught = self._thrash(6, ceiling=1)
+        self.assertEqual(cache.stats["evictions"], 5)
+        self.assertEqual(caught, [])
 
 
 class ClosedSessionExceptionTests(unittest.TestCase):

@@ -1766,56 +1766,135 @@ class _SyncBodyReader(object):
     paused body queue.
     """
 
-    def __init__(self, request, limit):
+    def __init__(self, request, limit, lease=None):
         self._request = request
         self._limit = limit
         self._total = 0
         self._closed = False
+        self._cancelled = False
+        #: The engine pin, transferred here when the caller asked for the body
+        #: unread: the slot is in use for as long as this reader can still call
+        #: into it, which is exactly the body's lifetime.
+        self._lease = lease
+        #: The body reached its end, so nothing was abandoned.
+        self._exhausted = False
+        #: The owner gave the reader up on purpose (``Response.close()``, the
+        #: ``content`` setter, a limit violation).  Only a reader that was
+        #: neither exhausted nor released warns from ``__del__``: the other two
+        #: are the caller doing the right thing.
+        self._released = False
 
     def __iter__(self):
         while not self._closed:
             try:
                 chunk = self._request.next_body()
             except RuntimeError as error:
-                self.close()
+                self._released = True
+                self.close(cancel=False)
                 raise map_native_error(error)
             if chunk is None:
+                self._exhausted = True
                 self.close()
                 return
             self._total += len(chunk)
             if self._limit is not None and self._total > self._limit:
+                self._released = True
                 self.close(cancel=True)
                 raise ResponseTooLarge(
                     "response exceeded max_response_bytes=%d" % self._limit)
             yield bytes(chunk)
 
-    def close(self, cancel=False):
-        if self._closed:
-            return
-        self._closed = True
-        if cancel:
+    def close(self, cancel=None):
+        # ``cancel=None`` means "cancel unless the body was exhausted": the
+        # generator that calls this is the one place that cannot tell a dropped
+        # stream from a finished one, and a finished body needs only a detach.
+        # An explicit True/False still wins, because the limit violation and the
+        # Core-error paths know which they are.
+        #
+        # ``cancel`` is honoured even when the reader is already closed.  The first
+        # close is usually the non-cancelling detach from ``_stream_chunks``'s
+        # ``finally``, and the cancelling one arrives afterwards from ``__del__``
+        # or ``Response.close()``; returning early there dropped the only
+        # ``mn_request_cancel`` the caller ever asked for.  ``_cancelled`` makes it
+        # idempotent, because the ABI cancel is not free (it posts to the Core).
+        # Any close means no further reads, so the pin goes back here rather than
+        # in each exit path: __iter__ reaches this on end-of-body, on a Core
+        # error and on a limit violation, and the generator calls it when it is
+        # dropped.
+        self._release_lease()
+        if cancel is None:
+            cancel = not self._exhausted
+        if cancel and not self._cancelled:
+            self._cancelled = True
             try:
                 self._request.cancel()
             except RuntimeError:
                 pass
+        if self._closed:
+            return
+        self._closed = True
         try:
             self._request.detach_callback()
         except RuntimeError:
             pass
 
+    def _release_lease(self):
+        """Drops the transferred pin.
+
+        Only a one-request engine goes to the retire worker.  Handing a CACHED
+        slot there is wrong, and it was measured as a crash: the worker calls
+        EngineSlot.release_engine(), which nulls the engine attribute, so the next
+        request served by that cached slot failed with a NoneType has no attribute
+        request AttributeError.  A pooled slot is kept alive by the cache anyway,
+        so dropping the lease reference costs nothing.
+        """
+        lease, self._lease = self._lease, None
+        if lease is None:
+            return
+        slot = lease.release()
+        if slot is not None and slot.single_use:
+            retire_engine_slot(slot)
+
+    def release(self):
+        """Closes the reader because its owner gave it up on purpose.
+
+        ``Response.close()`` and the ``content`` setter use this instead of
+        ``close(cancel=True)`` so the teardown is not later mistaken for the
+        caller dropping a live stream: only the garbage-collected path warns.
+        """
+        self._released = True
+        self.close(cancel=True)
+
     def __del__(self):
         try:
-            self.close(cancel=True)
+            if not self._exhausted and not self._released:
+                # The caller dropped a live stream without close().  Before the
+                # cancel below existed this was silent AND the Core kept reading
+                # to EOF, so the only observable was a download nobody asked
+                # for; ResourceWarning is what makes the drop site findable.
+                warnings.warn(
+                    "unclosed streaming response: a Response returned by "
+                    "stream=True was collected without close(); its body has "
+                    "been cancelled. Use 'with session.get(url, stream=True) as "
+                    "response:' or call response.close().",
+                    ResourceWarning, stacklevel=2)
+            # ``cancel=not self._exhausted``: an exhausted body has already
+            # reached the terminal callback, where the ABI answers
+            # MN_ERROR_INVALID_STATE -- a round trip that buys nothing and that
+            # this path used to skip only because ``close`` returned early.
+            self.close(cancel=not self._exhausted)
         except Exception:
             pass
 
 
 class _AsyncBodyReader(object):
-    def __init__(self, state, limit):
+    def __init__(self, state, limit, lease=None):
         self._state = state
         self._limit = limit
         self._total = 0
         self._closed = False
+        #: Same pin as the synchronous reader: held until the body ends.
+        self._lease = lease
 
     @property
     def state(self):
@@ -1875,6 +1954,12 @@ class _AsyncBodyReader(object):
         if self._closed:
             return
         self._closed = True
+        lease, self._lease = self._lease, None
+        if lease is not None:
+            slot = lease.release()
+            if slot is not None and slot.single_use:
+                # Only a one-shot engine; see _SyncBodyReader._release_lease.
+                retire_engine_slot(slot)
         self._state.finish(cancel=cancel)
 
 
@@ -2067,6 +2152,16 @@ class _AsyncState(object):
         # and would also leave an exception nobody retrieves.
         if not self.stream and not self.future.done():
             self.future.set_exception(error)
+        # A failure that belongs to the request rather than to the body (a
+        # deadline, a Core error) makes every buffered chunk unreachable: the
+        # reader raises instead of yielding, so the deque would only be cleared
+        # by a later close() or __del__.  Measured: a timed-out stream still held
+        # 1.03 MiB in 35 chunks until the response was closed.  ``ResponseTooLarge``
+        # is deliberately NOT cleared here -- that failure is reported while the
+        # caller is consuming, so the bytes already buffered still belong to it.
+        if self.chunks is not None and not self.error_is_lazy():
+            self.chunks.clear()
+            self.buffered = 0
         self._signal()
 
     def _expire(self):
@@ -4385,7 +4480,7 @@ class Session(BaseSession):
         try:
             return self._transfer_on_slot(
                 slot, prepared, options, discard, throwaway, limit, stream,
-                started, follow)
+                started, follow, lease=lease)
         finally:
             # Before the throwaway engine is retired: a per-request cookie
             # belongs to this request, and the store it landed in is this one.
@@ -4398,7 +4493,7 @@ class Session(BaseSession):
                 retire_engine_slot(slot)
 
     def _transfer_on_slot(self, slot, prepared, options, discard, throwaway, limit,
-                          stream, started, follow):
+                          stream, started, follow, lease=None):
         """Performs the transfer. Split out so the slot can be retired on every exit.
 
         Args:
@@ -4407,6 +4502,8 @@ class Session(BaseSession):
             options: The resolved call options.
             discard: Whether cookies must be neither sent nor recorded.
             throwaway: Whether *slot* is a one-request engine.
+            lease: The pin this frame took, when the caller had one; a streamed
+                body takes it over so ``inflight`` covers the body as well.
             limit: ``max_response_bytes``, or ``None``.
             stream: Whether the body is handed back unread.
             started: The monotonic start time, for ``elapsed``.
@@ -4469,7 +4566,13 @@ class Session(BaseSession):
         response = self._new_response()
         try:
             if stream:
-                response._body_reader = _SyncBodyReader(native, limit)
+                # The body outlives this frame, so the pin goes with it: without
+                # the transfer, a streamed response reported inflight=0 while the
+                # consumer was still reading, and an eviction in that window was
+                # counted as free (deferred=0).
+                if lease is not None:
+                    lease.transfer()
+                response._body_reader = _SyncBodyReader(native, limit, lease)
             elif limit is None:
                 response.content = native.read_body()
                 native.detach_callback()
@@ -4885,7 +4988,8 @@ class AsyncSession(BaseSession):
         lease.rebind(slot)
         throwaway = slot.single_use
         try:
-            return await self._perform_on_slot(slot, prepared, options, loop, discard)
+            return await self._perform_on_slot(slot, prepared, options, loop,
+                                                 discard, lease=lease)
         finally:
             # ``mn_engine_cookies_delete`` runs on the Core's store directly and
             # does not post a round trip the way a context teardown does, so this
@@ -4906,7 +5010,8 @@ class AsyncSession(BaseSession):
                 # (AGENTS section 2, measured).
                 retire_engine_slot(slot)
 
-    async def _perform_on_slot(self, slot, prepared, options, loop, discard):
+    async def _perform_on_slot(self, slot, prepared, options, loop, discard,
+                               lease=None):
         """Performs the transfer on *slot*, which the caller keeps alive.
 
         Args:
@@ -4995,7 +5100,11 @@ class AsyncSession(BaseSession):
             # from ``state.body`` -- which is None in streaming mode -- and the
             # response silently came back empty. The reader waits on the same
             # state, so it is correct for both redirect modes.
-            response._async_body_reader = _AsyncBodyReader(state, limit)
+            if lease is not None:
+                # Same transfer as the synchronous path: the reader owns the
+                # pin until the body ends.
+                lease.transfer()
+            response._async_body_reader = _AsyncBodyReader(state, limit, lease)
         else:
             response.content = b"".join(state.body) if state.body is not None else b""
             state.finish()

@@ -454,6 +454,23 @@ impl RequestShared {
         resume
     }
 
+    /// Whether a dropped body stream must cancel the Core request.
+    ///
+    /// Dropping the queue while the request is still running used to leave the
+    /// Core draining the body to EOF -- `abandon_body` resumes the read so the
+    /// request is not stranded in a pause.  That cost a whole download nobody
+    /// asked for: measured against a 256 MiB response, a stream abandoned at
+    /// 3.44 MiB pulled the remaining 252.56 MiB in 1.5 s before the socket
+    /// closed, while an explicit `close()` froze at 3.44 MiB.  Cancelling
+    /// terminates the request too, so nothing is stranded, and it is the same
+    /// thing `Response.close()` already did.
+    ///
+    /// False once the terminal callback has run, where `mn_request_cancel`
+    /// answers MN_ERROR_INVALID_STATE and the request is already over.
+    fn body_needs_cancel(&self) -> bool {
+        lock(&self.state).terminal.is_none()
+    }
+
     fn schedule_event(&self) {
         // The callback only schedules work on the consumer's event loop. It
         // must not perform user work or wait for network progress here.
@@ -712,6 +729,22 @@ impl Request {
         result(unsafe { sys::mn_request_cancel(self.0.raw.as_ptr()) })
     }
 
+    /// Releases the queued body of a cancelled request without dropping the stream.
+    ///
+    /// Nothing drains a cancelled request, so its queue -- up to
+    /// `BODY_BUFFER_LIMIT` of Chromium-owned buffers -- would otherwise live
+    /// until Python collects the request object; measured, a timed-out async
+    /// stream still held 1.03 MiB in 35 chunks until the response was closed.
+    /// The stream itself is deliberately kept: a wakeup already queued on the
+    /// event loop still calls `poll_events`, and a missing stream would answer
+    /// "request body stream is not started" -- an error the facade would report
+    /// as a request failure.  An abandoned queue reports end-of-body instead.
+    pub fn discard_body(&self) {
+        if self.0.shared.abandon_body() {
+            let _ = self.resume_read();
+        }
+    }
+
     pub fn upload_write(&self, data: &[u8], final_chunk: bool) -> Result<(), Error> {
         result(unsafe {
             sys::mn_request_upload_write(
@@ -835,7 +868,13 @@ impl std::fmt::Debug for ResponseStream {
 
 impl Drop for ResponseStream {
     fn drop(&mut self) {
-        if self.shared.abandon_body() {
+        let paused = self.shared.abandon_body();
+        if self.shared.body_needs_cancel() {
+            // Nothing will drain this queue again, so leaving the Core to read
+            // to EOF is pure cost (see `body_needs_cancel`).  Cancelling also
+            // lifts any pause, which is why the resume below is skipped.
+            let _ = self.request.cancel();
+        } else if paused {
             // The Core treats a resume that arrives before the pause lands, or
             // after completion, as a no-op.
             let _ = self.request.resume_read();
@@ -1289,6 +1328,20 @@ mod tests {
         drop(state);
 
         release_callback_ref(user_data.cast());
+    }
+
+    #[test]
+    fn a_dropped_stream_cancels_only_while_the_request_is_running() {
+        let shared = Arc::new(RequestShared::new());
+        let user_data = Arc::into_raw(Arc::clone(&shared)).cast_mut().cast();
+
+        // Still running: dropping the queue must cancel, because nothing will
+        // drain it and the Core would otherwise read the body to EOF.
+        assert!(shared.body_needs_cancel());
+        unsafe { on_complete(user_data, std::ptr::null_mut(), sys::mn_result_t::MN_OK, 0) };
+        // Terminal reached: a cancel here would be answered with
+        // MN_ERROR_INVALID_STATE, so the drop must not ask for one.
+        assert!(!shared.body_needs_cancel());
     }
 
     #[test]

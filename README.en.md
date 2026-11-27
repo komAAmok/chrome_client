@@ -85,7 +85,7 @@ Service Workers and persistent browser profiles are not included.
 | HTTP/HTTPS/SOCKS proxies | ✓ | ✓ | `proxy`, Requests-style `proxies`, mutable at runtime |
 | Synchronous requests | ✓ | ✓ | Blocking calls release the GIL, so a thread pool works |
 | asyncio requests | ✓ | — | Core callbacks wake the loop; no request thread pool, batched per wakeup |
-| Streaming responses | `iter_content` / `aiter_content` / `raw` | `ResponseStream` | 1 MiB body queue per request; at the ceiling the binding returns `MN_READ_PAUSE` (ABI v11) so the Core stops reading the socket, and `resume_read` restarts it once the consumer takes data |
+| Streaming responses | `iter_content` / `aiter_content` / `raw` | `ResponseStream` | Two queue ceilings per request: 1 MiB on the Rust side (`BODY_BUFFER_LIMIT`), where the ceiling returns `MN_READ_PAUSE` (ABI v11) so the Core stops reading the socket and only a consumer take issues `resume_read`; the async path adds 1 MiB of Python-side buffer (`STREAM_BUFFER_LIMIT`) and stops calling `poll_events` at that ceiling. A stream dropped without `close()` cancels the native request and raises `ResourceWarning` |
 | Chunked uploads | `data=` with a file object or iterator | `Upload::Chunked` | Same `upload_write` path for sync and async |
 | Cancellation, timeouts, size limits | ✓ | ✓ | `Timeout`, `ResponseTooLarge`, `RequestException` |
 | WebSocket / WSS | ✓ | ✓ | Sync and async, with the curl-cffi method names |
@@ -233,6 +233,20 @@ one. Measured on a 20-endpoint pool over 200 requests:
 ```python
 session = chrome_client.Session(max_engines=32)   # pool of 32 endpoints
 ```
+
+`Session.stats` reports the counters directly, so TIME_WAIT is not the first
+place this shows up; `EngineCache` also raises one `RuntimeWarning` once a cache
+has evicted `max(2 x max_engines, 8)` engines with zero hits, which is exactly
+the pool-wider-than-budget case.
+
+`inflight` covers the body, not just the head: with `stream=True` the lease is
+handed to the body reader and returned by `close()` / `aclose()` (or by dropping
+the stream), so a body the caller can still read is never reported idle, and an
+eviction in that window lands in `deferred` instead of being counted as free.
+`AsyncResponse.close()` is the synchronous method and schedules the release on the
+next loop turn; `await response.aclose()` releases immediately. A request with
+`discard_cookies=True` runs on an engine outside the cache and is not counted in
+`inflight`.
 
 Proxy rules **use Chromium's native syntax first** and only extend it where
 native support genuinely does not exist. The three forms the Core already parses
@@ -414,8 +428,38 @@ with open("big.bin", "rb") as handle:
 ```
 
 Exceeding `max_response_bytes` cancels the request and raises
-`ResponseTooLarge`. Each request buffers at most 1 MiB of body; above that ABI v11
-answers `MN_READ_PAUSE`, so nothing occupies a Core thread.
+`ResponseTooLarge`. The body queue has two ceilings: 1 MiB on the Rust side
+(`BODY_BUFFER_LIMIT` in `crates/minicronet/src/request.rs`), where the ceiling answers
+`MN_READ_PAUSE` (ABI v11) so the Core stops reading the socket and `resume_read` is
+issued **only** when the consumer takes data; the async path adds 1 MiB of Python-side
+buffer (`STREAM_BUFFER_LIMIT`) and stops `poll_events` there. A stalled synchronous
+stream therefore holds 1 MiB of queue and an asynchronous one 2 MiB.
+
+**`files=` and `data=<file object>` are not interchangeable, and here is why the first
+cannot stream.** Their upstream framing differs -- measured with
+`tools/upload-framing-probe.py`, reading the request head off a raw socket rather than
+inferring it:
+
+| Spelling | Wire framing | Memory |
+| --- | --- | --- |
+| `files={"f": ("a.bin", handle)}` | `Content-Length` + `multipart/form-data` | the whole body sits in `PreparedRequest.body` (8 MiB file -> 8.00 MiB resident) |
+| `data=handle` (file object/iterator) | `Transfer-Encoding: chunked` | 64 KiB at a time, flat in file size |
+
+The first is what Chrome sends when it submits a form, and `Content-Length` and chunked
+framing cannot both be present (RFC 9112 6.1). The ABI offers only a whole-body `FIXED`
+mode and `CHUNKED` (`mn_upload_mode_t`), with no "known length, fed incrementally" mode,
+so streaming `files=` would **change the frame on the wire** rather than optimise
+internally. Getting both needs one more ABI mode, which is a release-level change. Use
+`data=handle` when a large upload has to stay flat in memory, and accept the chunked
+frame.
+
+**`close()` cancels, and forgetting it no longer downloads the rest of the body.**
+`response.close()` / `await response.aclose()` cancels the native request and the
+connection closes immediately; a dropped (never closed) stream is cancelled the same
+way and raises `ResourceWarning` naming the drop site. Measured on a 256 MiB response
+stalled at 3.3 MiB: an explicit `close()` froze at 3.3 MiB and disconnected within
+0.5 s, and dropping the reference disconnected within 0.5 s too -- before the fix the
+drop pulled the remaining 252.6 MiB first.
 
 ### Concurrency
 

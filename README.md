@@ -82,7 +82,7 @@ Profile 影响 TLS ClientHello、ALPN、HTTP/2 设置、QUIC/H3 和相关 Chromi
 | HTTP/HTTPS/SOCKS 代理 | ✓ | ✓ | `proxy`、Requests 风格 `proxies`，运行期可改 |
 | 同步请求 | ✓ | ✓ | 同步等待释放 GIL，可直接放进线程池 |
 | asyncio 请求 | ✓ | — | Core 回调唤醒事件循环，无请求线程池；每次唤醒批量取事件 |
-| 流式响应 | `iter_content` / `aiter_content` / `raw` | `ResponseStream` | 每请求 body 队列上限 1 MiB；达到上限时向 Core 返回 `MN_READ_PAUSE`（ABI v11）让其停止读 socket，消费者取走后 `resume_read` 恢复 |
+| 流式响应 | `iter_content` / `aiter_content` / `raw` | `ResponseStream` | 每请求 body 队列两层上限：Rust 侧 1 MiB（`BODY_BUFFER_LIMIT`），达上限返回 `MN_READ_PAUSE`（ABI v11）让 Core 停止读 socket，消费者取走后 `resume_read`；异步另有 1 MiB 的 Python 侧缓冲（`STREAM_BUFFER_LIMIT`），超过即停止 `poll_events`。未 `close()` 就丢弃的流会取消 native 请求并抛 `ResourceWarning` |
 | 分块上传 | `data=` 传文件对象或迭代器 | `Upload::Chunked` | 同步与异步都走 `upload_write` |
 | 取消、超时、大小限制 | ✓ | ✓ | `Timeout`、`ResponseTooLarge`、`RequestException` |
 | WebSocket / WSS | ✓ | ✓ | 同步与异步，curl-cffi 方法名齐全 |
@@ -218,7 +218,9 @@ session.get("https://example.com", proxy="socks5://127.0.0.1:1080")   # 单次�
 session = chrome_client.Session(max_engines=32)   # 池有 32 个端点
 ```
 
-不必靠 TIME_WAIT 才发现这件事：`Session.stats` 直接给出计数。
+不必靠 TIME_WAIT 才发现这件事：`Session.stats` 直接给出计数；`EngineCache` 在
+「零命中 + 淘汰数达到 `max(2×max_engines, 8)`」时还会抛一次 `RuntimeWarning`，
+所以池比 `max_engines` 宽这件事会当场出现在日志里，而不是变成 TIME_WAIT 耗尽。
 
 ```python
 with chrome_client.Session(impersonate="chrome_151") as session:
@@ -231,6 +233,12 @@ with chrome_client.Session(impersonate="chrome_151") as session:
 
 `builds` 一直涨就是每次请求都在换传输上下文；`hits` 才代表连接、TLS 会话
 （session resumption）和 HTTP/2/3 会话池被真正复用。
+
+`inflight` 覆盖到 **body 结束**：`stream=True` 时租约随响应交给 body reader，
+`close()` / `aclose()`（或丢弃流）时才归还。所以一条还在读的流不会被报成空闲，期间发生的
+淘汰计入 `deferred` 而不是记成免费淘汰。`AsyncResponse.close()` 是同步方法，它把释放排到
+事件循环的下一轮；要立即归还用 `await response.aclose()`。`discard_cookies=True` 的请求
+跑在缓存之外的独立 engine 上，不计入 `inflight`。
 
 `Session.binding(url)` 返回这条请求将要使用的传输上下文本身——profile（JA3/JA4、
 H2 SETTINGS 与伪头部、QUIC 传输参数都由它冻结）、代理、TLS 校验策略。两个
@@ -436,9 +444,32 @@ with open("big.bin", "rb") as handle:
     session.post(url, data=handle)      # 文件对象或迭代器走分块上传
 ```
 
-`max_response_bytes` 超限会取消请求并抛 `ResponseTooLarge`。每个请求的 body 队列
-上限 1 MiB，超过时绑定层返回 `MN_READ_PAUSE`（ABI v11）让 Core 停止读 socket，
-不会占住 Core 线程；实测见 `docs/PERF_TEST_AND_LEAK.md` §5.6。
+`max_response_bytes` 超限会取消请求并抛 `ResponseTooLarge`。body 队列是两层：Rust 侧
+1 MiB（`crates/minicronet/src/request.rs` 的 `BODY_BUFFER_LIMIT`），超过时返回
+`MN_READ_PAUSE`（ABI v11）让 Core 停止读 socket，**只有消费者取走数据才会**
+`resume_read`；异步路径另有 1 MiB 的 Python 侧缓冲（`STREAM_BUFFER_LIMIT`），达到后
+停止 `poll_events`。所以停滞的同步流驻留 1 MiB 队列、异步流 2 MiB。实测见
+`docs/PERF_TEST_AND_LEAK.md` §5.6。
+
+**`files=` 与 `data=<文件对象>` 的取舍（为什么前者不能流式）。** 两者的上行框架不同，实测
+（`tools/upload-framing-probe.py`，原始 socket 读的请求头，不是推断）：
+
+| 写法 | wire 框架 | 内存 |
+| --- | --- | --- |
+| `files={"f": ("a.bin", handle)}` | `Content-Length` + `multipart/form-data` | 整个 body 在 `PreparedRequest.body` 里（8 MiB 文件 → 8.00 MiB 常驻） |
+| `data=handle`（文件对象/迭代器） | `Transfer-Encoding: chunked` | 64 KiB 一块，不随文件增长 |
+
+前者是 Chrome 提交表单时真正会发的框架，`Content-Length` 与 chunked 不能同时存在（RFC 9112 §6.1），
+而 ABI 的上传模式只有「整段 `FIXED`」与「`CHUNKED`」（`mn_upload_mode_t`），没有「已知长度、
+增量喂入」这一档 —— 所以把 `files=` 改成流式会**改变线上框架**，不是内部优化。要它既能流式又保留
+`Content-Length`，得先加一档 ABI（那是发布级改动）。需要恒定内存上传大文件时用 `data=handle`，
+并接受分块框架。
+
+**`close()` 是会取消的，忘记 close 也不会再白下载。** `response.close()` /
+`await response.aclose()` 取消 native 请求，连接立刻断；被丢弃（未 close）的流同样
+取消，并抛 `ResourceWarning` 指向丢弃点。实测一条停在 3.3 MiB 的 256 MiB 响应：
+显式 `close()` 冻结在 3.3 MiB 并在 0.5 s 内断开，丢弃引用也在 0.5 s 内断开；修复前
+丢弃引用会把剩余 252.6 MiB 全部读完才关连接。
 
 ### 并发
 

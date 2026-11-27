@@ -530,6 +530,12 @@ impl PyWebSocket {
 impl PyRequest {
     fn cancel(&self) -> PyResult<()> {
         let result = self.inner.cancel().map_err(native_error);
+        // Free the queued body now rather than at collection time: a cancelled
+        // request is never drained again, and its queue is up to the 1 MiB
+        // ceiling in Core-owned buffers.  The `ResponseStream` stays in place so
+        // a wakeup already scheduled on the loop reports end-of-body instead of
+        // "request body stream is not started".
+        self.inner.discard_body();
         self.finish();
         result
     }

@@ -3126,3 +3126,77 @@ Traceback：一条 Python 异常被 shell 的 `check` 函数当成「脚本非�
 **判据（补一句）**：门禁输出里的「没检出」和「没抓到我注入的东西」必须能区分。凡是一个
 检查的失败原因是「找不到要检查的对象」，它的消息里就得有对象的名字，而不是一句通过/
 不通过。
+## 93. 「兜底」如果早退，它兜住的正是它自己：丢弃一条流把剩下的 body 读完了
+
+`ResponseStream::drop` 里的 `abandon_body()` 会顺手 `resume_read()`，理由是「被暂停的请求
+没人 resume 就会永远挂着」——它确实解决了那个问题，代价没人量过：丢掉的流不是被取消，
+而是**被放开**，Core 一路读到 EOF。
+
+实测（256 MiB 响应，消费者停在 3.44 MiB，服务端按已写出字节计数）：
+
+| 行为 | 服务端最终写出 | 连接断开 |
+| --- | --- | --- |
+| `response.close()` | 3.44 MiB | 0.5 s 内 |
+| 丢弃引用（`del` + `gc.collect()`） | **256.00 MiB** | 1.5 s 后才 |
+
+纯 Rust 层同一个性质，用 `crates/minicronet/examples/request_smoke.rs` 的 `stream-drop`
+模式（先读一块再 `drop(body)`，同一个 256 MiB 回环服务器）：把 `Drop` 里的 cancel
+关掉，`stream_drop_finished_ms=1901`、服务端写出 **256.00 MiB**；打开是 `20 ms` 与
+**2.56 MiB**。所以两层的因果都要各自证明：Python 侧修的是「谁先取消」，Rust 侧修的
+是「没人取消时怎么办」。
+
+让这件事一直看不见的是第二层早退：`Response.close()` 之前，`iter_content()` 生成器的
+`finally` 调的是**不带 cancel** 的 `close()`，它把 `_closed` 置真；随后
+`_SyncBodyReader.__del__` 里那次 `close(cancel=True)` 在 `if self._closed: return` 上早退，
+于是 `mn_request_cancel` **一次都没发出去**。两处各自都有兜底，合起来兜住了零。
+同样的形状在 Rust 侧还有一份：`PyRequest::finish()` 只清 callback、wakeup token 和
+future，不释放 `body_stream`，于是「取消后仍持有 Response」能带着 1 MiB Core 缓冲活着
+（实测 `poll_events` 在 cancel 之后仍返回 34 个 body 事件、1.03 MiB）。
+
+异步侧是第三种早退：`_release_async_body` 在 `loop.is_closed()` 上直接 return，而
+`_AsyncState → PyRequest → Rust event_callback → state.notify → _AsyncState` 这个环穿过
+Rust，CPython 的 GC 看不见它（`PyRequest` 没有 `tp_traverse`）。实测丢弃后 9 秒：fd 仍 13
+（基线 5）、传输冻在 4.38 MiB、服务端 handler 永不退出。改法就写在同一个函数下面那条
+「loop 存在但没在跑」分支的注释里——同步释放——只是 closed 分支漏了同一件处理。
+
+复现（三个臂只差消费者行为，服务端按已写出字节计数）：
+
+```bash
+LD_LIBRARY_PATH=core/binaries/linux-x86_64 \
+  PYTHONPATH=bindings/python python3 tools/stream-drop-probe.py
+```
+
+两条防线都拿掉时它退出 1：`close` 与 `abandon` 在丢弃后分别又收到 61.44 / 61.50 MiB；
+只拿掉 Rust 那条时 `abandon` 仍是 0.00 MiB —— 单点变异反而证明两层各自都在起作用，
+所以这条性质需要两层，而不是「有一处兜底就够」。
+
+**判据**：兜底路径不能以「已经处理过」作为跳过条件，除非那个「处理过」保证做过同一件事。
+`_closed` 记录的是 detach，`_cancelled` 记录的是 cancel，两者不能共用一个标志（现在
+`release()` 与 `close(cancel=...)` 分工，只有 `__del__` 报 `ResourceWarning`）。第二条：
+凡是「对象回收时释放资源」的路径，都要能在没有事件循环、甚至解释器正在退出的情况下
+同步跑完——把清理交给 `create_task`，等于把清理交给一个可能永远不再转的循环。第三条：
+「谁来取消」必须有一条确定的路径。`close()` 取消、丢弃也取消，才不会出现两种丢弃语义：
+一种省内存，另一种既费内存又费流量。
+## 94. 「还在飞」的窗口止于响应头，于是它既漏报也误判
+
+租约原本只覆盖到响应头：`_perform` 返回、`with lease:` 退出，`inflight` 就归零。可 `stream=True`
+的 body 是之后才读的，于是同一条请求同时被两个计数器说错——`inflight=0`（它其实还在读），
+`deferred=0`（淘汰它被记成免费）。实测：一条停在 4.38 MiB 的流，`live=1, inflight=0`；
+第二个 binding 淘汰该槽后 `evictions=1, deferred=0`，而服务端字节数还在涨。
+
+修法是把租约**转移**给 body reader（`_SlotLease.transfer()`），由 `close()/aclose()/丢弃` 归还；
+`EngineCache` 另记一份「淘汰时仍被钉住」的槽，`inflight` 把它们算进去，两个计数器才对同一件事
+给同一个答案。变异：`transfer()` 里少写一行 `self._transferred = True`，四条新测试一起红
+（`0 != 1`，消息就是「a body the caller can still read is in flight」）。
+
+**踩到的坑（两次，都靠测试抓住）**：
+
+1. `__exit__` 在已转移的分支里仍然 `self._slot = None`。那等于把要归还的东西先丢了，
+   `release()` 拿不到槽，计数永不回落——探针显示 `close()` 之后 `inflight=1` 一直不变。
+2. 把**缓存里的**槽交给 retire worker。那个 worker 调 `EngineSlot.release_engine()`，把
+   `engine` 置空，于是下一条复用该槽的请求崩在 `NoneType has no attribute request`——
+   6 个测试同时红。那个队列的契约是「没人再用它」，只有 `single_use` 的槽成立。
+
+**判据**：①一个计数器的窗口必须覆盖它描述的那件事的全部时间，否则另一半只能由另一个数字猜；
+②把对象交给「只负责丢弃」的后台路径前，先确认没有第二个人还在用它——幂等的 `release_engine()`
+不会报错，它只会把别人手里的东西置空。
