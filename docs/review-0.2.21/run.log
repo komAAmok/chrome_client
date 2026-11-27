@@ -1,0 +1,28 @@
+# 0.2.21 的预打 tag review：被 python-tests 这一步卡住，未产出 summary.json
+# 24 步 PASS / 0 步 FAIL；卡在该步（同一命令在仓库根目录单独跑 157-163 秒、642 条通过）。
+# 这份日志原样保存，作为「跑过什么」的证据；它不是 summary.json，不代替它。
+
+PASS     abi                  ABI v17 audit passed: 35 symbols, header/FFI/Core/export tables agree.
+PASS     abi-layout             mn_websocket_config_t        136 bytes, 12 fields
+PASS     readme               README audit passed: PyPI description matches README.md for both wheels.
+PASS     pypi-metadata        ok redirect ceiling: CHROMIUM_MAX_REDIRECTS=20 (bindings/python/chrome_client/_python_impl/sessions.py:84) == 5 prose carriers
+PASS     python-stubs         19 stub modules, 0 error(s), 0 warning(s)
+PASS     python-typing        Python typing audit passed: stubs and consumer both clean.
+PASS     extra-fp             extra_fp verdict audit passed: 2 field(s) classified (HONOURED)
+PASS     client-hints         0 error(s)
+PASS     core-binaries        Core binary audit passed for 9 targets.
+PASS     core-inputs          Core input audit: 25 BUILD.gn names, 23 installed files, 15 patches -- all tracked
+PASS     core-size            core size ceiling audit passed: every MAX_BYTES satisfies its own 2% rule
+PASS     core-payloads        core payload audit passed: 27 artifact/payload pairs across 9 targets; every artifact embeds the header's 572 payload bytes byte for byte
+PASS     padding-rule         padding rule audit passed: 144 profile/protocol pairs; 86..118 fixed widths, 119..123 conditional, 124+ never; compiled table pins no override
+PASS     tls-version-range    TLS version range audit passed: 72 profiles; 86..97 advertise TLS 1.3/1.2/1.1/1.0 on the wire, 98.. advertise TLS 1.3/1.2, and the compiled table carries the matching floor
+PASS     h1-alps              HTTP/1.1 ALPS audit passed: 72 profiles; h1 never offers ALPS, h2 does from 91, and both protocols agree on supported_groups, signature_algorithms and supported_versions
+PASS     h3-support           H3 profile support audit passed: 73 profiles, 7 marked unsupported (86..92)
+PASS     profile-addition         h3: {"captures": 6, "status": "CAPTURED", "stable_fields": ["ciphers", "extensions", "h3_hash", "h3_settings", "h3_text", "ja4", "quic_version", "selected_version",
+PASS     profile-probes       profile probes passed: feature boundaries, profile isolation; state isolation SKIPPED (no HTTP_BASE/HTTPS_BASE)
+PASS     net-error-names      net error names audit passed: every row matches net_error_list.h
+PASS     rust-format          
+PASS     rust-check           
+PASS     rust-clippy          
+PASS     rust-tests           test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+PASS     python36-artifact    python36 artifact audit passed: libchrome_client_native36.so, abi 17, abi3, sync/redirect/async through the shared facade; chrome_client-0.2.20-cp36-abi3-manylinux_2_38_x86_64.whl: facade imports, abi 17
